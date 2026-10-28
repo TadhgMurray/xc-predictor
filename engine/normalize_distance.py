@@ -787,7 +787,15 @@ def loadGraphLevels():
             cur.execute("SELECT to_regclass('school_level_graph')")
             if cur.fetchone()[0] is None:
                 return _GRAPH_LEVELS
-            cur.execute("SELECT school, level FROM school_level_graph")
+            # ★ ONLY THE 'S:' NODES, PREFIX OFF (pooling review P3, 2026-10-26).
+            #   level_graph keys its nodes 'T:<team_id>' or 'S:<school>'
+            #   (level_graph.py, the node expression), and this read used to
+            #   normalise the whole key -- 's cornell', 't 123' -- so no row's
+            #   school ('cornell') ever matched and the pickle answered alone,
+            #   with its 128 colleges tagged hs or ms. Team nodes are what
+            #   team_level already says, from the same feed fact.
+            cur.execute("SELECT substr(school, 3), level FROM school_level_graph "
+                        "WHERE school LIKE 'S:%'")
             for name, lvl in cur.fetchall():
                 k = normSchoolKey(name)
                 if k:

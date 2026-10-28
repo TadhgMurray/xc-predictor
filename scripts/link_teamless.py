@@ -220,10 +220,10 @@ def teamlessSql(a="r"):
 
 def nameKeySql(first, last):
     """normName('First Last') in SQL -- the join key between a candidate and
-    its namesakes. Pinned to normName by the tests."""
-    return (f"btrim(regexp_replace(regexp_replace(lower(replace("
-            f"concat_ws(' ', btrim({first}), btrim({last})), '-', ' ')), "
-            f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    its namesakes. Pinned to normName by the tests. person_name's one rule,
+    accents folded, suffix kept (2026-10-26)."""
+    from person_name import personKeySql
+    return personKeySql(first, last, keep_suffix=True)
 
 
 # ------------------------------------------------------------------ #

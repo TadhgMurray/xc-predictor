@@ -39,7 +39,7 @@
         Every college's recruits on the high-school scale{{ rating_i() }}
         {% if since_year %} · classes of {{ since_year }} on{% endif %}
         · <a href="/coaches/recruits">Coaches: search athletes</a>
-        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="College recruiting on Racecast"
+        <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="College recruiting on Racecast"
               data-share-url="{{ site_origin ~ '/recruiting' }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       <p class="rc-story">What each college's recruits actually ran. Find yourself or enter a time,
@@ -48,7 +48,7 @@
   </div></header>
 
   {% if not built %}
-  <p class="predict-status show error">The recruiting table has not been built yet. It arrives with the next pipeline run (step 10f).</p>
+  <p class="predict-status show error">The recruiting numbers aren't ready yet; check back tomorrow.</p>
   {% endif %}
 
   {# ---- you ---------------------------------------------------------- #}

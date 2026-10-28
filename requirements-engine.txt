@@ -13,3 +13,4 @@ pytz
 timezonefinder
 xarray
 icechunk
+cdsapi                   # backfill/era5_cds_recent.py: weather after the free store ends (04e2)

@@ -109,7 +109,10 @@ def test_the_primary_key_keeps_its_budget_and_the_secondaries_ask_the_caps(monke
     assert "SET maintenance_work_mem = '8GB'" in log
     assert "SET max_parallel_maintenance_workers = 6" in log
     assert B.dbSetting("maintenance_work_mem", B._INDEX_MEM) == "2GB"
-    assert B.dbSetting("max_parallel_maintenance_workers", B._INDEX_WORKERS) == "2"
+    # balanced quiet mode allows 4 per build since 2026-10-25; strict allows none
+    assert B.dbSetting("max_parallel_maintenance_workers", B._INDEX_WORKERS) == "4"
+    monkeypatch.setenv("XCP_DB_QUIET", "strict")
+    assert B.dbSetting("max_parallel_maintenance_workers", B._INDEX_WORKERS) == "0"
 
 
 # ---- the rewrite-only-changed path (2026-09-26) ---------------------------

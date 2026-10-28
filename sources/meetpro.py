@@ -110,27 +110,63 @@ def _cells(row):
             for m in re.finditer(r'<td[^>]*class="([^"]+)"[^>]*>(.*?)</td>', row, re.S | re.I)}
 
 
+# ★ A ROUND IS ITS OWN RACE (2026-10-25, B&B Race KC, Winchester 2022): a
+#   sprint's page carries "Prelims" and "Finals" (h4.round-results-hdr), each
+#   with its own "place" table, so the same runner is on the page twice with
+#   two real times. parseRounds keeps them apart; a qualifier letter on the
+#   mark ("12.07Q", "4:43.59 q") is not part of the time.
+_ROUND = re.compile(r'<h4[^>]*round-results-hdr[^>]*>(.*?)</h4>', re.S | re.I)
+_TABLE = re.compile(r"<table[^>]*results-table[^>]*>(.*?)</table>", re.S | re.I)
+
+
+def parseRounds(page):
+    """A MeetPro results page -> [(round title, [Row])] in page order, the
+    overall table of each round (heats skipped). One untitled round ('')
+    when the page names none."""
+    marks = [(m.start(), _text(m.group(1))) for m in _ROUND.finditer(page)]
+    out = []
+    for t in _TABLE.finditer(page):
+        rnd = ""
+        for pos, title in marks:
+            if pos < t.start():
+                rnd = title
+        rows = _tableRows(t.group(1))
+        if rows is None:
+            continue
+        if out and out[-1][0] == rnd:
+            out[-1][1].extend(rows)
+        else:
+            out.append((rnd, rows))
+    return out
+
+
 def parseResults(page):
-    """A MeetPro results page -> the overall table's rows (heats skipped)."""
+    """A MeetPro results page -> the overall tables' rows, every round."""
+    return [r for _rnd, rows in parseRounds(page) for r in rows]
+
+
+def _tableRows(table):
+    """One results table's rows, or None for a heat/section ('hplace') table."""
     rows = []
-    for table in re.findall(r"<table[^>]*results-table[^>]*>(.*?)</table>", page, re.S | re.I):
-        header = re.search(r"<thead>(.*?)</thead>", table, re.S | re.I)
-        classes = re.findall(r'<th[^>]*class="([^"]+)"', header.group(1) if header else "")
-        if "place" not in [c.split()[0] for c in classes]:
-            continue                       # an 'hplace' heat/section table
-        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", table, re.S | re.I):
-            c = _cells(tr)
-            if not c.get("athlete"):
-                continue
-            mark = c.get("time") or c.get("mark") or ""
-            mark = mark.split(" ")[0]
-            last, first = _splitName(c["athlete"])
-            place = c.get("place", "")
-            rows.append(Row(
-                place=int(place) if place.isdigit() else None,
-                last=last, first=first,
-                grade=(c.get("year") or c.get("grade") or c.get("yr") or "").upper(),
-                school=c.get("team", ""),
-                seconds=secondsOf(mark), mark=mark or (place or ""),
-                points=int(c["points"]) if c.get("points", "").isdigit() else None))
+    header = re.search(r"<thead>(.*?)</thead>", table, re.S | re.I)
+    classes = re.findall(r'<th[^>]*class="([^"]+)"', header.group(1) if header else "")
+    if "place" not in [c.split()[0] for c in classes]:
+        return None                    # an 'hplace' heat/section table
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", table, re.S | re.I):
+        c = _cells(tr)
+        if not c.get("athlete"):
+            continue
+        mark = c.get("time") or c.get("mark") or ""
+        mark = mark.split(" ")[0]
+        # "12.07Q" / "4:43.59q": the qualifier is not the time
+        mark = re.sub(r"(?<=\d)[A-Za-z*#]+$", "", mark)
+        last, first = _splitName(c["athlete"])
+        place = c.get("place", "")
+        rows.append(Row(
+            place=int(place) if place.isdigit() else None,
+            last=last, first=first,
+            grade=(c.get("year") or c.get("grade") or c.get("yr") or "").upper(),
+            school=c.get("team", ""),
+            seconds=secondsOf(mark), mark=mark or (place or ""),
+            points=int(c["points"]) if c.get("points", "").isdigit() else None))
     return rows

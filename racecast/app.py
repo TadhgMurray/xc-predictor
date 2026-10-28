@@ -329,7 +329,40 @@ _optout.loadHidden(getConn)
 #   behind its back. XCP_PREWARM=1 forces it on anywhere, =0 off everywhere.
 # ! NOT WITH --preload: the thread would run in the master and not survive
 #   the fork. deploy/server_setup.sh starts gunicorn without it.
+# ★ AFTER THE FIRST REQUESTS, NOT DURING THEM (owner, 2026-10-27: after a
+#   restart the topbar says "Sign in" for ~5 s before it shows the account,
+#   and the first click on the picture is slow). Every worker starts at once
+#   after a restart, and torch's import holds the interpreter while the
+#   worker's first requests (/api/me, /account) wait behind it. So the
+#   thread first compiles the templates those first clicks render -- cheap,
+#   and a cold Jinja compile is part of a first page's wait -- then waits
+#   XCP_PREWARM_DELAY seconds (default 15) before loading the model. A
+#   Predict asked inside that window loads it itself, as it always could.
+# ★ AND NOT ALL AT ONCE (owner's timing, 2026-10-27: deploy/time_restart.sh
+#   answered at +2.4 s and in 1 ms from +5 s, then up to 3.4 s at +21-29 s
+#   -- the eight workers loading torch together, 7.5-9 s each). Each worker
+#   adds up to XCP_PREWARM_SPREAD seconds (default 40) of its own, so the
+#   loads take turns instead of piling up.
+_PREWARM_TEMPLATES = ("account.html", "athlete.html", "race.html", "home.html")
+
+
+def _prewarmTemplates():
+    for name in _PREWARM_TEMPLATES:
+        try:
+            app.jinja_env.get_template(name)
+        except Exception:                               # noqa: BLE001
+            app.logger.exception("template warm-up failed: %s", name)
+
+
 def _prewarmPredict():
+    _prewarmTemplates()
+    try:
+        delay = float(os.environ.get("XCP_PREWARM_DELAY") or 15)
+        spread = float(os.environ.get("XCP_PREWARM_SPREAD") or 40)
+    except ValueError:
+        delay, spread = 15.0, 40.0
+    import random
+    time.sleep(max(0.0, delay) + random.uniform(0.0, max(0.0, spread)))
     t0 = time.time()
     try:
         import predict as _predict
@@ -367,6 +400,8 @@ def _stateTeamAware(fn):
 app.template_filter("school_label_in")(_stateTeamAware(school_identity.schoolLabelIn))
 app.template_filter("school_label_for")(_stateTeamAware(school_identity.schoolLabelFor))
 app.template_filter("with_state")(_stateTeamAware(school_identity.withState))
+# a pool's level ("college_m" -> "college"): a race row's crest (school_logo)
+app.template_filter("level_of")(school_identity.levelOf)
 app.template_filter("school_label")(_stateTeamAware(school_identity.schoolLabel))
 
 # the crest beside a school's name, everywhere one is named (305). Both
@@ -1684,9 +1719,12 @@ def buildRankLine(cur, person_id, season):
                   f"({type(exc).__name__}: {exc})", flush=True)
             return None
 
+    # ★ THE LINK OPENS ON THE ATHLETE (UX review, 2026-10-24: "National
+    #   #212" opened page 1 with nothing lit). jump= asks rankings.js to page
+    #   to them and light their row (its own find-an-athlete path, jumpTo).
     def boardHref(with_state):
         q = "&".join(f"{k}={v}" for k, v in boardArgs(with_state).items())
-        return "/rankings?" + q
+        return f"/rankings?{q}&jump={person_id}"
 
     # the athlete's own units, once -- three scopes read from this
     from school_units import unitsFor, applyUnitFilters, homeStateOf
@@ -1781,7 +1819,7 @@ def buildRankLine(cur, person_id, season):
                 q = "&".join(f"{k}={v}" for k, v
                              in unitArgs(u["kind"], u["raw"]).items())
                 entries.append({"label": u["label"], "rank": r,
-                                "href": "/rankings?" + q})
+                                "href": f"/rankings?{q}&jump={person_id}"})
         elif scope == "nation":
             r = boardRank(False)
             if r:
@@ -1803,6 +1841,7 @@ def buildRankLine(cur, person_id, season):
                 try:
                     # Strictly-better count + 1 = place on the roster, the same
                     # mean-rating order schoolRoster sorts by; ties share it.
+                    # Own gender only (the pool's _m / _f), owner 2026-10-24.
                     cur.execute("""
                         SELECT count(*) + 1 AS place
                         FROM   athlete_season t
@@ -1810,8 +1849,9 @@ def buildRankLine(cur, person_id, season):
                           AND  t.sport  = %(sport)s
                           AND  t.year   = %(year)s
                           AND  t.mean_rating > %(mine)s
+                          AND  right(t.pool, 2) = right(%(pool)s, 2)
                     """, {"school": school, "sport": sport,
-                          "year": season["year"],
+                          "year": season["year"], "pool": season["pool"],
                           "mine": season["mean_rating"]})
                     row = cur.fetchone()
                 except Exception:            # noqa: BLE001
@@ -1869,7 +1909,7 @@ def _mainTrackDistance(races, label):
         if r.get("sport") != "TF" or str(r.get("season_label")) != str(label):
             continue
         ev = parseEventShort(r.get("event"))
-        m = ev.get("meters")
+        m = _eventMetres(r.get("event")) if ev.get("kind") == "flat" else None
         if ev.get("kind") != "flat" or not m or not 800.0 <= m <= 10000.0:
             continue
         m = round(float(m), 2)
@@ -1878,6 +1918,21 @@ def _mainTrackDistance(races, label):
     if not counts:
         return None
     return max(counts, key=lambda m: counts[m])
+
+
+# ★ AN EVENT'S DISTANCE AS THE RATINGS READ IT (complexity review,
+#   2026-10-24: an "880" with no stored distance showed PRs against 880 m
+#   while the backfill rated the rows at 804.67 m). event_parse is the
+#   backfill's parser; normalize_distance.parseEventShort answers only for
+#   what it rejects (steeple, hurdles), which the ratings do not price.
+def _eventMetres(event_short):
+    from event_parse import distanceFromEventShort
+    from normalize_distance import parseEventShort
+    try:
+        m = distanceFromEventShort(event_short)[0]
+    except Exception:                     # noqa: BLE001 -- a label, not a page
+        m = None
+    return m or parseEventShort(event_short).get("meters")
 
 
 @app.route("/athlete/<int:person_id>")
@@ -3481,11 +3536,9 @@ def _season_state(races, school=None):
     return c.most_common(1)[0][0]
 
 
-# The verdicts that mean grade_sanity looked and could not place the season.
-# ⚠ MUST MATCH pool_resolve.resolvePool's refusal list -- these four make it
-#   return no pool, which is what drops the season from every board. They are
-#   inlined there rather than named, so this copy is the thing to keep in step.
-_NO_POOL_VERDICTS = ("no_evidence", "contradicted", "thin_field", "lone_word")
+# The verdicts that mean grade_sanity looked and could not place the season:
+# pool_resolve.resolvePool's own refusal list, imported, not copied.
+from pool_resolve import NO_POOL_VERDICTS as _NO_POOL_VERDICTS             # noqa: E402
 
 
 def _attach_season_verdicts(seasons, verdicts):
@@ -3518,7 +3571,13 @@ def _attach_season_verdicts(seasons, verdicts):
             season["grade_note"] = note
         if v is None:
             continue
-        if v.get("method") in _NO_POOL_VERDICTS:
+        # ! ONLY WHERE THE VERDICT ACTUALLY DROPPED THE SEASON (pooling
+        #   review, 2026-10-25). resolvePool refuses these four only when
+        #   nothing else places the season -- a team level from the feed, a
+        #   college or pro field, a professional -- so a no_evidence season
+        #   on an anet high school pools hs and ranks. Its rows then carry a
+        #   pool, and "not ranked" would be false. A refused row has none.
+        if v.get("method") in _NO_POOL_VERDICTS and not season.get("pool"):
             season["board_note"] = v["method"]
         elif v.get("trust") == "low":
             season["board_note"] = "low_trust"
@@ -5281,7 +5340,9 @@ def meet_xc_find(meet_id):
                 ) x
                 WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
                 ORDER  BY (x.name ILIKE %(q)s) DESC, x.time_seconds NULLS LAST
-                LIMIT  25
+                -- ! a school's whole team, not its first 25 (UX review,
+                --   2026-10-24): one meet's rows, so the cap costs nothing
+                LIMIT  200
             """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
             rows = cur.fetchall()
     out = []
@@ -5327,7 +5388,7 @@ def meet_tf_find(meet_id):
                 ) x
                 WHERE  x.name ILIKE %(q)s OR x.school ILIKE %(q)s
                 ORDER  BY (x.name ILIKE %(q)s) DESC, x.name, x.event_short
-                LIMIT  40
+                LIMIT  200
             """, {"m": meet_id, "src": src, "q": "%" + q + "%"})
             rows = cur.fetchall()
     out = []
@@ -5805,8 +5866,7 @@ def race_tf(meet_id, event_id, div_id):
                 #   used to rate the rows says what the event was.
                 dist = header.get("distance_meters")
                 if not dist:
-                    from normalize_distance import parseEventShort
-                    dist = parseEventShort(header.get("event_short")).get("meters")
+                    dist = _eventMetres(header.get("event_short"))
                 # ! the event's kind, as ranking_results stores it (sweep
                 #   2026-10-10): hurdlers measured against hurdles
                 try:
@@ -5891,8 +5951,8 @@ def race_tf(meet_id, event_id, div_id):
     #   average cross country 5K. Not for field events or relays.
     equiv_dist = header.get("distance_meters")
     if not equiv_dist and header.get("event_short"):
-        from normalize_distance import parseEventShort
-        equiv_dist = parseEventShort(header["event_short"]).get("meters")
+        from event_parse import distanceFromEventShort
+        equiv_dist = distanceFromEventShort(header["event_short"])[0]
     _ev = (header.get("event_short") or "").lower()
     _run = [r for r in results if not r.get("is_field")
             and r.get("time_seconds") and r["time_seconds"] < 999999]
@@ -7026,6 +7086,16 @@ def school_page(school_name):
                 level = None
             if lchips and not level:
                 level = lchips[0]["level"]
+            # ★ THE HEADER IS THE CHOSEN INSTITUTION'S (owner, 2026-10-28:
+            #   Washington's high school view read "NCAA DI · Athletes 3223"
+            #   -- the units and count of the name, not of the school on
+            #   screen). Its own count, and units only when they are its own.
+            if lchips and level:
+                for c in lchips:
+                    if c["level"] == level:
+                        header["athletes"] = c["n"]
+                units = unitsFor(cur, school_name, state or primary_state,
+                                 sport, long=True, level=level)
 
             years = schoolYears(cur, school_name, state, primary_state)
 
@@ -7049,7 +7119,8 @@ def school_page(school_name):
                                    state=state, primary=primary_state)
                       if year else [])
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
-                                 state=state, primary=primary_state)
+                                 state=state, primary=primary_state,
+                                 level=level if lchips else None)
             # deeper than the old 25: the tables reveal in place now, and
             # the cap is what "show more" runs out against
             best   = schoolBest(cur, school_name, sport, limit=100,
@@ -10367,8 +10438,7 @@ def api_teams():
                     conn.rollback()
                     app.logger.exception("/api/teams (course) failed")
                     return jsonify({"error": "Team rankings failed to load. "
-                                             "The server log has the "
-                                             "traceback."}), 500
+                                             "Try again in a minute."}), 500
         # Rows carry their race distance, so the exact factor applies
         # rather than the representative one.
         hs_movable = stampBoardRows(rows, rating_keys=("top5_mean",),
@@ -10758,6 +10828,10 @@ for _bp in (_uploads.bp, _fixes.bp):
 #   /account/admin/social, see social.py; step 13g_social builds them.
 import social as _social                                       # noqa: E402
 app.register_blueprint(_social.bp)
+# ★ THE ACCOUNTS LIST (owner, 2026-10-27): /account/admin/accounts, every
+#   account and the profiles it claims; admins only, see admin_accounts.py.
+import admin_accounts as _admin_accounts                       # noqa: E402
+app.register_blueprint(_admin_accounts.bp)
 
 
 @app.route("/predictions")
@@ -10949,7 +11023,7 @@ def _predictSource(cur, meet_id, sport, alt=None, div_id=None):
 #   meet is the posted one and the feed is the answer with no index.
 # ! ONLY THE FEED NAMES (anet, tfrrs, and upload since 2026-10-10). Anything else is ignored, never echoed, and a
 #   link without it resolves exactly as before.
-_FEEDS = ("anet", "tfrrs", "upload")   # + the owner-approved uploads (2026-10-10)
+_FEEDS = ("anet", "tfrrs", "upload", "timer")   # + approved uploads (2026-10-10), timer meets (2026-10-25)
 
 
 def _feedPin(cur, meet_id, sport, hint, src, alt_idx):

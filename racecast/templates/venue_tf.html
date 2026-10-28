@@ -57,7 +57,6 @@
       <a class="seg-btn" href="#teams" data-tab="teams">Team records{% if relays %}<span class="n">{{ relays|length }}</span>{% endif %}</a>
       <a class="seg-btn" href="#meets" data-tab="meets">Meets{% if venue_meets %}<span class="n">{{ venue_meets|length }}</span>{% endif %}</a>
     </nav>
-    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
   </div>
 
   <section class="rc-panel" id="best" data-panel="best">

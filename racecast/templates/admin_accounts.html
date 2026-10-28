@@ -1,0 +1,77 @@
+{# admin_accounts.html -- the owner's list of accounts (admin_accounts.py,
+   owner 2026-10-27): each account, what it claims (the runner by name and
+   school, through a merge redirect) and how many follows. Read only.
+   Admins only (uploads.requireAdmin). #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Accounts" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
+    <h1>Accounts</h1>
+    <div class="rc-meta">{{ totals.n }} accounts ({{ totals.live }} not deleted, {{ totals.recent }} signed in this month) · {{ totals.claims }} claims ·
+      <a href="/account/admin/fixes">Fixes</a> · <a href="/account/admin/uploads">Uploads</a> · <a href="/account/status">Site status</a></div>
+    <form method="get" action="/account/admin/accounts" class="acct-search">
+      <label for="acct-q">Email or name</label>
+      <input id="acct-q" name="q" value="{{ q }}" maxlength="100" autocomplete="off">
+      <label><input type="checkbox" name="claims" value="1"{% if claims_only %} checked{% endif %}> Only accounts with a claim</label>
+      <button type="submit">Show</button>
+    </form>
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+  {% if not accounts %}<p class="ct-muted">No accounts{% if q or claims_only %} match{% endif %}.</p>{% endif %}
+  {% if accounts|length >= page_max %}<p class="ct-muted">The newest {{ page_max }} shown; search to narrow.</p>{% endif %}
+  <div class="table-scroll">
+  <table class="ct-rows">
+    <thead><tr><th scope="col">Account</th><th scope="col">Role</th><th scope="col">Signed up</th>
+      <th scope="col">Last login</th><th scope="col">Claims</th><th scope="col">Follows</th></tr></thead>
+    <tbody>
+    {% for a in accounts %}
+      <tr{% if a.deleted_at %} class="ct-muted"{% endif %}>
+        <td>{{ a.email }}{% if a.name %}<br><span class="ct-muted">{{ a.name }}</span>{% endif %}
+          {% if a.deleted_at %}<br><span class="ct-pill">deleted {{ a.deleted_at.strftime("%b %-d, %Y") }}</span>{% endif %}</td>
+        <td>{{ a.role }}</td>
+        <td>{{ a.created_at.strftime("%b %-d, %Y") if a.created_at else "" }}</td>
+        <td>{{ a.last_login_at.strftime("%b %-d, %Y") if a.last_login_at else "never" }}</td>
+        <td>
+          {% for c in a.claims %}
+            <div>{{ c.kind }}:
+              {% if c.person_id %}
+                {% set w = c.who or {} %}
+                <a href="/athlete/{{ w.person_id or c.person_id }}">{{ w.name or ("Athlete " ~ c.person_id) }}</a>
+                {% if w.schools %}<span class="ct-muted">({{ w.schools }})</span>{% endif %}
+                {% if w.merged_into %}<span class="ct-muted">· #{{ c.person_id }} merged into #{{ w.merged_into }}</span>{% endif %}
+              {% else %}
+                {{ [c.school, c.state, c.level]|select|join(" / ") or "-" }}
+              {% endif %}
+              <span class="ct-pill">{{ c.status }}</span>{% if c.verified_at %} <span class="ct-muted">verified {{ c.verified_at.strftime("%b %-d") }}{% if c.verified_by %} by {{ c.verified_by }}{% endif %}</span>{% endif %}
+            </div>
+          {% else %}<span class="ct-muted">none</span>{% endfor %}
+        </td>
+        <td>{{ a.n_follows or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+</div>
+</main>
+</body>
+</html>

@@ -26,16 +26,17 @@ def test_the_caps_apply_only_in_quiet_mode(monkeypatch):
     assert not db.dbQuiet()
     assert db.dbSetting("maintenance_work_mem", "8GB") == "8GB"
     assert db.dbJobs(3) == 3
-    # the balanced default (2026-09-26): room to work, still bounded
+    # the balanced default (2026-09-26; four workers since 2026-10-25, 24 cores)
     monkeypatch.setenv("XCP_DB_QUIET", "1")
     assert db.dbQuiet()
     assert db.dbSetting("maintenance_work_mem", "8GB") == "2GB"
     assert db.dbSetting("work_mem", "2GB") == "512MB"
-    assert db.dbSetting("max_parallel_maintenance_workers", 6) == "2"
-    assert db.dbSetting("max_parallel_workers_per_gather", 4) == "2"
+    assert db.dbSetting("max_parallel_maintenance_workers", 6) == "4"
+    assert db.dbSetting("max_parallel_workers_per_gather", 8) == "4"
     assert db.dbSetting("cursor_tuple_fraction", "0.1") == "1.0"
     assert db.dbSetting("lock_timeout", "5s") == "5s"        # not a cap: untouched
-    assert db.dbJobs(3) == 2
+    assert db.dbJobs(3) == 3
+    assert db.dbJobs(6) == 4
     assert db.dbJobs(1) == 1
     # the old site-first caps, on request
     monkeypatch.setenv("XCP_DB_QUIET", "strict")
@@ -71,7 +72,7 @@ def test_a_quiet_connection_is_capped_once_and_the_backend_is_reniced_best_effor
     conn = _Conn()
     db._quietTune(conn)
     sets = [p[0] for sql, p in conn.log if sql.startswith("SET ") and p]
-    assert "512MB" in sets and "2GB" in sets and "2" in sets and "off" in sets
+    assert "512MB" in sets and "2GB" in sets and "4" in sets and "off" in sets
     assert "1.0" in sets                               # cursor_tuple_fraction
     assert any("application_name" in sql for sql, _ in conn.log)
     assert seen["nice"] == (4242, db._QUIET_NICE)
@@ -93,7 +94,7 @@ def test_the_builders_ask_through_the_caps(monkeypatch):
     assert mc._dbSetting("maintenance_work_mem", "8GB") == "2GB"
     conn = _Conn()
     applied = dbfast.tuneSession(conn, quiet=True)
-    assert "work_mem=512MB" in applied and "max_parallel_maintenance_workers=2" in applied
+    assert "work_mem=512MB" in applied and "max_parallel_maintenance_workers=4" in applied
     monkeypatch.delenv("XCP_DB_QUIET")
     assert mc._dbSetting("maintenance_work_mem", "8GB") == "8GB"
     src = open(os.path.join(_ROOT, "engine", "merge_column.py")).read()

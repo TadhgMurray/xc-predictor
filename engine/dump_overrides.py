@@ -78,17 +78,47 @@ for key, byname in sorted(clashes)[:40]:
 if len(clashes) > 40:
     print(f"    ... and {len(clashes) - 40} more")
 
+# ★ distance_pin FIRST (engine/wrong_distance.py, 2026-10-26: the one
+#   writer of distance fixes). Its whole-division rows, active or held by the
+#   owner, outrank every dict here:
+#     pin     its distance, dict_name 'distance_pin'
+#     veto    the dicts' entry for the key is removed, and kept apart in
+#             dist_override_vetoed so the next run can judge it again
+#     novote  the row (or a new one at the listed distance, dict_name
+#             'novote') carries novote = true: the solve takes its venue away
+#   Per-gender / per-level parts are per row and only the backfill reads them.
+from wrong_distance import applyPins                       # noqa: E402  pure
+
+
 with getConn() as conn, conn.cursor() as cur:
+    cur.execute("SELECT to_regclass('public.distance_pin')")
+    pins = []
+    if cur.fetchone()[0] is not None:
+        cur.execute("""SELECT meet_id, div_id, action, distance, listed FROM distance_pin
+                       WHERE status IN ('active', 'held') AND part = ''
+                         AND action IN ('pin', 'veto', 'novote')""")
+        pins = cur.fetchall()
+    by_key, novote, vetoed = applyPins({(m, d): (dist, name) for m, d, dist, name in rows}, pins)
+    rows = [(m, d, dist, name, (m, d) in novote) for (m, d), (dist, name) in by_key.items()]
+    print(f"distance_pin: {len(pins):,} rows -- {sum(1 for p in pins if p[2] == 'pin'):,} pins, "
+          f"{len(vetoed):,} overrides vetoed, {len(novote):,} divisions voting on no course")
     cur.execute("DROP TABLE IF EXISTS dist_override")
     cur.execute("""CREATE TABLE dist_override (
                        meet_id bigint, div_id bigint,
                        distance double precision, dict_name text,
+                       novote boolean NOT NULL DEFAULT false,
                        -- ! THE KEY IS THE POINT. A duplicate is now a write
                        --   error here rather than a fan-out in the backfill.
                        PRIMARY KEY (meet_id, div_id))""")
     execute_values(cur, "INSERT INTO dist_override VALUES %s", rows,
                    page_size=5000)
     cur.execute("ANALYZE dist_override")
+    cur.execute("DROP TABLE IF EXISTS dist_override_vetoed")
+    cur.execute("""CREATE TABLE dist_override_vetoed (
+                       meet_id bigint, div_id bigint, distance double precision,
+                       dict_name text, PRIMARY KEY (meet_id, div_id))""")
+    if vetoed:
+        execute_values(cur, "INSERT INTO dist_override_vetoed VALUES %s", vetoed)
 
     # ★ THE DROPS TOO, so the SITE can say why a division has no ratings.
     #   backfill_normalize reads _DISTANCE_DROP straight from corrections;

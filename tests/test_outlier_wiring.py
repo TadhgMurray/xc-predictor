@@ -46,7 +46,8 @@ class Wiring(unittest.TestCase):
         sh = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
         self.assertLess(sh.index("step 09d_outliers"),
                         sh.index("step 10_rankings_prepare"))
-        self.assertLess(sh.index("step 09b_fill"), sh.index("step 09d_outliers"))
+        # 09b_fill runs beside 09c_school_names in a stepsN group (2026-10-25)
+        self.assertLess(sh.index("stepsN 09b_fill"), sh.index("step 09d_outliers"))
 
     # ★★ BOTH SIDES (owner, 2026-09-29): a 'slow' row counts toward no
     #    season number. athlete_season is aggregated from the boards' load,

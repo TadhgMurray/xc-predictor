@@ -111,7 +111,7 @@
       <div class="rc-meta">
         <span id="subtitle">Season ability - averaged across a season.</span>{{ rating_i() }}
         · <a href="/about">how it works</a>
-        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Rankings on Racecast"
+        <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="Rankings on Racecast"
               data-share-url="{{ site_origin ~ '/rankings' }}" title="Share this page; the preview is its card"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {# filled from the board's first row once it lands (rankings.js) #}
@@ -144,13 +144,13 @@
          Both on Teams) is a chip hidden too. A chip sets the select and
          fires its change event, which is what applies. #}
     <div class="field rk-cg not-courses">
-      <span class="k" id="pool-k">Pool</span>
+      <span class="k" id="pool-k">Level</span>
       <select id="pool" class="rk-src" aria-labelledby="pool-k" tabindex="-1">
         {# ! ALL is PR-ONLY, and rankings.js hides it on the other boards.
            speed_rating is relative to a pool's own 100 point, so a rating
            board mixing middle schoolers and collegians puts two scales in one
            column. A time is one scale by definition. #}
-        <option value="all" class="pr-only-opt">All pools</option>
+        <option value="all" class="pr-only-opt">All levels</option>
         <option value="hs_m">HS boys</option>
         <option value="hs_f">HS girls</option>
         <option value="ms_m">MS boys</option>

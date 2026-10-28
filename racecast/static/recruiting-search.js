@@ -185,7 +185,7 @@
     } else if (String($("r-sort").value).startsWith("proj") && !anyProj) {
       status("No athlete in these results has a model projection yet: the "
              + "model needs rated races this season, and the projection "
-             + "table is built per pool and season.", false);
+             + "table is built per level and season.", false);
     }
     const body = rows.map((r, i) => `
       <tr>

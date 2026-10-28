@@ -188,6 +188,83 @@ MAX_YEARS_AT_GRADE = 2
 
 # An event needs this many graded entries before its level means anything.
 MIN_FIELD_GRADED = 4
+# ★ AN OPEN RACE'S GRADED FEW DO NOT SPEAK FOR ITS UNGRADED MANY (owner,
+#   2026-10-27: Ethan Weiner, Cambridge Running, never a numeric grade,
+#   pooled high school and ranked nation #6). At an open meet the high
+#   schoolers carry grades and the adults carry none, so rule 4's mode over
+#   the GRADED entrants called every race of his 'hs' -- 77 of 83 runners
+#   ungraded at Wayland, 32 of 33 at the GBTC Invite. An event where at
+#   least this share of the entrants has no level casts no vote for an
+#   UNGRADED runner in it; a graded runner there still votes their field's
+#   level, and an event nobody graded still says 'pro' as before. With no
+#   vote, the season falls to what its team says (a club's gradeless row
+#   is professional; a school's is that school's).
+# ⚠ OFF UNTIL MEASURED (2026-10-27, the owner's --compare): "no vote" is not
+#   "the team decides" -- a season with no verdict is written no_evidence,
+#   and resolvePool gives no_evidence NO POOL. So the rule unpools a
+#   gradeless runner rather than handing them to their club, and at a meet
+#   where most entrants simply carry no grade it would unpool the school
+#   kids too. --compare-open measures what it alone moves; XCP_OPEN_FIELD_SHARE
+#   (0.5, say) switches it on. Unset, the share is above 1 and no event is
+#   ever open.
+# ★ ON (owner, 2026-10-28, after six --compare-open runs: the last moved
+#   128,597 of 8.77M field verdicts, Ethan Weiner's three Cambridge Running
+#   seasons among them, with the adult-race, school-team, college-window
+#   and school-name refinements below). XCP_OPEN_FIELD_SHARE=2 turns it off.
+OPEN_FIELD_OFF = 2.0
+OPEN_FIELD_ON = 0.5
+try:
+    OPEN_FIELD_SHARE = float(os.environ.get("XCP_OPEN_FIELD_SHARE") or OPEN_FIELD_ON)
+except ValueError:
+    OPEN_FIELD_SHARE = OPEN_FIELD_ON
+_OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
+
+# ★ BUT NOT A RUNNER WHO RAN IT FOR A SCHOOL (owner, 2026-10-28, after
+#   the club rule's four signals each caught youth clubs' children or
+#   college teams -- level 477k seasons, name 235k, team 159k, adult 4k
+#   with Canadian and NZ juniors in it -- and a by-hand pin: "this doesn't
+#   actually solve the issue"). The open-race rule judged the race alone,
+#   so a school kid whose grade the meet did not record lost the vote with
+#   the adults. The row's own team settles it: an ungraded runner who ran
+#   the open race for a SCHOOL team (anet_team.level a school code,
+#   loadTeamLevels' hs/ms/elem) keeps the race's school vote; one who ran
+#   it for a club, unattached or for no team does not. Only school levels
+#   are withheld -- a college field still votes.
+# ★ AND ONLY 'hs', AND ONLY AT AN ADULT OPEN RACE (owner's --compare-open,
+#   2026-10-28: Ethan's 2024 and 2026 moved, but so did Calabasas Cheetahs,
+#   Texas Select, WilCo TFC, Arizona Elite -- youth clubs at AAU/JO meets,
+#   where entrants race by AGE, carry no grade, and so read "open"). The
+#   ungraded entrants tell the two apart: at an AAU meet they are school
+#   kids who carry a grade in their school races that same academic year;
+#   at Wayland or the GBTC Invite they are adults with no school grade
+#   anywhere. An open race is an ADULT open race when fewer than
+#   ADULT_OPEN_KID_SHARE of its ungraded entrants have a graded school
+#   season (hs/ms/elem) that academic year. Only its 'hs' vote is withheld:
+#   an adult among middle schoolers is not the fault, and an elementary or
+#   middle school AAU field keeps its vote whatever it reads.
+ADULT_OPEN_KID_SHARE = 0.5
+# ★ AND NO 'college' FOR SOMEONE WHO NEVER WAS A COLLEGIAN (owner,
+#   2026-10-28: Ethan Weiner's 2025, Cambridge Running, still 'college' --
+#   "this still is not fine"). His races there were college-heavy meets
+#   where most entrants carry a class year, so they are not open races and
+#   the rule above never sees them: the graded collegians voted 'college'
+#   for the club adult. A collegian carries a class year (FR..SR, RS) --
+#   97% of anet's college rows do, and tfrrs' all but always -- so an
+#   ungraded row takes a race's 'college' vote only when that season is one
+#   of the runner's COLLEGE YEARS, or they ran that race for a college team
+#   (anet_team.level a college code). Any race, open or not.
+# ★ THE COLLEGE YEARS ARE A WINDOW, LIKE A GRADE (owner, 2026-10-28: "only
+#   if it makes sense for them to be that year then. For example a guy going
+#   from hs to running unattached in college ... should probably get put as
+#   a FR"). The window opens at the runner's first college year:
+#     from a class year anywhere in their career -- the season less the
+#       class (FR 0, SO 1, JR 2, SR 3), the earliest such;
+#     else from high school -- the season after graduation, graduation
+#       being the median of acad + (12 - grade) over their 9-12 rows;
+#   and runs POST_ELIGIBILITY_SEASONS seasons (rule 5e's limit). A season
+#   outside it takes no 'college' from the field; a season inside it that
+#   the field calls college carries the class the window gives it
+#   (collegeClasses: FR in the first year, SR from the fourth on).
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -386,6 +463,84 @@ def runTimed(cur, sql, label="", slow=1.0):
     print(f"    [{_t.time() - t_all:7.1f}s] {label} total", flush=True)
 
 
+# ★ COPY, NOT INSERT ... VALUES (2026-10-25, run log: 349 s from "written as
+#   31,638,512 academic-year rows" to the end -- the write and nothing else).
+#   execute_values formats every row into an INSERT in Python and the
+#   server parses each one back; COPY streams tab-separated lines the server
+#   reads as data. The values are the same values: copyText is COPY's own
+#   text format -- \N for NULL, and the four characters it reads as escapes
+#   (backslash, tab, newline, carriage return) escaped -- so every string
+#   arrives byte for byte as the INSERT delivered it, and a Python int is
+#   its digits either way.
+def copyText(v):
+    """One field of COPY's text format."""
+    if v is None:
+        return "\\N"
+    s = str(v)
+    if "\\" in s or "\t" in s or "\n" in s or "\r" in s:
+        s = (s.replace("\\", "\\\\").replace("\t", "\\t")
+              .replace("\n", "\\n").replace("\r", "\\r"))
+    return s
+
+
+def copyLines(rows):
+    """The rows as COPY text lines, one str per row. Strings repeat (a
+    verdict's method, its level) so each is escaped once; ints are not
+    cached -- there are 31M person ids."""
+    cache = {None: "\\N"}
+
+    def field(v):
+        if type(v) is int:
+            return str(v)
+        s = cache.get(v)
+        if s is None:
+            s = cache[v] = copyText(v)
+        return s
+
+    for r in rows:
+        yield "\t".join([field(v) for v in r]) + "\n"
+
+
+class _CopySource:
+    """A file copy_expert can read: copyLines, a chunk at a time, so 31M
+    rows never sit in memory as one string."""
+
+    def __init__(self, rows, encoding="utf-8", chunk_rows=100_000):
+        self._lines = copyLines(rows)
+        self._enc = encoding
+        self._chunk = chunk_rows
+        self._buf, self._pos = b"", 0
+
+    def read(self, size=-1):
+        if self._pos >= len(self._buf):
+            part = []
+            for line in self._lines:
+                part.append(line)
+                if len(part) >= self._chunk:
+                    break
+            self._buf, self._pos = "".join(part).encode(self._enc), 0
+            if not self._buf:
+                return b""
+        if size is None or size < 0:
+            size = len(self._buf) - self._pos
+        out = self._buf[self._pos:self._pos + size]
+        self._pos += len(out)
+        return out
+
+
+def _copyRows(cur, table, columns, rows):
+    """COPY rows (tuples, in `columns` order) into `table`, encoded as the
+    connection encodes everything else it sends."""
+    enc = "utf-8"
+    try:
+        from psycopg2.extensions import encodings
+        enc = encodings.get(cur.connection.encoding, enc)
+    except Exception:                                            # noqa: BLE001
+        pass
+    cur.copy_expert(f"COPY {table} ({', '.join(columns)}) FROM STDIN",
+                    _CopySource(rows, encoding=enc), size=1 << 20)
+
+
 _UNCERTAIN_METHODS = ("field", "bare_class", "bare_field", "no_evidence")
 
 # * THREE SEASONS TO OVERRULE ONE, NOT TWO. With two disagreeing seasons
@@ -582,6 +737,30 @@ _BUILD = f"""
     SET parallel_setup_cost = 0;
     SET parallel_tuple_cost = 0;
 
+    -- ★ EVERY FUNCTION BELOW IS PARALLEL SAFE, AND SAYS SO (2026-10-25,
+    --   04_grade_sanity at 4,292 s on the critical path; owner: "you can
+    --   multithread/core as necessary. You have freedom as long as it
+    --   remains accurate and working").
+    --
+    -- ! WITHOUT THE LABEL THE SETTINGS ABOVE DID NOTHING FOR HALF THE STEP.
+    --   CREATE FUNCTION defaults to PARALLEL UNSAFE, and one unsafe function
+    --   anywhere in a statement makes Postgres plan the WHOLE statement on
+    --   one core. It reads the labels before it inlines these SQL bodies, so
+    --   being inlined does not rescue it. raceIdent kept the allraces build
+    --   serial (420 s), gradeLevel kept rule 4 (826 s), rule 2c's field
+    --   passes and rule 5f serial, and normGrade kept rule 7's staging
+    --   serial (219 s). Checked on a scratch Postgres: EXPLAIN of one
+    --   statement is a Seq Scan without the label and a Gather over a
+    --   Parallel Seq Scan with it, and the allraces build on a 3.3M-row
+    --   synthetic corpus went from 8.2 s to 3.5 s on four cores.
+    --
+    -- ⚠ THE LABEL IS A PROMISE, AND EACH BODY KEEPS IT: a CASE over TRIM,
+    --   regexes, casts, round and hashtext, reading no table and writing
+    --   nothing. A parallel plan runs the same expression on the same row in
+    --   another process, so every value is the one the serial plan made. A
+    --   function added here that reads a table or a setting must NOT carry
+    --   the label.
+
     -- ============================================================== --
     --  GRADE NORMALISATION -- three helpers and a composition.
     --
@@ -637,7 +816,7 @@ _BUILD = f"""
             WHEN TRIM(g) ~* '^0*([1-9]|1[0-2])[thsnrd. ]*$'
             THEN (regexp_replace(TRIM(g), '[^0-9].*$', ''))::int::text
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- classGrade: the college class words, every spelling onto one key.
     -- 'Sr', 'SR' and 'SR-4' are one value. The eligibility digit in the
@@ -671,7 +850,7 @@ _BUILD = f"""
             WHEN 'sr-4' THEN 'SR'
             WHEN 'rs' THEN 'RS' WHEN 'redshirt'  THEN 'RS'
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     CREATE OR REPLACE FUNCTION classGrade(g text) RETURNS text AS $$
         SELECT CASE
@@ -679,7 +858,7 @@ _BUILD = f"""
             THEN upper(left(TRIM(g), 2))
             ELSE classWord(g)
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
 
     -- isDefiniteClass: does this row use the tfrrs CLASS+ELIGIBILITY form?
@@ -690,7 +869,7 @@ _BUILD = f"""
     --   distinction; rule 2c can now read it too.
     CREATE OR REPLACE FUNCTION isDefiniteClass(g text) RETURNS boolean AS $$
         SELECT upper(TRIM(g)) ~ '^(FR|SO|JR|SR)-[1-6]$'
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- The banded keys GRADE_TO_LEVEL carries verbatim. They are grades, not
     -- age ranges: '13-14' and '15-16' are ages and stay out.
@@ -700,7 +879,7 @@ _BUILD = f"""
             WHEN '9-10'  THEN '9-10'
             WHEN '11-12' THEN '11-12'
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- isGradYear: DIAGNOSTIC ONLY. Nothing in the build calls this.
     --
@@ -713,7 +892,7 @@ _BUILD = f"""
     --     SELECT count(*) FROM results WHERE isGradYear(grade);
     CREATE OR REPLACE FUNCTION isGradYear(g text) RETURNS boolean AS $$
         SELECT TRIM(g) ~ '^(19|20)[0-9][0-9]$'
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- normGrade: one spelling per grade, so counting works.
     --
@@ -751,7 +930,7 @@ _BUILD = f"""
             --   being mistaken for a value.
             ELSE NULL
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- Grade to level, poolFor's boundaries.
     -- Grade to level, poolFor's boundaries. Mirrors GRADE_TO_LEVEL key for
@@ -768,7 +947,7 @@ _BUILD = f"""
             WHEN g IN ('9-10','11-12')                       THEN 'hs'
             ELSE NULL
         END
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- raceIdent: ONE STRING PER ACTUAL RACE, so a race scraped twice
     -- counts once.
@@ -815,7 +994,7 @@ _BUILD = f"""
         SELECT COALESCE(round(t::numeric * 100)::bigint + 1,
                         -(abs(hashtext(d || ':' || m::text || ':'
                                        || e::text))::bigint + 1))
-    $$ LANGUAGE sql IMMUTABLE;
+    $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
     -- ★ NORMALISE THE SPELLINGS, NOT THE ROWS. normGrade is a CASE over
     --   three helper functions, each with its own regex -- four pattern
@@ -1057,7 +1236,54 @@ _CORROBORATED_SQL = """
 #  RULE 4: THE LEVEL OF THE FIELD
 # ------------------------------------------------------------------ #
 
-_FIELD_SQL = f"""
+# ★ STAGED INTO TABLES, ONE STATEMENT A STEP (2026-10-25, run log: 826 s
+#   between "[2c round 2]" and "[4] field levels read", the longest gap in
+#   the step). It was one statement of five CTEs. Two things made it slow,
+#   and neither was the arithmetic:
+#
+#   1. gradeLevel was PARALLEL UNSAFE (see _BUILD), so the whole statement
+#      ran on one core.
+#   2. `needy` is read twice, so Postgres materialises it, and a CTE scan
+#      may not run under a Gather: every join against it ran in the leader.
+#      Its row estimates were guesses besides, and a guess of one row for
+#      event_level turns the final join into a nested loop (reproduced on a
+#      synthetic corpus: the unchanged statement had not finished after two
+#      minutes on 450K rows, and took 3 s with nested loops turned off).
+#
+#   Each CTE is now an UNLOGGED table, ANALYZEd, so every step can run in
+#   parallel and the next one is planned on real row counts. The SQL of each
+#   step is the CTE it replaces; two changes are below, each the same
+#   relation by construction.
+#
+# ★ season_races IS ALSO RULE 5e's race_count (run log: 286 s for that one
+#   GROUP BY). needy read `SELECT DISTINCT person_id, acad FROM allraces`, and
+#   5e later grouped allraces by the same key again to count races. One
+#   table is both: its keys ARE the distinct seasons, and its count is 5e's
+#   count(DISTINCT race) verbatim. Nothing between here and 5e writes
+#   person_id, acad or race (the 2c write-back, the only UPDATE of allraces,
+#   runs before rule 4 and touches grade_folded alone), so the count read at
+#   5e is the count 5e used to make.
+#
+# ★ mode() BECOMES A COUNT PER LEVEL, AND THE ANSWER IS THE SAME. mode() is
+#   an ordered-set aggregate: it cannot be split across workers, so the
+#   leader read every entrant of every wanted event and ran gradeLevel on
+#   each, three times. Counting entrants per (event, level) is an ordinary
+#   GROUP BY the workers share. The level is then the one with the most
+#   entrants, ties to the FIRST in ORDER BY level -- which is mode()'s own
+#   rule: it walks the sorted values and replaces its answer only on a
+#   strictly larger count, so a tie keeps the earlier value. Same ORDER BY
+#   (the level text, default collation), same tie, same NULLs left out by
+#   the FILTER; count(a.grade) per level summed is the old
+#   count(*) FILTER (WHERE a.grade IS NOT NULL).
+# ★ A TIE GOES TO THE HIGHER LEVEL, BY RANK (owner, 2026-10-26: "I'd prefer
+#   for a tie to go to a higher level"). Both tie-breaks below were the level
+#   TEXT in sort order -- college, elem, hs, ms, pro -- so a college/hs tie
+#   went up but an elem/hs tie went DOWN to elem, and ms beat pro. They now
+#   rank pro > college > hs > ms > elem, highest first.
+_LEVEL_RANK_SQL = ("CASE {x} WHEN 'pro' THEN 5 WHEN 'college' THEN 4 WHEN 'hs' THEN 3 "
+               "WHEN 'ms' THEN 2 WHEN 'elem' THEN 1 ELSE 0 END")
+
+_FIELD_BUILD = f"""
     -- ! ONE PASS, NOT A SUBQUERY PER SEASON. The first version asked
     --   NOT EXISTS (... GROUP BY grade HAVING count(*) >= n) for every
     --   athlete-season, which re-scans allraces ~15M times: it ran 19 minutes
@@ -1070,32 +1296,52 @@ _FIELD_SQL = f"""
     -- ! THE SAME CHANGE, AND IT MATTERS MORE HERE. by_grade decides who is
     --   NEEDY, so a duplicate-inflated count does not merely pick the wrong
     --   grade -- it removes the season from rule 4 entirely.
-    WITH by_grade AS (
-        SELECT person_id, acad, grade_folded AS grade,
-               count(DISTINCT race) AS n
-        FROM   allraces
-        WHERE  grade_folded IS NOT NULL
-        GROUP  BY 1, 2, 3
-    ),
-    best AS (
+    -- ★ NO NESTED LOOPS FOR THESE STAGES (rule 7's and rule 8's setting, for
+    --   the same reason). The wanted events are most of the corpus, and the
+    --   planner still probed allraces' event index once per event, on one
+    --   worker; turned off, it hash-joins on every worker (synthetic corpus:
+    --   event_level 9.8 s -> 4.6 s, the final read 6.7 s -> 3.7 s). A plan
+    --   setting: the rows are the rows. RESET in _FIELD_DROP.
+    SET enable_nestloop = off;
+
+    DROP TABLE IF EXISTS season_races;
+    CREATE UNLOGGED TABLE season_races AS
+        SELECT person_id, acad, count(DISTINCT race) AS races
+        FROM   allraces GROUP BY 1, 2;
+    ANALYZE season_races;
+
+    DROP TABLE IF EXISTS fld_best;
+    CREATE UNLOGGED TABLE fld_best AS
         SELECT person_id, acad, max(n) AS top_n
-        FROM   by_grade GROUP BY 1, 2
-    ),
-    needy AS (
+        FROM  (SELECT person_id, acad, grade_folded AS grade,
+                      count(DISTINCT race) AS n
+               FROM   allraces
+               WHERE  grade_folded IS NOT NULL
+               GROUP  BY 1, 2, 3) by_grade
+        GROUP  BY 1, 2;
+    ANALYZE fld_best;
+
+    -- the seasons with no grade on MIN_CORROBORATION races
+    DROP TABLE IF EXISTS fld_needy;
+    CREATE UNLOGGED TABLE fld_needy AS
         SELECT a.person_id, a.acad
-        FROM   (SELECT DISTINCT person_id, acad FROM allraces) a
-        LEFT   JOIN best b
+        FROM   season_races a
+        LEFT   JOIN fld_best b
                ON b.person_id = a.person_id AND b.acad = a.acad
-        WHERE  b.top_n IS NULL OR b.top_n < %(minc)s
-    ),
+        WHERE  b.top_n IS NULL OR b.top_n < {MIN_CORROBORATION};
+    ANALYZE fld_needy;
+
     -- Only the events those athletes ran, scored from their own entrants.
-    wanted AS (
+    DROP TABLE IF EXISTS fld_wanted;
+    CREATE UNLOGGED TABLE fld_wanted AS
         SELECT DISTINCT a.meet_id, a.div_id, a.source, a.event_key
-        FROM   needy n
-        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-    ),
-    event_level AS (
-        SELECT w.meet_id, w.div_id, w.source, w.event_key,
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad;
+    ANALYZE fld_wanted;
+
+    DROP TABLE IF EXISTS fld_event_level;
+    CREATE UNLOGGED TABLE fld_event_level AS
+        SELECT meet_id, div_id, source, event_key,
                -- ★ EDIT 2, PART 1 -- AN EVENT NOBODY GRADED IS NOT A
                --   SCHOOL RACE. The HAVING below now lets the ungraded
                --   event through, but `mode()` over an empty set is NULL
@@ -1112,43 +1358,292 @@ _FIELD_SQL = f"""
                --   Amelio Chio's open 10 km is the case: no entrant
                --   carried a grade, MIN_FIELD_GRADED skipped the event, no
                --   verdict was produced, and his stale grade 6 stood.
-               CASE WHEN count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
+               CASE WHEN sum(n_graded) = 0
                     THEN 'pro'
-                    ELSE mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
-                             FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
+                    -- the modal level: most entrants, ties to the HIGHER
+                    -- level (_LEVEL_RANK_SQL; was mode()'s text order)
+                    ELSE (array_agg(lvl ORDER BY n DESC, {_LEVEL_RANK_SQL.format(x="lvl")} DESC)
+                              FILTER (WHERE lvl IS NOT NULL))[1]
                END AS level,
-               -- Carried for the diagnostic below, not for the decision.
-               count(*) AS n_entrants,
-               count(*) FILTER (WHERE a.grade IS NOT NULL) AS n_graded
-        FROM   wanted w
-        JOIN   allraces a
-               ON a.meet_id = w.meet_id AND a.div_id = w.div_id
-              AND a.source = w.source AND a.event_key = w.event_key
+               -- an open race: most of its entrants have no level (OPEN_FIELD_SHARE)
+               (sum(n) - COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0))
+                   >= {_OPEN_TOKEN} * sum(n) AS open_field
+        FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
+                      gradeLevel(a.grade) AS lvl,
+                      count(*)            AS n,
+                      count(a.grade)      AS n_graded
+               FROM   fld_wanted w
+               JOIN   allraces a
+                      ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+                     AND a.source = w.source AND a.event_key = w.event_key
+               GROUP  BY 1, 2, 3, 4, 5) per_level
         GROUP  BY 1, 2, 3, 4
         -- ★ EDIT 2, PART 2 -- the gate. Either the event has enough graded
         --   entrants for its mode to mean something, OR it has NONE, which
         --   is itself the evidence.
         --
-        -- ⚠ NO FIELD-SIZE FLOOR ON THE SECOND ARM, AS SPECIFIED. A
-        --   one-entrant ungraded event therefore votes 'pro' on a field of
-        --   one. If reportUngraded() below shows that is common, the floor
-        --   is one clause:
-        --       OR (count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
-        --           AND count(*) >= {MIN_FIELD_GRADED})
-        HAVING count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
+        -- ★ AND THE SAME FLOOR ON THE SECOND ARM (pooling review P5,
+        --   2026-10-26): a one-entrant ungraded event voted 'pro' on a
+        --   field of one. An ungraded field now needs MIN_FIELD_GRADED
+        --   entrants to say "not a school race", as a graded one does to
+        --   name its level.
+        HAVING COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0)
                    >= {MIN_FIELD_GRADED}
-            OR count(*) FILTER (WHERE a.grade IS NOT NULL) = 0
-    )
+            OR (sum(n_graded) = 0 AND sum(n) >= {MIN_FIELD_GRADED});
+    ANALYZE fld_event_level;
+"""
+
+# ! RACES, NOT ROWS (pooling review P4): a race scraped by both feeds is
+#   one race (allraces.race, raceIdent) and votes once.
+_FIELD_SQL = f"""
     SELECT DISTINCT ON (n.person_id, n.acad)
            n.person_id, n.acad, e.level
-    FROM   needy n
+    FROM   fld_needy n
     JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-    JOIN   event_level e
+    JOIN   fld_event_level e
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
+    LEFT   JOIN fld_withhold wh
+           ON wh.person_id = a.person_id AND wh.acad = a.acad
+          AND wh.meet_id = a.meet_id AND wh.div_id = a.div_id
+          AND wh.source = a.source AND wh.event_key = a.event_key
     WHERE  e.level IS NOT NULL
+      -- the ungraded rows whose field says nothing of the runner
+      -- (openSchoolBuild): an adult open race's 'hs', a college race's
+      -- 'college' for someone who never was a collegian
+      AND  wh.person_id IS NULL
     GROUP  BY n.person_id, n.acad, e.level
-    ORDER  BY n.person_id, n.acad, count(*) DESC, e.level
+    ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
+              {_LEVEL_RANK_SQL.format(x="e.level")} DESC
+"""
+
+def openSchoolBuild(on, codes, college_codes=()):
+    """Rule 4's withheld votes, fld_withhold: (person, season, event) rows
+    whose field level does not speak for the runner. Two kinds, each an
+    ungraded row of a needy season:
+      'hs'       in an ADULT open race (fld_adult_ev: open, voting 'hs', its
+                 ungraded entrants mostly not school kids that academic
+                 year -- see ADULT_OPEN_KID_SHARE);
+      'college'  in any race voting 'college', in a season outside the
+                 runner's college years (fld_college_start; see
+                 COLLEGE_VOTE_NEEDS_CLASS).
+    Either is kept when the runner ran that race for a team of the vote's
+    kind: a school (`codes`, anet_team.level hs/ms/elem) for 'hs', a college
+    (`college_codes`) for 'college'. Off: an empty table, and no results
+    tables read, so rule 4's tests need none."""
+    empty = """
+    DROP TABLE IF EXISTS fld_adult_ev;
+    CREATE UNLOGGED TABLE fld_adult_ev (meet_id bigint, div_id bigint,
+        source text, event_key bigint);
+    DROP TABLE IF EXISTS fld_withhold;
+    CREATE UNLOGGED TABLE fld_withhold (person_id bigint, acad int,
+        meet_id bigint, div_id bigint, source text, event_key bigint);
+    DROP TABLE IF EXISTS fld_college_start;
+    CREATE UNLOGGED TABLE fld_college_start (person_id bigint, start int);
+"""
+    if not on:
+        return empty
+    school = ", ".join(map(str, sorted({int(c) for c in codes or ()}))) or "NULL"
+    college = ", ".join(map(str, sorted({int(c) for c in college_codes or ()}))) or "NULL"
+    if codes or college_codes:
+        cond = f"""(o.kind = 'hs' AND (t.level IN ({school})
+                                   OR lower(btrim(r.school)) IN (SELECT name FROM fld_school_names)))
+           OR  (o.kind = 'college' AND (t.level IN ({college})
+                                   OR lower(btrim(r.school)) IN (SELECT name FROM fld_college_names)))"""
+        team_stage = f"""    -- kept: the row was run for a team of the vote's kind -- by its anet
+    -- team's level, or, a row with no anet team (another feed), by its
+    -- school string: an anet school team's name, or a college's
+    -- (fld_college_names, _collegeNames: the directory and tfrrs' college
+    -- slugs). Owner's --compare-open, 2026-10-28: Javan May, Saint Francis
+    -- (Ind.), lost 'college'; Shakeya Reid, Penwood High, lost 'hs'.
+    DROP TABLE IF EXISTS fld_school_names;
+    CREATE UNLOGGED TABLE fld_school_names AS
+        SELECT DISTINCT lower(btrim(name)) AS name FROM anet_team
+        WHERE  level IN ({school}) AND name IS NOT NULL;
+    ANALYZE fld_school_names;
+    DROP TABLE IF EXISTS fld_wh_team;
+    CREATE UNLOGGED TABLE fld_wh_team AS
+        SELECT DISTINCT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
+        FROM   fld_wh_cand o
+        JOIN   results r
+               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
+              AND r.div_id = o.div_id AND r.source = o.source AND o.event_key = -1
+        LEFT   JOIN anet_team t ON t.team_id = r.team_id
+        WHERE  {cond}
+        UNION
+        SELECT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
+        FROM   fld_wh_cand o
+        JOIN   results_tf r
+               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
+              AND r.div_id = o.div_id AND r.source = o.source
+              AND COALESCE(r.event_id, -1) = o.event_key
+        LEFT   JOIN anet_team t ON t.team_id = r.team_id
+        WHERE  {cond};
+    DROP TABLE fld_school_names;
+"""
+    else:                     # no codes: nothing kept, no results tables read
+        team_stage = """    DROP TABLE IF EXISTS fld_wh_team;
+    CREATE UNLOGGED TABLE fld_wh_team (person_id bigint, acad int,
+        meet_id bigint, div_id bigint, source text, event_key bigint);
+"""
+    return f"""
+    -- the college names (loadCollegeNames fills it before the build; a
+    -- database where nobody did reads it empty)
+    CREATE UNLOGGED TABLE IF NOT EXISTS fld_college_names (name text PRIMARY KEY);
+
+    -- the ungraded entrants of the open 'hs' events, every entrant's
+    DROP TABLE IF EXISTS fld_open_ung;
+    CREATE UNLOGGED TABLE fld_open_ung AS
+        SELECT DISTINCT a.person_id, a.acad, e.meet_id, e.div_id, e.source, e.event_key
+        FROM   fld_event_level e
+        JOIN   allraces a
+               ON a.meet_id = e.meet_id AND a.div_id = e.div_id
+              AND a.source = e.source AND a.event_key = e.event_key
+        WHERE  e.open_field AND e.level = 'hs'
+          AND  gradeLevel(a.grade) IS NULL;
+    ANALYZE fld_open_ung;
+
+    -- which of them carry a school grade somewhere that academic year
+    DROP TABLE IF EXISTS fld_open_kid;
+    CREATE UNLOGGED TABLE fld_open_kid AS
+        SELECT DISTINCT u.person_id, u.acad
+        FROM  (SELECT DISTINCT person_id, acad FROM fld_open_ung) u
+        JOIN   allraces a ON a.person_id = u.person_id AND a.acad = u.acad
+        WHERE  gradeLevel(a.grade) IN ('hs', 'ms', 'elem');
+    ANALYZE fld_open_kid;
+
+    DROP TABLE IF EXISTS fld_adult_ev;
+    CREATE UNLOGGED TABLE fld_adult_ev AS
+        SELECT u.meet_id, u.div_id, u.source, u.event_key
+        FROM   fld_open_ung u
+        LEFT   JOIN fld_open_kid k ON k.person_id = u.person_id AND k.acad = u.acad
+        GROUP  BY 1, 2, 3, 4
+        HAVING count(k.person_id) < {float(ADULT_OPEN_KID_SHARE)!r} * count(*);
+    ANALYZE fld_adult_ev;
+
+    -- the ungraded rows of needy seasons in races voting 'college'
+    DROP TABLE IF EXISTS fld_cvote;
+    CREATE UNLOGGED TABLE fld_cvote AS
+        SELECT DISTINCT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+        JOIN   fld_event_level e
+               ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+              AND e.source = a.source AND e.event_key = a.event_key
+        WHERE  e.level = 'college' AND gradeLevel(a.grade) IS NULL;
+    ANALYZE fld_cvote;
+
+    -- their first college year (COLLEGE_VOTE_NEEDS_CLASS): from a class
+    -- year, else the season after high school
+    DROP TABLE IF EXISTS fld_college_start;
+    CREATE UNLOGGED TABLE fld_college_start AS
+        SELECT person_id, COALESCE(c_start, hs_grad + 1) AS start
+        FROM  (SELECT a.person_id,
+                      min(a.acad - CASE a.grade WHEN 'FR' THEN 0 WHEN 'SO' THEN 1
+                                                WHEN 'JR' THEN 2 WHEN 'SR' THEN 3 END)
+                          FILTER (WHERE a.grade IN ('FR', 'SO', 'JR', 'SR'))   AS c_start,
+                      percentile_disc(0.5) WITHIN GROUP
+                          (ORDER BY a.acad + 12 - (CASE WHEN a.grade ~ '^(9|10|11|12)$'
+                                                        THEN a.grade::int END))
+                          FILTER (WHERE a.grade ~ '^(9|10|11|12)$')           AS hs_grad
+               FROM  (SELECT DISTINCT person_id FROM fld_cvote) p
+               JOIN   allraces a ON a.person_id = p.person_id
+               GROUP  BY 1) x
+        WHERE  COALESCE(c_start, hs_grad + 1) IS NOT NULL;
+    ANALYZE fld_college_start;
+
+    -- the candidates: each kind's ungraded rows of needy seasons
+    DROP TABLE IF EXISTS fld_wh_cand;
+    CREATE UNLOGGED TABLE fld_wh_cand AS
+        SELECT u.person_id, u.acad, u.meet_id, u.div_id, u.source, u.event_key,
+               'hs'::text AS kind
+        FROM   fld_open_ung u
+        JOIN   fld_adult_ev e
+               ON e.meet_id = u.meet_id AND e.div_id = u.div_id
+              AND e.source = u.source AND e.event_key = u.event_key
+        JOIN   fld_needy n ON n.person_id = u.person_id AND n.acad = u.acad
+        UNION ALL
+        SELECT v.person_id, v.acad, v.meet_id, v.div_id, v.source, v.event_key,
+               'college'
+        FROM   fld_cvote v
+        LEFT   JOIN fld_college_start c ON c.person_id = v.person_id
+        WHERE  c.start IS NULL
+           OR  v.acad NOT BETWEEN c.start AND c.start + {int(POST_ELIGIBILITY_SEASONS) - 1};
+    ANALYZE fld_wh_cand;
+
+{team_stage}    ANALYZE fld_wh_team;
+
+    DROP TABLE IF EXISTS fld_withhold;
+    CREATE UNLOGGED TABLE fld_withhold AS
+        SELECT DISTINCT person_id, acad, meet_id, div_id, source, event_key
+        FROM   fld_wh_cand
+        EXCEPT
+        SELECT person_id, acad, meet_id, div_id, source, event_key
+        FROM   fld_wh_team;
+    ANALYZE fld_withhold;
+    DROP TABLE fld_wh_team;
+    DROP TABLE fld_wh_cand;
+    DROP TABLE fld_cvote;
+    DROP TABLE fld_open_ung;
+    DROP TABLE fld_open_kid;
+"""
+
+
+def loadCollegeNames(cur):
+    """fld_college_names: the normalised school strings that are colleges
+    (speed_ratings_db._collegeNames), for rule 4's college-vote exemption.
+    Returns how many."""
+    from speed_ratings_db import _collegeNames
+    names = sorted(_collegeNames(cur))
+    cur.execute("DROP TABLE IF EXISTS fld_college_names; "
+                "CREATE UNLOGGED TABLE fld_college_names (name text PRIMARY KEY)")
+    if names:
+        from psycopg2.extras import execute_values
+        execute_values(cur, "INSERT INTO fld_college_names VALUES %s ON CONFLICT DO NOTHING",
+                       [(n,) for n in names], page_size=10000)
+    cur.execute("ANALYZE fld_college_names")
+    return len(names)
+
+
+_CLASSES = ("FR", "SO", "JR", "SR")
+
+
+def collegeClasses(field_rows, starts):
+    """{(person_id, acad): class} for the field's 'college' verdicts inside
+    the runner's college years: FR in the first, SR from the fourth on.
+    field_rows: _FIELD_SQL's (person, acad, level); starts: {person: first
+    college year} (fld_college_start). Pure."""
+    out = {}
+    for pid, ay, level in field_rows:
+        start = starts.get(int(pid))
+        if level != "college" or start is None:
+            continue
+        k = int(ay) - int(start)
+        if 0 <= k < POST_ELIGIBILITY_SEASONS:
+            out[(int(pid), int(ay))] = _CLASSES[min(k, len(_CLASSES) - 1)]
+    return out
+
+
+def fieldBuild(share=None, codes=None, college_codes=None):
+    """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
+    None; above 1 is off), and the withheld votes after it (openSchoolBuild;
+    `codes` / `college_codes` the school and college team codes)."""
+    share = float(OPEN_FIELD_SHARE if share is None else share)
+    return (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
+            + openSchoolBuild(share <= 1.0, codes, college_codes))
+
+
+# rule 4's staging tables; season_races outlives them until rule 5e reads it
+_FIELD_DROP = """
+    DROP TABLE IF EXISTS fld_best;
+    DROP TABLE IF EXISTS fld_needy;
+    DROP TABLE IF EXISTS fld_wanted;
+    DROP TABLE IF EXISTS fld_event_level;
+    DROP TABLE IF EXISTS fld_withhold;
+    DROP TABLE IF EXISTS fld_adult_ev;
+    DROP TABLE IF EXISTS fld_college_start;
+    DROP TABLE IF EXISTS fld_college_names;
+    RESET enable_nestloop;
 """
 
 
@@ -1178,7 +1673,17 @@ _FIELD_SQL = f"""
 #
 # The verdict is a LEVEL with no grade, like rule 4's: the raw grade stays
 # the feed's (the athlete page shows it, asterisked), and the pool is 'hs'.
-_TEAM_LEVEL_SQL = f"""
+#
+# ★ TWO STATEMENTS AND NO TEMP TABLE (2026-10-25, run log: 379 s from the
+#   5e line to the 5f line). tl_cand was TEMP, and a temp table cannot be
+#   read by a parallel worker, so the scan of both results tables joined to
+#   it ran on one core -- as did everything else here, gradeLevel being
+#   PARALLEL UNSAFE until today (_BUILD). tl_cand is UNLOGGED now, like
+#   allraces and for the same reason. `mine` was a CTE read twice, which
+#   Postgres materialises anyway; it is the table tl_mine instead, so the
+#   joins against it can run in workers too. Same rows, same statement.
+_TEAM_MINE_SQL = f"""
+    CREATE UNLOGGED TABLE tl_mine AS
     WITH teams AS (
         SELECT r.person_id, {_ACAD_R} AS acad,
                COALESCE(t.level = ANY(%(codes)s), false) AS hs
@@ -1200,14 +1705,16 @@ _TEAM_LEVEL_SQL = f"""
         JOIN   tl_cand c ON c.person_id = t.person_id AND c.acad = t.acad
         GROUP  BY 1, 2
         HAVING bool_and(t.hs)
-    ),
-    mine AS (
-        SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
-        FROM   allraces a
-        JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
-    ),
-    wanted AS (
-        SELECT DISTINCT meet_id, div_id, source, event_key FROM mine
+    )
+    -- the seasons' own rows: what `mine` was
+    SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
+    FROM   allraces a
+    JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
+"""
+
+_TEAM_LEVEL_SQL = f"""
+    WITH wanted AS (
+        SELECT DISTINCT meet_id, div_id, source, event_key FROM tl_mine
     ),
     event_level AS (
         SELECT w.meet_id, w.div_id, w.source, w.event_key,
@@ -1222,7 +1729,7 @@ _TEAM_LEVEL_SQL = f"""
                    >= {MIN_FIELD_GRADED}
     )
     SELECT m.person_id, m.acad
-    FROM   mine m
+    FROM   tl_mine m
     JOIN   event_level e
            ON e.meet_id = m.meet_id AND e.div_id = m.div_id
           AND e.source = m.source AND e.event_key = m.event_key
@@ -1234,47 +1741,84 @@ _TEAM_LEVEL_SQL = f"""
 def teamLevelCandidates(acad, seasons_of):
     """The athlete-seasons rule 5f may move: the athlete's only season, a
     school grade 1-8 on the verdict, and not the owner's pin."""
+    # ! THE CHEAP TEST FIRST (2026-10-25). This walks every verdict, 31M of
+    #   them, and formatted each one's grade before asking the two dict
+    #   lookups that turn most of them away. Same three tests, same keys in
+    #   the same order out; the string is only built for the seasons that
+    #   can still pass.
     out = []
     for key, v in acad.items():
+        if seasons_of.get(key[0]) != 1 or v.get("method") == "pinned":
+            continue
         g = str(v.get("grade") or "").strip()
-        if (seasons_of.get(key[0]) == 1 and v.get("method") != "pinned"
-                and g.isdigit() and 1 <= int(g) <= 8):
+        if g.isdigit() and 1 <= int(g) <= 8:
             out.append(key)
     return out
 
 
+_TEAM_MEANING = None
+
+
+def _teamMeaning():
+    """{anet_team.level code: level name}, the engine's own reading of them
+    (speed_ratings_db.loadTeamLevels), read once per run: rule 4's open-race
+    exemption and rule 5f both ask. {} when it cannot say."""
+    global _TEAM_MEANING
+    if _TEAM_MEANING is None:
+        try:
+            from speed_ratings_db import loadTeamLevels
+            _by_team, meaning, _rows = loadTeamLevels()
+        except Exception as exc:                                 # noqa: BLE001
+            print(f"    team levels unavailable ({type(exc).__name__}: {exc})", flush=True)
+            meaning = {}
+        _TEAM_MEANING = meaning
+    return _TEAM_MEANING
+
+
+def _schoolTeamCodes():
+    """The codes naming a school of any level (hs, ms, elem): rule 4's
+    open-race exemption."""
+    return sorted(int(c) for c, lv in _teamMeaning().items() if lv in ("hs", "ms", "elem"))
+
+
+def _collegeTeamCodes():
+    """The codes naming a college: rule 4's college-vote exemption."""
+    return sorted(int(c) for c, lv in _teamMeaning().items() if lv == "college")
+
+
 def _hsTeamCodes():
-    """anet_team.level codes that name a high school, from the engine's own
-    reading of them (speed_ratings_db.loadTeamLevels). Empty -- and rule 5f
-    inert -- when it cannot say."""
-    try:
-        from speed_ratings_db import loadTeamLevels
-        _by_team, meaning, _rows = loadTeamLevels()
-    except Exception as exc:                                     # noqa: BLE001
-        print(f"    [5f] team levels unavailable ({type(exc).__name__}: {exc}); "
-              f"rule skipped", flush=True)
-        return []
-    return sorted(int(c) for c, lv in meaning.items() if lv == "hs")
+    """anet_team.level codes that name a high school. Empty -- and rule 5f
+    inert -- when they cannot be read."""
+    codes = sorted(int(c) for c, lv in _teamMeaning().items() if lv == "hs")
+    if not codes:
+        print("    [5f] no high school team codes; rule skipped", flush=True)
+    return codes
 
 
 def teamLevelSeasons(cur, acad, seasons_of, hs_codes=None):
-    """{(person_id, acad)} rule 5f moves to 'hs'. See _TEAM_LEVEL_SQL."""
-    from psycopg2.extras import execute_values
+    """{(person_id, acad)} rule 5f moves to 'hs'. See _TEAM_LEVEL_SQL.
+    hs_codes: the codes, or a Future of them (resolve reads them in a
+    thread while 5e counts), or None to read them here."""
     cand = teamLevelCandidates(acad, seasons_of)
     if not cand:
         return set()
     if hs_codes is None:
         hs_codes = _hsTeamCodes()
+    elif hasattr(hs_codes, "result"):
+        hs_codes = hs_codes.result()
     if not hs_codes:
         return set()
-    cur.execute("DROP TABLE IF EXISTS tl_cand")
-    cur.execute("CREATE TEMP TABLE tl_cand (person_id bigint, acad int, "
+    cur.execute("DROP TABLE IF EXISTS tl_cand; DROP TABLE IF EXISTS tl_mine")
+    cur.execute("CREATE UNLOGGED TABLE tl_cand (person_id bigint, acad int, "
                 "PRIMARY KEY (person_id, acad))")
-    execute_values(cur, "INSERT INTO tl_cand VALUES %s", cand, page_size=10000)
+    _copyRows(cur, "tl_cand", ("person_id", "acad"), cand)
     cur.execute("ANALYZE tl_cand")
-    cur.execute(_TEAM_LEVEL_SQL, {"codes": list(hs_codes)})
+    params = {"codes": list(hs_codes)}
+    cur.execute(_TEAM_MINE_SQL, params)
+    cur.execute("ANALYZE tl_mine")
+    cur.execute(_TEAM_LEVEL_SQL, params)
     got = {(int(p), int(a)) for p, a in cur.fetchall()}
-    cur.execute("DROP TABLE tl_cand")
+    cur.execute("DROP TABLE tl_mine; DROP TABLE tl_cand")
     return got
 
 
@@ -1942,6 +2486,31 @@ NOT_SCHOOL_RE = (
     r"|morocco|algeria|bahrain|qatar|turkey|israel|philippines|colombia)$")
 
 
+# ★ ONE QUESTION FOR EVERY CANDIDATE, NOT ONE PER CANDIDATE (owner's dry
+#   run, 2026-10-27: grade_sanity --compare sat four hours on this step, and
+#   held the nightly pg_dump's table locks behind it). It was a correlated
+#   NOT EXISTS over a UNION ALL, which Postgres runs once per candidate --
+#   and under rule 8's enable_nestloop = off each run hashed the whole of
+#   race_top_level. Grades 6-12 (e4aa018, 2026-10-24) made the candidates
+#   many. Now the schoolers are found in one set-based pass, the shape of
+#   the facts query above it, and the rest are never_school.
+_NEVER_SCHOOL_SQL = """
+    WITH cand AS (SELECT DISTINCT person_id FROM tmp_club_cand),
+    schooled AS (
+        SELECT r.person_id
+        FROM   results r JOIN race_top_level rl ON rl.race = {race_r}
+        WHERE  r.person_id IN (SELECT person_id FROM cand)
+          AND  rl.top_level IN ('elem', 'ms', 'hs')
+        UNION
+        SELECT r.person_id
+        FROM   results_tf r JOIN race_top_level rl ON rl.race = {race_r}
+        WHERE  r.person_id IN (SELECT person_id FROM cand)
+          AND  rl.top_level IN ('elem', 'ms', 'hs'))
+    SELECT c.person_id
+    FROM   cand c LEFT JOIN schooled s ON s.person_id = c.person_id
+    WHERE  s.person_id IS NULL"""
+
+
 def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
     """{(person_id, acad): school} meeting rule 8's three signals. The
     school is '' for a season moved on the unattached arm (no club row).
@@ -2073,17 +2642,7 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
             pro_seasons.add((int(p), int(a)))
     # the candidates who never ran a race with school runners on top, any
     # season, either sport (_adultClubDecide's never_school)
-    cur.execute(f"""
-        SELECT c.person_id
-        FROM   (SELECT DISTINCT person_id FROM tmp_club_cand) c
-        WHERE  NOT EXISTS (
-            SELECT 1 FROM (SELECT r.meet_id, r.div_id, r.source FROM results r
-                           WHERE r.person_id = c.person_id
-                           UNION ALL
-                           SELECT r.meet_id, r.div_id, r.source FROM results_tf r
-                           WHERE r.person_id = c.person_id) r
-            JOIN race_top_level rl ON rl.race = {_raceKeyExpr('r')}
-            WHERE rl.top_level IN ('elem', 'ms', 'hs'))""")
+    cur.execute(_NEVER_SCHOOL_SQL.format(race_r=_raceKeyExpr("r")))
     never_school = {int(p) for (p,) in cur.fetchall()}
     cur.execute("RESET enable_nestloop")
     cur.execute("DROP TABLE tmp_club_rows; DROP TABLE tmp_club_cand; DROP TABLE tmp_club_alias")
@@ -2377,6 +2936,14 @@ def resolve(cur, audit=False):
     graduating case -- the LATER academic year wins, because grades only move
     forward.
     """
+    buildRaces(cur, audit)
+    # The academic-year verdicts, in precedence order.
+    return _resolve(cur)
+
+
+def buildRaces(cur, audit=False):
+    """The shared race table (allraces) and its companions, every rule's
+    input."""
     print("[grade] building the shared race table...")
     # ! SUBSTITUTED, NOT FORMATTED. _BUILD is already an f-string and its SQL
     #   carries `$$`-quoted function bodies; a second .format() pass over it
@@ -2407,7 +2974,9 @@ def resolve(cur, audit=False):
     reportFold(cur)
     reportUngraded(cur)
 
-    # The academic-year verdicts, in precedence order.
+
+def _resolve(cur):
+    """The rules, in precedence order, over buildRaces' tables."""
     acad = {}
 
     _tq = time.time()
@@ -2471,16 +3040,27 @@ def resolve(cur, audit=False):
     #   is the absence of school-ness. Only the second can emit 'pro', so the
     #   level identifies its own origin and the two stay countable apart.
     _tq = time.time()
-    cur.execute(_FIELD_SQL, {"minc": MIN_CORROBORATION})
-    print(f"    [4] field levels read ({time.time() - _tq:.0f}s)", flush=True)
+    _on = OPEN_FIELD_SHARE <= 1.0
+    if _on:
+        loadCollegeNames(cur)
+    runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if _on else (),
+                             college_codes=_collegeTeamCodes() if _on else ()),
+             label="[4] staging")
+    cur.execute(_FIELD_SQL)
+    _field_rows = cur.fetchall()
+    cur.execute("SELECT person_id, start FROM fld_college_start")
+    _classes = collegeClasses(_field_rows, {int(p): int(st) for p, st in cur.fetchall()})
+    cur.execute(_FIELD_DROP)
+    print(f"    [4] field levels read ({time.time() - _tq:.0f}s); "
+          f"{len(_classes):,} college verdicts given their class year", flush=True)
     n_nograde = 0
-    for pid, ay, level in cur.fetchall():
+    for pid, ay, level in _field_rows:
         key = (int(pid), int(ay))
         if key in acad:
             continue
         method = "no_grades" if level == "pro" else "field"
         n_nograde += (method == "no_grades")
-        acad[key] = {"grade": None, "level": level, "method": method}
+        acad[key] = {"grade": _classes.get(key), "level": level, "method": method}
     n_field = len(acad) - n_corr - n_nograde
 
     _tq = time.time()
@@ -2723,10 +3303,16 @@ def resolve(cur, audit=False):
         SELECT person_id, acad FROM gradekind
         WHERE  n_num > 0 AND n_word > n_num
     """)
+    #  ! A PRO VERDICT STANDS (pooling review P5, 2026-10-26). Rules 3, 4 and
+    #    the age floor run before this one; a season they already called
+    #    professional (stale_grade, elite_field, post_collegiate, adult_club,
+    #    no_grades) is a claim about eligibility, not a guess from its grades,
+    #    and the mixed grades are exactly what an adult with a stale profile
+    #    looks like. Nuking it left the row with no pool at all.
     n_nuked = 0
     for pid, ay in cur.fetchall():
         key = (int(pid), int(ay))
-        if key in acad:
+        if key in acad and acad[key].get("level") != "pro":
             acad[key] = {"grade": None, "level": None,
                          "method": "contradicted"}
             n_nuked += 1
@@ -2785,12 +3371,22 @@ def resolve(cur, audit=False):
     #   (person_id, acad) for rule 6, and count(DISTINCT race) per season for
     #   trust -- three passes over 225M rows for one table of 31M seasons.
     #   race_count IS that table; the other two are read off it.
+    # ★ AND IT IS ALREADY BUILT (2026-10-25): rule 4 made season_races, the
+    #   same GROUP BY, and nothing has written allraces' person_id, acad or
+    #   race since (see _FIELD_BUILD). This is a read, not a 225M-row count.
+    # ★ RULE 5f's TEAM LEVELS ARE READ MEANWHILE (2026-10-25, run log: 379 s
+    #   from here to the 5f line). _hsTeamCodes opens its own connection and
+    #   groups results by team code; nothing it reads is anything this step
+    #   writes, so it runs in a thread while this connection streams 31M
+    #   seasons into Python, and 5f takes its answer when it gets there.
+    from concurrent.futures import ThreadPoolExecutor
+    _bg = ThreadPoolExecutor(max_workers=1)
+    hs_codes = _bg.submit(_hsTeamCodes)
+    _bg.shutdown(wait=False)
     t_rc = time.time()
-    cur.execute("""
-        SELECT person_id, acad, count(DISTINCT race) AS races
-        FROM   allraces GROUP BY 1, 2
-    """)
+    cur.execute("SELECT person_id, acad, races FROM season_races")
     race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    cur.execute("DROP TABLE IF EXISTS season_races")
     seasons_of = {}
     for (pid, _ay) in race_count:
         seasons_of[pid] = seasons_of.get(pid, 0) + 1
@@ -2807,7 +3403,7 @@ def resolve(cur, audit=False):
 
     # RULE 5f: a lone season on a high school team, in high school fields
     _tq = time.time()
-    moved5f = teamLevelSeasons(cur, acad, seasons_of)
+    moved5f = teamLevelSeasons(cur, acad, seasons_of, hs_codes=hs_codes)
     for key in moved5f:
         acad[key] = {"grade": None, "level": "hs", "method": "team_level"}
     n_team = len(moved5f)
@@ -2893,43 +3489,217 @@ def write(cur, resolved):
       it academically; renaming it would break correct code. speed_ratings'
       poolOf is the consumer that had to move.
     """
-    from psycopg2.extras import execute_values
-
     cur.execute("DROP TABLE IF EXISTS grade_fix")
     # ⚠ `trust` IS A COLUMN, NOT A SEPARATE TABLE. A consumer that does not
     #   know about it still reads grade and level exactly as before and is
     #   simply not filtering -- which is the old behaviour, not a broken one.
+    # ★ THE KEY IS ADDED AFTER THE ROWS (2026-10-25, with the COPY above
+    #   copyText). Built once from sorted keys instead of grown by 31M
+    #   inserts in dict order. ADD PRIMARY KEY names it grade_fix_pkey, the
+    #   name the inline constraint had, on the same two columns, so the table
+    #   a consumer sees is the same table; a duplicate key would fail here
+    #   instead of at the INSERT, and abort the same transaction.
     cur.execute("""CREATE TABLE grade_fix (
                        person_id bigint NOT NULL,
                        season    int    NOT NULL,
                        grade     text,
                        level     text,
                        method    text   NOT NULL,
-                       trust     text   NOT NULL DEFAULT 'high',
-                       PRIMARY KEY (person_id, season))""")
-    execute_values(cur, "INSERT INTO grade_fix VALUES %s",
-                   [(p, s, v["grade"], v["level"], v["method"],
-                     v.get("trust", "high"))
-                    for (p, s), v in resolved.items()], page_size=5000)
+                       trust     text   NOT NULL DEFAULT 'high')""")
+    _copyRows(cur, "grade_fix",
+              ("person_id", "season", "grade", "level", "method", "trust"),
+              ((p, s, v["grade"], v["level"], v["method"], v.get("trust", "high"))
+               for (p, s), v in resolved.items()))
+    cur.execute("ALTER TABLE grade_fix ADD PRIMARY KEY (person_id, season)")
     cur.execute("ANALYZE grade_fix")
 
+    # ! FROM grade_fix, NOT FROM PYTHON AGAIN. Its rows are every key of
+    #   `resolved` -- sorted(resolved.keys()) was exactly that set -- so the
+    #   server copies the two columns across in the same sorted order rather
+    #   than Python sorting and sending 31M pairs a second time. The key goes
+    #   on after the rows, as grade_fix's does.
     cur.execute("DROP TABLE IF EXISTS grade_untrusted")
     cur.execute("""CREATE TABLE grade_untrusted (
                        person_id bigint NOT NULL,
-                       season    int    NOT NULL,
-                       PRIMARY KEY (person_id, season))""")
-    execute_values(cur, "INSERT INTO grade_untrusted VALUES %s",
-                   sorted(resolved.keys()), page_size=5000)
+                       season    int    NOT NULL)""")
+    cur.execute("""INSERT INTO grade_untrusted (person_id, season)
+                   SELECT person_id, season FROM grade_fix
+                   ORDER  BY person_id, season""")
+    cur.execute("ALTER TABLE grade_untrusted ADD PRIMARY KEY (person_id, season)")
     cur.execute("ANALYZE grade_untrusted")
     return len(resolved)
 
 
-def main(do_write=False, audit=False):
+def compareVerdicts(old, new):
+    """{(person, season): (level, method)} twice -> Counter of the changes,
+    '<old level>/<old method> -> <new ...>', a missing verdict as '-'. Pure."""
+    from collections import Counter
+    out = Counter()
+    for key in set(old) | set(new):
+        a, b = old.get(key), new.get(key)
+        if a == b:
+            continue
+        out[f"{'/'.join(map(str, a)) if a else '-'} -> {'/'.join(map(str, b)) if b else '-'}"] += 1
+    return out
+
+
+def compare(cur, resolved, show=12):
+    """Print how `resolved` differs from the grade_fix table now in place:
+    the dry run a rule change is judged on before --write."""
+    cur.execute("SELECT to_regclass('grade_fix')")
+    if not cur.fetchone()[0]:
+        print("[grade] no grade_fix to compare with")
+        return
+    cur.execute("SELECT person_id, season, level, method FROM grade_fix")
+    old = {(p, s): (lv, m) for p, s, lv, m in cur.fetchall()}
+    new = {k: (v["level"], v["method"]) for k, v in resolved.items()}
+    changes = compareVerdicts(old, new)
+    print(f"\n[grade] compared with grade_fix: {sum(changes.values()):,} seasons change")
+    for what, n in changes.most_common(20):
+        print(f"    {n:>9,}  {what}")
+    moved = [k for k in set(old) | set(new) if old.get(k) != new.get(k)
+             and (old.get(k) or (None,))[0] == "hs"]
+    if moved:
+        cur.execute("""SELECT DISTINCT ON (person_id) person_id, first_name, last_name, school
+                       FROM athletes WHERE person_id = ANY(%s)""",
+                    (sorted({k[0] for k in moved})[:5000],))
+        names = {p: (f, l, sc) for p, f, l, sc in cur.fetchall()}
+        print(f"\n  seasons that were 'hs' and change (up to {show}):")
+        for key in sorted(moved, key=lambda k: -k[1])[:show]:
+            f, l, sc = names.get(key[0], ("?", "?", "?"))
+            print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {old.get(key)} -> {new.get(key)}")
+
+
+def compareOpen(cur, share=0.5, show=20, codes=None, college_codes=None):
+    """What the open-race rule ALONE moves: rule 4's field verdicts with it
+    off and with it at `share` (school-team exemption included), over one
+    build. Read only (the dry run is rolled back). Field verdicts only --
+    rule 2c's relabelling of bare class words is skipped, so a few seasons
+    differ from a full run either way."""
+    import random
+    from collections import Counter
+    codes = _schoolTeamCodes() if codes is None else codes
+    college_codes = _collegeTeamCodes() if college_codes is None else college_codes
+    print(f"[grade] school team codes {codes}, college team codes {college_codes}", flush=True)
+    buildRaces(cur)
+    out = {}
+    for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
+        if label == "on":
+            print(f"    college names: {loadCollegeNames(cur):,}", flush=True)
+        runTimed(cur, fieldBuild(sh, codes, college_codes), label=f"[open {label}] staging")
+        if label == "on":
+            cur.execute("SELECT count(*) FROM fld_adult_ev")
+            print(f"    adult open races voting 'hs': {cur.fetchone()[0]:,}", flush=True)
+            cur.execute("SELECT count(*), count(DISTINCT (person_id, acad)) FROM fld_withhold")
+            n_rows, n_seasons = cur.fetchone()
+            print(f"    votes withheld: {n_rows:,} rows over {n_seasons:,} seasons", flush=True)
+            # Ethan Weiner's own races, each with what it voted and whether
+            # it was withheld: the case the rule is for, shown race by race
+            cur.execute("""
+                SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.event_key, a.grade,
+                       e.level, e.open_field, wh.person_id IS NOT NULL
+                FROM   athletes x
+                JOIN   allraces a ON a.person_id = x.person_id
+                LEFT   JOIN fld_event_level e
+                       ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+                      AND e.source = a.source AND e.event_key = a.event_key
+                LEFT   JOIN fld_withhold wh
+                       ON wh.person_id = a.person_id AND wh.acad = a.acad
+                      AND wh.meet_id = a.meet_id AND wh.div_id = a.div_id
+                      AND wh.source = a.source AND wh.event_key = a.event_key
+                WHERE  x.first_name ILIKE 'ethan' AND x.last_name ILIKE 'weiner'
+                  AND  x.school ILIKE '%%cambridge%%'
+                ORDER  BY 1, 2, 3""")
+            print("    Ethan Weiner (Cambridge Running), race by race:")
+            for p, ay, m, d, ev, g, lv, op, wh in cur.fetchall():
+                print(f"      {p} {ay} meet {m}/{d} ev {ev}: grade {g}, field {lv}"
+                      f"{' (open)' if op else ''}{' WITHHELD' if wh else ''}", flush=True)
+        cur.execute(_FIELD_SQL)
+        rows = cur.fetchall()
+        out[label] = {(int(p), int(a)): lv for p, a, lv in rows}
+        if label == "on":
+            cur.execute("SELECT person_id, start FROM fld_college_start")
+            classes = collegeClasses(rows, {int(p): int(st) for p, st in cur.fetchall()})
+            from collections import Counter as _C
+            print(f"    college verdicts given a class year: {len(classes):,} "
+                  f"{dict(_C(classes.values()).most_common())}", flush=True)
+        cur.execute(_FIELD_DROP)
+    off, on = out["off"], out["on"]
+    moved = [k for k in set(off) | set(on) if off.get(k) != on.get(k)]
+    moves = Counter(f"{off.get(k) or '-'} -> {on.get(k) or 'no field verdict'}" for k in moved)
+    print(f"\n[grade] the open-race rule at {share:.0%} ungraded moves "
+          f"{len(moved):,} field verdicts (of {len(off):,}):")
+    for what, n in moves.most_common():
+        print(f"    {n:>9,}  {what}")
+    if not moved:
+        return
+    pids = sorted({k[0] for k in moved})
+    seasons = {}
+    cur.execute("""SELECT person_id, acad,
+                          bool_or(gradeLevel(grade) IN ('hs', 'ms', 'elem')),
+                          bool_or(gradeLevel(grade) = 'college')
+                   FROM   allraces WHERE person_id = ANY(%s)
+                   GROUP  BY 1, 2""", (pids,))
+    for p, a, sch, col in cur.fetchall():
+        seasons.setdefault(int(p), []).append((int(a), bool(sch), bool(col)))
+    print("\n  the moved seasons, by the runner's other seasons:")
+    for what, n in youthSigns(seasons, moved).most_common():
+        print(f"    {n:>9,}  {what}")
+    sample = sorted(random.Random(0).sample(moved, min(len(moved), show)), key=lambda k: -k[1])
+    cur.execute("""SELECT person_id, acad FROM allraces a
+                   JOIN   athletes x USING (person_id)
+                   WHERE  x.first_name ILIKE 'ethan' AND x.last_name ILIKE 'weiner'
+                   GROUP  BY 1, 2""")
+    ethan = [(int(p), int(a)) for p, a in cur.fetchall()]
+    want = sorted({k[0] for k in sample + ethan})
+    cur.execute("""SELECT DISTINCT ON (a.person_id) a.person_id, a.first_name, a.last_name,
+                          a.school, t.level
+                   FROM   athletes a
+                   LEFT   JOIN LATERAL (SELECT r.team_id FROM results r
+                                        WHERE r.person_id = a.person_id
+                                          AND r.team_id IS NOT NULL LIMIT 1) r ON true
+                   LEFT   JOIN anet_team t ON t.team_id = r.team_id
+                   WHERE  a.person_id = ANY(%s)""", (want,))
+    info = {p: (f, l, sc, lv) for p, f, l, sc, lv in cur.fetchall()}
+    print("\n  Ethan Weiner's seasons (off -> on):")
+    for key in sorted(ethan):
+        f, l, sc, _lv = info.get(key[0], ("?", "?", "?", None))
+        print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {off.get(key)} -> {on.get(key)}")
+    print(f"\n  {len(sample)} examples, newest season first:")
+    for key in sample:
+        f, l, sc, lv = info.get(key[0], ("?", "?", "?", None))
+        print(f"    {key[0]} {key[1]} {f} {l} ({sc}; team level {lv}): "
+              f"{off.get(key)} -> {on.get(key)}")
+
+
+def youthSigns(seasons_by_person, moved):
+    """{(person, acad)} moved -> Counter of 'kid then' (a graded school
+    season after it: the club season was a child's), 'adult' (a graded
+    college season before it, or a school one four or more years before)
+    and 'no sign'. seasons_by_person: {person: [(acad, school?, college?)]}.
+    Pure."""
+    from collections import Counter
+    out = Counter()
+    for pid, ay in moved:
+        mine = seasons_by_person.get(pid, ())
+        if any(a > ay and sch for a, sch, _c in mine):
+            out["kid then (graded school season after it)"] += 1
+        elif any(a < ay and col for a, _s, col in mine) or \
+                any(a <= ay - 4 and sch for a, sch, _c in mine):
+            out["adult (college before, or school 4+ years before)"] += 1
+        else:
+            out["no sign either way"] += 1
+    return out
+
+
+def main(do_write=False, audit=False, do_compare=False):
     from database import getConn
 
     with getConn() as conn:
         with conn.cursor() as cur:
             resolved = resolve(cur, audit=audit)
+            if do_compare:
+                compare(cur, resolved)
             if do_write:
                 n = write(cur, resolved)
                 conn.commit()
@@ -2939,5 +3709,14 @@ def main(do_write=False, audit=False):
 
 
 if __name__ == "__main__":
+    if "--compare-open" in sys.argv:
+        from database import getConn
+        with getConn() as _conn:
+            with _conn.cursor() as _cur:
+                _sh = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--share=")]
+                compareOpen(_cur, share=float(_sh[0]) if _sh else 0.5)
+            _conn.rollback()
+        sys.exit(0)
     main(do_write="--write" in sys.argv,
-         audit="--audit" in sys.argv)
+         audit="--audit" in sys.argv,
+         do_compare="--compare" in sys.argv)

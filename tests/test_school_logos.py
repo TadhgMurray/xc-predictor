@@ -2462,7 +2462,8 @@ class TeamSlug(unittest.TestCase):
         self.assertIn("_migrateResultsAddTeamSlug", steps)
         self.assertIn("_step(cursor)", db)
         self.assertIn('for table in ("results", "results_tf"):', db)
-        self.assertIn("ADD COLUMN IF NOT EXISTS team_slug TEXT", db)
+        # asks the catalogue first, then adds (the 2026-10-26 outage)
+        self.assertIn('_addColumnIfMissing(cursor, table, "team_slug", "TEXT")', db)
 
     def test_the_migration_is_idempotent(self):
         """Every statement it runs is IF NOT EXISTS -- run it twice, nothing

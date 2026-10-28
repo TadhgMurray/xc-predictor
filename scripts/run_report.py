@@ -65,8 +65,11 @@ LOG_METRICS = [
      r"ours\s+bias [-+0-9.]+%\s+spread ([0-9.]+)%", "low"),
     ("lacctic_5000_theirs", "XC -> actual 5000 spread: theirs (%)", "16b_lacctic.log",
      r"theirs bias [-+0-9.]+%\s+spread ([0-9.]+)%", None),
-    ("day_scatter", "race-day term: race scatter, robust (%)", "08_golive.log",
-     r"day in, leave-self-out\s+sd [0-9.]+%\s+robust ([0-9.]+)%", "low"),
+    # ! THE FIRST MATCH: the go-live prints this line for XC, then for TF,
+    #   and the last match was storing TF's under an XC name (engine review,
+    #   2026-10-24). The sixth element picks which match a metric keeps.
+    ("day_scatter", "race-day term: XC race scatter, robust (%)", "08_golive.log",
+     r"day in, leave-self-out\s+sd [0-9.]+%\s+robust ([0-9.]+)%", "low", 0),
     ("sanity_hard", "board-sanity hard findings", "10a_board_sanity.log",
      r"\[sanity\] (\d+) hard", "low"),
     ("lean_courses", "courses whose days lean one way", "08_golive.log",
@@ -97,20 +100,20 @@ SENTINELS = [
     # Mt. SAC: the 4828 should be only 1-2% easier than the 4715 (owner)
     ("mtsac_4700", "Mt. SAC 4715m difficulty (%)",
      "SELECT 100 * difficulty FROM course_difficulties WHERE canonical_id = 13433 "
-     "AND distance_m = 4700 LIMIT 1", None),
+     "AND distance_m = 4700 ORDER BY n_results DESC NULLS LAST LIMIT 1", None),
     ("mtsac_4800", "Mt. SAC 4828m difficulty (%)",
      "SELECT 100 * difficulty FROM course_difficulties WHERE canonical_id = 13433 "
-     "AND distance_m = 4800 LIMIT 1", None),
+     "AND distance_m = 4800 ORDER BY n_results DESC NULLS LAST LIMIT 1", None),
     ("mtsac_gap", "Mt. SAC 4715 minus 4828 (%; owner: 1-2)",
      "SELECT 100 * ((SELECT difficulty FROM course_difficulties WHERE canonical_id = 13433"
-     " AND distance_m = 4700 LIMIT 1) - (SELECT difficulty FROM course_difficulties"
-     " WHERE canonical_id = 13433 AND distance_m = 4800 LIMIT 1))", None),
+     " AND distance_m = 4700 ORDER BY n_results DESC NULLS LAST LIMIT 1) - (SELECT difficulty FROM course_difficulties"
+     " WHERE canonical_id = 13433 AND distance_m = 4800 ORDER BY n_results DESC NULLS LAST LIMIT 1))", None),
     # Glendoveer (NXN): course_bracket's model-free reading sat at or a little
     #   above the board in 2023-25 (2026-10-04); this is the site's number --
     #   the diagnostic's own scale differs, so compare runs, not the two
     ("glendoveer", "Glendoveer 5000m difficulty (%)",
      "SELECT 100 * difficulty FROM course_difficulties WHERE canonical_id = 22331 "
-     "AND distance_m = 5000 LIMIT 1", None),
+     "AND distance_m = 5000 ORDER BY n_results DESC NULLS LAST LIMIT 1", None),
 ]
 
 
@@ -121,14 +124,16 @@ def latestLogDir():
 
 def readLogMetrics(log_dir):
     out = {}
-    for key, _label, fname, rx, _better in LOG_METRICS:
+    for spec in LOG_METRICS:
+        key, _label, fname, rx, _better = spec[:5]
+        pick = spec[5] if len(spec) > 5 else -1           # which match: last unless said
         path = os.path.join(log_dir, fname)
         if not os.path.exists(path):
             continue
         with open(path, encoding="utf-8", errors="replace") as f:
             hits = re.findall(rx, f.read())
         if hits:
-            out[key] = float(str(hits[-1]).replace(",", ""))
+            out[key] = float(str(hits[pick]).replace(",", ""))
     return out
 
 
@@ -207,8 +212,8 @@ def main():
     fair = {"holdout_race_sd", "sport_holdout_bias", "sport_holdout_sd", "lacctic_order_ours",
             "lacctic_order_theirs", "lacctic_5000_ours", "lacctic_5000_theirs", "day_scatter"}
     section("FAIR TESTS (these decide)",
-            [(k, lab, b) for k, lab, _f, _r, b in LOG_METRICS if k in fair])
-    section("HEALTH", [(k, lab, b) for k, lab, _f, _r, b in LOG_METRICS if k not in fair])
+            [(k, lab, b) for k, lab, _f, _r, b, *_ in LOG_METRICS if k in fair])
+    section("HEALTH", [(k, lab, b) for k, lab, _f, _r, b, *_ in LOG_METRICS if k not in fair])
     section("SENTINELS (the cases the owner caught)", [(k, lab, b) for k, lab, _s, b in SENTINELS])
     missing = [lab for k, lab, *_ in LOG_METRICS if k not in now]
     if missing:

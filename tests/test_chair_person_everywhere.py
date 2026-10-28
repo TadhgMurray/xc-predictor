@@ -57,7 +57,7 @@ def test_checklist_reads_the_person_list():
     body = src[i:src.index("\ndef ", i + 1)]
     assert 'if _exists(cur, "wheelchair_person")' in body
     assert "SELECT w.person_id, NULL, NULL FROM wheelchair_person w" in body
-    assert body.index("FROM wheelchair_person w") < body.index("bad = []")
+    assert body.index("FROM wheelchair_person w") < body.index("bad, shown = [], []")
 
 
 def test_athlete_page_blanks_difficulty_on_a_corrected_division():

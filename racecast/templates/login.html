@@ -48,12 +48,12 @@
        the non-google sign in actually works"): "Check your email" above
        "no link went out" read as a success with small print. #}
     {% if unsent == "failed" %}
-    <p class="auth-lead">The mail service refused the message, so no link went out. The reason is in the server log; try again in a minute.</p>
+    <p class="auth-lead">The email didn't send, so no link went out. Try again in a minute.</p>
     {% elif unsent == "slow" %}
     <p class="auth-lead">The mail service is slow to answer. A link for <strong>{{ email }}</strong> is still on its way and may take a minute or two. It works once and expires in 15 minutes.</p>
     <p class="auth-small">Nothing after a few minutes? Check spam, then <a href="/login{% if next %}?next={{ next|urlencode }}{% endif %}">ask for another</a>.</p>
     {% elif unsent %}
-    <p class="auth-lead">Mail is not set up on this server yet, so no link went out. The site owner can find it in the server log.</p>
+    <p class="auth-lead">Sign-in emails aren't working right now, so no link went out. Please try again later.</p>
     {% else %}
     <p class="auth-lead">If <strong>{{ email }}</strong> is an address we can send to, a sign-in link is on its way. It works once and expires in 15 minutes.</p>
     <p class="auth-small">Nothing arrived? Check spam, then <a href="/login{% if next %}?next={{ next|urlencode }}{% endif %}">ask for another</a>.</p>

@@ -4,6 +4,14 @@
      panel shows, one under another (race.css hides panels only under
      .rc-js), the team rows are plain rows and the finder box is inert. */
 (function () {
+  // ★ THE WINDOW ONLY (UX review, 2026-10-24): scrollIntoView also scrolls
+  //   a phone table's own box (div.tscroll, overflow-y hidden), and what it
+  //   scrolls off the top -- the header row -- cannot be scrolled back.
+  function centreRow(el, smooth) {
+    var r = el.getBoundingClientRect();
+    window.scrollTo({ top: window.pageYOffset + r.top - (window.innerHeight - r.height) / 2,
+                      behavior: smooth ? "smooth" : "auto" });
+  }
   var main = document.querySelector("main.rc");
   if (!main) return;
   main.classList.add("rc-js");
@@ -294,6 +302,19 @@
   var fieldPlot = field && field.querySelector(".rc-field-plot");
   var fieldKey = field && field.querySelector(".rc-field-key");
   var SVGNS = "http://www.w3.org/2000/svg";
+  // the runner's name: the cell's link, or its own text (not the
+  // school/grade subline). ! "td.nm a, td.nm" matched the CELL first (a
+  // selector list returns the first match in document order) and its first
+  // child is the template's line break, so every dot was named "" (owner,
+  // 2026-10-28: "graph on race page doesn't display name").
+  function rowName(tr) {
+    var a = tr.querySelector("td.nm > a");
+    if (a) return a.textContent.trim();
+    var td = tr.querySelector("td.nm");
+    var txt = "";
+    if (td) td.childNodes.forEach(function (n) { if (n.nodeType === 3) txt += n.textContent; });
+    return txt.trim();
+  }
   function rated() {
     var out = [];
     rows.forEach(function (tr) {
@@ -304,10 +325,8 @@
       var mode = window.rcScale ? window.rcScale.mode : "pool";
       var v = parseFloat(mode === "hs" && hs ? hs : own);
       if (isNaN(v)) return;
-      var nm = tr.querySelector("td.nm a, td.nm");
       out.push({ tr: tr, v: v, lit: tr.classList.contains("rc-lit"),
-                 label: tr.querySelector("td.pl").textContent.trim() + ". " +
-                        (nm ? nm.childNodes[0].textContent.trim() : "") +
+                 label: tr.querySelector("td.pl").textContent.trim() + ". " + rowName(tr) +
                         (tr.dataset.team ? ", " + tr.dataset.team : "") + " \u2014 " + v.toFixed(1) });
     });
     return out;
@@ -365,7 +384,7 @@
         c.addEventListener("click", function () {
           show(first);
           p.tr.hidden = false;
-          p.tr.scrollIntoView({ block: "center", behavior: "smooth" });
+          centreRow(p.tr, true);
           p.tr.classList.remove("rc-flash"); void p.tr.offsetWidth; p.tr.classList.add("rc-flash");
         });
         svg.appendChild(c);
@@ -685,7 +704,7 @@
   if (/^#r-?\d+$/.test(location.hash)) {           // -? : tfrrs ids are negative
     var target = document.getElementById(location.hash.slice(1));
     if (target) {
-      target.scrollIntoView({ block: "center" });
+      centreRow(target);
       target.classList.add("rc-flash");
     }
   }

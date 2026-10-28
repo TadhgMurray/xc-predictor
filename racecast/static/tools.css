@@ -16,7 +16,7 @@
   border-collapse: separate; border-spacing: 0; border: 1px solid var(--line, #e5e7eb);
   border-radius: 6px; font-variant-numeric: tabular-nums; }
 .scale-page .scale-tbl th, .scale-page .scale-tbl td { padding: 0.42rem 0.75rem; border: 0;
-  border-bottom: 1px solid var(--line, #e5e7eb); text-align: right; white-space: nowrap; }
+  border-bottom: 1px solid var(--line, #e5e7eb); text-align: left; white-space: nowrap; }
 .scale-page .scale-tbl tbody tr:last-child td { border-bottom: 0; }
 .scale-page .scale-tbl col.scale-rc { width: 10.5rem; }
 .scale-page .scale-tbl thead th { position: sticky; top: 0; z-index: 1; background: #f5f5f5;

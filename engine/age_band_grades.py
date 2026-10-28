@@ -87,7 +87,9 @@ from database import getConn
 # ⚠ '19+' EARNS ITS PLACE TWICE. It is unambiguous on its own AND it is the
 #   commonest marker at exactly the meets where this matters -- open and
 #   professional fields, where a banded grade beside it is certainly an age.
-UNAMBIGUOUS_AGE = (r"^(13-14|15-16|17-18|19\+|6U|20\+|open)$")
+# ! LOWER CASE (pooling review, 2026-10-25): every reader matches it against
+#   lower(btrim(grade)), so the '6U' this used to spell could never match.
+UNAMBIGUOUS_AGE = (r"^(13-14|15-16|17-18|19\+|6u|20\+|open)$")
 
 # The ambiguous ones: real GRADE_TO_LEVEL keys that are also age bands.
 # ! KEPT IN SYNC WITH GRADE_TO_LEVEL BY HAND, and asserted below rather than

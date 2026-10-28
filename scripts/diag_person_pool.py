@@ -32,6 +32,17 @@ table that decides it. READ-ONLY.
   person: the other-feed persons holding the same runs (same day, same
   time as printed, same school, one partner), their kind (stray anet
   placeholder / minted tfrrs / career) and the verdict. Read-only.
+
+★ --field: WHO RAN THEIR RACES (owner, 2026-10-27: Ethan Weiner, Cambridge
+  Running, never a numeric grade, pooled high school and ranked nation #6).
+  A season with too few graded races takes the level of its races, and a
+  race's level is the most common level among the entrants who CARRY a
+  grade -- at an open meet that is the high schoolers, never the adults.
+  Prints, per XC race of the person: entrants with a high-school grade,
+  another grade, and none; and each team's level in anet_team (a gradeless
+  row on a 'club' team pools professional).
+
+    /srv/venv/bin/python scripts/diag_person_pool.py 26196653 --field
 """
 import os
 import sys
@@ -100,6 +111,36 @@ def _twins(conn, cur, pid):
     F.report(groups, pairs, F.judge(groups), show=5)
 
 
+def _field(cur, pid):
+    """Each XC race of the person: who ran it, graded and not; then the
+    level anet_team gives each of the person's teams."""
+    cur.execute("""
+        WITH mine AS (SELECT DISTINCT source, meet_id, div_id FROM results
+                      WHERE person_id = %s)
+        SELECT min(r.date), r.meet_id, r.div_id, count(*),
+               count(*) FILTER (WHERE r.grade ~ '^(9|10|11|12)$'),
+               count(*) FILTER (WHERE r.grade ~ '^[0-9]+$' AND r.grade !~ '^(9|10|11|12)$'),
+               count(*) FILTER (WHERE r.grade IS NULL OR r.grade !~ '^[0-9]+$')
+        FROM   mine m JOIN results r USING (source, meet_id, div_id)
+        GROUP  BY 2, 3 ORDER BY 1""", (pid,))
+    print("    XC races (runners: high-school grade / other grade / no grade):")
+    for d, meet, div, n, hs, other, none in cur.fetchall():
+        print(f"      {d} meet {meet} div {div}: {n} runners -- {hs} hs, {other} other, "
+              f"{none} ungraded ({none / n:.0%})")
+    cur.execute("SELECT to_regclass('anet_team')")
+    if not cur.fetchone()[0]:
+        print("    anet_team: not built")
+        return
+    cur.execute("""
+        SELECT DISTINCT r.team_id, r.school, t.level
+        FROM  (SELECT team_id, school FROM results WHERE person_id = %s
+               UNION SELECT team_id, school FROM results_tf WHERE person_id = %s) r
+        LEFT  JOIN anet_team t ON t.team_id = r.team_id
+        ORDER BY 1""", (pid, pid))
+    for tid, sch, lvl in cur.fetchall():
+        print(f"    team {tid} {sch!r}: anet_team level={lvl!r}")
+
+
 def main():
     from database import getConn
     args = sys.argv[1:]
@@ -109,7 +150,8 @@ def main():
     # --school SUBSTR picks, among many people of one name, those whose
     # profiles name a matching school ("John Rivera" is 40 people).
     twins = "--twins" in args
-    args = [x for x in args if x != "--twins"]
+    field = "--field" in args
+    args = [x for x in args if x not in ("--twins", "--field")]
     school_q = None
     if "--school" in args:
         i = args.index("--school")
@@ -188,6 +230,8 @@ def main():
                                    GROUP BY pool ORDER BY 2 DESC""", (pid,))
                     for p in cur.fetchall():
                         print(f"    boards 2025+: pool={p[0]} rows={p[1]} mean rating={p[2]}")
+                    if field:
+                        _field(cur, pid)
                     if twins:
                         _twins(conn, cur, pid)
         conn.rollback()

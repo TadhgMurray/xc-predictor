@@ -73,6 +73,11 @@ work_mem = 256MB
 maintenance_work_mem = 4GB
 max_wal_size = 8GB
 random_page_cost = 1.1
+# 24 cores (2026-10-25): the pipeline asks four workers per query and per
+# index build (scripts/database.py); the defaults of 8 starved it
+max_worker_processes = 24
+max_parallel_workers = 16
+max_parallel_maintenance_workers = 4
 EOF
 systemctl restart postgresql
 

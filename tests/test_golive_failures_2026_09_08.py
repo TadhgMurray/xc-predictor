@@ -106,10 +106,10 @@ def test_golive_failures_2026_09_08():
 
     ok("failed() {" in PIPE, "run_pipeline needs a `failed <step>` predicate")
     _abort = PIPE.index("if failed 08_golive; then")
-    ok(_abort < PIPE.index("step 09b_fill"),
+    ok(_abort < PIPE.index("stepsN 09b_fill"),
        "the 08_golive guard must come BEFORE 09b_fill -- the fill is the first "
        "step that reads results.speed_rating back out")
-    _guard = PIPE[_abort:PIPE.index("step 09b_fill")]
+    _guard = PIPE[_abort:PIPE.index("stepsN 09b_fill")]
     ok("summarise" in _guard,
        "the abort must print the usual closing summary and exit non-zero")
     ok("XCP_IGNORE_GOLIVE_FAIL" in _guard,

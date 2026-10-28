@@ -358,6 +358,85 @@ def teamHasPros(team_id, school):
     return bool(school) and str(school).strip().lower() in by_school
 
 
+# rowTeamFacts
+# Purpose:   the five team facts resolvePool takes, for one row.
+# Output:    (team_level, team_has_pros, no_team, team_pro, race_top_level).
+#
+# ★ ONE DERIVATION, EVERY CALLER (pooling review, 2026-10-25, P1). This was
+#   inline in packResults, so fill_ratings -- which prices every row the
+#   solve left out and stamps rating_pool on it, nightly and in the full
+#   run -- called resolvePool with none of the five. An unattached row
+#   (team_id 0) the engine pools pro came out of the fill hs_m, priced, and
+#   build_ranking_results then took that stamp as the engine's. Now the
+#   pack, the fill and dump_pack_row ask this function, so the facts cannot
+#   drift any more than the decision can.
+#
+# ! have_team=False is a pack row with no team columns at all (an older
+#   database): every team fact stays off, as it always did, and only the
+#   unattached race ceiling is looked up.
+# ! Each loader caches its table after its first call, so this costs a call
+#   and a global check per row; the first call queries and prints.
+def rowTeamFacts(team_id, team_slug, school, person_id, race_date, sport,
+                 result_id, census=None, have_team=True):
+    from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID, unattachedEntry
+    team_level, has_pros, no_team, team_pro = None, False, False, False
+    if have_team:
+        team_level = teamLevelOf(team_id, team_slug, loadAnetLevels())
+        # ★ NO TEAM AT ALL (owner, 2026-09-16: "If any school has id == 0
+        #   we should just put them in pro"), and ungated -- see
+        #   pool_resolve.UNATTACHED_TEAM_ID. Counted, because it is a rule
+        #   whose cost has to stay visible.
+        try:
+            no_team = int(team_id) == UNATTACHED_TEAM_ID
+        except (TypeError, ValueError):
+            no_team = False
+        if census is not None:
+            if no_team:
+                census["no_team_pro"] += 1
+            if team_level:
+                census[f"team_level_{team_level}"] += 1
+        # ★ THE TEAM'S OWN VERDICT, BY TEAM ID (build_team_pool).
+        try:
+            team_pro = int(team_id) in loadProTeams()
+        except (TypeError, ValueError):
+            team_pro = False
+        if team_pro and census is not None:
+            census["team_pool_pro"] += 1
+        has_pros = teamHasPros(team_id, school)
+        # ★ THE CLUB RULES FIRE ONLY IN A SEASON RACED MOSTLY FOR THE CLUB
+        #   (clubSeason): one national-team race is one row.
+        # ! THE MAJORITY GATE DOES NOT APPLY TO no_team. A row with no team
+        #   is not a club row: there is no club.
+        # ! THE ACADEMIC YEAR, the clock loadClubMajority keys on
+        if (team_level == "club" or has_pros) and \
+                not clubSeason(person_id, _academicYear(race_date)):
+            has_pros = False
+            if team_level == "club":
+                team_level = None
+                if census is not None:
+                    census["club_row_in_a_school_season"] += 1
+    # ★ THE RACE'S CEILING, FOR UNATTACHED ROWS ONLY (owner, 2026-09-20). The
+    #   map holds unattached rows alone -- team_id 0 AND the tfrrs
+    #   "Unattached" school string, see loadUnattachedRaceLevel -- so every
+    #   other row misses the dict and pools exactly as before.
+    race_top_level = None
+    unatt = loadUnattachedRaceLevel()
+    if unatt:
+        try:
+            race_top_level = unatt.get((str(sport), int(result_id)))
+        except (TypeError, ValueError):
+            race_top_level = None
+        if race_top_level is not None and census is not None:
+            census[f"unattached_race_{race_top_level}"] += 1
+    # ★ A CEILING MAKES THE ROW UNATTACHED, tfrrs "Unattached" rows included
+    #   -- see pool_resolve.unattachedEntry.
+    if not no_team and unattachedEntry(no_team, race_top_level):
+        no_team = True
+        if census is not None:
+            census["unattached_by_school_string"] += 1
+    return team_level, has_pros, no_team, team_pro, race_top_level
+
+
 _PRO_TEAMS = None
 
 
@@ -1017,7 +1096,11 @@ def poolOf(grade, gender, source, school, sport, merge=False,
     pid = None if person_id is None else int(person_id)
 
     # The season verdict, keyed on the ACADEMIC year (see loadSeasonLevels).
-    slvl = None
+    # ! ay AND grade_verdict ARE BOUND ON EVERY PATH. A row with no
+    #   person_id (or no season) used to reach the resolvePool call with
+    #   them unbound and raise NameError, which packResults never hits only
+    #   because it always passes both; replay_rating and dump_pack_row do not.
+    slvl = ay = None
     if pid is not None:
         ay = _academicYear(race_date)
         if ay is not None:
@@ -1028,7 +1111,7 @@ def poolOf(grade, gender, source, school, sport, merge=False,
     # Initialised alongside `untrusted`, or a row with no person_id reaches
     # the call with these unbound.
     untrusted = pro = False
-    fixed_grade = fixed_level = None
+    fixed_grade = fixed_level = grade_verdict = None
     # ! None, NOT False. False is a VERDICT ("measured, and not fast
     #   enough") and would demote every row that cannot be looked up at
     #   all. A row with no person_id has no season to ask about, which is
@@ -1089,7 +1172,6 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         is_pro=pro,
         pro_ability=pro_able,
         college_first=None if pid is None else loadCollegeFirst().get(pid),
-        upperclass_first=None if pid is None else loadUpperclassFirst().get(pid),
         race_date=race_date,
         merge=merge,
         poolfor=_cachedPoolFor,
@@ -1461,16 +1543,6 @@ def packResults(batches, today, merge=False):
     n_rows = 0
     _it = iter(batches)
 
-    # ★ THE ROW LOOP'S LOOKUPS, BOUND ONCE (2026-09-26). The import and the
-    #   three loaders below ran on every one of ~100M rows. Each loader caches
-    #   its table after its first call, so every later call only paid the
-    #   call and the global check -- small per row, real over the corpus.
-    # ! STILL FETCHED LAZILY, AT THE SAME POINT IN THE LOOP: a loader's first
-    #   call queries the database and prints its table, so calling them here
-    #   up front would move those lines and run them on a pack that never
-    #   reaches a row. None = not fetched yet; each returns a dict or a set.
-    from pool_resolve import teamLevelOf, UNATTACHED_TEAM_ID
-    _levels = _pro_teams = _unatt = None
 
     while True:
         _t0 = _clk()
@@ -1497,66 +1569,14 @@ def packResults(batches, today, merge=False):
                 census["bad_or_future_date"] += 1
                 continue
             _tp = _clk()
-            team_level, has_pros, no_team = None, False, False
-            team_pro = False
-            if len(r) > _SLUG:
-                if _levels is None:
-                    _levels = loadAnetLevels()
-                team_level = teamLevelOf(r[_TEAM], r[_SLUG], _levels)
-                # ★ NO TEAM AT ALL (owner, 2026-09-16: "If any school has
-                #   id == 0 we should just put them in pro"), and ungated --
-                #   see pool_resolve.UNATTACHED_TEAM_ID. Counted, because it
-                #   is a rule whose cost has to stay visible.
-                try:
-                    no_team = int(r[_TEAM]) == UNATTACHED_TEAM_ID
-                except (TypeError, ValueError):
-                    no_team = False
-                if no_team:
-                    census["no_team_pro"] += 1
-                if team_level:
-                    census[f"team_level_{team_level}"] += 1
-                # ★ THE TEAM'S OWN VERDICT, BY TEAM ID. Counted because a
-                #   rule that repools rows out of the school boards must have
-                #   its cost visible in the census, exactly like no_team_pro.
-                try:
-                    _tid = int(r[_TEAM])         # first, as before: a bad id
-                    if _pro_teams is None:       # never triggered the load
-                        _pro_teams = loadProTeams()
-                    team_pro = _tid in _pro_teams
-                except (TypeError, ValueError):
-                    team_pro = False
-                if team_pro:
-                    census["team_pool_pro"] += 1
-                has_pros = teamHasPros(r[_TEAM], r[_SCHOOL])
-                # ★ THE CLUB RULES FIRE ONLY IN A SEASON RACED MOSTLY FOR THE
-                #   CLUB (clubSeason): one national-team race is one row
-                # ! THE MAJORITY GATE DOES NOT APPLY TO no_team. A row with
-                #   no team is not a club row: there is no club.
-                if (team_level == "club" or has_pros) and not clubSeason(r[_PID], d.year):
-                    has_pros = False
-                    if team_level == "club":
-                        team_level = None
-                        census["club_row_in_a_school_season"] += 1
-            # ★ THE RACE'S CEILING, FOR UNATTACHED ROWS ONLY (owner,
-            #   2026-09-20). Looked up only when it can be used: the map holds
-            #   unattached rows alone, so every other row skips the dict hit
-            #   entirely and pools exactly as before.
-            #
-            # ! THE SCHOOL-STRING CASE IS IN THE MAP TOO, not just team_id 0.
-            #   tfrrs carries no team id and says "Unattached" in the school,
-            #   so testing no_team alone would have covered anet and missed
-            #   every tfrrs row -- see loadUnattachedRaceLevel.
-            race_top_level = None
-            if _unatt is None:
-                _unatt = loadUnattachedRaceLevel()
-            unatt = _unatt
-            if unatt:
-                try:
-                    race_top_level = unatt.get((str(r[_SPORT]), int(r[_RID])))
-                except (TypeError, ValueError):
-                    race_top_level = None
-                if race_top_level is not None:
-                    census[f"unattached_race_{race_top_level}"] += 1
+            # ★ THE FIVE TEAM FACTS, FROM rowTeamFacts -- the one derivation,
+            #   shared with fill_ratings so a row the solve skipped is priced
+            #   in the pool this loop would have given it.
+            have_team = len(r) > _SLUG
+            team_level, has_pros, no_team, team_pro, race_top_level = rowTeamFacts(
+                r[_TEAM] if have_team else None, r[_SLUG] if have_team else None,
+                r[_SCHOOL], r[_PID], d, r[_SPORT], r[_RID],
+                census=census, have_team=have_team)
             pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
                           r[_SPORT], merge,
                           person_id=r[_PID], season=d.year,

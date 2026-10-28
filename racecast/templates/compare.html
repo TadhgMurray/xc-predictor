@@ -45,7 +45,7 @@
       · {{ meetings|length }} meeting{{ "" if meetings|length == 1 else "s" }}{% if ties %} · {{ ties }} dead heat{{ "" if ties == 1 else "s" }}{% endif %}
       {%- if meetings %} · last met {{ meetings[0].date|mdy }}{% endif %}
       {%- if meetings and avg_margin_label and avg_margin > 0 %} · avg margin {{ avg_margin_label }} to {{ card_a.short }}{% elif meetings and avg_margin_label and avg_margin < 0 %} · avg margin {{ avg_margin_label }} to {{ card_b.short }}{% endif %}
-      <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="{{ card_a.name ~ ' vs ' ~ card_b.name ~ ' on Racecast' }}"
+      <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ card_a.name ~ ' vs ' ~ card_b.name ~ ' on Racecast' }}"
             data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
     </div>
     <div class="rc-champs">
@@ -117,7 +117,6 @@
         {# ★ THE NEXT RACE, PREDICTED (2026-10-10): _h2h_predict.html #}
         <a class="seg-btn" href="#predict" data-tab="predict">Predicted</a>
       </nav>
-      {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
     </div>
     <section class="rc-panel" id="meetings" data-panel="meetings">
     {% if meetings %}

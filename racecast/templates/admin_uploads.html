@@ -32,7 +32,7 @@
         · {{ up.meet_date or "no date" }}{% if up.location %} · {{ up.location }}{% endif %}
         · {{ {"XC": "Cross country", "TF": "Track"}.get(up.sport, "sport not set") }}
         · <a href="/account/admin/uploads">The queue</a>
-      {% else %}{{ waiting|length }} waiting · <a href="/account/admin/fixes">Fixes to review</a> · <a href="/account/status">Site status</a>{% endif %}
+      {% else %}{{ waiting|length }} waiting · <a href="/account/admin/fixes">Fixes to review</a> · <a href="/account/admin/accounts">Accounts</a> · <a href="/account/status">Site status</a>{% endif %}
     </div>
     {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
     {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}

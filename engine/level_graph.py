@@ -556,6 +556,75 @@ def propagate(cur, threshold=_THRESHOLD, rounds=_MAX_ROUNDS):
 # CHUNK 3b -- RACE VERDICTS
 # ------------------------------------------------------------------ #
 
+# ★ BUILT BESIDE THE LIVE TABLES, SWAPPED IN AT THE NEXT RUN'S START
+#   (2026-10-25: "the tables nothing builds"). The graph takes hours, and
+#   school_level_graph, race_level and race_top_level are read all through
+#   the pipeline (normalize_distance, grade_sanity, the backfill, the pack,
+#   the boards). Rebuilt in place, its DROPs at the end of one long
+#   transaction would wait on those readers and they on it. So the nightly
+#   run builds them as <name>_next in the background (--stage), and the
+#   next run's first step swaps all three in at once (--swap-staged): every
+#   step of a run reads one version, and the swap holds its locks for
+#   milliseconds. --write still rebuilds the live tables, by hand.
+_STAGED = ("school_level_graph", "race_level", "race_top_level")
+_SUFFIX = {"s": ""}
+
+
+def _t(name):
+    return name + _SUFFIX["s"]
+
+
+def swapStaged(conn, lock_ms=3000, tries=40, pause=3.0):
+    """Swap every <name>_next in for <name>, all three in ONE short
+    transaction (they come from one graph and must not be read mixed),
+    retrying under a short lock_timeout while readers hold the old ones.
+    Their indexes take the live names. Returns the tables swapped, [] when
+    nothing is staged."""
+    import time
+    from psycopg2 import errors as _pgerr
+    with conn.cursor() as cur:
+        staged = []
+        for nm in _STAGED:
+            cur.execute("SELECT to_regclass(%s)", (f"public.{nm}_next",))
+            if cur.fetchone()[0] is not None:
+                staged.append(nm)
+    conn.commit()
+    if not staged:
+        print("[level] nothing staged; the live tables stay as they are")
+        return []
+    if len(staged) != len(_STAGED):
+        # one transaction made all three, so a partial set is debris
+        print(f"[level] only {staged} staged -- not swapping a partial graph")
+        return []
+    for attempt in range(1, tries + 1):
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SET LOCAL lock_timeout = '{int(lock_ms)}ms'")
+                for nm in staged:
+                    new = nm + "_next"
+                    cur.execute(f"DROP TABLE IF EXISTS {nm}")
+                    cur.execute(f"ALTER TABLE {new} RENAME TO {nm}")
+                    cur.execute("""SELECT indexname FROM pg_indexes
+                                   WHERE schemaname = 'public' AND tablename = %s
+                                     AND indexname LIKE %s""",
+                                (nm, new.replace("_", r"\_") + r"\_%"))
+                    for (ix,) in cur.fetchall():
+                        want = nm + ix[len(new):]
+                        cur.execute("SELECT to_regclass(%s)", (f"public.{want}",))
+                        if cur.fetchone()[0] is None:
+                            cur.execute(f'ALTER INDEX "{ix}" RENAME TO "{want}"')
+            conn.commit()
+            print(f"[level] swapped in {', '.join(staged)} (attempt {attempt})")
+            return staged
+        except (_pgerr.LockNotAvailable, _pgerr.DeadlockDetected):
+            conn.rollback()
+            print(f"[level] tables being read; swap attempt {attempt}/{tries} "
+                  f"yielded, retrying in {pause:.0f}s", flush=True)
+            time.sleep(pause)
+    raise RuntimeError("level tables: no swap lock; the _next tables are left "
+                       "for the next run")
+
+
 def raceLevels(cur, threshold=_THRESHOLD):
     """
     race_level: the level of each RACE, derived from its known teams.
@@ -578,14 +647,14 @@ def raceLevels(cur, threshold=_THRESHOLD):
       normalize_distance.poolFor. A high schooler with one pro-meet appearance
       must stay 'hs'; only a season that is UNANIMOUSLY something else moves.
     """
-    cur.execute("DROP TABLE IF EXISTS race_level")
-    cur.execute("""CREATE TABLE race_level (
+    cur.execute(f"DROP TABLE IF EXISTS {_t('race_level')}")
+    cur.execute(f"""CREATE TABLE {_t('race_level')} (
                        race        bigint NOT NULL PRIMARY KEY,
                        level       text   NOT NULL,
                        known_frac  real   NOT NULL,
                        n_teams     int    NOT NULL)""")
     cur.execute(f"""
-        INSERT INTO race_level (race, level, known_frac, n_teams)
+        INSERT INTO {_t('race_level')} (race, level, known_frac, n_teams)
         SELECT rt.race,
                min(l.level),
                (count(l.school)::float / count(*))::real,
@@ -597,7 +666,7 @@ def raceLevels(cur, threshold=_THRESHOLD):
            AND count(DISTINCT l.level) = 1
     """)
     n = cur.rowcount
-    cur.execute("CREATE INDEX ON race_level (level)")
+    cur.execute(f"CREATE INDEX ON {_t('race_level')} (level)")
 
     cur.execute("SELECT count(DISTINCT race) FROM tmp_race_team")
     total = cur.fetchone()[0]
@@ -660,8 +729,8 @@ def raceTopLevels(cur, threshold=_THRESHOLD):
       has no ceiling worth trusting, and a row with no verdict here falls back
       to the old behaviour rather than to a guess.
     """
-    cur.execute("DROP TABLE IF EXISTS race_top_level")
-    cur.execute("""CREATE TABLE race_top_level (
+    cur.execute(f"DROP TABLE IF EXISTS {_t('race_top_level')}")
+    cur.execute(f"""CREATE TABLE {_t('race_top_level')} (
                        race        bigint NOT NULL PRIMARY KEY,
                        top_level   text   NOT NULL,
                        n_levels    int    NOT NULL,
@@ -678,7 +747,7 @@ def raceTopLevels(cur, threshold=_THRESHOLD):
     #   rank is one grouped scan with no window to sort, and the rank maps
     #   back to a name at the end. Tested against a real Postgres.
     cur.execute(f"""
-        INSERT INTO race_top_level (race, top_level, n_levels, known_frac, n_teams)
+        INSERT INTO {_t('race_top_level')} (race, top_level, n_levels, known_frac, n_teams)
         SELECT race,
                CASE top_rank
                    WHEN 0 THEN 'elem' WHEN 1 THEN 'ms'   WHEN 2 THEN 'hs'
@@ -699,13 +768,13 @@ def raceTopLevels(cur, threshold=_THRESHOLD):
         WHERE top_rank IS NOT NULL
     """)
     n = cur.rowcount
-    cur.execute("CREATE INDEX ON race_top_level (top_level)")
+    cur.execute(f"CREATE INDEX ON {_t('race_top_level')} (top_level)")
     cur.execute("SELECT count(DISTINCT race) FROM tmp_race_team")
     total = cur.fetchone()[0]
     print(f"    race ceilings: {n:,} of {total:,} races have one "
           f"({100.0 * n / max(total, 1):.1f}%)")
-    cur.execute("""SELECT top_level, count(*), sum((n_levels > 1)::int)
-                   FROM race_top_level GROUP BY 1
+    cur.execute(f"""SELECT top_level, count(*), sum((n_levels > 1)::int)
+                   FROM {_t('race_top_level')} GROUP BY 1
                    ORDER BY 2 DESC""")
     print(f"      {'level':<9} {'races':>10} {'of which mixed':>16}")
     for lvl, cnt, mixed in cur.fetchall():
@@ -775,14 +844,14 @@ def report(cur):
 
 
 def write(cur):
-    cur.execute("DROP TABLE IF EXISTS school_level_graph")
-    cur.execute("""CREATE TABLE school_level_graph (
+    cur.execute(f"DROP TABLE IF EXISTS {_t('school_level_graph')}")
+    cur.execute(f"""CREATE TABLE {_t('school_level_graph')} (
                        school text NOT NULL PRIMARY KEY,
                        level  text NOT NULL,
                        round  int  NOT NULL)""")
-    cur.execute("INSERT INTO school_level_graph SELECT * FROM tmp_level")
+    cur.execute(f"INSERT INTO {_t('school_level_graph')} SELECT * FROM tmp_level")
     n = cur.rowcount
-    cur.execute("CREATE INDEX ON school_level_graph (level)")
+    cur.execute(f"CREATE INDEX ON {_t('school_level_graph')} (level)")
     return n
 
 
@@ -962,12 +1031,21 @@ def main(live=False):
             if not seed(cur):
                 print("[level] EMPTY SEED -- edit _SEEDS. Nothing to propagate.")
                 return
+            # ★ LET GO OF results BEFORE THE HOURS OF PROPAGATION (2026-10-25).
+            #   The graph and the seed are the only reads of the live tables;
+            #   everything after works on the session's temp tables, which a
+            #   commit keeps. Held to the end, this transaction's lock on
+            #   results stalled any swap of results for hours (the backfill
+            #   replaces it), now that the graph runs beside the pipeline.
+            #   The three writes still commit together, at the end.
+            conn.commit()
 
             print("\n[level] propagating...")
             propagate(cur)
 
             report(cur)
             contested(cur)
+            conn.commit()                 # contested's reads, released too
 
             if live:
                 n = write(cur)
@@ -979,7 +1057,7 @@ def main(live=False):
                 #   tmp_level, so the two can never disagree about a race.
                 raceTopLevels(cur)
                 conn.commit()
-                print(f"\n[level] wrote school_level_graph ({n:,} rows)")
+                print(f"\n[level] wrote {_t('school_level_graph')} ({n:,} rows)")
             else:
                 conn.rollback()
                 print("\n[level] DRY RUN -- pass --write to save")
@@ -1003,6 +1081,11 @@ def _parser():
     ap.add_argument("--write", action="store_true",
                     help="commit school_level_graph, race_level and "
                          "race_top_level (without it, a dry run)")
+    ap.add_argument("--stage", action="store_true",
+                    help="build the three tables as <name>_next for the next run to "
+                         "swap in (the pipeline's background step)")
+    ap.add_argument("--swap-staged", action="store_true",
+                    help="swap a complete staged set in (seconds; the run's first step)")
     ap.add_argument("--find", action="store_true",
                     help="report candidate seed races instead of building")
     ap.add_argument("--level", default=None,
@@ -1027,5 +1110,12 @@ if __name__ == "__main__":
             conn.commit()            # keep the index for the next run
             with conn.cursor() as cur:
                 find(cur, level=_args.level)
+    elif _args.swap_staged:
+        from database import getConn
+        with getConn() as conn:
+            swapStaged(conn)
+    elif _args.stage:
+        _SUFFIX["s"] = "_next"
+        main(live=True)
     else:
         main(live=_args.write)

@@ -77,8 +77,9 @@ def test_network_failure_is_none_not_an_error(monkeypatch):
 def test_words():
     row = {"temp_c": 24.0, "apparent_temp_c": 27.0, "wind_speed_kmh": 14.0,
            "precipitation_mm": 2.5, "cloud_cover": 90.0}
-    assert fc.describe(row) == "24°C, feels 27, wind 14 km/h, 2.5 mm rain, overcast"
-    assert fc.describe({"temp_c": 12.0, "cloud_cover": 10.0}) == "12°C, sunny"
+    # °F and mph, as the race pages (UX review, 2026-10-24)
+    assert fc.describe(row) == "75°F, feels 81, wind 9 mph, 0.10 in rain, overcast"
+    assert fc.describe({"temp_c": 12.0, "cloud_cover": 10.0}) == "54°F, sunny"
     assert fc.describe(None) is None
 
 

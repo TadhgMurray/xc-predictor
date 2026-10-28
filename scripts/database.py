@@ -111,11 +111,17 @@ _QUIET_STRICT = {
 #   which picks nested-loop index probes -- a dozen per row over 61.6M rows
 #   in the ranking build. Every pipeline cursor reads its query to the end,
 #   so plan for the end (panels.py found and fixed this for itself).
+# ★ FOUR WORKERS, NOT TWO (2026-10-25, owner: "you can multithread/core as
+#   necessary"). The box has 24 cores and the run was 10 hours of
+#   single-worker scans; four per query and four per index build, with the
+#   server's own ceiling raised to match (max_worker_processes 24,
+#   max_parallel_workers 16; deploy/server_setup.sh). Under the server's old
+#   default of 8 a query simply gets fewer workers -- never an error.
 _QUIET_SETTINGS = {
     "work_mem": "512MB",
     "maintenance_work_mem": "2GB",
-    "max_parallel_workers_per_gather": "2",
-    "max_parallel_maintenance_workers": "2",
+    "max_parallel_workers_per_gather": "4",
+    "max_parallel_maintenance_workers": "4",
     "synchronous_commit": "off",
     "cursor_tuple_fraction": "1.0",
 }
@@ -145,12 +151,12 @@ def dbSetting(name, default):
 
 def dbJobs(default, quiet=1):
     """How many database-heavy workers a builder may run side by side:
-    one in strict mode, up to two in the balanced default."""
+    one in strict mode, up to four in the balanced default (2026-10-25)."""
     if not dbQuiet():
         return default
     if os.environ.get("XCP_DB_QUIET") == "strict":
         return quiet
-    return max(quiet, min(default, 2))
+    return max(quiet, min(default, 4))
 
 
 _TUNED = {}          # id(conn) -> conn, connections already capped
@@ -1198,19 +1204,47 @@ def _createRecoveryTable(cursor):
 # ! ONLY NEW AND RE-SCRAPED ROWS GET A VALUE. Additive on purpose: NULL for
 #   everything already stored, and result_status.kind() falls back to the
 #   sentinel for those, which is all they have.
+# ★ ASK FIRST, ALTER ONLY WHEN MISSING (2026-10-26, a site outage). These
+#   two ran ADD COLUMN IF NOT EXISTS on results and results_tf at every
+#   scraper start. IF NOT EXISTS still takes an ACCESS EXCLUSIVE lock when
+#   the column is there: the nightly's ALTER queued behind an 18-hour reader
+#   and every page touching results queued behind the ALTER -- six hours of
+#   504s. The same lesson ensureCoreColumns learned on 2026-09-17 (above):
+#   a catalogue read takes no lock, and a real ALTER waits _LOCK_TIMEOUT at
+#   most instead of for ever.
+def _hasColumn(cursor, table, column):
+    cursor.execute("""SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = %s
+                        AND column_name = %s""", (table, column))
+    return cursor.fetchone() is not None
+
+
+def _hasIndex(cursor, name):
+    cursor.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+    return cursor.fetchone()[0] is not None
+
+
+def _addColumnIfMissing(cursor, table, column, spec):
+    if _hasColumn(cursor, table, column):
+        return False
+    cursor.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+    cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {spec}")
+    return True
+
+
 def _migrateResultsAddStatus(cursor):
     for table in ("results", "results_tf"):
-        cursor.execute(
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS status TEXT")
+        _addColumnIfMissing(cursor, table, "status", "TEXT")
 
 
 def _migrateResultsAddTeamSlug(cursor):
     for table in ("results", "results_tf"):
-        cursor.execute(
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS team_slug TEXT")
-        cursor.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{table}_team_slug "
-            f"ON {table} (team_slug) WHERE team_slug IS NOT NULL")
+        _addColumnIfMissing(cursor, table, "team_slug", "TEXT")
+        if not _hasIndex(cursor, f"idx_{table}_team_slug"):
+            cursor.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+            cursor.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{table}_team_slug "
+                f"ON {table} (team_slug) WHERE team_slug IS NOT NULL")
 
 
 # _createMeetsTFMetaTable
@@ -2151,7 +2185,7 @@ def _ensureResultsStatus(conn, table="results"):
     if table in _RESULTS_STATUS_READY:
         return
     cur = conn.cursor()
-    cur.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS status TEXT")
+    _addColumnIfMissing(cur, table, "status", "TEXT")      # asks first (above)
     _RESULTS_STATUS_READY.add(table)
 
 

@@ -49,7 +49,7 @@
       {% if rc.venue %} · <a href="/course/{{ rc.venue|urlencode }}">{{ rc.venue }}</a>{% endif %}
       {% if rc.state %} · {{ rc.state }}{% endif %}
       · <a href="/meet/xc/{{ rc.meet_id }}">Results</a>
-      · <button type="button" class="share-btn rc-share-link" data-share-title="{{ rc.name }}: how our forecast did"
+      <button type="button" class="share-btn rc-share-link" data-share-title="{{ rc.name }}: how our forecast did"
             data-share-url="{{ site_origin }}{{ meta_path }}" title="Share this recap; the card is the meet's numbers">
       <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg>
       <span>Share</span></button>

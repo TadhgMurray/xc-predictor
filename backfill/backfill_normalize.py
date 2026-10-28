@@ -847,11 +847,11 @@ def _rowGender(genders, athlete_id, person_id):
 #   for a dict consulted once per row. One packed int keeps it small, and
 #   10000 sits safely above any academic year.
 #
-# ! ONLY `unanimous` ROWS CARRY A LEVEL -- season_level.py stores NULL for a
-#   season whose races disagree. That is the whole safety mechanism: a high
-#   schooler with one pro-meet appearance has a split season, gets NULL here,
-#   and keeps their grade. The WHERE clause below IS the unanimity gate,
-#   enforced by the data rather than re-implemented in this file.
+# ! A SPLIT SEASON BELOW season_level's SHARE BAR STORES NULL. That is the
+#   safety mechanism: a high schooler with one pro-meet appearance has a
+#   split season, gets NULL, and keeps their grade. Since 2026-10-26 (P7)
+#   this reads every level season_level wrote, as the engine does -- not
+#   only the unanimous ones.
 def _loadGradeFix(cur):
     """{person_id*10000 + academic_year: (grade, level)} from grade_fix.
 
@@ -937,9 +937,16 @@ def _loadSeasonLevels(cur):
     #   a verdict, else the combined one", and two dicts express that as one
     #   `or` at the call site. A single dict keyed on sport would need the
     #   caller to try twice and get the fallback order right every time.
+    # ★ THE ENGINE'S SET, NOT ONLY THE UNANIMOUS ONES (pooling review P7,
+    #   2026-10-26). season_level writes a level for a mixed season whose
+    #   highest level clears its share bar, and the engine pools on every
+    #   level it finds (speed_ratings.loadSeasonLevels). Reading only the
+    #   unanimous ones here normalised a mixed season on one pool's curve and
+    #   the engine then rated it in another. The share bar is the gate now,
+    #   in one place, for both.
     cur.execute("""SELECT person_id, ay, sport, level
                    FROM   athlete_season_level
-                   WHERE  level IS NOT NULL AND unanimous""")
+                   WHERE  level IS NOT NULL""")
     by_sport, combined = {}, {}
     for pid, ay, sport, lvl in cur:
         if pid is None or ay is None:
@@ -1136,13 +1143,63 @@ _UPLOAD_DIV_GENDER = {}
 
 
 def _loadUploadDivGenders(cur):
-    cur.execute("SELECT div_id, division FROM meets WHERE source = 'upload'")
+    # ! AND A TIMER MEET'S (sources/promote.py, 2026-10-25): the same shape,
+    #   negative div ids of its own range
+    cur.execute("SELECT div_id, division FROM meets WHERE source IN ('upload', 'timer')")
     _UPLOAD_DIV_GENDER.clear()
     for div_id, division in cur:
         g = _genderFromDivName(division)
         if g is not None:
             _UPLOAD_DIV_GENDER[div_id] = g
     return len(_UPLOAD_DIV_GENDER)
+
+
+# ★ distance_pin, THE ONE WRITER OF DISTANCE FIXES (engine/wrong_distance.py,
+#   2026-10-26). Loaded once per run; its rows outrank every dict in
+#   corrections.py. Keys are (source, meet_id, div_id) -- the source is in the
+#   key, so a tfrrs (meet, ordinal) cannot collide with an anet (meet, div).
+#     _DPIN_DIV   {key: ('pin', metres) | ('veto', None)}  the whole division
+#     _DPIN_PART  {key: [(attr, value, metres)]}  one side of a combined
+#                 division: attr 'g' (the pool's sex, 'm'/'f') or 'lvl'
+#                 (the pool's level, 'ms'/'hs'/...), applied once the row's
+#                 pool is known, and only ever downward
+_DPIN_DIV = {}
+_DPIN_PART = {}
+
+
+def _loadDistancePins(cur):
+    _DPIN_DIV.clear()
+    _DPIN_PART.clear()
+    cur.execute("SELECT to_regclass('public.distance_pin')")
+    if cur.fetchone()[0] is None:
+        return 0
+    cur.execute("""SELECT source, meet_id, div_id, part, action, distance FROM distance_pin
+                   WHERE status IN ('active', 'held') AND action IN ('pin', 'veto')""")
+    n = 0
+    for src, m, d, part, action, dist in cur.fetchall():
+        key = (src, int(m), int(d))
+        if not part:
+            _DPIN_DIV[key] = (action, float(dist) if dist else None)
+        elif action == "pin" and dist and ":" in part:
+            attr, val = part.split(":", 1)
+            _DPIN_PART.setdefault(key, []).append((attr, val, float(dist)))
+        n += 1
+    return n
+
+
+def _partPin(key, pool, distance):
+    """The distance a combined division's pinned side ran, for a row of this
+    pool; `distance` when no part applies. Downward only. Pure."""
+    parts = _DPIN_PART.get(key)
+    if not parts or not pool or distance is None:
+        return distance
+    p = str(pool).split("|", 1)[0]
+    lvl, sex = p.split("_", 1)[0], p.rsplit("_", 1)[-1]
+    for attr, val, metres in parts:
+        if ((attr == "g" and val == sex) or (attr == "lvl" and val == lvl)) \
+                and metres < float(distance):
+            return metres
+    return distance
 
 
 # ★ ONE PATTERN FOR EVERY WHEELCHAIR SEAM. The engine's _xcQuery carries the
@@ -1877,6 +1934,12 @@ def _resolveDistanceGender(cfg, row, meet_distances, tfrrs_blob):
     # ★ data_checks' tfrrs pins (2026-10-23): their own dict, tfrrs rows only
     if cfg.sport == "XC" and row[_SRC] == "tfrrs" and key in _TFRRS_DISTANCE_PINS:
         override = _TFRRS_DISTANCE_PINS[key]
+    # ★ distance_pin outranks them all (see _loadDistancePins): a pin is the
+    #   distance, a veto puts the listed one back
+    if cfg.sport == "XC" and _DPIN_DIV:
+        dp = _DPIN_DIV.get((row[_SRC], row[_MEET], row[_DIV]))
+        if dp is not None:
+            override = dp[1] if dp[0] == "pin" else None
 
     # The stored resolution runs even when an override exists, because the
     # override is now judged AGAINST it -- see the clamp below.
@@ -1921,7 +1984,7 @@ def _resolveDistanceGender(cfg, row, meet_distances, tfrrs_blob):
 # Detail   : tfrrs only. anet rows carry gender on the athlete, so a title guess
 #           there would ADD noise rather than remove it.
 def _blobGender(row, tfrrs_blob):
-    if row[_SRC] == "upload":
+    if row[_SRC] in ("upload", "timer"):
         return _UPLOAD_DIV_GENDER.get(row[_DIV])
     if row[_SRC] != "tfrrs":
         return None
@@ -2282,6 +2345,15 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         if pool is None:                           # grade+gender+source -> no pool
             trace = _makeTrace(row, "unknown_pool", distance)
             return row[_ID], None, _SkipReason.UNKNOWN_POOL, trace
+        # 3-part) ONE SIDE OF A COMBINED DIVISION (distance_pin part rows):
+        #    the girls' 4000 inside the boys' 5000 -- the row's own pool says
+        #    which side it is on
+        if _DPIN_PART:
+            pinned = _partPin((row[_SRC], row[_MEET], row[_DIV]), pool, distance)
+            if pinned != distance:
+                distance = pinned
+                pace_insane = (not _paceSane(row[_TIME], distance)
+                               or not _paceNotAbsurd(row[_TIME], distance))
 
         # 3-borrow) A BORROWED DISTANCE IS THE COLLEGE RACE'S (owner,
         #    2026-10-24: Dan Conway Classic 2021, an hs_m 16:34 with no
@@ -3428,6 +3500,9 @@ def _buildLookups(read_conn, cfg):
         meet_distances = _loadMeetDistances(cur) if cfg.sport == "XC" else {}
         if cfg.sport == "XC":
             _loadUploadDivGenders(cur)
+            n_pins = _loadDistancePins(cur)
+            print(f"  distance_pin: {n_pins:,} rows ({len(_DPIN_DIV):,} divisions, "
+                  f"{len(_DPIN_PART):,} combined divisions' sides)")
         tfrrs_distances = (_loadTfrrsBlobDistances(cur)
                            if cfg.sport == "XC" else {})
         # Canon dedup: the matched cross-source twins (drop the tfrrs copy) and

@@ -54,9 +54,17 @@ def isMaintenance(now=None):
 
 
 def heartbeat():
-    """Refresh the flag's mtime so a long but live hold does not expire."""
+    """Refresh the flag's mtime, and this process's holds', so a long but
+    live hold does not expire."""
     try:
         os.utime(FLAG, None)
+    except OSError:
+        pass
+    pre = f"{os.getpid()}-"
+    try:
+        for nm in os.listdir(FLAG + ".d"):
+            if nm.startswith(pre):
+                os.utime(os.path.join(FLAG + ".d", nm), None)
     except OSError:
         pass
 
@@ -68,30 +76,123 @@ def clearStale(now=None):
     age = flagAge(now)
     if age is None or age < MAX_AGE_S:
         return None
-    try:
-        os.remove(FLAG)
-    except OSError:
-        return None
+    with _flagLock():
+        if liveHolders(now):                          # a live hold refreshed late
+            return None
+        try:
+            os.remove(FLAG)
+        except OSError:
+            return None
     return age
+
+
+# ★ ONE FLAG, SEVERAL HOLDERS (2026-10-25). Two swaps in two steps that run
+#   side by side can both fall back to the flag; with one file and no count,
+#   the first to finish removed it while the second was still swapping, and
+#   the site served pages into a locked table. Each hold now leaves its own
+#   file in FLAG.d/ (pid and a counter), and the flag comes off only when the
+#   last live holder leaves. A holder whose process is gone (SIGKILL) or that
+#   is older than MAX_AGE_S does not count. The site still reads FLAG alone.
+# ! THE DECISIONS UNDER A FILE LOCK (fcntl, FLAG.lock): "am I the last?" and
+#   "raise it" must not interleave between processes, or one can remove the
+#   flag between the other's check and its write.
+_HOLD = {"n": 0}
+
+
+def _holdDir():
+    return FLAG + ".d"
+
+
+@contextlib.contextmanager
+def _flagLock():
+    try:
+        import fcntl
+        fh = open(FLAG + ".lock", "a")
+    except (ImportError, OSError):                   # no lock: today's behaviour
+        yield
+        return
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        finally:
+            fh.close()
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:                                  # exists, not ours to signal
+        return True
+    return True
+
+
+def liveHolders(now=None):
+    """The hold files of processes still running and younger than MAX_AGE_S;
+    removes the others."""
+    now = time.time() if now is None else now
+    out = []
+    try:
+        names = os.listdir(_holdDir())
+    except OSError:
+        return out
+    for nm in names:
+        path = os.path.join(_holdDir(), nm)
+        try:
+            pid = int(nm.split("-", 1)[0])
+            age = now - os.stat(path).st_mtime
+        except (ValueError, OSError):
+            continue
+        if _alive(pid) and age < MAX_AGE_S:
+            out.append(nm)
+        else:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return out
 
 
 @contextlib.contextmanager
 def siteMaintenance(why=""):
     """The site is in maintenance for the block: the flag exists on entry
-    and is gone on exit, however the block ends."""
-    try:
-        with open(FLAG, "w") as f:
-            f.write(why or "table swap")
-        os.chmod(FLAG, 0o644)
-    except OSError as exc:                            # the site just stays up
-        print(f"[maintenance] could not drop {FLAG}: {exc}", flush=True)
+    and, once no other live holder needs it, is gone on exit, however the
+    block ends."""
+    _HOLD["n"] += 1
+    hold = os.path.join(_holdDir(), f"{os.getpid()}-{_HOLD['n']}")
+    with _flagLock():
+        try:
+            os.makedirs(_holdDir(), exist_ok=True)
+            with open(hold, "w") as f:
+                f.write(why or "table swap")
+        except OSError as exc:
+            print(f"[maintenance] could not register a hold in {_holdDir()}: {exc}",
+                  flush=True)
+            hold = None
+        try:
+            with open(FLAG, "w") as f:
+                f.write(why or "table swap")
+            os.chmod(FLAG, 0o644)
+        except OSError as exc:                        # the site just stays up
+            print(f"[maintenance] could not drop {FLAG}: {exc}", flush=True)
     try:
         yield
     finally:
-        try:
-            os.remove(FLAG)
-        except OSError:
-            pass
+        with _flagLock():
+            if hold is not None:
+                try:
+                    os.remove(hold)
+                except OSError:
+                    pass
+            if not liveHolders():
+                try:
+                    os.remove(FLAG)
+                except OSError:
+                    pass
 
 
 # ★★ QUIET FIRST, FLAG LAST (sweep 2026-10-10, D5/D6). Every swap used to

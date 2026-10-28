@@ -50,7 +50,10 @@ export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
 #    row walks run four at a time again and the course pages in three.
 export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"
 XCP_STREAMS="${XCP_STREAMS:-4}"
-XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-3}"
+# ★ SIX COURSE SHARDS ON THE 24-CORE BOX (2026-10-25: 12b was 1,541 s at
+#   three, and the shards wait on the database, not the CPU). Each holds one
+#   pooled connection until it needs more (XCP_DB_MIN_CONN=1 at 12b).
+XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-6}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
@@ -260,6 +263,30 @@ summarise() {
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
 _ALWAYS="00_integrity 00b_run_snapshot 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
+# ⚠ A SKIPPED STEP SAYS WHAT IT COSTS. --skip is explicit, so it is
+#   honoured -- but the one step whose omission is invisible until the
+#   boards are wrong does not get to go quietly.
+_skipCost() {
+  if [ "$1" = 04b_wheelchair ]; then
+    echo "  ⚠⚠ $1 IS ON THE --skip LIST. wheelchair_person will not be" \
+         "rebuilt, so chair athletes who arrived since it was last built" \
+         "will be rated and ranked. run_checklist cannot catch this: it" \
+         "consults the same stale list. Drop it from --skip."
+  fi
+}
+
+# beforeFrom NAME: true when NAME is before --from and not on _ALWAYS.
+# ★ ONE RULE FOR EVERY KIND OF STEP (complexity review, 2026-10-24): only
+#   step() read _ALWAYS, and 05b_anchor_repair runs through steps2, so
+#   `--from 7` -- the standard recipe -- still skipped the repair the list
+#   exists to keep (run20). steps2, stepsN, shards and bgstep ask here now,
+#   and --skip is honoured per name, not only for a batch's first.
+beforeFrom() {
+  case " $_ALWAYS " in *" $1 "*) return 1 ;; esac
+  _n=$(echo "$1" | sed 's/^0*\([0-9]*\).*/\1/')
+  [ "${_n:-0}" -lt "$FROM" ]
+}
+
 step() {
   name="$1"; shift
   num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
@@ -270,15 +297,7 @@ step() {
   fi
   if skipped "$name"; then
     echo "  $name skipped (--skip)"
-    # ⚠ AND SAY WHAT IT COSTS. --skip is explicit, so it is honoured -- but
-    #   the one step whose omission is invisible until the boards are wrong
-    #   does not get to go quietly.
-    if [ "$name" = 04b_wheelchair ]; then
-      echo "  ⚠⚠ $name IS ON THE --skip LIST. wheelchair_person will not be" \
-           "rebuilt, so chair athletes who arrived since it was last built" \
-           "will be rated and ranked. run_checklist cannot catch this: it" \
-           "consults the same stale list. Drop it from --skip."
-    fi
+    _skipCost "$name"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -328,15 +347,15 @@ _live() (
 # sequential for no reason).
 steps2() {
   nameA="$1"; cmdA="$2"; nameB="$3"; cmdB="$4"
-  num=$(echo "$nameA" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
-    echo "  $nameA + $nameB skipped (--from $FROM)"
-    return 0
-  fi
-  if skipped "$nameA"; then
-    echo "  $nameA + $nameB skipped (--skip)"
-    return 0
-  fi
+  runA=1; runB=1
+  if beforeFrom "$nameA"; then echo "  $nameA skipped (--from $FROM)"; runA=0
+  elif skipped "$nameA"; then echo "  $nameA skipped (--skip)"; runA=0; fi
+  if beforeFrom "$nameB"; then echo "  $nameB skipped (--from $FROM)"; runB=0
+  elif skipped "$nameB"; then echo "  $nameB skipped (--skip)"; runB=0; fi
+  if [ "$runA" -eq 0 ] && [ "$runB" -eq 0 ]; then return 0; fi
+  # one of the pair left: it runs alone, as a step
+  if [ "$runB" -eq 0 ]; then step "$nameA" sh -c "$cmdA"; return 0; fi
+  if [ "$runA" -eq 0 ]; then step "$nameB" sh -c "$cmdB"; return 0; fi
   if [ "$DRY" -eq 1 ]; then
     echo "  $nameA : $cmdA   (with $nameB : $cmdB)"
     return 0
@@ -366,19 +385,26 @@ steps2() {
 }
 
 # stepsN <nameA> <cmdA> <nameB> <cmdB> ...  -- any number of steps in
-# parallel, one log each, one summary line each. Same --from and --dry-run
-# rules as steps2; the --from test uses the FIRST name's number.
+# parallel, one log each, one summary line each. Same --dry-run rule as
+# steps2.
+# ★ EACH NAME ANSWERS --from, --skip AND _ALWAYS FOR ITSELF (2026-10-25).
+#   It used to test the FIRST name only, which was right while every group
+#   was one step's streams. The people verdicts and the board waves mix
+#   step numbers and an _ALWAYS step: `--from 11` must still build the
+#   teams, `--from 7` must still rebuild wheelchair_person, and `--skip
+#   04d_gender` must skip gender and nothing else.
 stepsN() {
+  # each pair judged on its own name: --from (with _ALWAYS) and --skip
+  _keep=()
+  while [ $# -ge 2 ]; do
+    if beforeFrom "$1"; then echo "  $1 skipped (--from $FROM)"
+    elif skipped "$1"; then echo "  $1 skipped (--skip)"; _skipCost "$1"
+    else _keep+=("$1" "$2"); fi
+    shift 2
+  done
+  [ "${#_keep[@]}" -eq 0 ] && return 0
+  set -- "${_keep[@]}"
   first="$1"
-  num=$(echo "$first" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
-    echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--from $FROM)"
-    return 0
-  fi
-  if skipped "$first"; then
-    echo "  $first (+ $(( $# / 2 - 1 )) more) skipped (--skip)"
-    return 0
-  fi
   if [ "$DRY" -eq 1 ]; then
     while [ $# -ge 2 ]; do echo "  $1 : $2"; shift 2; done
     return 0
@@ -418,9 +444,12 @@ stepsN() {
 # --dry-run rules as step.
 shards() {
   name="$1"; n="$2"; shift 2
-  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ] && [ "$name" != "02_drop_old" ]; then
+  if beforeFrom "$name"; then
     echo "  $name skipped (--from $FROM)"
+    return 0
+  fi
+  if skipped "$name"; then
+    echo "  $name skipped (--skip)"
     return 0
   fi
   if [ "$DRY" -eq 1 ]; then
@@ -466,8 +495,7 @@ shards() {
 BG_PIDS=(); BG_NAMES=(); BG_T0=()
 bgstep() {
   name="$1"; shift
-  num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
-  if [ "${num:-0}" -lt "$FROM" ]; then
+  if beforeFrom "$name"; then
     echo "  $name skipped (--from $FROM)"
     return 0
   fi
@@ -552,6 +580,13 @@ step 00_integrity     "$PY" -u scripts/integrity_check.py
 #   season's athlete ratings and every XC course number, kept so 17c0 can
 #   tell readers what the recompute moved (What's new). On every --from.
 step 00b_run_snapshot "$PY" -u scripts/run_changes.py --snapshot || true
+# ★ LAST RUN'S LEVEL GRAPH GOES LIVE HERE, BEFORE ANYTHING READS IT
+#   (2026-10-25: "the tables nothing builds"). school_level_graph,
+#   race_level and race_top_level were built by hand, now and then; 01c
+#   rebuilds them every run in the background as <name>_next, and this
+#   swaps a complete set in, all three in one transaction, in seconds. A
+#   run with nothing staged changes nothing.
+step 00c_level_swap   "$PY" -u engine/level_graph.py --swap-staged
 if failed 00_integrity; then
   echo "" | tee -a "$SUMMARY"
   echo "FATAL: 00_integrity found damaged pages (or could not check). Nothing" | tee -a "$SUMMARY"
@@ -560,6 +595,14 @@ if failed 00_integrity; then
 fi
 step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
 step 01_season_year   "$PY" -u engine/season_year.py
+# ★ tfrrs XC MEETS PLACED BEFORE THE WEATHER GRID READS THEIR PLACE
+#   (2026-10-25). 04e fetches weather for the meets that have gps, and
+#   tfrrs meets only get gps from 06a, which ran after it: a meet 06a placed
+#   tonight got no weather until the next full run. The same script runs
+#   here first (tiers 1-2 on the links that already exist; idempotent,
+#   seconds to minutes) and again at 06a, which still catches the meets the
+#   linking steps between make placeable.
+step 01b_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --out "$LOGDIR"
 # ★ THE WEATHER GRID IN THE BACKGROUND FROM HERE (2026-10-18, 23 min off
 #   the critical path). It reads the meets' dates and venues (corrected by
 #   the two steps above) and writes only the weather grid, which nothing
@@ -567,9 +610,20 @@ step 01_season_year   "$PY" -u engine/season_year.py
 #   on why it exists sit where it used to run, above 04f.
 if [ -x "$WXPY" ]; then
   bgstep 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+  # ★ AND THE MONTHS THAT STORE HAS NOT REACHED (2026-10-25: the grid
+  #   stopped at 2026-06-30 -- the free store runs 3-4 months behind). The
+  #   CDS's ERA5T, ~5 days behind, for the days after the store's last one;
+  #   no CDSAPI_KEY in the env file and it says so and exits 0.
+  bgstep 04e2_weather_recent "$WXPY" -u backfill/era5_cds_recent.py
 else
   echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
 fi
+# ★ THE LEVEL GRAPH, REBUILT EVERY RUN, BESIDE IT (2026-10-25). About two and
+#   a half hours of graph propagation over the race/team graph, written as
+#   <name>_next for the NEXT run's 00c to swap in: this run reads one
+#   version throughout. It commits after reading results, so it holds no
+#   lock on the live tables while it propagates. Collected at the end (bgwait).
+bgstep 01c_level_graph "$PY" -u engine/level_graph.py --stage
 # ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
 #   Twins, tfrrs links and mints all change person ids, and the old id's page
 #   404s. 13c0 compares against this and 301s each vanished id to its
@@ -585,6 +639,12 @@ step 02_drop_old      "$PY" -u engine/drop_old.py
 #   was called by nothing, which is why the ids kept appearing.
 step 02b_tf_venues    "$PY" -u scripts/backfill_tf_venues.py --write
 step 03_pro_flag      "$PY" -u engine/pro_flag.py --skip-dist --write
+# ★ THE TEAM POOLS, EVERY RUN (pooling review P2, 2026-10-26). team_pool
+#   (a club with a pro is pro, a team of under 15 athletes ever is pro) was
+#   built only by overnight_fit_pool_solve.sh, so the pack and the fill read
+#   a table as old as that run, keyed on team ids and pros since changed.
+#   After 03 because it reads pro_athlete_season; the pack reads it at 08.
+step 03a_team_pool    "$PY" -u engine/build_team_pool.py --write
 # ⚠ BEFORE grade_sanity: it decides whether "11-12" is grades or ages, and
 #   every rule downstream reads that answer.
 step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
@@ -639,7 +699,6 @@ step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 #   29k rows that had drifted back onto merged-away ids -- an anet row is seeded
 #   person_id = athlete_id, and nothing re-applied the merges between approvals)
 step 04a3b_merges     "$PY" -u scripts/link_profile_school.py --reapply
-step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 
 # ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,
 #   2026-09-01: "somehow wheelchair athletes snuck back into the engine").
@@ -649,7 +708,6 @@ step 04_grade_sanity  "$PY" -u engine/grade_sanity.py --write
 #   the table. Nothing else creates it, so every run since it was written has
 #   rated chair athletes. It belongs BEFORE the pack: it is a fact about
 #   people that the pack reads.
-step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
 # issue 94: one physical race stored twice is flagged once, by result_id,
 # and every reader (engine, pricer, boards, page) anti-joins result_twin
 # ★ AND A HIGH SCHOOL RACE ON A COLLEGE SEASON IS FLAGGED HERE TOO (the
@@ -660,10 +718,27 @@ step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
 #   because the pack is what must not see them. `--from 7` keeps the last
 #   full run's flags; `engine/level_conflict.py --write` refreshes just
 #   these ones when a run starts past this step.
-step 04c_twins        "$PY" -u engine/twin_flag.py --write
 # gender by the divisions raced under; a person who raced both ways enough
 # is two athletes to the pack and the boards (issue 164)
-step 04d_gender       "$PY" -u engine/person_gender.py --write
+# ★ THREE PEOPLE VERDICTS SIDE BY SIDE (2026-10-25, the step times: 4,292 s
+#   + the two small ones, in a row). grade_sanity, wheelchair and gender
+#   read the person ids 04a3b leaves and write disjoint tables (grade_fix /
+#   grade_untrusted, wheelchair_*, person_gender; docs/PIPELINE-
+#   DEPENDENCIES.md). Twins stays AFTER grade_sanity: grade_sanity reads the
+#   PREVIOUS run's result_twin on purpose and 04c swaps it. stepsN asks
+#   --from per name, so 04b keeps its run-on-every---from rule.
+stepsN 04_grade_sanity "$PY -u engine/grade_sanity.py --write" \
+       04b_wheelchair "$PY -u engine/wheelchair_flag.py --write" \
+       04d_gender "$PY -u engine/person_gender.py --write"
+step 04c_twins        "$PY" -u engine/twin_flag.py --write
+# ★ THE SEASON LEVELS, REBUILT EVERY RUN (2026-10-25: "the tables nothing
+#   builds"). college_first_season / upperclass_first_season (college_flag)
+#   and athlete_season_level (season_level, from race_level and tonight's
+#   grade_fix) were built by hand; the backfill, the pack and the boards
+#   read them. After the person steps (both read person ids and dates) and
+#   04_grade_sanity, in the background while 04g runs (which reads neither),
+#   and collected before 05, their first reader.
+bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
 # ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
 #   2025-12-31 because nothing in the pipeline ever extended it, so the
 #   whole 2026 season was rated with no weather. The fetcher is resumable:
@@ -679,6 +754,7 @@ step 04d_gender       "$PY" -u engine/person_gender.py --write
 # (started in the background after 01_season_year; collected here, before
 #  the refit and the backfill read the grid)
 bgjoin 04e_weather_grid
+bgjoin 04e2_weather_recent
 # ! THE REFIT IS OPT-IN. fit_weather_correction is the heavy stage (hours)
 #   and its answer only changes when the grid's numbers do -- after
 #   scripts/recompute_apparent_temp.py, or a new season's worth of rows.
@@ -768,6 +844,13 @@ if [ "${XCP_AUDIT_OVERRIDES:-1}" != "0" ] && [ -f engine/corrections.py ]; then
   #   one person on both genders -- data_issue, ranked by impact
   step 04g1_data_checks "$PY" -u engine/data_checks.py --write
   step 04g_audit_overrides "$PY" -u engine/audit_overrides.py --rebuild --write
+  # ★ THE ONE WRITER OF DISTANCE FIXES (engine/wrong_distance.py, 2026-10-26;
+  #   docs/WRONG-DISTANCE-2026-10-25.md). Raw times against each runner's own
+  #   season, re-judged every run, into distance_pin; dump_overrides reads it
+  #   first. Its circuit breaker writes nothing past 300 adds or retires in
+  #   one run (the step still succeeds and says so in its log).
+  step 04g1b_wrong_distance "$PY" -u engine/wrong_distance.py --write --top 20 \
+       --csv "$LOGDIR/wrong_distance.csv"
   if ! failed 04g_audit_overrides; then
     step 04g2_dump_overrides "$PY" -u engine/dump_overrides.py
   fi
@@ -775,6 +858,7 @@ else
   echo "  04g_audit_overrides skipped (XCP_AUDIT_OVERRIDES=0 or no engine/corrections.py)" | tee -a "$SUMMARY"
 fi
 
+bgjoin 04h_season_levels
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else
@@ -1405,7 +1489,11 @@ if failed 08_golive; then
   fi
 fi
 
-step 09b_fill         "$PY" -u engine/fill_ratings.py
+# ★ THE FILL BESIDE THE SCHOOL NAMES (2026-10-25): 09b updates speed_rating
+#   rows, which 09c does not read; 09c reads school, person and team columns
+#   and writes only school_name_alias, which 09b does not read. 09d follows both.
+stepsN 09b_fill "$PY -u engine/fill_ratings.py" \
+       09c_school_names "$PY -u scripts/merge_school_names.py --write"
 
 
 # ---- boards and pages ----------------------------------------------- #
@@ -1418,7 +1506,6 @@ step 09b_fill         "$PY" -u engine/fill_ratings.py
 #   schools called Oregon stay four schools. Additive: read the dry run
 #   (scripts/merge_school_names.py --show 80) before trusting a change to
 #   the bars, and drop the table to undo it on the next run.
-step 09c_school_names "$PY" -u scripts/merge_school_names.py --write
 # ★ THE OUTLIER RULE (owner, 2026-09-18: "more than 5-15 sigma away from
 #   their season ... do not rate or rank"; wired 2026-09-26). After the last
 #   rating is written (09b) and before the boards are built from them, which
@@ -1462,48 +1549,38 @@ bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 #   anchor gate, record pace, board pool == rating pool, club teams, margin
 #   over the pool's own top seasons, the XC/TF gap. A hard finding FAILS
 #   the step (no "|| true"): a wrong board is not a board.
-step 10a_board_sanity "$PY" -u scripts/board_sanity.py --top "${XCP_SANITY_TOP:-60}"
-# ! BEFORE 10b, BECAUSE 10b READS IT. school_team_link says which anet
+# ★ THE BOARD STEPS, FOUR AT A TIME (2026-10-25, the step times: about
+#   2,100 s in a row). Their writes are disjoint (nothing, school_team_link,
+#   school_identity, school_unit, meet_unit, season_rank, ...) and the boards
+#   they share as readers are finished (docs/PIPELINE-DEPENDENCIES.md, group
+#   1). The orders that matter stay: 10b after 10b0 (it reads
+#   school_team_link), 10g2 after 10g, 10f after 10b and 10d, 10f3 after
+#   10f, 11 after 10b. Each wave is XCP_STREAMS wide at most.
+# ! 10a STILL FAILS ITS STEP on a hard finding (a wrong board is not a board);
+#   running beside the others changes nothing about that.
+# ! 10b0 BEFORE 10b, BECAUSE 10b READS IT. school_team_link says which anet
 #   college TEAM each tfrrs school string is, learned from athletes who
 #   appear in both feeds -- the join that needs no spelling. It is what
-#   separates the University of Oregon from Oregon (IL): a tfrrs XC row
-#   carries no anet team id, so without this the college half of every
-#   collision is placed by where its athletes RACE, and for a college that
-#   is a travel mode. Additive and idempotent, and it exits 0 with nothing
-#   done on a database that has not run anet_teams yet -- there are no anet
-#   college teams to link, which is a state of the data and not a failure.
-step 10b0_tfrrs_link  "$PY" -u scripts/link_tfrrs_to_anet.py --write
-step 10b_school_ids   "$PY" -u racecast/build_school_identity.py
-if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
-  # measured for telemetry only: the joint level is not steered by the json
-  step 10c_gap        "$PY" -u scripts/measure_sport_gap.py
-else
-  step 10c_gap        "$PY" -u scripts/measure_sport_gap.py --emit
-fi
-
-step 10d_school_units "$PY" -u racecast/build_school_units.py
-# issue 34: which meets are championships, and of what; then the units
-# reach the site search (a partial index rebuild, cheap)
-step 10e_meet_units   "$PY" -u racecast/build_meet_units.py
-# recruiting (282): each college's recruits from athlete_season, on the
-# HS scale; reads school_identity (10b) and school_unit (10d)
-step 10f_recruits     "$PY" -u racecast/build_recruiting.py
-# "Runners like you" (comps.py): every HS season with its next season,
-# senior season and college attached; reads college_recruit (10f). In line,
-# not bgstep: it holds a transaction, and 11b's concurrent index builds wait
-# on every older one.
+#   separates the University of Oregon from Oregon (IL). Additive and
+#   idempotent; exits 0 with nothing done before anet_teams has run.
+# 10c is measured for telemetry only under XCP_JOINT_LIVE=1 (the default);
+# 10e marks which meets are championships (issue 34); 10g precomputes every
+# season's rank (311) and 10g2 keeps this week's state ranks (/movers).
+if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then _GAP_FLAGS=""; else _GAP_FLAGS="--emit"; fi
+stepsN 10a_board_sanity "$PY -u scripts/board_sanity.py --top ${XCP_SANITY_TOP:-60}" \
+       10b0_tfrrs_link "$PY -u scripts/link_tfrrs_to_anet.py --write" \
+       10d_school_units "$PY -u racecast/build_school_units.py" \
+       10g_season_ranks "$PY -u racecast/build_season_ranks.py"
+stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
+       10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
+       10e_meet_units "$PY -u racecast/build_meet_units.py" \
+       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py"
+# recruiting (282) reads school_identity (10b) and school_unit (10d); the
+# teams read school_identity. "Runners like you" (10f3) reads college_recruit
+# (10f) and holds a transaction, so it stays in line before 11b.
+stepsN 10f_recruits "$PY -u racecast/build_recruiting.py" \
+       11_teams "$PY -u racecast/build_team_season.py"
 step 10f3_comps       "$PY" -u racecast/build_comps.py
-# who the MODEL thinks has room left (the coach's "underrated" sort). Needs a
-# trained model; without one it says so and exits clean, and the search falls
-# back to the rating sort while the table is absent.
-# the athlete page's rank line, precomputed (311): every season's place in
-# every scope, one row per season, so the page runs no scoped counts
-step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
-# ★ THIS WEEK'S STATE RANKS, KEPT (2026-10-10): season_rank is swapped every
-#   run and held no history; /movers compares a week with the one before
-#   (build_rank_snapshot.py). Seconds, reads only season_rank.
-step 10g2_rank_snapshot "$PY" -u racecast/build_rank_snapshot.py
-step 11_teams         "$PY" -u racecast/build_team_season.py
 # ★ THE NCAA CHAMPIONSHIPS PROJECTION (2026-10-10): the regionals, the
 #   at-large selection and nationals, simulated for D1/D2/D3 men and women,
 #   one stored row per board per week (build_ncaa_projection.py). Reads
@@ -1526,7 +1603,7 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 #   every third course cut the wall time to about a third. --prepare and
 #   --finish bracket them so the swap happens once, after all three.
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
-shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
+XCP_DB_MIN_CONN=1 shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
 # ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
 #   course records by era, "on this day" (racecast/build_record_books.py).

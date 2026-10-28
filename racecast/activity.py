@@ -237,7 +237,7 @@ def _metricSpecs():
         import run_report
     except Exception:                                   # noqa: BLE001
         return []
-    specs = [(k, lab, b) for k, lab, _f, _rx, b in getattr(run_report, "LOG_METRICS", [])]
+    specs = [(k, lab, b) for k, lab, _f, _rx, b, *_ in getattr(run_report, "LOG_METRICS", [])]
     specs += [(k, lab, b) for k, lab, _sql, b in getattr(run_report, "SENTINELS", [])]
     return specs
 
@@ -260,8 +260,8 @@ def accuracyEvents(history=HISTORY, runs=10):
 
 
 _SCRAPED_SQL = """
-    SELECT %(sport)s AS sport, source, meet_id, min(date), count(*),
-           max(scraped_at)::text
+    SELECT %(sport)s AS sport, source, meet_id, min(date) AS race_date,
+           count(*) AS n, max(scraped_at)::text AS scraped_at
     FROM   {table}
     WHERE  scraped_at >= %(since)s
     GROUP  BY source, meet_id

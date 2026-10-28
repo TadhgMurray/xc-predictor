@@ -63,7 +63,7 @@
       <div class="rc-meta">
         {% if data.anchor %}Races {{ data.window_lo|mdy }} to {{ data.anchor|mdy }}{% else %}No rated races yet this season{% endif %}
         · <span class="p2-muted">computed {{ data.computed_at|ago_words }}</span>
-        <span class="rc-nowrap">· <button type="button" class="share-btn rc-share-link" data-share-title="Breakouts this week on Racecast"
+        <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="Breakouts this week on Racecast"
               data-share-url="{{ site_origin ~ qs() }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
       {% if breakouts or prs %}
@@ -142,7 +142,7 @@
 
 
   {% if data.error %}
-  <div class="p2-banner" role="note">This list could not be computed just now ({{ data.error }}). It will be tried again in a few minutes.</div>
+  <div class="p2-banner" role="note">This list could not be computed just now. It will be tried again in a few minutes.</div>
   {% endif %}
 
   <div class="rc-tbar">
@@ -151,7 +151,6 @@
       <a class="seg-btn" href="#prs" data-tab="prs">New PRs{% if prs %}<span class="n">{{ prs|length }}</span>{% endif %}</a>
       <a class="seg-btn" href="#how" data-tab="how">What counts</a>
     </nav>
-    {% if has_hs_view %}<div class="rc-tbar-end">{{ scale_toggle() }}</div>{% endif %}
   </div>
 
   <section class="rc-panel" id="jumps" data-panel="jumps">
@@ -196,7 +195,7 @@
 
   <section class="rc-panel" id="prs" data-panel="prs">
   {% if data.pr_error %}
-  <p class="p2-note">The PR list could not be computed just now ({{ data.pr_error }}); it will be tried again in a few minutes.</p>
+  <p class="p2-note">The PR list could not be computed just now; it will be tried again in a few minutes.</p>
   {% elif prs %}
   <table class="p2-tbl p2-prs">
     <thead><tr>

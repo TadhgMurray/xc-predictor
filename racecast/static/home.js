@@ -22,10 +22,22 @@
         });
     }
 
+    // ★ NOT BOYS BY DEFAULT (UX review, 2026-10-24): the level the reader
+    //   last chose (rc_level, shared with rankings.js), or HS girls or HS
+    //   boys at random on a first visit, kept after that
+    function store(lv) { try { localStorage.setItem('rc_level', lv); } catch (e) { /* private */ } }
+    var lv = null;
+    try {
+        lv = localStorage.getItem('rc_level');
+        if (!lv) { lv = Math.random() < 0.5 ? 'hs_f' : 'hs_m'; store(lv); }
+    } catch (e) { lv = null; }
+    if (lv && bar.querySelector('[data-level="' + lv + '"]')) rankings.setAttribute('data-level', lv);
+
     bar.addEventListener('click', function (e) {
         var btn = e.target.closest('[data-level]');
         if (!btn) return;
         rankings.setAttribute('data-level', btn.getAttribute('data-level'));
+        store(btn.getAttribute('data-level'));
         paint();
     });
 

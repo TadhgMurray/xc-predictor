@@ -74,7 +74,7 @@
 /* ---- tables ---------------------------------------------------------- */
 .p2-page .p2-tbl { width: 100%; margin-top: 0.3rem; }
 .p2-page .p2-tbl th, .p2-page .p2-tbl td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; }
-.p2-page .p2-tbl .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p2-page .p2-tbl .num { text-align: left; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .p2-page .p2-tbl td:first-child { color: var(--muted, #6b7280); width: 2.2rem; }
 .p2-page .p2-pts { font-weight: 700; color: var(--ink, #111418); }
 .p2-page .p2-team { min-width: 10rem; }

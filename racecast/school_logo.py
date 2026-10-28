@@ -222,6 +222,18 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
     #   without this every crest on the site disappears whenever the label
     #   cache is empty (mid-rebuild, a fresh process, an old database).
     st = (st or state or "").upper()
+    # ★ THE MENTION'S LEVEL FROM ITS POOL when the caller named none (owner,
+    #   2026-10-28: the University of Washington's crest showed on its page
+    #   but not on its runners' athlete pages, race rows or boards). Every
+    #   season line and board row already passes its pool; a college_m
+    #   runner's "Washington" is the college's crest, an hs_f runner's the
+    #   high school's.
+    if not level and pool:
+        try:
+            from school_identity import levelOf
+            level = levelOf(pool)
+        except Exception:                          # noqa: BLE001
+            level = None
     lv = (level or "").strip().lower()
     # ★ THE LEVEL FIRST, THEN THE LEVEL-LESS ROW (see fileFor). A pair that
     #   holds two institutions has one crest per level once anet has filed

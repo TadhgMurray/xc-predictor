@@ -529,6 +529,8 @@ def compute(cur, sport, level, days):
             out["breakouts"] = rows
         except Exception as exc:                        # noqa: BLE001
             cur.connection.rollback()
+            # the page says only "could not be computed"; the reason is logged
+            print(f"breakouts: {type(exc).__name__}: {exc}", flush=True)
             out["error"] = type(exc).__name__
             return out
         cur.connection.rollback()        # end the SET LOCAL transaction
@@ -538,6 +540,7 @@ def compute(cur, sport, level, days):
                                      out["anchor"])
             except Exception as exc:                    # noqa: BLE001
                 cur.connection.rollback()
+                print(f"breakouts PRs: {type(exc).__name__}: {exc}", flush=True)
                 out["pr_error"] = type(exc).__name__
             cur.connection.rollback()
         # names and race links for every row the page could show, any state

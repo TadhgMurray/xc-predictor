@@ -140,13 +140,25 @@ def showGate(r):
 def showPool(r):
     """The pool poolOf returns for this exact row -- the bottom line."""
     from speed_ratings import (poolOf, _PID, _DATE, _GRADE, _SRC, _SCHOOL,
-                               _GENDER, _SPORT, _asDate)
+                               _GENDER, _SPORT, _TEAM, _SLUG, _RID, _asDate,
+                               rowTeamFacts)
 
     d = _asDate(r[_DATE])
+    # ★ AND THE TEAM FACTS, AS packResults PASSES THEM (pooling review,
+    #   2026-10-25): without them this printed a pool the pack never gave an
+    #   unattached, club or team_pool row.
+    have = len(r) > _SLUG
+    lvl, pros, no_team, team_pro, top = rowTeamFacts(
+        r[_TEAM] if have else None, r[_SLUG] if have else None, r[_SCHOOL],
+        r[_PID], d, r[_SPORT], r[_RID], have_team=have)
+    print(f"    team facts: level={lvl} has_pros={pros} no_team={no_team} "
+          f"team_pro={team_pro} race_top_level={top}")
     for merge in (False, True):
         pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL], r[_SPORT],
                       merge, person_id=r[_PID],
-                      season=None if d is None else d.year, race_date=d)
+                      season=None if d is None else d.year, race_date=d,
+                      team_level=lvl, team_has_pros=pros, no_team=no_team,
+                      team_pro=team_pro, race_top_level=top)
         print(f"    ==> poolOf(merge={merge!s:<5}) = {pool!r}")
 
 

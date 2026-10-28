@@ -346,6 +346,10 @@
         <div>
             <span class="s-lab">Athlete rating{{ rating_i() }}{% if athlete.rating_note %} <span class="s-when">&middot; {{ athlete.rating_note|replace(" season", "")|replace(" TF", " " ~ "TF"|sport_short)|replace(" XC", " " ~ "XC"|sport_short) }}</span>{% endif %}</span>
             <span class="s-val">{{ rv(athlete.rating, athlete.rating_hs) }}</span>
+            {# ! SAY WHY THERE IS NONE (UX review, 2026-10-24): the engine rates
+               running events from 600 m up, and a sprinter's page showed a
+               bare "-" beside a home page promising every result rated #}
+            {% if not athlete.rating %}<span class="s-sub s-under">Ratings cover races from 600 m up; sprints, hurdles and field events show times only.</span>{% endif %}
             {# ★ THE RATING AS A TIME, BACK UNDER IT (owner, 2026-10-10: "124.6
                means nothing to parents"). The old "≈ 15:47 5K · top 1%" line
                left the strip in the phone pass (issue 88, 2026-09-02) for
@@ -436,7 +440,8 @@
     <nav class="ath-actions" aria-label="Athlete tools">
       <a class="ath-act" href="/compare?a={{ athlete.person_id }}" title="Put this runner side by side with anyone else">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h11l-3-3M17 17H6l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Compare</a>
-      {% if _hs %}
+      {# ! not for an athlete with no rating: both tools read it #}
+      {% if _hs and athlete.rating %}
       <a class="ath-act" href="/recruiting?athlete={{ athlete.person_id }}" title="Which college teams this rating would fit on">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9l10-5 10 5-10 5zM6 11v5c3 2 9 2 12 0v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>College fit</a>
       <a class="ath-act" href="/recruit/{{ athlete.person_id }}#like" title="Runners with a similar rating and progression">
@@ -497,7 +502,9 @@
     {# names the panel in the outline: the seasons' h3 sat straight under the
        h1 (sweep 2026-10-10, B21); the tab names it on screen #}
     <h2 class="sr-only">{{ "XC"|sport_name }} seasons</h2>
-    <details class="chart-fold" open>
+    {# ! an empty chart does not open (UX review, 2026-10-24) #}
+    {% set _xc_rated = xc_seasons|map(attribute='1')|map(attribute='races')|sum(start=[])|selectattr('speed_rating')|list %}
+    <details class="chart-fold"{% if _xc_rated %} open{% endif %}>
       <summary>XC speed rating</summary>
       <div class="chart-slot chart-wide" data-chart="xc_rating" data-kind="rating" data-title="XC speed rating"></div>
     </details>
@@ -522,7 +529,8 @@
        the location"). The rating and each distance share the top slot;
        athlete-charts.js flips the panes. A hidden pane draws when shown
        (the resize observer); with no JS only the rating shows. #}
-    <details class="chart-fold" open>
+    {% set _tf_rated = tf_seasons|map(attribute='1')|map(attribute='races')|sum(start=[])|selectattr('speed_rating')|list %}
+    <details class="chart-fold"{% if _tf_rated %} open{% endif %}>
       <summary>Track speed rating</summary>
       {% if tf_dists %}
       <nav class="seg tf-chart-pick" aria-label="Chart">
@@ -577,7 +585,7 @@
 {# ★ THE BESTS AS SIDE CARDS, the plain race-page card: a label on the
    left, the figure on the right, every figure a link to its row (which
    opens its sport's tab, race-page.js). #}
-<aside class="rc-side">
+<aside class="rc-side" data-fold="Bests &amp; PRs">
   {#
     ALL-TIME BESTS. One table per sport, rendered only when that sport has
     something, so an XC-only athlete gets no empty TF heading. Ratings

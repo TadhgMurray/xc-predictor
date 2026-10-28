@@ -271,6 +271,68 @@ def dayDivisionGuardOn():
         "0", "false", "off", "no")
 
 
+# ★ A CLOSE VOTE GOES TO THE SIDE NEAR ZERO (owner, 2026-10-28: Berrien
+#   County Fairgrounds, Shamrock Invitational, "Field ran +10.5% capped").
+#   Four divisions a day: two varsity 5000s that ran normally (+1.7% and
+#   +1.8% against the runners' own 5Ks) and two filed 3218 m but run about
+#   3,700 m (+13% to +20%). Two against two, the median fell on the side with
+#   more runners -- the long ones, 215 rows to 179 -- so the guard flagged the
+#   VARSITY races as the broken sheets ("reconciled" to 4,273 m) and handed
+#   every 5K runner a +14% day. 2025-09-02, same meet, same split, +8.2%.
+#   125 divisions on 86 race days in race_day_suspect_division read within
+#   4% of zero while their race's day was 8% or more.
+#
+#  THE RULE. A race-day term is drawn from a prior centred on zero (sigma_u
+#  of a few percent); a wrong stored distance is what puts a division 10%
+#  off. When the kept side holds less than DAY_GUARD_MAJORITY of the race's
+#  information, the two readings are compared: the kept side's pooled day,
+#  and the flagged side's (when the flagged divisions agree among
+#  themselves, within the cap). The one nearer zero is the day; the other
+#  side is flagged instead.
+#  ! A CLEAR MAJORITY STILL DECIDES: Midlothian's five correct divisions of
+#    eight (69% of the rows) keep the day whatever it reads.
+#  ! AND THE OTHER READING MUST BE A DAY: within the cap itself. The owner's
+#    list (2026-10-28, scripts/diag_day_guard_swaps.py, 156 of 1,951 race
+#    days) had five flips to -10.8% .. -12.3% and +14%: neither side a
+#    believable day, and a wrong fast day cuts every rating there. Those
+#    stay as the median read them.
+#  ON (owner, 2026-10-28, after reading the list: "just add to pipeline or
+#  where it's needed"). XCP_DAY_GUARD_NEAR_ZERO=0 turns it off (ablation).
+DAY_GUARD_MAJORITY = 2.0 / 3.0
+
+
+def dayGuardNearZeroOn():
+    return os.environ.get("XCP_DAY_GUARD_NEAR_ZERO", "1").strip().lower() not in (
+        "0", "false", "off", "no")
+
+
+def _nearZeroSide(flag, centre, ok, cand, m_s, num_s, W_s, race_of, n_race, cap):
+    """(flag, centre) with each race whose kept side is no clear majority
+    read from the side nearer zero. Per division arrays; see above."""
+    kept = ok & ~flag
+    W_tot = np.bincount(race_of[ok], weights=W_s[ok], minlength=n_race)
+    W_k = np.bincount(race_of[kept], weights=W_s[kept], minlength=n_race)
+    num_k = np.bincount(race_of[kept], weights=num_s[kept], minlength=n_race)
+    W_f = np.bincount(race_of[flag], weights=W_s[flag], minlength=n_race)
+    num_f = np.bincount(race_of[flag], weights=num_s[flag], minlength=n_race)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        day_k = np.where(W_k > 0, num_k / np.where(W_k > 0, W_k, 1.0), np.nan)
+        day_f = np.where(W_f > 0, num_f / np.where(W_f > 0, W_f, 1.0), np.nan)
+        share_k = np.where(W_tot > 0, W_k / np.where(W_tot > 0, W_tot, 1.0), 1.0)
+    # the flagged side must be one reading: every flagged division within
+    # the cap of their pooled day
+    spread_f = np.zeros(n_race)
+    np.maximum.at(spread_f, race_of[flag], np.abs(m_s[flag] - day_f[race_of[flag]]))
+    swap = ((W_f > 0) & (W_k > 0) & (share_k < DAY_GUARD_MAJORITY)
+            & (spread_f <= cap) & (np.abs(day_f) <= cap)
+            & (np.abs(day_f) < np.abs(day_k)))
+    if not swap.any():
+        return flag, centre
+    on = swap[race_of]
+    alt_flag = cand & (np.abs(m_s - day_f[race_of]) > cap)
+    return np.where(on, alt_flag, flag), np.where(on, day_f[race_of], centre)
+
+
 def raceDayDivisions(r, w, h, race, sub, n_race, pen, cap=RACE_DAY_CAP,
                      guard=True):
     """The race-day term with whole broken divisions given zero weight.
@@ -340,6 +402,9 @@ def raceDayDivisions(r, w, h, race, sub, n_race, pen, cap=RACE_DAY_CAP,
                 touched[race_of[flag]] = True
                 centre = np.where(touched[race_of], clean[race_of], centre)
                 flag = cand & touched[race_of] & (np.abs(m_s - centre) > cap)
+                if flag.any() and dayGuardNearZeroOn():
+                    flag, centre = _nearZeroSide(flag, centre, ok, cand, m_s, num_s,
+                                                 W_s, race_of, int(n_race), cap)
         if flag.any():
             keep = (~flag[sub]).astype(np.float64)
         out.update(m=m_s, W=W_s, n=n_s, race_of=race_of, flag=flag,

@@ -524,9 +524,17 @@ def athleteNextRace(cur, getConn, person_id, today=None):
             "state": season.get("state"), "races": found}
 
 
-def schoolNextRaces(cur, getConn, school, state, today=None):
+def schoolNextRaces(cur, getConn, school, state, today=None, level=None):
     """{"available", "races": [...]} -- per posted meet the team ran last
-    time, its projected team place in each gender's race."""
+    time, its projected team place in each gender's race.
+
+    level: the page's level when the name is several institutions
+    (school_identity.levelChips). ★ (owner, 2026-10-28: the University of
+    Washington's page, level=college, showed "Westside Classic: Girls
+    projected 7th of 12" -- Washington HIGH SCHOOL's meet. The match is by
+    name and state, and three Washingtons share both.) A race counts only
+    when the school's projected runners in it are of that level."""
+    from school_identity import levelOf
     found = []
     for m, plan, races in schoolMatches(cur, getConn, school, state, today):
         # one race per gender: the one the school brought most runners to
@@ -541,11 +549,13 @@ def schoolNextRaces(cur, getConn, school, state, today=None):
             pred = racePrediction(cur, m["meet_id"], race["div_id"], m["source"])
             if not pred.get("available"):
                 continue
+            mine = [x for x in pred["runners"] if x.get("school") == school]
+            if level and not any(levelOf(x.get("pool")) == level for x in mine):
+                continue
             place, score, n_teams = teamPlace(pred, school, state)
             cond = conditions(cur, m["meet_id"], race["div_id"], m["source"],
                               m.get("venue"), race.get("distance"))
             row = _meetBits(m, plan, race, cond)
-            mine = [x for x in pred["runners"] if x.get("school") == school]
             row.update({"team_place": place, "team_place_word": ordinal(place) if place else None,
                         "score": score, "n_teams": n_teams,
                         "top": [{"person_id": x["person_id"], "name": x["name"],

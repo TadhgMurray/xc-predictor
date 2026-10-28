@@ -1,7 +1,8 @@
 # Project: xc-predictor / racecast
 # File:    build_clock_calibration.py
-# Purpose: The 5K column checked against the track, every run (owner,
-#          2026-10-23: "the 5k equivs on my race were abt 15-20s faster").
+# Purpose: The 5K column checked against the track, run by hand -- no
+#          pipeline step runs it (owner, 2026-10-23: "the 5k equivs on my
+#          race were abt 15-20s faster").
 #          For each pool and rating band: the time the site SHOWS for a
 #          runner's cross country season, at the track distance that level
 #          races in spring, against the best they actually ran there the

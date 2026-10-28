@@ -5,6 +5,7 @@ link_uploads.py -- give every approved uploaded result a person.
     /srv/venv/bin/python scripts/link_uploads.py              # DRY RUN: counts + samples
     /srv/venv/bin/python scripts/link_uploads.py --apply      # link / mint (pipeline 04a, pass 4)
     /srv/venv/bin/python scripts/link_uploads.py --undo upload|upload_mint|all
+    /srv/venv/bin/python scripts/link_uploads.py --source timer [--apply]   # timer rows (sources/promote.py)
 
     Run inside the pipeline as pass 4 of scripts/link_tfrrs_rows.py (step
     04a_link_tfrrs); XCP_LINK_UPLOADS=0 skips it there.
@@ -62,6 +63,15 @@ link_uploads.py -- give every approved uploaded result a person.
   that is wrong is a "not mine" fix: person_pins' detach, which this step
   skips from then on.
 
+★ AND TIMING-COMPANY ROWS (2026-10-25, docs/PLAN-MULTISOURCE.md). A timer's
+  meet that no feed has is promoted into the same tables in the same shape
+  (sources/promote.py: source 'timer', the timer in id_system, NO person_id)
+  and carries the same facts an upload does: name, grade, school, date. So
+  it is linked by the same rules (--source timer, FEEDS below), with its own
+  log rules ('timer' / 'timer_mint'), its own report table
+  (timer_link_report, keyed by meet) and its own --undo. Pass 4 of
+  link_tfrrs_rows runs both.
+
 Read-only without --apply / --undo.
 """
 import argparse
@@ -94,6 +104,16 @@ TABLES = (("XC", "results"), ("TF", "results_tf"))
 MATCH = "match"
 MINT = "mint"
 NATIVE_PER_UPLOAD = 100000      # uploads.applyUpload: native_id = upload * 100000 + n
+
+# ★ ONE LINKER, TWO ID-LESS SOURCES. What differs: the source tag, the log
+#   rules, the report table and what a row's group is (an upload, a meet).
+#   group_sql is read off result alias r.
+Feed = namedtuple("Feed", "source rule rule_mint report group_col group_sql tag")
+UPLOAD = Feed(SOURCE, RULE, RULE_MINT, "upload_link_report", "upload_id",
+              f"r.native_id / {NATIVE_PER_UPLOAD}", "upload-link")
+TIMER = Feed("timer", "timer", "timer_mint", "timer_link_report", "meet_id", "r.meet_id", "timer-link")
+FEEDS = {"upload": UPLOAD, "timer": TIMER}
+ALL_RULES = tuple(r for f in FEEDS.values() for r in (f.rule, f.rule_mint))
 
 # an uploaded row; gender is its own division / event label's
 UpRow = namedtuple("UpRow", "result_id sport date name school grade gender meet_id div_id upload_id",
@@ -310,11 +330,8 @@ def judge(rows, namesakes_by_key):
 def nameKeyTextSql(col):
     """normName(<one name column>) in SQL: 'Smith, Jake' -> 'jake smith'.
     Pinned to normName by the tests."""
-    swapped = (f"CASE WHEN position(',' in {col}) > 0 "
-               f"THEN substr({col}, position(',' in {col}) + 1) || ' ' || split_part({col}, ',', 1) "
-               f"ELSE {col} END")
-    return (f"btrim(regexp_replace(regexp_replace(lower(replace({swapped}, '-', ' ')), "
-            f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
+    from person_name import personKeyTextSql
+    return personKeyTextSql(col, keep_suffix=True)     # one rule (2026-10-26)
 
 
 def _hasTable(cur, name):
@@ -322,7 +339,7 @@ def _hasTable(cur, name):
     return cur.fetchone()[0] is not None
 
 
-def upRowsSql(skip_xc="", skip_tf=""):
+def upRowsSql(skip_xc="", skip_tf="", feed=UPLOAD):
     """The uploaded rows no person holds yet, both sports, with the gender
     their own label gives (person_gender.labelExpr: the division for cross
     country, the event title for track)."""
@@ -330,20 +347,20 @@ def upRowsSql(skip_xc="", skip_tf=""):
     return f"""
         SELECT 'XC' AS sport, r.result_id, r.date, r.athlete_name, r.school, r.grade,
                {labelExpr('m.division')} AS gender, r.meet_id, r.div_id,
-               r.native_id / {NATIVE_PER_UPLOAD} AS upload_id
+               {feed.group_sql} AS upload_id
         FROM   results r
         LEFT   JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
-        WHERE  r.source = '{SOURCE}' AND r.person_id IS NULL {skip_xc}
+        WHERE  r.source = '{feed.source}' AND r.person_id IS NULL {skip_xc}
         UNION ALL
         SELECT 'TF', r.result_id, r.date, r.athlete_name, r.school, r.grade,
                {labelExpr('r.event_short')}, r.meet_id, r.div_id,
-               r.native_id / {NATIVE_PER_UPLOAD}
+               {feed.group_sql}
         FROM   results_tf r
-        WHERE  r.source = '{SOURCE}' AND r.person_id IS NULL
+        WHERE  r.source = '{feed.source}' AND r.person_id IS NULL
           AND  COALESCE(r.is_relay, 0) = 0 {skip_tf}"""
 
 
-def gather(cur):
+def gather(cur, feed=UPLOAD, rows_sql=None):
     """([UpRow], {name key: [Person]}). Temp tables only; the caller rolls
     back. Every person who carries one of the uploaded names -- in the anet
     registry (athletes) or on a result row (a tfrrs person, a minted one, an
@@ -352,7 +369,9 @@ def gather(cur):
     from psycopg2.extras import execute_values
     import person_pins as PP
     det = PP.present(cur, "result_detach")
-    cur.execute(upRowsSql(PP.skipSql("XC", "r", det), PP.skipSql("TF", "r", det)))
+    # rows_sql: another linker's rows in upRowsSql's columns (link_tfrrs_hs)
+    cur.execute(rows_sql(PP.skipSql("XC", "r", det), PP.skipSql("TF", "r", det)) if rows_sql
+                else upRowsSql(PP.skipSql("XC", "r", det), PP.skipSql("TF", "r", det), feed))
     rows = [UpRow(rid, sport, d, nm, sch, gr, g, mid, did, uid)
             for sport, rid, d, nm, sch, gr, g, mid, did, uid in cur.fetchall()]
     keys = {normName(u.name) for u in rows} - {None}
@@ -411,10 +430,10 @@ def gather(cur):
 #  WRITING
 # ------------------------------------------------------------------ #
 REPORT_DDL = """
-CREATE TABLE IF NOT EXISTS upload_link_report (
+CREATE TABLE IF NOT EXISTS {table} (
     sport      text   NOT NULL,
     result_id  bigint NOT NULL,
-    upload_id  bigint,
+    {group_col}  bigint,
     name       text,
     school     text,
     reason     text   NOT NULL,
@@ -424,18 +443,18 @@ CREATE TABLE IF NOT EXISTS upload_link_report (
 )"""
 
 
-def plan(rows, verdicts, groups, fresh):
+def plan(rows, verdicts, groups, fresh, feed=UPLOAD):
     """[(sport, result_id, to_person, rule)] -- links, then one fresh id per
     mint group (fresh: a callable that hands out the next id)."""
-    out = [(u.sport, u.result_id, verdicts[u.result_id].target, RULE)
+    out = [(u.sport, u.result_id, verdicts[u.result_id].target, feed.rule)
            for u in rows if verdicts[u.result_id].reason == MATCH]
     for _k, us in sorted(groups.items(), key=lambda kv: min(u.result_id for u in kv[1])):
         pid = fresh()
-        out += [(u.sport, u.result_id, pid, RULE_MINT) for u in us]
+        out += [(u.sport, u.result_id, pid, feed.rule_mint) for u in us]
     return out
 
 
-def write(cur, moves):
+def write(cur, moves, feed=UPLOAD):
     """Log then stamp each move, only onto a row still on nobody. -> counts."""
     from psycopg2.extras import execute_values
     cur.execute(LOG_DDL)
@@ -450,34 +469,35 @@ def write(cur, moves):
             INSERT INTO person_link_log (sport, result_id, from_person, to_person, rule)
             SELECT m.sport, r.result_id, 0, m.to_person, m.rule
             FROM   lu_map m JOIN {table} r ON r.result_id = m.result_id
-            WHERE  m.sport = %s AND r.source = '{SOURCE}' AND r.person_id IS NULL
+            WHERE  m.sport = %s AND r.source = '{feed.source}' AND r.person_id IS NULL
             ON CONFLICT DO NOTHING""", (sport,))
         cur.execute(f"""
             UPDATE {table} r SET person_id = m.to_person
             FROM   lu_map m
             WHERE  m.sport = %s AND r.result_id = m.result_id
-              AND  r.source = '{SOURCE}' AND r.person_id IS NULL""", (sport,))
+              AND  r.source = '{feed.source}' AND r.person_id IS NULL""", (sport,))
         out[sport] = cur.rowcount
     return out
 
 
-def writeReport(cur, rows, verdicts):
-    """upload_link_report holds this run's refusals, and only those."""
+def writeReport(cur, rows, verdicts, feed=UPLOAD):
+    """The feed's report table (upload_link_report) holds this run's
+    refusals, and only those."""
     from psycopg2.extras import execute_values
-    cur.execute(REPORT_DDL)
-    cur.execute("DELETE FROM upload_link_report")
+    cur.execute(REPORT_DDL.format(table=feed.report, group_col=feed.group_col))
+    cur.execute(f"DELETE FROM {feed.report}")
     rep = [(u.sport, u.result_id, u.upload_id, u.name, u.school, v.reason, list(v.touched) or None)
            for u in rows for v in (verdicts[u.result_id],)
            if v.target is None and v.reason not in (MATCH, MINT)]
     if rep:
-        execute_values(cur, """INSERT INTO upload_link_report
-                               (sport, result_id, upload_id, name, school, reason, touched)
+        execute_values(cur, f"""INSERT INTO {feed.report}
+                               (sport, result_id, {feed.group_col}, name, school, reason, touched)
                                VALUES %s ON CONFLICT DO NOTHING""", rep)
     return len(rep)
 
 
-def undo(cur, which):
-    rules = RULES if which == "all" else (which,)
+def undo(cur, which, feed=UPLOAD):
+    rules = (feed.rule, feed.rule_mint) if which == "all" else (which,)
     back = {}
     for sport, table in TABLES:
         cur.execute(f"""
@@ -490,12 +510,12 @@ def undo(cur, which):
     return back
 
 
-def report(rows, verdicts, groups, show=20):
+def report(rows, verdicts, groups, show=20, feed=UPLOAD):
     reasons = Counter(v.reason for v in verdicts.values())
-    print(f"[upload-link] {len(rows):,} uploaded rows with no person judged:")
+    print(f"[{feed.tag}] {len(rows):,} {feed.source} rows with no person judged:")
     for why, n in reasons.most_common():
         print(f"    {n:>8,}  {why}")
-    print(f"[upload-link] {len(groups):,} new persons would be made")
+    print(f"[{feed.tag}] {len(groups):,} new persons would be made")
     by = {u.result_id: u for u in rows}
     shown = 0
     for rid, v in verdicts.items():
@@ -507,23 +527,23 @@ def report(rows, verdicts, groups, show=20):
         shown += 1
 
 
-def run(conn, apply, show=20):
+def run(conn, apply, show=20, feed=UPLOAD):
     """The whole step on one connection: gather, judge, report, and with
     apply, link + mint + the report table. Commits when applying."""
     import person_pins as PP
     with conn.cursor() as cur:
         if apply:
             PP.ensure(cur)
-        rows, by_key = gather(cur)
+        rows, by_key = gather(cur, feed)
         if not rows:
-            print("[upload-link] no uploaded row without a person")
+            print(f"[{feed.tag}] no {feed.source} row without a person")
             conn.rollback()
             return {}
         verdicts, groups = judge(rows, by_key)
-        report(rows, verdicts, groups, show)
+        report(rows, verdicts, groups, show, feed)
         if not apply:
             conn.rollback()
-            print("[upload-link] dry run -- nothing written; --apply to link")
+            print(f"[{feed.tag}] dry run -- nothing written; --apply to link")
             return {}
         state = {"next": None}
 
@@ -533,12 +553,12 @@ def run(conn, apply, show=20):
             else:
                 state["next"] += 1
             return state["next"]
-        moves = plan(rows, verdicts, groups, fresh)
-        out = write(cur, moves)
-        out["reported"] = writeReport(cur, rows, verdicts)
+        moves = plan(rows, verdicts, groups, fresh, feed)
+        out = write(cur, moves, feed)
+        out["reported"] = writeReport(cur, rows, verdicts, feed)
     conn.commit()
-    print(f"[upload-link] {out}; person_link_log rules '{RULE}' / '{RULE_MINT}' "
-          f"(--undo upload|upload_mint|all); doubtful rows in upload_link_report")
+    print(f"[{feed.tag}] {out}; person_link_log rules '{feed.rule}' / '{feed.rule_mint}' "
+          f"(--undo {feed.rule}|{feed.rule_mint}|all); doubtful rows in {feed.report}")
     return out
 
 
@@ -547,22 +567,32 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--show", type=int, default=20)
-    ap.add_argument("--undo", choices=RULES + ("all",))
+    ap.add_argument("--undo", choices=ALL_RULES + ("all",))
+    ap.add_argument("--source", choices=sorted(FEEDS), default="upload",
+                    help="which id-less rows: approved uploads (default) or timer meets")
     a = ap.parse_args(argv)
-    if os.environ.get("XCP_LINK_UPLOADS", "1") in ("0", "false"):
-        print("[upload-link] XCP_LINK_UPLOADS=0 -- skipped")
+    feed = FEEDS[a.source]
+    if a.undo and a.undo != "all" and a.undo not in (feed.rule, feed.rule_mint):
+        feed = next(f for f in FEEDS.values() if a.undo in (f.rule, f.rule_mint))
+    if os.environ.get(envKey(feed), "1") in ("0", "false"):
+        print(f"[{feed.tag}] {envKey(feed)}=0 -- skipped")
         return 0
     from database import getConn
     with getConn() as conn:
         if a.undo:
             with conn.cursor() as cur:
-                back = undo(cur, a.undo)
+                back = undo(cur, a.undo, feed)
             conn.commit()
-            print(f"[upload-link] undone {a.undo}: rows put back {back}")
+            print(f"[{feed.tag}] undone {a.undo}: rows put back {back}")
             return 0
-        print(f"[upload-link] {'APPLY' if a.apply else 'DRY RUN'} {datetime.date.today()}")
-        run(conn, a.apply, a.show)
+        print(f"[{feed.tag}] {'APPLY' if a.apply else 'DRY RUN'} {datetime.date.today()}")
+        run(conn, a.apply, a.show, feed)
     return 0
+
+
+def envKey(feed):
+    """XCP_LINK_UPLOADS / XCP_LINK_TIMERS: the switch that turns a feed off."""
+    return "XCP_LINK_UPLOADS" if feed is UPLOAD else "XCP_LINK_TIMERS"
 
 
 if __name__ == "__main__":

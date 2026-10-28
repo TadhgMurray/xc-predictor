@@ -51,7 +51,8 @@ def test_status_letters_are_kept_and_nothing_else():
 
 def test_scraper_and_saver_carry_the_status():
     db = read("scripts", "database.py")
-    assert "ADD COLUMN IF NOT EXISTS status TEXT" in db
+    # asks the catalogue first, then adds (the 2026-10-26 outage)
+    assert '_addColumnIfMissing(cursor, table, "status", "TEXT")' in db
     assert "status        = COALESCE(EXCLUDED.status, results.status)" in db
     assert "mark = _statusOf(result) if time_seconds is None else None" in db
     sc = read("scripts", "scrape_results.py")
@@ -88,6 +89,7 @@ def test_conversions_follow_the_athlete_and_the_scale():
     assert "adoptAthletePool(" in js and "src.scale = hsMode()" in js
     assert "rc-scale-change" in js
     tpl = read("racecast", "templates", "conversions.html")
-    assert "scale_toggle()" in tpl and "data-prefill-pool" in tpl
+    # the Advanced switch left conversions (UX review, 2026-10-24): one scale
+    assert "scale_toggle()" not in tpl and "data-prefill-pool" in tpl
     assert (tpl.index("static_v('scale-view.js')")
             < tpl.index("static_v('conversions.js')"))

@@ -38,20 +38,21 @@ import gzip
 import hashlib
 import os
 import random
+import re
 import sqlite3
 import time
 import urllib.parse
-import urllib.robotparser
 from dataclasses import dataclass
 
 import requests
 
-# ★ THE SAME BROWSER STRING AS THE athletic.net AND TFRRS SCRAPERS (owner,
-#   2026-10-23: "keep the same settings as anet and tfrrs ... the new ones
-#   too"). XCP_SOURCE_UA overrides it.
-USER_AGENT = os.environ.get("XCP_SOURCE_UA", (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"))
+# ★ OUR OWN NAME, WITH A WAY TO REACH US (owner, 2026-10-25: "never disguise
+#   the fetcher's identity"; it identifies itself as racecast-results). This
+#   was the athletic.net scrapers' Chrome string until then. A timer who
+#   wants us slower or gone can see who we are and say so; robots.txt is
+#   read for the same name. XCP_SOURCE_UA overrides it -- keep "racecast" in
+#   whatever it says.
+USER_AGENT = os.environ.get("XCP_SOURCE_UA", "racecast-results/1.0 (+https://racecast.co/about)")
 # ! ROBOTS.TXT IS STILL READ FOR OUR OWN NAME: rules a site writes for
 #   "racecast" or for every crawler ("*") both apply.
 ROBOTS_AGENT = "racecast-results"
@@ -120,6 +121,83 @@ ROBOTS_ERROR_ALLOW = {"results.yentiming.com"} | {
     h.strip().lower() for h in os.environ.get("XCP_ROBOTS_ERROR_ALLOW", "").split(",") if h.strip()}
 
 
+class RobotsRules:
+    """One robots.txt, read the way RFC 9309 says: `*` matches anything,
+    a trailing `$` anchors the end, the LONGEST matching rule wins and an
+    allow wins a tie. can_fetch(agent, url) / crawl_delay(agent), the two
+    calls Robots makes of urllib's parser.
+
+    ⚠ urllib.robotparser DOES NOT DO WILDCARDS. It prefix-matches each
+      rule literally, so AthleticLIVE's Firebase robots.txt
+          User-agent: *  /  Allow: /*.json$  /  Disallow: /
+      read as "disallow everything": no path starts with "/*.json$", and
+      every path starts with "/". The site says the opposite -- every
+      .json document is open, the HTML console is not.
+
+    A group applies to us when its User-agent token is in our name
+    ("racecast" applies to "racecast-results", as urllib had it); the
+    groups that name us replace "*", they do not add to it."""
+
+    def __init__(self, text):
+        self.groups = []                 # [(agents, [(allow, pattern)], delay)]
+        agents, rules, delay, in_rules = [], [], None, False
+        for raw in (text or "").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if ":" not in line:
+                continue
+            key, _, val = line.partition(":")
+            key, val = key.strip().lower(), val.strip()
+            if key == "user-agent":
+                if in_rules:
+                    self.groups.append((agents, rules, delay))
+                    agents, rules, delay, in_rules = [], [], None, False
+                agents.append(val.lower())
+            elif key in ("allow", "disallow"):
+                in_rules = True
+                if val:
+                    rules.append((key == "allow", val))
+            elif key == "crawl-delay":
+                in_rules = True
+                try:
+                    delay = float(val)
+                except ValueError:
+                    pass
+        if agents:
+            self.groups.append((agents, rules, delay))
+
+    def _group(self, agent):
+        agent = agent.lower()
+        mine = [g for g in self.groups if any(a != "*" and a in agent for a in g[0])]
+        if not mine:
+            mine = [g for g in self.groups if "*" in g[0]]
+        rules = [r for g in mine for r in g[1]]
+        delays = [g[2] for g in mine if g[2] is not None]
+        return rules, (max(delays) if delays else None)
+
+    @staticmethod
+    def _matches(pattern, path):
+        end = pattern.endswith("$")
+        body = pattern[:-1] if end else pattern
+        rx = ".*".join(re.escape(part) for part in body.split("*"))
+        return re.match(rx + ("$" if end else ""), path) is not None
+
+    def can_fetch(self, agent, url):
+        parts = urllib.parse.urlsplit(url)
+        path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+        if path == "/robots.txt":
+            return True
+        best = None                      # (length, allow)
+        for allow, pattern in self._group(agent)[0]:
+            if self._matches(pattern, path):
+                cand = (len(pattern), allow)
+                if best is None or cand > best:      # longer wins; allow wins a tie
+                    best = cand
+        return True if best is None else best[1]
+
+    def crawl_delay(self, agent):
+        return self._group(agent)[1]
+
+
 class Robots:
     """robots.txt per host, fetched once per run. get(url) -> (allowed,
     crawl_delay or None)."""
@@ -143,9 +221,7 @@ class Robots:
             return None, False
         if status >= 400:
             return None, True           # no robots.txt: allowed
-        rp = urllib.robotparser.RobotFileParser()
-        rp.parse(text.splitlines())
-        return rp, True
+        return RobotsRules(text), True
 
     def get(self, url):
         parts = urllib.parse.urlsplit(url)
