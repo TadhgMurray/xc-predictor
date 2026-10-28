@@ -382,13 +382,14 @@ def test_a_close_vote_goes_to_the_side_near_zero(monkeypatch):
     w = np.ones(sub.size)
     race = np.zeros(sub.size, dtype=np.int64)
     pen = 1e-3 / 0.01 ** 2
-    # off (the default): the bug -- the varsity races flagged, the day +14%
-    monkeypatch.delenv("XCP_DAY_GUARD_NEAR_ZERO", raising=False)
+    # off: the bug -- the varsity races flagged, the day +14%
+    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "0")
     dd = js.raceDayDivisions(r, w, 1.0, race, sub, 1, pen)
     assert dd["flag"].tolist() == [True, True, False, False]
     assert dd["u"][0] > 0.10
-    # on: the long divisions are the broken sheets, the day the varsity's
-    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "1")
+    # on (the default): the long divisions are the broken sheets, the day
+    # the varsity's
+    monkeypatch.delenv("XCP_DAY_GUARD_NEAR_ZERO")
     dd = js.raceDayDivisions(r, w, 1.0, race, sub, 1, pen)
     assert dd["flag"].tolist() == [False, False, True, True]
     assert abs(dd["u"][0] + 0.024) < 0.01
@@ -418,10 +419,21 @@ def test_a_scattered_flagged_side_is_not_a_reading(monkeypatch):
     # zero, and only their disagreement keeps them from being the day
     r = np.array([0.06, 0.07, 0.25, -0.20])[sub] + rng.normal(0, 0.02, sub.size)
     race = np.zeros(sub.size, dtype=np.int64)
-    monkeypatch.delenv("XCP_DAY_GUARD_NEAR_ZERO")
+    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "0")
     off = js.raceDayDivisions(r, np.ones(sub.size), 1.0, race, sub, 1, 10.0)
     monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "1")
     on = js.raceDayDivisions(r, np.ones(sub.size), 1.0, race, sub, 1, 10.0)
     assert on["flag"].tolist() == off["flag"].tolist()
     assert on["flag"].tolist() == [False, False, True, True]
     assert np.array_equal(on["u"], off["u"])
+
+
+def test_the_other_reading_must_itself_be_a_day():
+    """North County Championships 2015 on the owner's list: +41.5% now, the
+    flagged side -11.8%. Neither is a believable day; no swap."""
+    rng = np.random.default_rng(5)
+    sub = np.repeat(np.arange(4), [80, 76, 60, 56])
+    r = np.array([0.40, 0.43, -0.12, -0.115])[sub] + rng.normal(0, 0.02, sub.size)
+    race = np.zeros(sub.size, dtype=np.int64)
+    dd = js.raceDayDivisions(r, np.ones(sub.size), 1.0, race, sub, 1, 10.0)
+    assert dd["flag"].tolist() == [False, False, True, True]

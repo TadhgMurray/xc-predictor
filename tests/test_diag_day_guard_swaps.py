@@ -19,3 +19,5 @@ def test_berrien_would_swap_and_midlothian_would_not():
     assert not D.wouldSwap(179, 393, 0.20, 0.05, [0.20, 0.21])
     # flagged side scattered (one long, one short): no single reading
     assert not D.wouldSwap(179, 393, 0.02, 0.14, [0.20, -0.18])
+    # the flagged side not itself a believable day (North County, -11.8%)
+    assert not D.wouldSwap(116, 272, -0.118, 0.415, [-0.11, -0.125])

@@ -291,14 +291,19 @@ def dayDivisionGuardOn():
 #  side is flagged instead.
 #  ! A CLEAR MAJORITY STILL DECIDES: Midlothian's five correct divisions of
 #    eight (69% of the rows) keep the day whatever it reads.
-#  ! OFF UNTIL THE OWNER HAS READ THE LIST (scripts/diag_day_guard_swaps.py):
-#    XCP_DAY_GUARD_NEAR_ZERO=1 switches it on.
+#  ! AND THE OTHER READING MUST BE A DAY: within the cap itself. The owner's
+#    list (2026-10-28, scripts/diag_day_guard_swaps.py, 156 of 1,951 race
+#    days) had five flips to -10.8% .. -12.3% and +14%: neither side a
+#    believable day, and a wrong fast day cuts every rating there. Those
+#    stay as the median read them.
+#  ON (owner, 2026-10-28, after reading the list: "just add to pipeline or
+#  where it's needed"). XCP_DAY_GUARD_NEAR_ZERO=0 turns it off (ablation).
 DAY_GUARD_MAJORITY = 2.0 / 3.0
 
 
 def dayGuardNearZeroOn():
-    return os.environ.get("XCP_DAY_GUARD_NEAR_ZERO", "0").strip().lower() in (
-        "1", "true", "on", "yes")
+    return os.environ.get("XCP_DAY_GUARD_NEAR_ZERO", "1").strip().lower() not in (
+        "0", "false", "off", "no")
 
 
 def _nearZeroSide(flag, centre, ok, cand, m_s, num_s, W_s, race_of, n_race, cap):
@@ -319,7 +324,8 @@ def _nearZeroSide(flag, centre, ok, cand, m_s, num_s, W_s, race_of, n_race, cap)
     spread_f = np.zeros(n_race)
     np.maximum.at(spread_f, race_of[flag], np.abs(m_s[flag] - day_f[race_of[flag]]))
     swap = ((W_f > 0) & (W_k > 0) & (share_k < DAY_GUARD_MAJORITY)
-            & (spread_f <= cap) & (np.abs(day_f) < np.abs(day_k)))
+            & (spread_f <= cap) & (np.abs(day_f) <= cap)
+            & (np.abs(day_f) < np.abs(day_k)))
     if not swap.any():
         return flag, centre
     on = swap[race_of]

@@ -1,13 +1,15 @@
 """
 diag_day_guard_swaps.py -- the race days the day guard's near-zero tie-break
-(joint_solve._nearZeroSide, XCP_DAY_GUARD_NEAR_ZERO) would read the other
-way, from the last go-live's tables. READ-ONLY.
+(joint_solve._nearZeroSide, on since 2026-10-28; XCP_DAY_GUARD_NEAR_ZERO=0
+turns it off) reads the other way, from the last go-live's tables -- a
+go-live from before it was on. READ-ONLY.
 
 ★ WHY (owner, 2026-10-28, Berrien County Fairgrounds): two varsity 5000s
   ran normally and two divisions filed 3218 m ran ~3,700 m; two against
   two, the guard flagged the VARSITY races and the day came out +14%. The
-  tie-break gives a close vote to the side nearer zero. This lists, before
-  it is switched on, every race day where that would happen.
+  tie-break gives a close vote to the side nearer zero, when that side is
+  itself a believable day (within the cap). This lists every race day where
+  that happens.
 
   An estimate from the stored tables, not the solve: rows stand in for the
   solve's information, the stored race_u for the kept side's day, and the
@@ -62,7 +64,8 @@ def wouldSwap(flagged_rows, race_rows, flagged_day, race_u, div_days,
         return False
     share_kept = (race_rows - flagged_rows) / race_rows
     spread = max(abs(d - flagged_day) for d in div_days)
-    return share_kept < majority and spread <= cap and abs(flagged_day) < abs(race_u)
+    return (share_kept < majority and spread <= cap and abs(flagged_day) <= cap
+            and abs(flagged_day) < abs(race_u))
 
 
 def main(limit=40):
@@ -74,7 +77,7 @@ def main(limit=40):
     hits.sort(key=lambda r: -abs(float(r[7])) * (r[5] or 0))
     print(f"[day guard] {len(hits):,} of {len(rows):,} race days with a flagged division "
           f"would read the other side (kept side under {DAY_GUARD_MAJORITY:.0%} of the rows, "
-          f"the flagged side one reading nearer zero)\n")
+          f"the flagged side one reading, within {RACE_DAY_CAP:.0%} and nearer zero)\n")
     print(f"  {'date':<10}  {'course':<34} {'meet':<34} {'day now':>8} {'day then':>8} "
           f"{'rows':>9}  divisions flagged now")
     for r in hits[:limit or None]:
