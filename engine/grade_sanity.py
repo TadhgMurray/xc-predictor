@@ -238,6 +238,17 @@ _OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
 #   an adult among middle schoolers is not the fault, and an elementary or
 #   middle school AAU field keeps its vote whatever it reads.
 ADULT_OPEN_KID_SHARE = 0.5
+# ★ AND NO 'college' FOR SOMEONE WHO NEVER WAS A COLLEGIAN (owner,
+#   2026-10-28: Ethan Weiner's 2025, Cambridge Running, still 'college' --
+#   "this still is not fine"). His races there were college-heavy meets
+#   where most entrants carry a class year, so they are not open races and
+#   the rule above never sees them: the graded collegians voted 'college'
+#   for the club adult. A collegian carries a class year (FR..SR, RS) --
+#   97% of anet's college rows do, and tfrrs' all but always -- so an
+#   ungraded row takes a race's 'college' vote only when the runner carried
+#   a class year in SOME season of their career, or ran that race for a
+#   college team (anet_team.level a college code). Any race, open or not.
+COLLEGE_VOTE_NEEDS_CLASS = True
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -1376,45 +1387,75 @@ _FIELD_SQL = f"""
     JOIN   fld_event_level e
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
-    LEFT   JOIN fld_adult_ev ae
-           ON ae.meet_id = a.meet_id AND ae.div_id = a.div_id
-          AND ae.source = a.source AND ae.event_key = a.event_key
-    LEFT   JOIN fld_open_school os
-           ON os.person_id = a.person_id AND os.acad = a.acad
-          AND os.meet_id = a.meet_id AND os.div_id = a.div_id
-          AND os.source = a.source AND os.event_key = a.event_key
+    LEFT   JOIN fld_withhold wh
+           ON wh.person_id = a.person_id AND wh.acad = a.acad
+          AND wh.meet_id = a.meet_id AND wh.div_id = a.div_id
+          AND wh.source = a.source AND wh.event_key = a.event_key
     WHERE  e.level IS NOT NULL
-      -- an ungraded runner in an ADULT open race: its graded few high
-      -- schoolers say nothing of them -- unless they ran it for a school
-      -- team (fld_open_school). fld_adult_ev holds only 'hs' events.
-      AND  NOT (ae.meet_id IS NOT NULL AND gradeLevel(a.grade) IS NULL
-                AND os.person_id IS NULL)
+      -- the ungraded rows whose field says nothing of the runner
+      -- (openSchoolBuild): an adult open race's 'hs', a college race's
+      -- 'college' for someone who never was a collegian
+      AND  wh.person_id IS NULL
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
               {_LEVEL_RANK_SQL.format(x="e.level")} DESC
 """
 
-def openSchoolBuild(on, codes):
-    """Rule 4's open-race stages (see ADULT_OPEN_KID_SHARE):
-      fld_adult_ev     the open events voting 'hs' whose ungraded entrants
-                       are mostly not school kids that academic year;
-      fld_open_school  the ungraded rows in them run for a SCHOOL team
-                       (`codes`, anet_team.level codes naming a school),
-                       which keep their vote.
-    Off: both empty, and no results tables read, so rule 4's tests need
-    none. With no codes the exemption is empty and the rule still runs."""
-    off = """
+def openSchoolBuild(on, codes, college_codes=()):
+    """Rule 4's withheld votes, fld_withhold: (person, season, event) rows
+    whose field level does not speak for the runner. Two kinds, each an
+    ungraded row of a needy season:
+      'hs'       in an ADULT open race (fld_adult_ev: open, voting 'hs', its
+                 ungraded entrants mostly not school kids that academic
+                 year -- see ADULT_OPEN_KID_SHARE);
+      'college'  in any race voting 'college', by a runner who never carried
+                 a college class year (FR..RS) in any season of their career
+                 (see COLLEGE_VOTE_NEEDS_CLASS).
+    Either is kept when the runner ran that race for a team of the vote's
+    kind: a school (`codes`, anet_team.level hs/ms/elem) for 'hs', a college
+    (`college_codes`) for 'college'. Off: an empty table, and no results
+    tables read, so rule 4's tests need none."""
+    empty = """
     DROP TABLE IF EXISTS fld_adult_ev;
     CREATE UNLOGGED TABLE fld_adult_ev (meet_id bigint, div_id bigint,
         source text, event_key bigint);
-    DROP TABLE IF EXISTS fld_open_school;
-    CREATE UNLOGGED TABLE fld_open_school (person_id bigint, acad int,
+    DROP TABLE IF EXISTS fld_withhold;
+    CREATE UNLOGGED TABLE fld_withhold (person_id bigint, acad int,
         meet_id bigint, div_id bigint, source text, event_key bigint);
 """
     if not on:
-        return off
-    codes = sorted({int(c) for c in codes or ()})
-    adult = f"""
+        return empty
+    school = ", ".join(map(str, sorted({int(c) for c in codes or ()}))) or "NULL"
+    college = ", ".join(map(str, sorted({int(c) for c in college_codes or ()}))) or "NULL"
+    if codes or college_codes:
+        team_stage = f"""    -- kept: the row was run for a team of the vote's kind
+    DROP TABLE IF EXISTS fld_wh_team;
+    CREATE UNLOGGED TABLE fld_wh_team AS
+        SELECT DISTINCT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
+        FROM   fld_wh_cand o
+        JOIN   results r
+               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
+              AND r.div_id = o.div_id AND r.source = o.source AND o.event_key = -1
+        JOIN   anet_team t ON t.team_id = r.team_id
+        WHERE  (o.kind = 'hs' AND t.level IN ({school}))
+           OR  (o.kind = 'college' AND t.level IN ({college}))
+        UNION
+        SELECT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
+        FROM   fld_wh_cand o
+        JOIN   results_tf r
+               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
+              AND r.div_id = o.div_id AND r.source = o.source
+              AND COALESCE(r.event_id, -1) = o.event_key
+        JOIN   anet_team t ON t.team_id = r.team_id
+        WHERE  (o.kind = 'hs' AND t.level IN ({school}))
+           OR  (o.kind = 'college' AND t.level IN ({college}));
+"""
+    else:                     # no codes: nothing kept, no results tables read
+        team_stage = """    DROP TABLE IF EXISTS fld_wh_team;
+    CREATE UNLOGGED TABLE fld_wh_team (person_id bigint, acad int,
+        meet_id bigint, div_id bigint, source text, event_key bigint);
+"""
+    return f"""
     -- the ungraded entrants of the open 'hs' events, every entrant's
     DROP TABLE IF EXISTS fld_open_ung;
     CREATE UNLOGGED TABLE fld_open_ung AS
@@ -1444,58 +1485,64 @@ def openSchoolBuild(on, codes):
         GROUP  BY 1, 2, 3, 4
         HAVING count(k.person_id) < {float(ADULT_OPEN_KID_SHARE)!r} * count(*);
     ANALYZE fld_adult_ev;
-"""
-    if not codes:
-        return adult + """
-    DROP TABLE IF EXISTS fld_open_school;
-    CREATE UNLOGGED TABLE fld_open_school (person_id bigint, acad int,
-        meet_id bigint, div_id bigint, source text, event_key bigint);
-    DROP TABLE fld_open_ung;
-    DROP TABLE fld_open_kid;
-"""
-    lv = ", ".join(map(str, codes))
-    return adult + f"""
-    -- the needy runners' ungraded rows in those events
-    DROP TABLE IF EXISTS fld_open_rows;
-    CREATE UNLOGGED TABLE fld_open_rows AS
-        SELECT u.*
+
+    -- the needy runners who carried a college class year in any season
+    DROP TABLE IF EXISTS fld_collegian;
+    CREATE UNLOGGED TABLE fld_collegian AS
+        SELECT DISTINCT n.person_id
+        FROM  (SELECT DISTINCT person_id FROM fld_needy) n
+        JOIN   allraces a ON a.person_id = n.person_id
+        WHERE  gradeLevel(a.grade) = 'college';
+    ANALYZE fld_collegian;
+
+    -- the candidates: each kind's ungraded rows of needy seasons
+    DROP TABLE IF EXISTS fld_wh_cand;
+    CREATE UNLOGGED TABLE fld_wh_cand AS
+        SELECT u.person_id, u.acad, u.meet_id, u.div_id, u.source, u.event_key,
+               'hs'::text AS kind
         FROM   fld_open_ung u
         JOIN   fld_adult_ev e
                ON e.meet_id = u.meet_id AND e.div_id = u.div_id
               AND e.source = u.source AND e.event_key = u.event_key
-        JOIN   fld_needy n ON n.person_id = u.person_id AND n.acad = u.acad;
-    ANALYZE fld_open_rows;
+        JOIN   fld_needy n ON n.person_id = u.person_id AND n.acad = u.acad
+        UNION ALL
+        SELECT DISTINCT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key,
+               'college'
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+        JOIN   fld_event_level e
+               ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+              AND e.source = a.source AND e.event_key = a.event_key
+        LEFT   JOIN fld_collegian c ON c.person_id = a.person_id
+        WHERE  e.level = 'college' AND gradeLevel(a.grade) IS NULL
+          AND  c.person_id IS NULL;
+    ANALYZE fld_wh_cand;
 
-    DROP TABLE IF EXISTS fld_open_school;
-    CREATE UNLOGGED TABLE fld_open_school AS
-        SELECT DISTINCT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
-        FROM   fld_open_rows o
-        JOIN   results r
-               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
-              AND r.div_id = o.div_id AND r.source = o.source AND o.event_key = -1
-        JOIN   anet_team t ON t.team_id = r.team_id AND t.level IN ({lv})
-        UNION
-        SELECT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
-        FROM   fld_open_rows o
-        JOIN   results_tf r
-               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
-              AND r.div_id = o.div_id AND r.source = o.source
-              AND COALESCE(r.event_id, -1) = o.event_key
-        JOIN   anet_team t ON t.team_id = r.team_id AND t.level IN ({lv});
-    ANALYZE fld_open_school;
-    DROP TABLE fld_open_rows;
+{team_stage}    ANALYZE fld_wh_team;
+
+    DROP TABLE IF EXISTS fld_withhold;
+    CREATE UNLOGGED TABLE fld_withhold AS
+        SELECT DISTINCT person_id, acad, meet_id, div_id, source, event_key
+        FROM   fld_wh_cand
+        EXCEPT
+        SELECT person_id, acad, meet_id, div_id, source, event_key
+        FROM   fld_wh_team;
+    ANALYZE fld_withhold;
+    DROP TABLE fld_wh_team;
+    DROP TABLE fld_wh_cand;
+    DROP TABLE fld_collegian;
     DROP TABLE fld_open_ung;
     DROP TABLE fld_open_kid;
 """
 
 
-def fieldBuild(share=None, codes=None):
+def fieldBuild(share=None, codes=None, college_codes=None):
     """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
-    None; above 1 is off), and the school-team exemption after it
-    (openSchoolBuild, `codes` the school team codes)."""
+    None; above 1 is off), and the withheld votes after it (openSchoolBuild;
+    `codes` / `college_codes` the school and college team codes)."""
     share = float(OPEN_FIELD_SHARE if share is None else share)
     return (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
-            + openSchoolBuild(share <= 1.0, codes))
+            + openSchoolBuild(share <= 1.0, codes, college_codes))
 
 
 # rule 4's staging tables; season_races outlives them until rule 5e reads it
@@ -1504,7 +1551,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_needy;
     DROP TABLE IF EXISTS fld_wanted;
     DROP TABLE IF EXISTS fld_event_level;
-    DROP TABLE IF EXISTS fld_open_school;
+    DROP TABLE IF EXISTS fld_withhold;
     DROP TABLE IF EXISTS fld_adult_ev;
     RESET enable_nestloop;
 """
@@ -1642,6 +1689,11 @@ def _schoolTeamCodes():
     """The codes naming a school of any level (hs, ms, elem): rule 4's
     open-race exemption."""
     return sorted(int(c) for c, lv in _teamMeaning().items() if lv in ("hs", "ms", "elem"))
+
+
+def _collegeTeamCodes():
+    """The codes naming a college: rule 4's college-vote exemption."""
+    return sorted(int(c) for c, lv in _teamMeaning().items() if lv == "college")
 
 
 def _hsTeamCodes():
@@ -2898,7 +2950,9 @@ def _resolve(cur):
     #   is the absence of school-ness. Only the second can emit 'pro', so the
     #   level identifies its own origin and the two stay countable apart.
     _tq = time.time()
-    runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if OPEN_FIELD_SHARE <= 1.0 else ()),
+    _on = OPEN_FIELD_SHARE <= 1.0
+    runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if _on else (),
+                             college_codes=_collegeTeamCodes() if _on else ()),
              label="[4] staging")
     cur.execute(_FIELD_SQL)
     _field_rows = cur.fetchall()
@@ -3421,7 +3475,7 @@ def compare(cur, resolved, show=12):
             print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {old.get(key)} -> {new.get(key)}")
 
 
-def compareOpen(cur, share=0.5, show=20, codes=None):
+def compareOpen(cur, share=0.5, show=20, codes=None, college_codes=None):
     """What the open-race rule ALONE moves: rule 4's field verdicts with it
     off and with it at `share` (school-team exemption included), over one
     build. Read only (the dry run is rolled back). Field verdicts only --
@@ -3430,18 +3484,39 @@ def compareOpen(cur, share=0.5, show=20, codes=None):
     import random
     from collections import Counter
     codes = _schoolTeamCodes() if codes is None else codes
-    print(f"[grade] school team codes {codes}", flush=True)
+    college_codes = _collegeTeamCodes() if college_codes is None else college_codes
+    print(f"[grade] school team codes {codes}, college team codes {college_codes}", flush=True)
     buildRaces(cur)
     out = {}
     for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
-        runTimed(cur, fieldBuild(sh, codes), label=f"[open {label}] staging")
+        runTimed(cur, fieldBuild(sh, codes, college_codes), label=f"[open {label}] staging")
         if label == "on":
             cur.execute("SELECT count(*) FROM fld_adult_ev")
             print(f"    adult open races voting 'hs': {cur.fetchone()[0]:,}", flush=True)
-            cur.execute("SELECT count(*), count(DISTINCT (person_id, acad)) FROM fld_open_school")
+            cur.execute("SELECT count(*), count(DISTINCT (person_id, acad)) FROM fld_withhold")
             n_rows, n_seasons = cur.fetchone()
-            print(f"    school-team exemption: {n_rows:,} open-race rows "
-                  f"({n_seasons:,} seasons) keep their vote", flush=True)
+            print(f"    votes withheld: {n_rows:,} rows over {n_seasons:,} seasons", flush=True)
+            # Ethan Weiner's own races, each with what it voted and whether
+            # it was withheld: the case the rule is for, shown race by race
+            cur.execute("""
+                SELECT a.person_id, a.acad, a.meet_id, a.div_id, a.event_key, a.grade,
+                       e.level, e.open_field, wh.person_id IS NOT NULL
+                FROM   athletes x
+                JOIN   allraces a ON a.person_id = x.person_id
+                LEFT   JOIN fld_event_level e
+                       ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+                      AND e.source = a.source AND e.event_key = a.event_key
+                LEFT   JOIN fld_withhold wh
+                       ON wh.person_id = a.person_id AND wh.acad = a.acad
+                      AND wh.meet_id = a.meet_id AND wh.div_id = a.div_id
+                      AND wh.source = a.source AND wh.event_key = a.event_key
+                WHERE  x.first_name ILIKE 'ethan' AND x.last_name ILIKE 'weiner'
+                  AND  x.school ILIKE '%%cambridge%%'
+                ORDER  BY 1, 2, 3""")
+            print("    Ethan Weiner (Cambridge Running), race by race:")
+            for p, ay, m, d, ev, g, lv, op, wh in cur.fetchall():
+                print(f"      {p} {ay} meet {m}/{d} ev {ev}: grade {g}, field {lv}"
+                      f"{' (open)' if op else ''}{' WITHHELD' if wh else ''}", flush=True)
         cur.execute(_FIELD_SQL)
         out[label] = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
         cur.execute(_FIELD_DROP)

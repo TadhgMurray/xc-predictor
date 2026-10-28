@@ -726,3 +726,43 @@ def test_only_hs_is_withheld():
     'hs' events can be adult open races."""
     sql = GS.openSchoolBuild(True, [4])
     assert "e.open_field AND e.level = 'hs'" in sql
+
+
+def test_a_college_race_gives_college_only_to_a_collegian(cur):
+    """Ethan Weiner's 2025 (owner, 2026-10-28: "this still is not fine"): a
+    college-heavy meet, most entrants carrying a class year -- not an open
+    race. The club adult who never carried a class year gets no 'college';
+    an ungraded runner who carried one in another season keeps it, as does
+    one who ran the race for a college team."""
+    from psycopg2.extras import execute_values
+    rows = [(pid, 2025, g, g, 9, 1, "anet", -1, 900 + pid)
+            for pid, g in ((31, "FR"), (32, "SO"), (33, "JR"), (34, "SR"), (35, "SO"))]
+    rows += [(pid, 2025, None, None, 9, 1, "anet", -1, 900 + pid) for pid in (40, 41, 42)]
+    # 41 carried a class year two seasons before
+    rows.append((41, 2023, "FR", "FR", 50, 1, "anet", -1, 5041))
+    _load(cur, rows)
+    cols = ("result_id bigint, person_id bigint, meet_id bigint, div_id bigint, "
+            "source text, event_id bigint, team_id bigint")
+    cur.execute(f"CREATE TABLE results ({cols}); CREATE TABLE results_tf ({cols})")
+    cur.execute("CREATE TABLE anet_team (team_id bigint, level int)")
+    execute_values(cur, "INSERT INTO anet_team VALUES %s", [(1, 16), (8, 8)])
+    # 40: Cambridge Running; 42: ran it for a college team, no class recorded
+    execute_values(cur, "INSERT INTO results VALUES %s",
+                   [(1, 40, 9, 1, "anet", None, 1), (2, 41, 9, 1, "anet", None, None),
+                    (3, 42, 9, 1, "anet", None, 8)])
+    GS.runTimed(cur, GS.fieldBuild(0.5, [4], [8]), label="test", slow=1e9)
+    cur.execute(GS._FIELD_SQL)
+    levels = {(p, a): lv for p, a, lv in cur.fetchall()}
+    cur.execute(GS._FIELD_DROP)
+    assert (40, 2025) not in levels                        # the club adult
+    assert levels[(41, 2025)] == "college"                 # a collegian's other season
+    assert levels[(42, 2025)] == "college"                 # on a college team
+    assert levels[(31, 2025)] == "college"
+    # off (the default): the club adult still takes 'college'
+    GS.runTimed(cur, GS.fieldBuild(None, [4], [8]), label="test", slow=1e9)
+    cur.execute(GS._FIELD_SQL)
+    assert {(p, a): lv for p, a, lv in cur.fetchall()}[(40, 2025)] == "college"
+    cur.execute(GS._FIELD_DROP)
+    cur.execute("SELECT to_regclass('fld_withhold'), to_regclass('fld_wh_cand'), "
+                "to_regclass('fld_collegian')")
+    assert cur.fetchone() == (None, None, None)
