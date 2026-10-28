@@ -16,6 +16,9 @@
 #   fitted on everything since (in October 2026: before 2025-08-01, then
 #   2025-08-01 to yesterday). That is the setup the sealed 2025-26 check
 #   scored (docs/PLAN-MODEL-2026-10.md: +1.29 points over the ratings).
+#   The gate below reads that held-out score; then --refit-all refits the
+#   served trees on every season, the held-out one too (owner, 2026-10-28:
+#   "why not everything?"), keeping the held-out ranges.
 #
 # ! NEVER A WORSE MODEL ON THE PAGE. The new pickle replaces the served one
 #   only when its race-morning gain over the ratings is at least
@@ -72,7 +75,7 @@ flock -u 9
 exec 9>&-
 
 "$PY" -u model/race_trees.py --rows "$ROWS_NEW" --val-from "$VAL_FROM" \
-      --without dist_vs_course --out "$PKL_NEW" > "$LOGDIR/race_trees.log" 2>&1 \
+      --without dist_vs_course --refit-all --out "$PKL_NEW" > "$LOGDIR/race_trees.log" 2>&1 \
       || fail race_trees
 GAIN="$(grep -m1 'model - ratings, pairs:' "$LOGDIR/race_trees.log" \
         | sed -E 's/.*pairs: ([+-][0-9.]+).*/\1/')"

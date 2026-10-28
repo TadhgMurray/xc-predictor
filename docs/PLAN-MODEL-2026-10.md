@@ -849,3 +849,17 @@ of having tuned to the validation season.
 in every fifth, narrowest to widest (widths 1.95% to 6.36%). One width
 per band: 87 / 77 / 68 / 59 / 50. Time: 71% inside ±1 sigma, 90% inside
 the 90% band.
+
+### Serving (2026-10-28)
+
+- **`deploy/race_model_weekly.sh`**, Mondays 14:17 UTC
+  (`deploy/install_race_model_timer.sh`): the table through yesterday, the
+  held-out fit and report, a gate (+1.0 points over the ratings or the old
+  model stays), then **`--refit-all`**: the served trees and level refit
+  on every season at the rounds early stopping chose (owner: "why not
+  everything?"). The ranges and spread stay the held-out ones, so they err
+  a little wide. A refit that scores worse on rows it has seen stops the
+  swap.
+- The sealed season's college mean (12.83%) is one meet: Jayton
+  Invitational 2025 (TFRRS 25768), four races entered about 5x slow. College
+  100+ is 3.79% (the page 4.79%).

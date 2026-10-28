@@ -775,19 +775,24 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     X_all, X = X, X[:, used]
     feats_all, feats = feats, [f for f, u in zip(feats, used) if u]
     r = np.clip(y - base, -CLIP, CLIP)
-    # ★ PRACTICE WITH MISSING INPUTS (2026-10-26): the page will not always
-    #   have the weather, a course cell or a past meeting. A few training
-    #   rows have each blanked, so the trees learn what to do without it.
-    Xt = X[~val].copy()
+    Xt = practiceBlanks(X[~val].copy(), feats, seed)
+    return {k: v for k, v in locals().items() if k in _TABLE_KEYS}
+
+
+def practiceBlanks(M, feats, seed=0):
+    """★ PRACTICE WITH MISSING INPUTS (2026-10-26): the page will not always
+    have the weather, a course cell or a past meeting. A few training rows
+    have each blanked, so the trees learn what to do without it. In place."""
+    import numpy as np
     rng = np.random.default_rng(seed)
     for group in (("temp_c", "dew_point_c", "precip_mm", "wind_kmh"),
                   ("course_cell",), ("h2h_n", "h2h_share", "h2h_vs_base")):
         cols = [feats.index(g) for g in group if g in feats]
         if cols:
-            hit = rng.random(len(Xt)) < 0.05
+            hit = rng.random(len(M)) < 0.05
             for c in cols:
-                Xt[hit, c] = np.nan
-    return {k: v for k, v in locals().items() if k in _TABLE_KEYS}
+                M[hit, c] = np.nan
+    return M
 
 
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
@@ -990,6 +995,10 @@ def main():
     ap.add_argument("--no-ratings", action="store_true",
                     help="a TEST: the same trees with nothing the engine made, from raw "
                          "times on a 5K by Riegel (RATING_INPUTS); the ratings print beside")
+    ap.add_argument("--refit-all", action="store_true",
+                    help="after the report, refit both models on EVERY season (the "
+                         "validation one too) at the rounds early stopping chose; the "
+                         "report, ranges and spread stay the held-out ones (with --out)")
     ap.add_argument("--drop-odd", action="store_true",
                     help="leave practices, time trials, relays and races with no distance "
                          "out of the TRAINING races (isOddRace)")
@@ -1261,9 +1270,32 @@ def main():
         print("\nrunner inputs by importance (rise in squared error when shuffled, x1e6)")
         for v, f in top:
             print(f"  {f:24} {1e6 * v:8.1f}")
+    if a.refit_all:
+        # ★ EVERY SEASON, NOT JUST THE OLD ONES (owner, 2026-10-28: "why not
+        #   everything?"). The held-out season measured the model and fitted
+        #   its ranges; the served trees then learn from it too, at the
+        #   rounds early stopping chose. Nothing is left to score the refit
+        #   on, so the report above stays the honest number, and the ranges
+        #   err a little wide. ! A refit that scores WORSE on rows it has now
+        #   seen than the held-out model did is broken: it stops here.
+        t5 = datetime.datetime.now()
+        rm2 = runnerModel(a.seed, a.big).set_params(max_iter=int(rm.n_iter_),
+                                                    early_stopping=False)
+        rm2.fit(practiceBlanks(X, feats, a.seed + 1), r)
+        lm2 = levelModel(a.seed).set_params(max_iter=int(lm.n_iter_), early_stopping=False)
+        lm2.fit(R[known][:, lused], L[known])
+        held = 100 * _mean(m[0] for m in model_s)
+        seen = 100 * _mean(m[0] for m in orderScores(centre(bv + rm2.predict(Xv), sl), yv, sl))
+        print(f"\nrefit on every season: {rm2.n_iter_} rounds, the level {lm2.n_iter_}; "
+              f"the validation season now seen {seen:.2f}% (held out it was {held:.2f}%) "
+              f"({datetime.datetime.now() - t5})")
+        if seen < held - 0.05:
+            raise SystemExit("the refit scores worse on rows it has seen: not saved")
+        rm, lm = rm2, lm2
     if a.out:
         with open(a.out, "wb") as fh:
             pickle.dump({"runner": rm, "level": lm, "features": feats,
+                         "refit_all": bool(a.refit_all),
                          "sigmas": sig_all, "sigmas_by_lead": sig_lead,
                          "own": own_pack, "team": team_pack, "ctx": ctx_packs,
                          "course_level": clv_pack,
