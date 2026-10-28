@@ -385,8 +385,9 @@ def test_the_staged_statements_take_no_parameters():
         assert "%(" not in sql and GS._OPEN_TOKEN not in sql
     heads = [s.split("\n")[-1] if s.startswith("--") else s
              for s in GS.splitStatements(GS.fieldBuild())]
-    # five stages and the (empty, open rule off) fld_adult_ev, fld_open_school
-    assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 7
+    # five stages and the open rule's (empty while it is off) fld_adult_ev,
+    # fld_withhold and fld_college_start
+    assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 8
     assert "%(" not in GS.fieldBuild(0.5, [4]) and GS._OPEN_TOKEN not in GS.fieldBuild(0.5, [4])
 
 
@@ -737,9 +738,14 @@ def test_a_college_race_gives_college_only_to_a_collegian(cur):
     from psycopg2.extras import execute_values
     rows = [(pid, 2025, g, g, 9, 1, "anet", -1, 900 + pid)
             for pid, g in ((31, "FR"), (32, "SO"), (33, "JR"), (34, "SR"), (35, "SO"))]
-    rows += [(pid, 2025, None, None, 9, 1, "anet", -1, 900 + pid) for pid in (40, 41, 42)]
-    # 41 carried a class year two seasons before
+    rows += [(pid, 2025, None, None, 9, 1, "anet", -1, 900 + pid)
+             for pid in (40, 41, 42, 43, 44)]
+    # 41 was a freshman two seasons before: 2025 is a junior's year
     rows.append((41, 2023, "FR", "FR", 50, 1, "anet", -1, 5041))
+    # 43 was a senior in 2010: 2025 is long past college
+    rows.append((43, 2010, "SR", "SR", 51, 1, "anet", -1, 5043))
+    # 44 was a high school senior last season: 2025 is a freshman's year
+    rows += [(44, 2024, "12", "12", 52 + k, 1, "anet", -1, 5044 + k) for k in range(2)]
     _load(cur, rows)
     cols = ("result_id bigint, person_id bigint, meet_id bigint, div_id bigint, "
             "source text, event_id bigint, team_id bigint")
@@ -752,11 +758,17 @@ def test_a_college_race_gives_college_only_to_a_collegian(cur):
                     (3, 42, 9, 1, "anet", None, 8)])
     GS.runTimed(cur, GS.fieldBuild(0.5, [4], [8]), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
-    levels = {(p, a): lv for p, a, lv in cur.fetchall()}
+    rows = cur.fetchall()
+    levels = {(p, a): lv for p, a, lv in rows}
+    cur.execute("SELECT person_id, start FROM fld_college_start")
+    classes = GS.collegeClasses(rows, dict(cur.fetchall()))
     cur.execute(GS._FIELD_DROP)
+    assert classes[(44, 2025)] == "FR" and classes[(41, 2025)] == "JR"
     assert (40, 2025) not in levels                        # the club adult
-    assert levels[(41, 2025)] == "college"                 # a collegian's other season
+    assert levels[(41, 2025)] == "college"                 # inside their college years
     assert levels[(42, 2025)] == "college"                 # on a college team
+    assert (43, 2025) not in levels                        # fifteen years after college
+    assert levels[(44, 2025)] == "college"                 # the season after high school
     assert levels[(31, 2025)] == "college"
     # off (the default): the club adult still takes 'college'
     GS.runTimed(cur, GS.fieldBuild(None, [4], [8]), label="test", slow=1e9)
@@ -764,5 +776,13 @@ def test_a_college_race_gives_college_only_to_a_collegian(cur):
     assert {(p, a): lv for p, a, lv in cur.fetchall()}[(40, 2025)] == "college"
     cur.execute(GS._FIELD_DROP)
     cur.execute("SELECT to_regclass('fld_withhold'), to_regclass('fld_wh_cand'), "
-                "to_regclass('fld_collegian')")
+                "to_regclass('fld_college_start')")
     assert cur.fetchone() == (None, None, None)
+
+
+def test_college_classes_count_from_the_first_college_year():
+    rows = [(1, 2025, "college"), (2, 2025, "college"), (3, 2025, "college"),
+            (4, 2025, "hs"), (5, 2025, "college"), (6, 2025, "college")]
+    starts = {1: 2025, 2: 2023, 3: 2020, 4: 2025, 6: 2030}
+    assert GS.collegeClasses(rows, starts) == {(1, 2025): "FR", (2, 2025): "JR",
+                                               (3, 2025): "SR"}

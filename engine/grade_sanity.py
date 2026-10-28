@@ -245,10 +245,21 @@ ADULT_OPEN_KID_SHARE = 0.5
 #   the rule above never sees them: the graded collegians voted 'college'
 #   for the club adult. A collegian carries a class year (FR..SR, RS) --
 #   97% of anet's college rows do, and tfrrs' all but always -- so an
-#   ungraded row takes a race's 'college' vote only when the runner carried
-#   a class year in SOME season of their career, or ran that race for a
-#   college team (anet_team.level a college code). Any race, open or not.
-COLLEGE_VOTE_NEEDS_CLASS = True
+#   ungraded row takes a race's 'college' vote only when that season is one
+#   of the runner's COLLEGE YEARS, or they ran that race for a college team
+#   (anet_team.level a college code). Any race, open or not.
+# ★ THE COLLEGE YEARS ARE A WINDOW, LIKE A GRADE (owner, 2026-10-28: "only
+#   if it makes sense for them to be that year then. For example a guy going
+#   from hs to running unattached in college ... should probably get put as
+#   a FR"). The window opens at the runner's first college year:
+#     from a class year anywhere in their career -- the season less the
+#       class (FR 0, SO 1, JR 2, SR 3), the earliest such;
+#     else from high school -- the season after graduation, graduation
+#       being the median of acad + (12 - grade) over their 9-12 rows;
+#   and runs POST_ELIGIBILITY_SEASONS seasons (rule 5e's limit). A season
+#   outside it takes no 'college' from the field; a season inside it that
+#   the field calls college carries the class the window gives it
+#   (collegeClasses: FR in the first year, SR from the fourth on).
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -1408,9 +1419,9 @@ def openSchoolBuild(on, codes, college_codes=()):
       'hs'       in an ADULT open race (fld_adult_ev: open, voting 'hs', its
                  ungraded entrants mostly not school kids that academic
                  year -- see ADULT_OPEN_KID_SHARE);
-      'college'  in any race voting 'college', by a runner who never carried
-                 a college class year (FR..RS) in any season of their career
-                 (see COLLEGE_VOTE_NEEDS_CLASS).
+      'college'  in any race voting 'college', in a season outside the
+                 runner's college years (fld_college_start; see
+                 COLLEGE_VOTE_NEEDS_CLASS).
     Either is kept when the runner ran that race for a team of the vote's
     kind: a school (`codes`, anet_team.level hs/ms/elem) for 'hs', a college
     (`college_codes`) for 'college'. Off: an empty table, and no results
@@ -1422,6 +1433,8 @@ def openSchoolBuild(on, codes, college_codes=()):
     DROP TABLE IF EXISTS fld_withhold;
     CREATE UNLOGGED TABLE fld_withhold (person_id bigint, acad int,
         meet_id bigint, div_id bigint, source text, event_key bigint);
+    DROP TABLE IF EXISTS fld_college_start;
+    CREATE UNLOGGED TABLE fld_college_start (person_id bigint, start int);
 """
     if not on:
         return empty
@@ -1486,14 +1499,36 @@ def openSchoolBuild(on, codes, college_codes=()):
         HAVING count(k.person_id) < {float(ADULT_OPEN_KID_SHARE)!r} * count(*);
     ANALYZE fld_adult_ev;
 
-    -- the needy runners who carried a college class year in any season
-    DROP TABLE IF EXISTS fld_collegian;
-    CREATE UNLOGGED TABLE fld_collegian AS
-        SELECT DISTINCT n.person_id
-        FROM  (SELECT DISTINCT person_id FROM fld_needy) n
-        JOIN   allraces a ON a.person_id = n.person_id
-        WHERE  gradeLevel(a.grade) = 'college';
-    ANALYZE fld_collegian;
+    -- the ungraded rows of needy seasons in races voting 'college'
+    DROP TABLE IF EXISTS fld_cvote;
+    CREATE UNLOGGED TABLE fld_cvote AS
+        SELECT DISTINCT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+        JOIN   fld_event_level e
+               ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+              AND e.source = a.source AND e.event_key = a.event_key
+        WHERE  e.level = 'college' AND gradeLevel(a.grade) IS NULL;
+    ANALYZE fld_cvote;
+
+    -- their first college year (COLLEGE_VOTE_NEEDS_CLASS): from a class
+    -- year, else the season after high school
+    DROP TABLE IF EXISTS fld_college_start;
+    CREATE UNLOGGED TABLE fld_college_start AS
+        SELECT person_id, COALESCE(c_start, hs_grad + 1) AS start
+        FROM  (SELECT a.person_id,
+                      min(a.acad - CASE a.grade WHEN 'FR' THEN 0 WHEN 'SO' THEN 1
+                                                WHEN 'JR' THEN 2 WHEN 'SR' THEN 3 END)
+                          FILTER (WHERE a.grade IN ('FR', 'SO', 'JR', 'SR'))   AS c_start,
+                      percentile_disc(0.5) WITHIN GROUP
+                          (ORDER BY a.acad + 12 - (CASE WHEN a.grade ~ '^(9|10|11|12)$'
+                                                        THEN a.grade::int END))
+                          FILTER (WHERE a.grade ~ '^(9|10|11|12)$')           AS hs_grad
+               FROM  (SELECT DISTINCT person_id FROM fld_cvote) p
+               JOIN   allraces a ON a.person_id = p.person_id
+               GROUP  BY 1) x
+        WHERE  COALESCE(c_start, hs_grad + 1) IS NOT NULL;
+    ANALYZE fld_college_start;
 
     -- the candidates: each kind's ungraded rows of needy seasons
     DROP TABLE IF EXISTS fld_wh_cand;
@@ -1506,16 +1541,12 @@ def openSchoolBuild(on, codes, college_codes=()):
               AND e.source = u.source AND e.event_key = u.event_key
         JOIN   fld_needy n ON n.person_id = u.person_id AND n.acad = u.acad
         UNION ALL
-        SELECT DISTINCT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key,
+        SELECT v.person_id, v.acad, v.meet_id, v.div_id, v.source, v.event_key,
                'college'
-        FROM   fld_needy n
-        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-        JOIN   fld_event_level e
-               ON e.meet_id = a.meet_id AND e.div_id = a.div_id
-              AND e.source = a.source AND e.event_key = a.event_key
-        LEFT   JOIN fld_collegian c ON c.person_id = a.person_id
-        WHERE  e.level = 'college' AND gradeLevel(a.grade) IS NULL
-          AND  c.person_id IS NULL;
+        FROM   fld_cvote v
+        LEFT   JOIN fld_college_start c ON c.person_id = v.person_id
+        WHERE  c.start IS NULL
+           OR  v.acad NOT BETWEEN c.start AND c.start + {int(POST_ELIGIBILITY_SEASONS) - 1};
     ANALYZE fld_wh_cand;
 
 {team_stage}    ANALYZE fld_wh_team;
@@ -1530,10 +1561,29 @@ def openSchoolBuild(on, codes, college_codes=()):
     ANALYZE fld_withhold;
     DROP TABLE fld_wh_team;
     DROP TABLE fld_wh_cand;
-    DROP TABLE fld_collegian;
+    DROP TABLE fld_cvote;
     DROP TABLE fld_open_ung;
     DROP TABLE fld_open_kid;
 """
+
+
+_CLASSES = ("FR", "SO", "JR", "SR")
+
+
+def collegeClasses(field_rows, starts):
+    """{(person_id, acad): class} for the field's 'college' verdicts inside
+    the runner's college years: FR in the first, SR from the fourth on.
+    field_rows: _FIELD_SQL's (person, acad, level); starts: {person: first
+    college year} (fld_college_start). Pure."""
+    out = {}
+    for pid, ay, level in field_rows:
+        start = starts.get(int(pid))
+        if level != "college" or start is None:
+            continue
+        k = int(ay) - int(start)
+        if 0 <= k < POST_ELIGIBILITY_SEASONS:
+            out[(int(pid), int(ay))] = _CLASSES[min(k, len(_CLASSES) - 1)]
+    return out
 
 
 def fieldBuild(share=None, codes=None, college_codes=None):
@@ -1553,6 +1603,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_event_level;
     DROP TABLE IF EXISTS fld_withhold;
     DROP TABLE IF EXISTS fld_adult_ev;
+    DROP TABLE IF EXISTS fld_college_start;
     RESET enable_nestloop;
 """
 
@@ -2956,8 +3007,11 @@ def _resolve(cur):
              label="[4] staging")
     cur.execute(_FIELD_SQL)
     _field_rows = cur.fetchall()
+    cur.execute("SELECT person_id, start FROM fld_college_start")
+    _classes = collegeClasses(_field_rows, {int(p): int(st) for p, st in cur.fetchall()})
     cur.execute(_FIELD_DROP)
-    print(f"    [4] field levels read ({time.time() - _tq:.0f}s)", flush=True)
+    print(f"    [4] field levels read ({time.time() - _tq:.0f}s); "
+          f"{len(_classes):,} college verdicts given their class year", flush=True)
     n_nograde = 0
     for pid, ay, level in _field_rows:
         key = (int(pid), int(ay))
@@ -2965,7 +3019,7 @@ def _resolve(cur):
             continue
         method = "no_grades" if level == "pro" else "field"
         n_nograde += (method == "no_grades")
-        acad[key] = {"grade": None, "level": level, "method": method}
+        acad[key] = {"grade": _classes.get(key), "level": level, "method": method}
     n_field = len(acad) - n_corr - n_nograde
 
     _tq = time.time()
@@ -3518,7 +3572,14 @@ def compareOpen(cur, share=0.5, show=20, codes=None, college_codes=None):
                 print(f"      {p} {ay} meet {m}/{d} ev {ev}: grade {g}, field {lv}"
                       f"{' (open)' if op else ''}{' WITHHELD' if wh else ''}", flush=True)
         cur.execute(_FIELD_SQL)
-        out[label] = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
+        rows = cur.fetchall()
+        out[label] = {(int(p), int(a)): lv for p, a, lv in rows}
+        if label == "on":
+            cur.execute("SELECT person_id, start FROM fld_college_start")
+            classes = collegeClasses(rows, {int(p): int(st) for p, st in cur.fetchall()})
+            from collections import Counter as _C
+            print(f"    college verdicts given a class year: {len(classes):,} "
+                  f"{dict(_C(classes.values()).most_common())}", flush=True)
         cur.execute(_FIELD_DROP)
     off, on = out["off"], out["on"]
     moved = [k for k in set(off) | set(on) if off.get(k) != on.get(k)]
