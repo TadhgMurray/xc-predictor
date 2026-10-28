@@ -225,6 +225,19 @@ _OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
 #   loadTeamLevels' hs/ms/elem) keeps the race's school vote; one who ran
 #   it for a club, unattached or for no team does not. Only school levels
 #   are withheld -- a college field still votes.
+# ★ AND ONLY 'hs', AND ONLY AT AN ADULT OPEN RACE (owner's --compare-open,
+#   2026-10-28: Ethan's 2024 and 2026 moved, but so did Calabasas Cheetahs,
+#   Texas Select, WilCo TFC, Arizona Elite -- youth clubs at AAU/JO meets,
+#   where entrants race by AGE, carry no grade, and so read "open"). The
+#   ungraded entrants tell the two apart: at an AAU meet they are school
+#   kids who carry a grade in their school races that same academic year;
+#   at Wayland or the GBTC Invite they are adults with no school grade
+#   anywhere. An open race is an ADULT open race when fewer than
+#   ADULT_OPEN_KID_SHARE of its ungraded entrants have a graded school
+#   season (hs/ms/elem) that academic year. Only its 'hs' vote is withheld:
+#   an adult among middle schoolers is not the fault, and an elementary or
+#   middle school AAU field keeps its vote whatever it reads.
+ADULT_OPEN_KID_SHARE = 0.5
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -1363,45 +1376,94 @@ _FIELD_SQL = f"""
     JOIN   fld_event_level e
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
+    LEFT   JOIN fld_adult_ev ae
+           ON ae.meet_id = a.meet_id AND ae.div_id = a.div_id
+          AND ae.source = a.source AND ae.event_key = a.event_key
     LEFT   JOIN fld_open_school os
            ON os.person_id = a.person_id AND os.acad = a.acad
           AND os.meet_id = a.meet_id AND os.div_id = a.div_id
           AND os.source = a.source AND os.event_key = a.event_key
     WHERE  e.level IS NOT NULL
-      -- an ungraded runner in an open race: its graded few say nothing of
-      -- them -- unless they ran it for a school team (fld_open_school)
-      AND  NOT (e.open_field AND e.level IN ('hs', 'ms', 'elem')
-                AND gradeLevel(a.grade) IS NULL AND os.person_id IS NULL)
+      -- an ungraded runner in an ADULT open race: its graded few high
+      -- schoolers say nothing of them -- unless they ran it for a school
+      -- team (fld_open_school). fld_adult_ev holds only 'hs' events.
+      AND  NOT (ae.meet_id IS NOT NULL AND gradeLevel(a.grade) IS NULL
+                AND os.person_id IS NULL)
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
               {_LEVEL_RANK_SQL.format(x="e.level")} DESC
 """
 
 def openSchoolBuild(on, codes):
-    """The fld_open_school stage: the ungraded rows rule 4 would withhold
-    in an open race (a school level, the runner gradeless there) that were
-    run for a SCHOOL team, which keep their vote. `codes`: anet_team.level
-    codes naming a school (_schoolTeamCodes). Off, or with no codes, an
-    empty table -- and no results tables read, so rule 4's tests need none."""
-    codes = sorted({int(c) for c in codes or ()})
-    if not on or not codes:
-        return """
+    """Rule 4's open-race stages (see ADULT_OPEN_KID_SHARE):
+      fld_adult_ev     the open events voting 'hs' whose ungraded entrants
+                       are mostly not school kids that academic year;
+      fld_open_school  the ungraded rows in them run for a SCHOOL team
+                       (`codes`, anet_team.level codes naming a school),
+                       which keep their vote.
+    Off: both empty, and no results tables read, so rule 4's tests need
+    none. With no codes the exemption is empty and the rule still runs."""
+    off = """
+    DROP TABLE IF EXISTS fld_adult_ev;
+    CREATE UNLOGGED TABLE fld_adult_ev (meet_id bigint, div_id bigint,
+        source text, event_key bigint);
     DROP TABLE IF EXISTS fld_open_school;
     CREATE UNLOGGED TABLE fld_open_school (person_id bigint, acad int,
         meet_id bigint, div_id bigint, source text, event_key bigint);
 """
+    if not on:
+        return off
+    codes = sorted({int(c) for c in codes or ()})
+    adult = f"""
+    -- the ungraded entrants of the open 'hs' events, every entrant's
+    DROP TABLE IF EXISTS fld_open_ung;
+    CREATE UNLOGGED TABLE fld_open_ung AS
+        SELECT DISTINCT a.person_id, a.acad, e.meet_id, e.div_id, e.source, e.event_key
+        FROM   fld_event_level e
+        JOIN   allraces a
+               ON a.meet_id = e.meet_id AND a.div_id = e.div_id
+              AND a.source = e.source AND a.event_key = e.event_key
+        WHERE  e.open_field AND e.level = 'hs'
+          AND  gradeLevel(a.grade) IS NULL;
+    ANALYZE fld_open_ung;
+
+    -- which of them carry a school grade somewhere that academic year
+    DROP TABLE IF EXISTS fld_open_kid;
+    CREATE UNLOGGED TABLE fld_open_kid AS
+        SELECT DISTINCT u.person_id, u.acad
+        FROM  (SELECT DISTINCT person_id, acad FROM fld_open_ung) u
+        JOIN   allraces a ON a.person_id = u.person_id AND a.acad = u.acad
+        WHERE  gradeLevel(a.grade) IN ('hs', 'ms', 'elem');
+    ANALYZE fld_open_kid;
+
+    DROP TABLE IF EXISTS fld_adult_ev;
+    CREATE UNLOGGED TABLE fld_adult_ev AS
+        SELECT u.meet_id, u.div_id, u.source, u.event_key
+        FROM   fld_open_ung u
+        LEFT   JOIN fld_open_kid k ON k.person_id = u.person_id AND k.acad = u.acad
+        GROUP  BY 1, 2, 3, 4
+        HAVING count(k.person_id) < {float(ADULT_OPEN_KID_SHARE)!r} * count(*);
+    ANALYZE fld_adult_ev;
+"""
+    if not codes:
+        return adult + """
+    DROP TABLE IF EXISTS fld_open_school;
+    CREATE UNLOGGED TABLE fld_open_school (person_id bigint, acad int,
+        meet_id bigint, div_id bigint, source text, event_key bigint);
+    DROP TABLE fld_open_ung;
+    DROP TABLE fld_open_kid;
+"""
     lv = ", ".join(map(str, codes))
-    return f"""
+    return adult + f"""
+    -- the needy runners' ungraded rows in those events
     DROP TABLE IF EXISTS fld_open_rows;
     CREATE UNLOGGED TABLE fld_open_rows AS
-        SELECT DISTINCT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
-        FROM   fld_needy n
-        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-        JOIN   fld_event_level e
-               ON e.meet_id = a.meet_id AND e.div_id = a.div_id
-              AND e.source = a.source AND e.event_key = a.event_key
-        WHERE  e.open_field AND e.level IN ('hs', 'ms', 'elem')
-          AND  gradeLevel(a.grade) IS NULL;
+        SELECT u.*
+        FROM   fld_open_ung u
+        JOIN   fld_adult_ev e
+               ON e.meet_id = u.meet_id AND e.div_id = u.div_id
+              AND e.source = u.source AND e.event_key = u.event_key
+        JOIN   fld_needy n ON n.person_id = u.person_id AND n.acad = u.acad;
     ANALYZE fld_open_rows;
 
     DROP TABLE IF EXISTS fld_open_school;
@@ -1422,6 +1484,8 @@ def openSchoolBuild(on, codes):
         JOIN   anet_team t ON t.team_id = r.team_id AND t.level IN ({lv});
     ANALYZE fld_open_school;
     DROP TABLE fld_open_rows;
+    DROP TABLE fld_open_ung;
+    DROP TABLE fld_open_kid;
 """
 
 
@@ -1441,6 +1505,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_wanted;
     DROP TABLE IF EXISTS fld_event_level;
     DROP TABLE IF EXISTS fld_open_school;
+    DROP TABLE IF EXISTS fld_adult_ev;
     RESET enable_nestloop;
 """
 
@@ -3371,6 +3436,8 @@ def compareOpen(cur, share=0.5, show=20, codes=None):
     for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
         runTimed(cur, fieldBuild(sh, codes), label=f"[open {label}] staging")
         if label == "on":
+            cur.execute("SELECT count(*) FROM fld_adult_ev")
+            print(f"    adult open races voting 'hs': {cur.fetchone()[0]:,}", flush=True)
             cur.execute("SELECT count(*), count(DISTINCT (person_id, acad)) FROM fld_open_school")
             n_rows, n_seasons = cur.fetchone()
             print(f"    school-team exemption: {n_rows:,} open-race rows "

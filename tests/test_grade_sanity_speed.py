@@ -385,8 +385,8 @@ def test_the_staged_statements_take_no_parameters():
         assert "%(" not in sql and GS._OPEN_TOKEN not in sql
     heads = [s.split("\n")[-1] if s.startswith("--") else s
              for s in GS.splitStatements(GS.fieldBuild())]
-    # five stages and the (empty, open rule off) fld_open_school
-    assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 6
+    # five stages and the (empty, open rule off) fld_adult_ev, fld_open_school
+    assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 7
     assert "%(" not in GS.fieldBuild(0.5, [4]) and GS._OPEN_TOKEN not in GS.fieldBuild(0.5, [4])
 
 
@@ -690,3 +690,39 @@ def test_an_open_race_keeps_the_vote_of_a_runner_on_a_school_team(cur):
     cur.execute(GS._FIELD_DROP)
     cur.execute("SELECT to_regclass('fld_open_school'), to_regclass('fld_open_rows')")
     assert cur.fetchone() == (None, None)
+
+
+
+def test_an_aau_race_is_not_an_adult_open_race(cur):
+    """Youth clubs at an AAU meet (owner's --compare-open, 2026-10-28):
+    entrants race by age and carry no grade, but they are school kids with a
+    grade in their school races that year. Their open race keeps its vote;
+    the adults' open race (nobody ungraded is a school kid) does not."""
+    rows = []
+    # event 7: the adult open race -- 4 graded high schoolers, 10 adults
+    rows += [(pid, 2026, g, g, 7, 1, "anet", -1, 700 + pid)
+             for pid, g in ((31, "11"), (32, "10"), (33, "12"), (34, "9"))]
+    rows += [(pid, 2026, None, None, 7, 1, "anet", -1, 700 + pid) for pid in range(40, 50)]
+    # event 8: the AAU race -- 4 graded, 10 ungraded kids (60-69)...
+    rows += [(pid, 2026, g, g, 8, 1, "anet", -1, 800 + pid)
+             for pid, g in ((51, "11"), (52, "10"), (53, "12"), (54, "9"))]
+    rows += [(pid, 2026, None, None, 8, 1, "anet", -1, 800 + pid) for pid in range(60, 70)]
+    # ...each with ONE graded school race that year (below corroboration,
+    # so still needy), in a school meet of their own
+    rows += [(pid, 2026, "10", "10", 100 + pid, 1, "anet", -1, 900 + pid) for pid in range(60, 70)]
+    _load(cur, rows)
+    GS.runTimed(cur, GS.fieldBuild(0.5, []), label="test", slow=1e9)
+    cur.execute("SELECT meet_id FROM fld_adult_ev")
+    assert [m for (m,) in cur.fetchall()] == [7]
+    cur.execute(GS._FIELD_SQL)
+    levels = {p: lv for p, _a, lv in cur.fetchall()}
+    cur.execute(GS._FIELD_DROP)
+    assert 40 not in levels                                # the adult: no 'hs'
+    assert levels[60] == "hs"                              # the AAU kid keeps it
+
+
+def test_only_hs_is_withheld():
+    """An adult open race voting 'ms' or 'elem' is not the fault: only
+    'hs' events can be adult open races."""
+    sql = GS.openSchoolBuild(True, [4])
+    assert "e.open_field AND e.level = 'hs'" in sql
