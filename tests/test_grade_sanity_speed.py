@@ -696,7 +696,12 @@ def test_club_runners_take_no_school_level_from_the_field(cur):
     res += [(200 + i, 950 + i, "2026-09-01", 2, "Lincoln HS", "10") for i in range(25)]
     execute_values(cur, "INSERT INTO results VALUES %s", res)
     cur.execute("ANALYZE results")
-    for sig in (("level",), ("name",), ("team",), GS.CLUB_SIGNALS_ALL):
+    # the last build's pools: the club's members are adults (rule 8, arm (b))
+    cur.execute("CREATE TABLE athlete_season (person_id bigint, year int, pool text)")
+    execute_values(cur, "INSERT INTO athlete_season VALUES %s",
+                   [(900 + i, 2026, "pro_m") for i in range(25)]
+                   + [(950 + i, 2026, "hs_m") for i in range(25)])
+    for sig in (("level",), ("name",), ("team",), ("adult",), GS.CLUB_SIGNALS_ALL):
         GS.runTimed(cur, GS.fieldBuild(club=sig), label="test", slow=1e9)
         cur.execute(GS._FIELD_SQL)
         levels = {p: lv for p, _a, lv in cur.fetchall()}
@@ -712,3 +717,26 @@ def test_club_runners_take_no_school_level_from_the_field(cur):
     cur.execute(GS._FIELD_DROP)
     cur.execute("SELECT to_regclass('fld_club'), to_regclass('club_rows')")
     assert cur.fetchone() == (None, None)
+
+
+def test_the_adult_signal_leaves_a_youth_club_alone(cur):
+    """A club whose members are children (pooled hs/ms by the last build)
+    is not an adult club: its ungraded runner keeps the field's level."""
+    from psycopg2.extras import execute_values
+    rows = [(pid, 2026, g, g, 7, 1, "anet", -1, 700 + pid)
+            for pid, g in ((31, "11"), (32, "10"), (33, "12"), (34, "9"))]
+    rows.append((40, 2026, None, None, 7, 1, "anet", -1, 740))
+    _load(cur, rows)
+    cols = "result_id bigint, person_id bigint, date text, team_id bigint, school text, grade text"
+    cur.execute(f"CREATE TABLE results ({cols}); CREATE TABLE results_tf ({cols})")
+    cur.execute("CREATE TABLE anet_team (team_id bigint, level int)")
+    cur.execute("CREATE TABLE athlete_season (person_id bigint, year int, pool text)")
+    res = [(1, 40, "2026-09-10", 1, "Metro Running Club", None)]
+    res += [(100 + i, 900 + i, "2026-09-01", 1, "Metro Running Club", None) for i in range(25)]
+    execute_values(cur, "INSERT INTO results VALUES %s", res)
+    execute_values(cur, "INSERT INTO athlete_season VALUES %s",
+                   [(900 + i, 2026, "ms_m") for i in range(25)])
+    GS.runTimed(cur, GS.fieldBuild(club=("adult",)), label="test", slow=1e9)
+    cur.execute(GS._FIELD_SQL)
+    assert {p: lv for p, _a, lv in cur.fetchall()}[40] == "hs"
+    cur.execute(GS._FIELD_DROP)
