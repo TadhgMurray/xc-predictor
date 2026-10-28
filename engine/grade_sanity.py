@@ -214,6 +214,33 @@ except ValueError:
     OPEN_FIELD_SHARE = OPEN_FIELD_OFF
 _OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
 
+# * A CLUB RUNNER'S SEASON TAKES NO SCHOOL LEVEL FROM THE FIELD (owner,
+#   2026-10-28, Ethan Weiner again: "do it, but also idk there must be more
+#   accurate rules"). The open-race rule above judged the RACE and moved
+#   698k verdicts, school kids among them. This judges the RUNNER: a needy
+#   season with no grade on any row, run mostly for a club, casts no
+#   school-level field vote ('hs', 'ms', ...); an event nobody graded still
+#   says 'pro'. What is a club is a choice of signals, measured apart by
+#   --compare-club before any is switched on:
+#     level  anet calls the team an open club (CLUB_TEAM_CODES);
+#     name   the team's name reads as a club (CLUB_FIELD_RE: rule 8's club
+#            words without "youth" -- a youth club IS kids -- plus "running");
+#     team   the team's own rows carry almost no grades, over all its
+#            athletes (CLUB_TEAM_GRADED_MAX of CLUB_TEAM_MIN_ROWS or more):
+#            a school's rows carry grades, a club's do not.
+# ! NO VOTE IS NO POOL, as with the open rule: such a season is written
+#   no_evidence and pools nowhere unless an ungraded event voted 'pro'. The
+#   owner, 2026-10-28: unranked or professional is all one while there are
+#   no professional boards. --compare-club counts the youth sign (a GRADED
+#   school season after the club one: a kid then) for each signal.
+# XCP_CLUB_FIELD: a comma list of the signals (level,name,team); unset, off.
+CLUB_SIGNALS_ALL = ("level", "name", "team")
+CLUB_SIGNALS = frozenset(x.strip() for x in (os.environ.get("XCP_CLUB_FIELD") or "").split(",")
+                         if x.strip() in CLUB_SIGNALS_ALL)
+CLUB_TEAM_CODES = (16,)        # anet_team.level 16, open / club (--compare-open's table)
+CLUB_TEAM_GRADED_MAX = 0.1
+CLUB_TEAM_MIN_ROWS = 20
+
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
 #   is ordinary: a grade is recorded per race and is sometimes a year stale,
@@ -1351,19 +1378,106 @@ _FIELD_SQL = f"""
     JOIN   fld_event_level e
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
+    LEFT   JOIN fld_club c ON c.person_id = n.person_id AND c.acad = n.acad
     WHERE  e.level IS NOT NULL
       -- an ungraded runner in an open race: its graded few say nothing of them
       AND  NOT (e.open_field AND e.level <> 'pro' AND gradeLevel(a.grade) IS NULL)
+      -- a club runner's ungraded season: no school level from the field
+      AND  NOT (c.person_id IS NOT NULL AND e.level <> 'pro')
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
               {_LEVEL_RANK_SQL.format(x="e.level")} DESC
 """
 
-def fieldBuild(share=None):
+def clubFieldRe():
+    """CLUB_NAME_RE without "youth", with "running" (see CLUB_SIGNALS)."""
+    out = CLUB_NAME_RE.replace("harriers|youth|", "harriers|running|")
+    assert out != CLUB_NAME_RE, "CLUB_NAME_RE changed: clubFieldRe no longer edits it"
+    return out
+
+
+def clubBuild(signals=None):
+    """The fld_club stage: the needy seasons with no grade on any row whose
+    rows are mostly a club's by `signals` (CLUB_SIGNALS when None). No
+    signal, an empty table -- and on a database with no results tables, so
+    rule 4's tests need none."""
+    signals = CLUB_SIGNALS if signals is None else frozenset(signals)
+    unknown = set(signals) - set(CLUB_SIGNALS_ALL)
+    assert not unknown, f"unknown club signals {sorted(unknown)}"
+    if not signals:
+        return """
+    DROP TABLE IF EXISTS fld_club;
+    CREATE UNLOGGED TABLE fld_club (person_id bigint, acad int);
+"""
+    tests = []
+    if "level" in signals:
+        tests.append(f"t.level IN ({', '.join(str(int(c)) for c in CLUB_TEAM_CODES)})")
+    if "name" in signals:
+        tests.append(f"w.sch ~ '{clubFieldRe()}'")
+    if "team" in signals:
+        tests.append(f"(tg.n >= {int(CLUB_TEAM_MIN_ROWS)} "
+                     f"AND tg.g <= {float(CLUB_TEAM_GRADED_MAX)!r} * tg.n)")
+    team_cte = f"""
+    -- each of their teams' rows, every athlete's: how many carry a grade
+    WITH team_graded AS (
+        SELECT x.team_id, count(*) AS n,
+               count(*) FILTER (WHERE gradeLevel(x.grade) IS NOT NULL) AS g
+        FROM  (SELECT r.team_id, r.grade FROM results r
+               WHERE  r.team_id IN (SELECT team_id FROM club_rows)
+               UNION ALL
+               SELECT r.team_id, r.grade FROM results_tf r
+               WHERE  r.team_id IN (SELECT team_id FROM club_rows)) x
+        GROUP  BY 1
+    )""" if "team" in signals else ""
+    team_join = ("LEFT   JOIN team_graded tg ON tg.team_id = w.team_id"
+                 if "team" in signals else "")
+    return f"""
+    DROP TABLE IF EXISTS fld_club;
+    DROP TABLE IF EXISTS club_ungraded;
+    CREATE UNLOGGED TABLE club_ungraded AS
+        SELECT a.person_id, a.acad
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+        GROUP  BY 1, 2
+        HAVING bool_and(gradeLevel(a.grade) IS NULL);
+    ANALYZE club_ungraded;
+
+    DROP TABLE IF EXISTS club_rows;
+    CREATE UNLOGGED TABLE club_rows AS
+        SELECT x.* FROM (
+            SELECT r.person_id, {_ACAD_R} AS acad, r.team_id,
+                   lower(btrim(COALESCE(r.school, ''))) AS sch
+            FROM   results r
+            JOIN  (SELECT DISTINCT person_id FROM club_ungraded) u ON u.person_id = r.person_id
+            WHERE  r.date IS NOT NULL
+            UNION ALL
+            SELECT r.person_id, {_ACAD_R}, r.team_id,
+                   lower(btrim(COALESCE(r.school, '')))
+            FROM   results_tf r
+            JOIN  (SELECT DISTINCT person_id FROM club_ungraded) u ON u.person_id = r.person_id
+            WHERE  r.date IS NOT NULL) x
+        JOIN   club_ungraded u ON u.person_id = x.person_id AND u.acad = x.acad;
+    ANALYZE club_rows;
+
+    CREATE UNLOGGED TABLE fld_club AS
+    {team_cte}
+    SELECT w.person_id, w.acad
+    FROM   club_rows w
+    LEFT   JOIN anet_team t ON t.team_id = w.team_id
+    {team_join}
+    GROUP  BY 1, 2
+    HAVING 2 * count(*) FILTER (WHERE {" OR ".join(tests)}) > count(*);
+    ANALYZE fld_club;
+    DROP TABLE club_rows;
+    DROP TABLE club_ungraded;
+"""
+
+
+def fieldBuild(share=None, club=None):
     """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
-    None; above 1 is off)."""
+    None; above 1 is off), and the club stage after it (clubBuild)."""
     return _FIELD_BUILD.replace(_OPEN_TOKEN, repr(float(
-        OPEN_FIELD_SHARE if share is None else share)))
+        OPEN_FIELD_SHARE if share is None else share))) + clubBuild(club)
 
 
 # rule 4's staging tables; season_races outlives them until rule 5e reads it
@@ -1372,6 +1486,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_needy;
     DROP TABLE IF EXISTS fld_wanted;
     DROP TABLE IF EXISTS fld_event_level;
+    DROP TABLE IF EXISTS fld_club;
     RESET enable_nestloop;
 """
 
@@ -3319,6 +3434,83 @@ def compareOpen(cur, share=0.5, show=25):
               f"{off.get(key)} -> {on.get(key)}")
 
 
+def youthSigns(seasons_by_person, moved):
+    """{(person, acad)} moved -> Counter of 'kid then' (a graded school
+    season after it: the club season was a child's), 'adult' (a graded
+    college season before it, or a school one four or more years before)
+    and 'no sign'. seasons_by_person: {person: [(acad, school?, college?)]}.
+    Pure."""
+    from collections import Counter
+    out = Counter()
+    for pid, ay in moved:
+        mine = seasons_by_person.get(pid, ())
+        if any(a > ay and sch for a, sch, _c in mine):
+            out["kid then (graded school season after it)"] += 1
+        elif any(a < ay and col for a, _s, col in mine) or \
+                any(a <= ay - 4 and sch for a, sch, _c in mine):
+            out["adult (college before, or school 4+ years before)"] += 1
+        else:
+            out["no sign either way"] += 1
+    return out
+
+
+def compareClub(cur, show=12):
+    """What the club rule moves for each signal alone and for all three:
+    rule 4's field verdicts with no club stage, then with each. One build,
+    one field staging; only fld_club is rebuilt per signal. Read only (the
+    dry run is rolled back)."""
+    import random
+    from collections import Counter
+    buildRaces(cur)
+    runTimed(cur, fieldBuild(club=()), label="[club off] staging")
+    cur.execute(_FIELD_SQL)
+    off = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
+    runs = []
+    for sig in [("level",), ("name",), ("team",), CLUB_SIGNALS_ALL]:
+        runTimed(cur, clubBuild(sig), label=f"[club {'+'.join(sig)}] stage")
+        cur.execute("SELECT count(*) FROM fld_club")
+        n_club = cur.fetchone()[0]
+        cur.execute(_FIELD_SQL)
+        on = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
+        moved = [k for k in set(off) | set(on) if off.get(k) != on.get(k)]
+        runs.append(("+".join(sig), n_club, on, moved))
+    cur.execute(_FIELD_DROP)
+
+    pids = sorted({k[0] for _l, _n, _o, mv in runs for k in mv})
+    seasons, info = {}, {}
+    if pids:
+        cur.execute("""SELECT person_id, acad,
+                              bool_or(gradeLevel(grade) IN ('hs', 'ms', 'elem')),
+                              bool_or(gradeLevel(grade) = 'college')
+                       FROM   allraces WHERE person_id = ANY(%s)
+                       GROUP  BY 1, 2""", (pids,))
+        for p, a, sch, col in cur.fetchall():
+            seasons.setdefault(int(p), []).append((int(a), bool(sch), bool(col)))
+        cur.execute("""SELECT DISTINCT ON (a.person_id) a.person_id, a.first_name, a.last_name,
+                              a.school, t.level
+                       FROM   athletes a
+                       LEFT   JOIN LATERAL (SELECT r.team_id FROM results r
+                                            WHERE r.person_id = a.person_id
+                                              AND r.team_id IS NOT NULL LIMIT 1) r ON true
+                       LEFT   JOIN anet_team t ON t.team_id = r.team_id
+                       WHERE  a.person_id = ANY(%s)""", (pids[:50000],))
+        info = {p: (f, l, sc, lv) for p, f, l, sc, lv in cur.fetchall()}
+
+    print(f"\n[grade] the club rule, {len(off):,} field verdicts with it off:")
+    for label, n_club, on, moved in runs:
+        moves = Counter(f"{off.get(k) or '-'} -> {on.get(k) or 'no field verdict'}" for k in moved)
+        print(f"\n  == signal {label}: {n_club:,} club seasons, {len(moved):,} verdicts move")
+        for what, n in moves.most_common(6):
+            print(f"    {n:>9,}  {what}")
+        for what, n in youthSigns(seasons, moved).most_common():
+            print(f"    {n:>9,}  {what}")
+        rnd = random.Random(0)
+        for key in sorted(rnd.sample(moved, min(len(moved), show)), key=lambda k: -k[1]):
+            f, l, sc, lv = info.get(key[0], ("?", "?", "?", None))
+            print(f"      {key[0]} {key[1]} {f} {l} ({sc}; team level {lv}): "
+                  f"{off.get(key)} -> {on.get(key)}")
+
+
 def main(do_write=False, audit=False, do_compare=False):
     from database import getConn
 
@@ -3336,6 +3528,13 @@ def main(do_write=False, audit=False, do_compare=False):
 
 
 if __name__ == "__main__":
+    if "--compare-club" in sys.argv:
+        from database import getConn
+        with getConn() as _conn:
+            with _conn.cursor() as _cur:
+                compareClub(_cur)
+            _conn.rollback()
+        sys.exit(0)
     if "--compare-open" in sys.argv:
         from database import getConn
         with getConn() as _conn:
