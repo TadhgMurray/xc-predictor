@@ -851,6 +851,69 @@ def missCauses(facts):
     return out
 
 
+SPREAD_MIN, SPREAD_MAX = 0.003, 0.20
+
+
+def spreadModel(X, em, rows, seed=0, cap=1_500_000):
+    """Trees for each runner's 1-sigma half-width: the 68.27th percentile of
+    |within-race miss| given the runner inputs, fitted on `rows`."""
+    import numpy as np
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    ix = np.flatnonzero(rows)
+    if len(ix) > cap:
+        ix = np.random.default_rng(seed).choice(ix, cap, replace=False)
+    # ! a column with fewer than two values in these rows cannot be binned
+    Xf = X[ix]
+    cols = np.array([len(np.unique(c[~np.isnan(c)])[:2]) > 1 for c in Xf.T])
+    m = HistGradientBoostingRegressor(
+        loss="quantile", quantile=0.6827, learning_rate=0.1, max_iter=400,
+        max_leaf_nodes=31, min_samples_leaf=500, early_stopping=True,
+        validation_fraction=0.1, n_iter_no_change=20, random_state=seed)
+    # ! by the module's name, not __main__'s, so the page can unpickle it
+    import race_trees as _rt
+    return _rt.Spread(m.fit(Xf[:, cols], np.abs(em[ix])), cols)
+
+
+class Spread:
+    """The spread trees and the input columns they read."""
+    def __init__(self, model, cols):
+        self.model, self.cols = model, cols
+
+    def predict(self, X):
+        return self.model.predict(X[:, self.cols])
+
+
+def spreadReport(X, em, err_abs, even_rows, main_rows, band_sig, level_sig, seed=0):
+    """(per-runner place sigmas, their measured 90% multiple, report lines):
+    fitted on the even races, checked on the odd ones, beside the band
+    sigmas."""
+    import numpy as np
+    ps = np.clip(spreadModel(X, em, even_rows, seed).predict(X), SPREAD_MIN, SPREAD_MAX)
+    ts = np.sqrt(ps ** 2 + level_sig ** 2)
+    fit, chk = even_rows & main_rows, ~even_rows & main_rows
+    z90 = float(np.percentile(np.abs(err_abs[fit]) / ts[fit], 90)) if fit.any() else 1.645
+    a = np.abs(em[chk])
+    cuts = np.percentile(ps[chk], [20, 40, 60, 80])
+    fifth = np.searchsorted(cuts, ps[chk])
+    per = [100 * (a[fifth == q] <= ps[chk][fifth == q]).mean() for q in range(5)]
+    bnd = [100 * (a[fifth == q] <= band_sig[chk][fifth == q]).mean() for q in range(5)]
+    lines = ["\nRANGES PER RUNNER (fitted on the even races, checked on the odd; honest = 68)",
+             f"  place, inside +-1 sigma: per runner {100 * (a <= ps[chk]).mean():.0f}%, "
+             f"by band {100 * (a <= band_sig[chk]).mean():.0f}%",
+             "  by the runner's own width, narrowest fifth -> widest:",
+             "    per runner  " + "  ".join(f"{v:3.0f}%" for v in per),
+             "    by band     " + "  ".join(f"{v:3.0f}%" for v in bnd),
+             f"  median width: per runner {100 * np.median(ps[chk]):.2f}%, "
+             f"by band {100 * np.median(band_sig[chk]):.2f}%; narrowest fifth "
+             f"{100 * np.median(ps[chk][fifth == 0]):.2f}%, widest "
+             f"{100 * np.median(ps[chk][fifth == 4]):.2f}%",
+             f"  time, inside +-1 sigma / the 90% band: "
+             f"{100 * (np.abs(err_abs[chk]) <= ts[chk]).mean():.0f}% / "
+             f"{100 * (np.abs(err_abs[chk]) <= z90 * ts[chk]).mean():.0f}% "
+             f"(the 90% band is {z90:.2f} sigma)"]
+    return ps, z90, lines
+
+
 def siteReport(path, pid_v, keys, rv, sl, lead_r, yv, page_abs, lastv, pv, tot_m, yav, labels):
     """EVERY BASELINE ON THE SAME RACES AND RUNNERS (owner, 2026-10-27):
     last race, the ratings (the site's order today), the transformer alone,
@@ -1170,9 +1233,21 @@ def main():
                  f"(the 90% band is {sg['_z90']:.2f} sigma)")
     lines.append("  sigmas: " + ", ".join(f"{k} {100 * v:.2f}%" for k, v in sg.items()
                                           if k != "_z90"))
+    # ★ A RANGE PER RUNNER (owner, 2026-10-28): some kids finish within a
+    #   few seconds of their prediction every week, some are all over the
+    #   place. The band sigmas give every opener one width; this model gives
+    #   each runner the 68th percentile of |miss| for runners like them (own
+    #   swing, record, band, field, how far ahead ...). Fitted on the even
+    #   validation races, checked on the odd ones: honest means 68% inside
+    #   for the narrowest fifth of runners AND the widest, not just overall.
+    sizes_v = [e - s for s, e in sl]
+    ps_r, z90_r, spread_lines = spreadReport(Xv, em, err_abs, np.repeat(even, sizes_v),
+                                             main_rows, place_sig, sg["_level"], a.seed)
+    lines += spread_lines
     sig_all = sigmas(lead_r == 0)
     # the page reads the set for the nearest lead (race_model)
     sig_lead = {int(ld): sigmas(lead_r == ld) for ld in set(lead_r.tolist())}
+    spread = spreadModel(Xv, em, np.ones(len(em), dtype=bool), a.seed) if a.out else None
     print("\n".join(lines))
 
     if a.importance:
@@ -1192,6 +1267,7 @@ def main():
                          "sigmas": sig_all, "sigmas_by_lead": sig_lead,
                          "own": own_pack, "team": team_pack, "ctx": ctx_packs,
                          "course_level": clv_pack,
+                         "spread": spread, "spread_z90": z90_r,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP,

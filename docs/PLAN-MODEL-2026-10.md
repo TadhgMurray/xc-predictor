@@ -812,3 +812,20 @@ epoch on the server.)
   course that only ever ran 4,828 m is likely three miles.
 - No history: nothing to learn from without course data.
 - No cause: mostly the day.
+
+### Ranges per runner (on the branch)
+
+- **Why** (owner, 2026-10-28): the band sigmas give every opener one width
+  and every in-season runner another; a steady kid and an erratic one get
+  the same range, so place and win chances are off for both.
+- `race_trees.spreadModel`: trees for the 68th percentile of each runner's
+  |within-race miss| from the runner inputs (own swing, record, band,
+  field, how far ahead). Fitted on the even validation races, checked on
+  the odd ones. **Honest means 68% inside in the narrowest fifth of
+  runners and in the widest**, not just overall. "RANGES PER RUNNER" in the
+  report prints both methods by fifth.
+- Saved as `spread` with `--out`; the page uses it when the pickle has it,
+  else the band sigmas. The time and score medians do not change.
+- On a synthetic table where swing depends on an input: per runner stays
+  within 6 points of 68% in every fifth; one width per band covers over 90%
+  of the steadiest and under 50% of the most erratic.

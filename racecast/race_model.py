@@ -271,10 +271,15 @@ def predictField(model, field, race):
     by_lead = model.get("sigmas_by_lead") or {}
     sig = (by_lead[min(by_lead, key=lambda ld: abs(ld - lead))] if by_lead
            else model.get("sigmas") or {})
+    # ★ A RANGE PER RUNNER when the model carries one (race_trees spreadModel)
+    spread = model.get("spread")
+    own_ps = (np.clip(spread.predict(X), RT.SPREAD_MIN, RT.SPREAD_MAX)
+              if spread is not None else None)
     out = {}
-    for r, x in zip(field, rel):
+    for i, (r, x) in enumerate(zip(field, rel)):
         band = RT.bandOf(r["f"]["opener"], r["f"]["last_days"])
-        ps = float(sig.get(band, sig.get("_all", 0.03)))
+        ps = (float(own_ps[i]) if own_ps is not None
+              else float(sig.get(band, sig.get("_all", 0.03))))
         ts = math.sqrt(ps * ps + float(sig.get("_level", 0.0)) ** 2)
         secs = math.exp(mean_base + level + float(x))
         out[r["pid"]] = {"seconds": round(secs, 1), "lo": round(secs * math.exp(-ts), 1),

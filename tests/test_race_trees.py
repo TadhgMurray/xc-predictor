@@ -234,3 +234,18 @@ def test_a_distance_is_read_against_what_the_course_ran_before():
     assert T.distVsCourse(d[1], 3010.0, 25) == pytest.approx(math.log(3010 / 3000))
     assert math.isnan(T.distVsCourse(d[1], 5000.0, 10))           # nothing before the cut
     assert math.isnan(T.distVsCourse(None, 5000.0, 99))
+
+
+def test_ranges_per_runner_stay_honest_where_one_width_per_band_is_not():
+    rng = np.random.default_rng(0)
+    n = 60_000
+    X = rng.random((n, 3)).astype(np.float32)
+    sd = 0.005 + 0.04 * X[:, 0]                      # some runners swing far more
+    em = rng.normal(0, 1, n) * sd
+    band = np.full(n, np.percentile(np.abs(em), 68.27))
+    even = np.arange(n) % 2 == 0
+    _ps, _z, lines = T.spreadReport(X, em, em, even, np.ones(n, dtype=bool), band, 0.0)
+    per = [float(v.rstrip("%")) for v in lines[3].split()[2:]]
+    bnd = [float(v.rstrip("%")) for v in lines[4].split()[2:]]
+    assert max(abs(v - 68) for v in per) < 6
+    assert bnd[0] > 90 and bnd[-1] < 50
