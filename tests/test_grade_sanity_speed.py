@@ -385,10 +385,9 @@ def test_the_staged_statements_take_no_parameters():
         assert "%(" not in sql and GS._OPEN_TOKEN not in sql
     heads = [s.split("\n")[-1] if s.startswith("--") else s
              for s in GS.splitStatements(GS.fieldBuild())]
-    # five stages and the (empty, club rule off) fld_club
+    # five stages and the (empty, open rule off) fld_open_school
     assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 6
-    for sig in (("level",), ("name",), ("team",), GS.CLUB_SIGNALS_ALL):
-        assert "%(" not in GS.clubBuild(sig)
+    assert "%(" not in GS.fieldBuild(0.5, [4]) and GS._OPEN_TOKEN not in GS.fieldBuild(0.5, [4])
 
 
 # ------------------------------------------------------------------ #
@@ -647,15 +646,6 @@ def test_compare_counts_each_kind_of_change():
     assert got == {"hs/field -> -": 1, "hs/field -> pro/no_grades": 1, "- -> hs/field": 1}
 
 
-def test_club_field_re_drops_youth_and_adds_running():
-    import re
-    rx = GS.clubFieldRe().replace(r"\m", r"\b").replace(r"\M", r"\b")
-    assert re.search(rx, "boston running club")
-    assert re.search(rx, "west chester running")
-    assert not re.search(rx, "spring youth track")
-    assert not re.search(rx, "lincoln high school")
-
-
 def test_youth_signs_reads_the_seasons_around_the_club_one():
     seasons = {1: [(2026, True, False)],                    # graded hs after: a kid
                2: [(2019, True, False)],                    # school 7 years before
@@ -667,76 +657,36 @@ def test_youth_signs_reads_the_seasons_around_the_club_one():
                    "no sign either way": 2}
 
 
-def test_club_runners_take_no_school_level_from_the_field(cur):
-    """Ethan Weiner's case judged by the runner (owner, 2026-10-28): an
-    ungraded season run for a club takes no 'hs' from a school-graded field.
-    A school kid with no grade in the same race keeps it; a race nobody
-    graded still says 'pro'."""
-    from psycopg2.extras import execute_values
-    rows = []
-    # event 7: four graded high schoolers, the club runner 40, the school kid 41
-    for pid, g in ((31, "11"), (32, "10"), (33, "12"), (34, "9")):
-        rows.append((pid, 2026, g, g, 7, 1, "anet", -1, 700 + pid))
-    for pid in (40, 41):
-        rows.append((pid, 2026, None, None, 7, 1, "anet", -1, 700 + pid))
-    # event 8: nobody graded, the club runner 42 among them
-    for pid in (42, 43, 44, 45):
-        rows.append((pid, 2026, None, None, 8, 1, "anet", -1, 800 + pid))
-    _load(cur, rows)
-    cols = "result_id bigint, person_id bigint, date text, team_id bigint, school text, grade text"
-    cur.execute(f"CREATE TABLE results ({cols}); CREATE TABLE results_tf ({cols})")
-    cur.execute("CREATE TABLE anet_team (team_id bigint, level int)")
-    execute_values(cur, "INSERT INTO anet_team VALUES %s", [(1, 16), (2, 4), (3, 4)])
-    # team 1: the club (level 16, a club's name, its rows ungraded);
-    # team 2: the school (graded rows); team 3 a school whose name is a club's
-    res = [(1, 40, "2026-09-10", 1, "Boston Running Club", None),
-           (2, 41, "2026-09-10", 2, "Lincoln HS", None),
-           (3, 42, "2026-09-12", 1, "Boston Running Club", None)]
-    res += [(100 + i, 900 + i, "2026-09-01", 1, "Boston Running Club", None) for i in range(25)]
-    res += [(200 + i, 950 + i, "2026-09-01", 2, "Lincoln HS", "10") for i in range(25)]
-    execute_values(cur, "INSERT INTO results VALUES %s", res)
-    cur.execute("ANALYZE results")
-    # the last build's pools: the club's members are adults (rule 8, arm (b))
-    cur.execute("CREATE TABLE athlete_season (person_id bigint, year int, pool text)")
-    execute_values(cur, "INSERT INTO athlete_season VALUES %s",
-                   [(900 + i, 2026, "pro_m") for i in range(25)]
-                   + [(950 + i, 2026, "hs_m") for i in range(25)])
-    for sig in (("level",), ("name",), ("team",), ("adult",), GS.CLUB_SIGNALS_ALL):
-        GS.runTimed(cur, GS.fieldBuild(club=sig), label="test", slow=1e9)
-        cur.execute(GS._FIELD_SQL)
-        levels = {p: lv for p, _a, lv in cur.fetchall()}
-        cur.execute(GS._FIELD_DROP)
-        assert 40 not in levels, sig                       # no 'hs' for the club runner
-        assert levels[41] == "hs", sig                     # the school kid keeps it
-        assert levels[31] == "hs", sig
-        assert levels[42] == "pro", sig                    # nobody graded: still 'pro'
-    # off (the default): the club runner still takes 'hs'
-    GS.runTimed(cur, GS.fieldBuild(club=()), label="test", slow=1e9)
-    cur.execute(GS._FIELD_SQL)
-    assert {p: lv for p, _a, lv in cur.fetchall()}[40] == "hs"
-    cur.execute(GS._FIELD_DROP)
-    cur.execute("SELECT to_regclass('fld_club'), to_regclass('club_rows')")
-    assert cur.fetchone() == (None, None)
-
-
-def test_the_adult_signal_leaves_a_youth_club_alone(cur):
-    """A club whose members are children (pooled hs/ms by the last build)
-    is not an adult club: its ungraded runner keeps the field's level."""
+def test_an_open_race_keeps_the_vote_of_a_runner_on_a_school_team(cur):
+    """Ethan Weiner's open races, judged by each row's own team (owner,
+    2026-10-28): the ungraded adult on a club loses the graded few's 'hs';
+    an ungraded kid who ran the same race for a school team keeps it."""
     from psycopg2.extras import execute_values
     rows = [(pid, 2026, g, g, 7, 1, "anet", -1, 700 + pid)
             for pid, g in ((31, "11"), (32, "10"), (33, "12"), (34, "9"))]
-    rows.append((40, 2026, None, None, 7, 1, "anet", -1, 740))
+    rows += [(pid, 2026, None, None, 7, 1, "anet", -1, 700 + pid) for pid in range(40, 50)]
     _load(cur, rows)
-    cols = "result_id bigint, person_id bigint, date text, team_id bigint, school text, grade text"
+    cols = ("result_id bigint, person_id bigint, meet_id bigint, div_id bigint, "
+            "source text, event_id bigint, team_id bigint")
     cur.execute(f"CREATE TABLE results ({cols}); CREATE TABLE results_tf ({cols})")
     cur.execute("CREATE TABLE anet_team (team_id bigint, level int)")
-    cur.execute("CREATE TABLE athlete_season (person_id bigint, year int, pool text)")
-    res = [(1, 40, "2026-09-10", 1, "Metro Running Club", None)]
-    res += [(100 + i, 900 + i, "2026-09-01", 1, "Metro Running Club", None) for i in range(25)]
-    execute_values(cur, "INSERT INTO results VALUES %s", res)
-    execute_values(cur, "INSERT INTO athlete_season VALUES %s",
-                   [(900 + i, 2026, "ms_m") for i in range(25)])
-    GS.runTimed(cur, GS.fieldBuild(club=("adult",)), label="test", slow=1e9)
+    execute_values(cur, "INSERT INTO anet_team VALUES %s", [(1, 16), (2, 4)])
+    # 40: Cambridge Running (a club); 41: Lincoln HS, no grade recorded;
+    # 42: no team at all
+    execute_values(cur, "INSERT INTO results VALUES %s",
+                   [(1, 40, 7, 1, "anet", None, 1), (2, 41, 7, 1, "anet", None, 2),
+                    (3, 42, 7, 1, "anet", None, None)])
+    GS.runTimed(cur, GS.fieldBuild(0.5, [4]), label="test", slow=1e9)
+    cur.execute(GS._FIELD_SQL)
+    levels = {p: lv for p, _a, lv in cur.fetchall()}
+    cur.execute(GS._FIELD_DROP)
+    assert 40 not in levels and 42 not in levels           # the adults: no 'hs'
+    assert levels[41] == "hs"                              # the school kid keeps it
+    assert levels[31] == "hs"                              # a graded runner as before
+    # off (the default) everyone keeps it
+    GS.runTimed(cur, GS.fieldBuild(None, [4]), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     assert {p: lv for p, _a, lv in cur.fetchall()}[40] == "hs"
     cur.execute(GS._FIELD_DROP)
+    cur.execute("SELECT to_regclass('fld_open_school'), to_regclass('fld_open_rows')")
+    assert cur.fetchone() == (None, None)

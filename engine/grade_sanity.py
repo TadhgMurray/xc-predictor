@@ -214,38 +214,17 @@ except ValueError:
     OPEN_FIELD_SHARE = OPEN_FIELD_OFF
 _OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
 
-# * A CLUB RUNNER'S SEASON TAKES NO SCHOOL LEVEL FROM THE FIELD (owner,
-#   2026-10-28, Ethan Weiner again: "do it, but also idk there must be more
-#   accurate rules"). The open-race rule above judged the RACE and moved
-#   698k verdicts, school kids among them. This judges the RUNNER: a needy
-#   season with no grade on any row, run mostly for a club, casts no
-#   school-level field vote ('hs', 'ms', ...); an event nobody graded still
-#   says 'pro'. What is a club is a choice of signals, measured apart by
-#   --compare-club before any is switched on:
-#     level  anet calls the team an open club (CLUB_TEAM_CODES);
-#     name   the team's name reads as a club (CLUB_FIELD_RE: rule 8's club
-#            words without "youth" -- a youth club IS kids -- plus "running");
-#     team   the team's own rows carry almost no grades, over all its
-#            athletes (CLUB_TEAM_GRADED_MAX of CLUB_TEAM_MIN_ROWS or more):
-#            a school's rows carry grades, a club's do not.
-# ! NO VOTE IS NO POOL, as with the open rule: such a season is written
-#   no_evidence and pools nowhere unless an ungraded event voted 'pro'. The
-#   owner, 2026-10-28: unranked or professional is all one while there are
-#   no professional boards. --compare-club counts the youth sign (a GRADED
-#   school season after the club one: a kid then) for each signal.
-# XCP_CLUB_FIELD: a comma list of the signals (level,name,team); unset, off.
-#     adult  (owner's --compare-club, 2026-10-28: level 477k seasons, name
-#            235k, team 159k -- youth clubs' children and college teams, not
-#            Ethan Weiner) the team's name reads as a club AND most of its
-#            athletes' seasons were pooled professional or college by the
-#            last build: rule 8's adult club, arm (b). A youth club's members
-#            are children and cannot pass it; a school's name is not a club's.
-CLUB_SIGNALS_ALL = ("level", "name", "team", "adult")
-CLUB_SIGNALS = frozenset(x.strip() for x in (os.environ.get("XCP_CLUB_FIELD") or "").split(",")
-                         if x.strip() in CLUB_SIGNALS_ALL)
-CLUB_TEAM_CODES = (16,)        # anet_team.level 16, open / club (--compare-open's table)
-CLUB_TEAM_GRADED_MAX = 0.1
-CLUB_TEAM_MIN_ROWS = 20
+# ★ BUT NOT A RUNNER WHO RAN IT FOR A SCHOOL (owner, 2026-10-28, after
+#   the club rule's four signals each caught youth clubs' children or
+#   college teams -- level 477k seasons, name 235k, team 159k, adult 4k
+#   with Canadian and NZ juniors in it -- and a by-hand pin: "this doesn't
+#   actually solve the issue"). The open-race rule judged the race alone,
+#   so a school kid whose grade the meet did not record lost the vote with
+#   the adults. The row's own team settles it: an ungraded runner who ran
+#   the open race for a SCHOOL team (anet_team.level a school code,
+#   loadTeamLevels' hs/ms/elem) keeps the race's school vote; one who ran
+#   it for a club, unattached or for no team does not. Only school levels
+#   are withheld -- a college field still votes.
 
 # * FORGIVING BY ONE GRADE, AND ONLY BY ONE. Implied class year is
 #   `acad + (12 - grade)` and is constant for a real athlete. A drift of one
@@ -1384,136 +1363,75 @@ _FIELD_SQL = f"""
     JOIN   fld_event_level e
            ON e.meet_id = a.meet_id AND e.div_id = a.div_id
           AND e.source = a.source AND e.event_key = a.event_key
-    LEFT   JOIN fld_club c ON c.person_id = n.person_id AND c.acad = n.acad
+    LEFT   JOIN fld_open_school os
+           ON os.person_id = a.person_id AND os.acad = a.acad
+          AND os.meet_id = a.meet_id AND os.div_id = a.div_id
+          AND os.source = a.source AND os.event_key = a.event_key
     WHERE  e.level IS NOT NULL
-      -- an ungraded runner in an open race: its graded few say nothing of them
-      AND  NOT (e.open_field AND e.level <> 'pro' AND gradeLevel(a.grade) IS NULL)
-      -- a club runner's ungraded season: no school level from the field
-      -- (a college or 'pro' field still votes: a college club's runners)
-      AND  NOT (c.person_id IS NOT NULL AND e.level IN ('hs', 'ms', 'elem'))
+      -- an ungraded runner in an open race: its graded few say nothing of
+      -- them -- unless they ran it for a school team (fld_open_school)
+      AND  NOT (e.open_field AND e.level IN ('hs', 'ms', 'elem')
+                AND gradeLevel(a.grade) IS NULL AND os.person_id IS NULL)
     GROUP  BY n.person_id, n.acad, e.level
     ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
               {_LEVEL_RANK_SQL.format(x="e.level")} DESC
 """
 
-def clubFieldRe():
-    """CLUB_NAME_RE without "youth", with "running" (see CLUB_SIGNALS)."""
-    out = CLUB_NAME_RE.replace("harriers|youth|", "harriers|running|")
-    assert out != CLUB_NAME_RE, "CLUB_NAME_RE changed: clubFieldRe no longer edits it"
-    return out
-
-
-def clubBuild(signals=None):
-    """The fld_club stage: the needy seasons with no grade on any row whose
-    rows are mostly a club's by `signals` (CLUB_SIGNALS when None). No
-    signal, an empty table -- and on a database with no results tables, so
-    rule 4's tests need none."""
-    signals = CLUB_SIGNALS if signals is None else frozenset(signals)
-    unknown = set(signals) - set(CLUB_SIGNALS_ALL)
-    assert not unknown, f"unknown club signals {sorted(unknown)}"
-    if not signals:
+def openSchoolBuild(on, codes):
+    """The fld_open_school stage: the ungraded rows rule 4 would withhold
+    in an open race (a school level, the runner gradeless there) that were
+    run for a SCHOOL team, which keep their vote. `codes`: anet_team.level
+    codes naming a school (_schoolTeamCodes). Off, or with no codes, an
+    empty table -- and no results tables read, so rule 4's tests need none."""
+    codes = sorted({int(c) for c in codes or ()})
+    if not on or not codes:
         return """
-    DROP TABLE IF EXISTS fld_club;
-    CREATE UNLOGGED TABLE fld_club (person_id bigint, acad int);
+    DROP TABLE IF EXISTS fld_open_school;
+    CREATE UNLOGGED TABLE fld_open_school (person_id bigint, acad int,
+        meet_id bigint, div_id bigint, source text, event_key bigint);
 """
-    tests = []
-    if "level" in signals:
-        tests.append(f"t.level IN ({', '.join(str(int(c)) for c in CLUB_TEAM_CODES)})")
-    if "name" in signals:
-        tests.append(f"w.sch ~ '{clubFieldRe()}'")
-    if "team" in signals:
-        tests.append(f"(tg.n >= {int(CLUB_TEAM_MIN_ROWS)} "
-                     f"AND tg.g <= {float(CLUB_TEAM_GRADED_MAX)!r} * tg.n)")
-    if "adult" in signals:
-        tests.append(f"(w.sch ~ '{clubFieldRe()}' AND ca.sch IS NOT NULL)")
-    ctes = []
-    if "team" in signals:
-        ctes.append(f"""
-    -- each of their teams' rows, every athlete's: how many carry a grade
-    team_graded AS (
-        SELECT x.team_id, count(*) AS n,
-               count(*) FILTER (WHERE gradeLevel(x.grade) IS NOT NULL) AS g
-        FROM  (SELECT r.team_id, r.grade FROM results r
-               WHERE  r.team_id IN (SELECT team_id FROM club_rows)
-               UNION ALL
-               SELECT r.team_id, r.grade FROM results_tf r
-               WHERE  r.team_id IN (SELECT team_id FROM club_rows)) x
-        GROUP  BY 1
-    )""")
-    if "adult" in signals:
-        ctes.append(f"""
-    -- each of their clubs' (athlete, season)s, every athlete's: how many the
-    -- last build pooled professional or college (rule 8's arm (b))
-    club_adult AS (
-        SELECT x.sch
-        FROM  (SELECT DISTINCT r.person_id, {_ACAD_R} AS acad,
-                      lower(btrim(r.school)) AS sch
-               FROM   results r
-               WHERE  r.date IS NOT NULL AND r.person_id IS NOT NULL
-                 AND  lower(btrim(r.school)) IN (SELECT sch FROM club_rows)
-               UNION
-               SELECT r.person_id, {_ACAD_R}, lower(btrim(r.school))
-               FROM   results_tf r
-               WHERE  r.date IS NOT NULL AND r.person_id IS NOT NULL
-                 AND  lower(btrim(r.school)) IN (SELECT sch FROM club_rows)) x
-        JOIN   athlete_season s ON s.person_id = x.person_id AND s.year = x.acad
-        WHERE  x.sch ~ '{clubFieldRe()}'
-        GROUP  BY 1
-        HAVING count(*) FILTER (WHERE s.pool ~ '^(pro|college)_')
-                   > {float(ADULT_CLUB_SHARE)!r} * count(*)
-    )""")
-    team_cte = ("WITH" + ",".join(ctes)) if ctes else ""
-    team_join = "\n    ".join(
-        j for sig, j in (("team", "LEFT   JOIN team_graded tg ON tg.team_id = w.team_id"),
-                         ("adult", "LEFT   JOIN club_adult ca ON ca.sch = w.sch"))
-        if sig in signals)
+    lv = ", ".join(map(str, codes))
     return f"""
-    DROP TABLE IF EXISTS fld_club;
-    DROP TABLE IF EXISTS club_ungraded;
-    CREATE UNLOGGED TABLE club_ungraded AS
-        SELECT a.person_id, a.acad
+    DROP TABLE IF EXISTS fld_open_rows;
+    CREATE UNLOGGED TABLE fld_open_rows AS
+        SELECT DISTINCT a.person_id, a.acad, a.meet_id, a.div_id, a.source, a.event_key
         FROM   fld_needy n
         JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-        GROUP  BY 1, 2
-        HAVING bool_and(gradeLevel(a.grade) IS NULL);
-    ANALYZE club_ungraded;
+        JOIN   fld_event_level e
+               ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+              AND e.source = a.source AND e.event_key = a.event_key
+        WHERE  e.open_field AND e.level IN ('hs', 'ms', 'elem')
+          AND  gradeLevel(a.grade) IS NULL;
+    ANALYZE fld_open_rows;
 
-    DROP TABLE IF EXISTS club_rows;
-    CREATE UNLOGGED TABLE club_rows AS
-        SELECT x.* FROM (
-            SELECT r.person_id, {_ACAD_R} AS acad, r.team_id,
-                   lower(btrim(COALESCE(r.school, ''))) AS sch
-            FROM   results r
-            JOIN  (SELECT DISTINCT person_id FROM club_ungraded) u ON u.person_id = r.person_id
-            WHERE  r.date IS NOT NULL
-            UNION ALL
-            SELECT r.person_id, {_ACAD_R}, r.team_id,
-                   lower(btrim(COALESCE(r.school, '')))
-            FROM   results_tf r
-            JOIN  (SELECT DISTINCT person_id FROM club_ungraded) u ON u.person_id = r.person_id
-            WHERE  r.date IS NOT NULL) x
-        JOIN   club_ungraded u ON u.person_id = x.person_id AND u.acad = x.acad;
-    ANALYZE club_rows;
-
-    CREATE UNLOGGED TABLE fld_club AS
-    {team_cte}
-    SELECT w.person_id, w.acad
-    FROM   club_rows w
-    LEFT   JOIN anet_team t ON t.team_id = w.team_id
-    {team_join}
-    GROUP  BY 1, 2
-    HAVING 2 * count(*) FILTER (WHERE {" OR ".join(tests)}) > count(*);
-    ANALYZE fld_club;
-    DROP TABLE club_rows;
-    DROP TABLE club_ungraded;
+    DROP TABLE IF EXISTS fld_open_school;
+    CREATE UNLOGGED TABLE fld_open_school AS
+        SELECT DISTINCT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
+        FROM   fld_open_rows o
+        JOIN   results r
+               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
+              AND r.div_id = o.div_id AND r.source = o.source AND o.event_key = -1
+        JOIN   anet_team t ON t.team_id = r.team_id AND t.level IN ({lv})
+        UNION
+        SELECT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
+        FROM   fld_open_rows o
+        JOIN   results_tf r
+               ON r.person_id = o.person_id AND r.meet_id = o.meet_id
+              AND r.div_id = o.div_id AND r.source = o.source
+              AND COALESCE(r.event_id, -1) = o.event_key
+        JOIN   anet_team t ON t.team_id = r.team_id AND t.level IN ({lv});
+    ANALYZE fld_open_school;
+    DROP TABLE fld_open_rows;
 """
 
 
-def fieldBuild(share=None, club=None):
+def fieldBuild(share=None, codes=None):
     """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
-    None; above 1 is off), and the club stage after it (clubBuild)."""
-    return _FIELD_BUILD.replace(_OPEN_TOKEN, repr(float(
-        OPEN_FIELD_SHARE if share is None else share))) + clubBuild(club)
+    None; above 1 is off), and the school-team exemption after it
+    (openSchoolBuild, `codes` the school team codes)."""
+    share = float(OPEN_FIELD_SHARE if share is None else share)
+    return (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
+            + openSchoolBuild(share <= 1.0, codes))
 
 
 # rule 4's staging tables; season_races outlives them until rule 5e reads it
@@ -1522,7 +1440,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_needy;
     DROP TABLE IF EXISTS fld_wanted;
     DROP TABLE IF EXISTS fld_event_level;
-    DROP TABLE IF EXISTS fld_club;
+    DROP TABLE IF EXISTS fld_open_school;
     RESET enable_nestloop;
 """
 
@@ -1636,18 +1554,38 @@ def teamLevelCandidates(acad, seasons_of):
     return out
 
 
+_TEAM_MEANING = None
+
+
+def _teamMeaning():
+    """{anet_team.level code: level name}, the engine's own reading of them
+    (speed_ratings_db.loadTeamLevels), read once per run: rule 4's open-race
+    exemption and rule 5f both ask. {} when it cannot say."""
+    global _TEAM_MEANING
+    if _TEAM_MEANING is None:
+        try:
+            from speed_ratings_db import loadTeamLevels
+            _by_team, meaning, _rows = loadTeamLevels()
+        except Exception as exc:                                 # noqa: BLE001
+            print(f"    team levels unavailable ({type(exc).__name__}: {exc})", flush=True)
+            meaning = {}
+        _TEAM_MEANING = meaning
+    return _TEAM_MEANING
+
+
+def _schoolTeamCodes():
+    """The codes naming a school of any level (hs, ms, elem): rule 4's
+    open-race exemption."""
+    return sorted(int(c) for c, lv in _teamMeaning().items() if lv in ("hs", "ms", "elem"))
+
+
 def _hsTeamCodes():
-    """anet_team.level codes that name a high school, from the engine's own
-    reading of them (speed_ratings_db.loadTeamLevels). Empty -- and rule 5f
-    inert -- when it cannot say."""
-    try:
-        from speed_ratings_db import loadTeamLevels
-        _by_team, meaning, _rows = loadTeamLevels()
-    except Exception as exc:                                     # noqa: BLE001
-        print(f"    [5f] team levels unavailable ({type(exc).__name__}: {exc}); "
-              f"rule skipped", flush=True)
-        return []
-    return sorted(int(c) for c, lv in meaning.items() if lv == "hs")
+    """anet_team.level codes that name a high school. Empty -- and rule 5f
+    inert -- when they cannot be read."""
+    codes = sorted(int(c) for c, lv in _teamMeaning().items() if lv == "hs")
+    if not codes:
+        print("    [5f] no high school team codes; rule skipped", flush=True)
+    return codes
 
 
 def teamLevelSeasons(cur, acad, seasons_of, hs_codes=None):
@@ -2895,7 +2833,8 @@ def _resolve(cur):
     #   is the absence of school-ness. Only the second can emit 'pro', so the
     #   level identifies its own origin and the two stay countable apart.
     _tq = time.time()
-    runTimed(cur, fieldBuild(), label="[4] staging")
+    runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if OPEN_FIELD_SHARE <= 1.0 else ()),
+             label="[4] staging")
     cur.execute(_FIELD_SQL)
     _field_rows = cur.fetchall()
     cur.execute(_FIELD_DROP)
@@ -3417,27 +3356,31 @@ def compare(cur, resolved, show=12):
             print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {old.get(key)} -> {new.get(key)}")
 
 
-def compareOpen(cur, share=0.5, show=25):
+def compareOpen(cur, share=0.5, show=20, codes=None):
     """What the open-race rule ALONE moves: rule 4's field verdicts with it
-    off and with it at `share`, over one build. Read only (the dry run is
-    rolled back). Field verdicts only -- rule 2c's relabelling of bare class
-    words is skipped, so a few seasons differ from a full run either way."""
+    off and with it at `share` (school-team exemption included), over one
+    build. Read only (the dry run is rolled back). Field verdicts only --
+    rule 2c's relabelling of bare class words is skipped, so a few seasons
+    differ from a full run either way."""
+    import random
     from collections import Counter
+    codes = _schoolTeamCodes() if codes is None else codes
+    print(f"[grade] school team codes {codes}", flush=True)
     buildRaces(cur)
     out = {}
     for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
-        runTimed(cur, fieldBuild(sh), label=f"[open {label}] staging")
+        runTimed(cur, fieldBuild(sh, codes), label=f"[open {label}] staging")
+        if label == "on":
+            cur.execute("SELECT count(*), count(DISTINCT (person_id, acad)) FROM fld_open_school")
+            n_rows, n_seasons = cur.fetchone()
+            print(f"    school-team exemption: {n_rows:,} open-race rows "
+                  f"({n_seasons:,} seasons) keep their vote", flush=True)
         cur.execute(_FIELD_SQL)
         out[label] = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
         cur.execute(_FIELD_DROP)
     off, on = out["off"], out["on"]
-    moves = Counter()
-    moved = []
-    for key in set(off) | set(on):
-        a, b = off.get(key), on.get(key)
-        if a != b:
-            moves[f"{a or '-'} -> {b or 'no field verdict'}"] += 1
-            moved.append(key)
+    moved = [k for k in set(off) | set(on) if off.get(k) != on.get(k)]
+    moves = Counter(f"{off.get(k) or '-'} -> {on.get(k) or 'no field verdict'}" for k in moved)
     print(f"\n[grade] the open-race rule at {share:.0%} ungraded moves "
           f"{len(moved):,} field verdicts (of {len(off):,}):")
     for what, n in moves.most_common():
@@ -3445,6 +3388,24 @@ def compareOpen(cur, share=0.5, show=25):
     if not moved:
         return
     pids = sorted({k[0] for k in moved})
+    seasons = {}
+    cur.execute("""SELECT person_id, acad,
+                          bool_or(gradeLevel(grade) IN ('hs', 'ms', 'elem')),
+                          bool_or(gradeLevel(grade) = 'college')
+                   FROM   allraces WHERE person_id = ANY(%s)
+                   GROUP  BY 1, 2""", (pids,))
+    for p, a, sch, col in cur.fetchall():
+        seasons.setdefault(int(p), []).append((int(a), bool(sch), bool(col)))
+    print("\n  the moved seasons, by the runner's other seasons:")
+    for what, n in youthSigns(seasons, moved).most_common():
+        print(f"    {n:>9,}  {what}")
+    sample = sorted(random.Random(0).sample(moved, min(len(moved), show)), key=lambda k: -k[1])
+    cur.execute("""SELECT person_id, acad FROM allraces a
+                   JOIN   athletes x USING (person_id)
+                   WHERE  x.first_name ILIKE 'ethan' AND x.last_name ILIKE 'weiner'
+                   GROUP  BY 1, 2""")
+    ethan = [(int(p), int(a)) for p, a in cur.fetchall()]
+    want = sorted({k[0] for k in sample + ethan})
     cur.execute("""SELECT DISTINCT ON (a.person_id) a.person_id, a.first_name, a.last_name,
                           a.school, t.level
                    FROM   athletes a
@@ -3452,19 +3413,14 @@ def compareOpen(cur, share=0.5, show=25):
                                         WHERE r.person_id = a.person_id
                                           AND r.team_id IS NOT NULL LIMIT 1) r ON true
                    LEFT   JOIN anet_team t ON t.team_id = r.team_id
-                   WHERE  a.person_id = ANY(%s)""", (pids[:20000],))
+                   WHERE  a.person_id = ANY(%s)""", (want,))
     info = {p: (f, l, sc, lv) for p, f, l, sc, lv in cur.fetchall()}
-    club = Counter()
-    for key in moved:
-        lv = (info.get(key[0]) or (None,) * 4)[3]
-        club["anet team level " + str(lv)] += 1
-    print("\n  the moved seasons by their team's anet level (16 = open / club):")
-    for what, n in club.most_common(8):
-        print(f"    {n:>9,}  {what}")
-    import random
-    rnd = random.Random(0)
-    print(f"\n  {show} examples, newest season first:")
-    for key in sorted(rnd.sample(moved, min(len(moved), show * 4)), key=lambda k: -k[1])[:show]:
+    print("\n  Ethan Weiner's seasons (off -> on):")
+    for key in sorted(ethan):
+        f, l, sc, _lv = info.get(key[0], ("?", "?", "?", None))
+        print(f"    {key[0]} {key[1]} {f} {l} ({sc}): {off.get(key)} -> {on.get(key)}")
+    print(f"\n  {len(sample)} examples, newest season first:")
+    for key in sample:
         f, l, sc, lv = info.get(key[0], ("?", "?", "?", None))
         print(f"    {key[0]} {key[1]} {f} {l} ({sc}; team level {lv}): "
               f"{off.get(key)} -> {on.get(key)}")
@@ -3490,76 +3446,6 @@ def youthSigns(seasons_by_person, moved):
     return out
 
 
-def compareClub(cur, show=12, signals=None):
-    """What the club rule moves for each signal alone and for all three:
-    rule 4's field verdicts with no club stage, then with each. One build,
-    one field staging; only fld_club is rebuilt per signal. Read only (the
-    dry run is rolled back)."""
-    import random
-    from collections import Counter
-    buildRaces(cur)
-    runTimed(cur, fieldBuild(club=()), label="[club off] staging")
-    cur.execute(_FIELD_SQL)
-    off = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
-    runs = []
-    for sig in signals or [("level",), ("name",), ("team",), ("adult",), CLUB_SIGNALS_ALL]:
-        runTimed(cur, clubBuild(sig), label=f"[club {'+'.join(sig)}] stage")
-        cur.execute("SELECT count(*) FROM fld_club")
-        n_club = cur.fetchone()[0]
-        cur.execute(_FIELD_SQL)
-        on = {(int(p), int(a)): lv for p, a, lv in cur.fetchall()}
-        moved = [k for k in set(off) | set(on) if off.get(k) != on.get(k)]
-        runs.append(("+".join(sig), n_club, on, moved))
-    cur.execute(_FIELD_DROP)
-
-    pids = sorted({k[0] for _l, _n, _o, mv in runs for k in mv})
-    seasons, info = {}, {}
-    if pids:
-        cur.execute("""SELECT person_id, acad,
-                              bool_or(gradeLevel(grade) IN ('hs', 'ms', 'elem')),
-                              bool_or(gradeLevel(grade) = 'college')
-                       FROM   allraces WHERE person_id = ANY(%s)
-                       GROUP  BY 1, 2""", (pids,))
-        for p, a, sch, col in cur.fetchall():
-            seasons.setdefault(int(p), []).append((int(a), bool(sch), bool(col)))
-        cur.execute("""SELECT DISTINCT ON (a.person_id) a.person_id, a.first_name, a.last_name,
-                              a.school, t.level
-                       FROM   athletes a
-                       LEFT   JOIN LATERAL (SELECT r.team_id FROM results r
-                                            WHERE r.person_id = a.person_id
-                                              AND r.team_id IS NOT NULL LIMIT 1) r ON true
-                       LEFT   JOIN anet_team t ON t.team_id = r.team_id
-                       WHERE  a.person_id = ANY(%s)""", (pids[:50000],))
-        info = {p: (f, l, sc, lv) for p, f, l, sc, lv in cur.fetchall()}
-    # the examples' own names (the lookup above stops at 50,000 people)
-    samples = {label: sorted(random.Random(0).sample(mv, min(len(mv), show)), key=lambda k: -k[1])
-               for label, _n, _o, mv in runs}
-    want = sorted({k[0] for ks in samples.values() for k in ks} - set(info))
-    if want:
-        cur.execute("""SELECT DISTINCT ON (a.person_id) a.person_id, a.first_name, a.last_name,
-                              a.school, t.level
-                       FROM   athletes a
-                       LEFT   JOIN LATERAL (SELECT r.team_id FROM results r
-                                            WHERE r.person_id = a.person_id
-                                              AND r.team_id IS NOT NULL LIMIT 1) r ON true
-                       LEFT   JOIN anet_team t ON t.team_id = r.team_id
-                       WHERE  a.person_id = ANY(%s)""", (want,))
-        info.update({p: (f, l, sc, lv) for p, f, l, sc, lv in cur.fetchall()})
-
-    print(f"\n[grade] the club rule, {len(off):,} field verdicts with it off:")
-    for label, n_club, on, moved in runs:
-        moves = Counter(f"{off.get(k) or '-'} -> {on.get(k) or 'no field verdict'}" for k in moved)
-        print(f"\n  == signal {label}: {n_club:,} club seasons, {len(moved):,} verdicts move")
-        for what, n in moves.most_common(6):
-            print(f"    {n:>9,}  {what}")
-        for what, n in youthSigns(seasons, moved).most_common():
-            print(f"    {n:>9,}  {what}")
-        for key in samples[label]:
-            f, l, sc, lv = info.get(key[0], ("?", "?", "?", None))
-            print(f"      {key[0]} {key[1]} {f} {l} ({sc}; team level {lv}): "
-                  f"{off.get(key)} -> {on.get(key)}")
-
-
 def main(do_write=False, audit=False, do_compare=False):
     from database import getConn
 
@@ -3577,20 +3463,12 @@ def main(do_write=False, audit=False, do_compare=False):
 
 
 if __name__ == "__main__":
-    if "--compare-club" in sys.argv:
-        from database import getConn
-        with getConn() as _conn:
-            with _conn.cursor() as _cur:
-                _sig = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--signals=")]
-                compareClub(_cur, signals=[tuple(x.split("+")) for x in _sig[0].split(",")]
-                            if _sig else None)
-            _conn.rollback()
-        sys.exit(0)
     if "--compare-open" in sys.argv:
         from database import getConn
         with getConn() as _conn:
             with _conn.cursor() as _cur:
-                compareOpen(_cur)
+                _sh = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--share=")]
+                compareOpen(_cur, share=float(_sh[0]) if _sh else 0.5)
             _conn.rollback()
         sys.exit(0)
     main(do_write="--write" in sys.argv,
