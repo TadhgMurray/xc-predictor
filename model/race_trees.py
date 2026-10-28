@@ -624,6 +624,8 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     cut = datetime.date.fromisoformat(val_from).toordinal()
     val = day >= cut
     pid = z["pid"][order]
+    course = (z["course"][order] if "course" in z.files
+              else np.full(len(day), -1, dtype=np.int64))
     # ★ A SAMPLE OF THE TRAINING RACES (owner, 2026-10-27: "that took way way
     #   too long"). Whole races, by race id; the validation season stays
     #   whole, and every runner's and team's record was already read from
@@ -635,6 +637,7 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
         base_page, base_page_abs = base_page[keep], base_page_abs[keep]
         race, day, tfrrs, lead, val, pid = (race[keep], day[keep], tfrrs[keep], lead[keep],
                                             val[keep], pid[keep])
+        course = course[keep]
     if not (~val).any() or not val.any():
         raise SystemExit(f"{rows}: {int((~val).sum()):,} training and {int(val.sum()):,} "
                          f"validation rows around --val-from {val_from}; both are needed")
@@ -674,7 +677,48 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
 _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base', 'y_abs',
                'base_abs', 'base_page', 'base_page_abs', 'race', 'day', 'tfrrs', 'val', 'lead',
                'own_pack', 'team_pack', 'labels', 'r', 'Xt', 'excluded', 'order', 'pid',
-               'ctx_packs', 'clv_pack')
+               'ctx_packs', 'clv_pack', 'course')
+
+
+_ODD_NAME = ("relay", "time trial", "alumni", "fun run", "parent", "exhibition", "practice",
+             "scrimmage", "handicap", "predict", "community", "kids", "costume")
+MISS_CAUSES = ("a name that is not a normal race", "distance unlike the course's",
+               "mixed levels in one field", "a field under 8", "a course with no history",
+               "no cause found")
+
+
+def missCause(f):
+    """The first reason a race's level could be wrong that the data shows."""
+    nm = (f.get("name") or "").lower()
+    if any(w in nm for w in _ODD_NAME):
+        return MISS_CAUSES[0]
+    if not math.isnan(f["usual"]) and abs(math.log(f["distance"] / f["usual"])) > 0.03:
+        return MISS_CAUSES[1]
+    if f["levels"] >= 1.0:
+        return MISS_CAUSES[2]
+    if f["n"] < 8:
+        return MISS_CAUSES[3]
+    if not f["has_course"] or math.isnan(f["usual"]):
+        return MISS_CAUSES[4]
+    return MISS_CAUSES[5]
+
+
+def missCauses(facts):
+    """Report lines: race-morning races by cause -- races, median level
+    miss, and the share of all race-level error beyond 5% each holds."""
+    groups = {c: [] for c in MISS_CAUSES}
+    for f in facts:
+        groups[missCause(f)].append(abs(f["miss"]))
+    excess = sum(max(0.0, m - 0.05) for v in groups.values() for m in v) or 1.0
+    out = ["\nwhere the race-level misses are (race morning; first cause that fits):",
+           f"  {'':34} {'races':>7} {'median':>7} {'over 10%':>9} {'error past 5%':>14}"]
+    for c in MISS_CAUSES:
+        v = groups[c]
+        if v:
+            out.append(f"  {c:34} {len(v):>7,} {100 * statistics.median(v):6.2f}% "
+                       f"{100 * sum(m > 0.10 for m in v) / len(v):8.1f}% "
+                       f"{100 * sum(max(0.0, m - 0.05) for m in v) / excess:13.1f}%")
+    return out
 
 
 def siteReport(path, pid_v, keys, rv, sl, lead_r, yv, page_abs, lastv, pv, tot_m, yav, labels):
@@ -765,7 +809,7 @@ def main():
                   [w for w in a.without.split(",") if w])
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
-     excluded, order, pid, ctx_packs, clv_pack) = \
+     excluded, order, pid, ctx_packs, clv_pack, course) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
     rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
@@ -918,6 +962,26 @@ def main():
         dist = float(XvA[sl[k][0], fidx["distance"]])
         lines.append(f"    {100 * race_miss['trees + ' + labels[1]][k]:+7.1f}%  {sl[k][1] - sl[k][0]:>4}  "
                      f"{dist:>7.0f}  {nm[:40]:40}  {keys[ri]}")
+    # where the big misses come from (the data, not the model: plan #4)
+    usual = {}
+    for k, (s0, _e) in enumerate(sl_all):
+        if not race_val[k] and known[k] and course[s0] >= 0:
+            usual.setdefault(int(course[s0]), []).append(float(X_all[s0, fidx["distance"]]))
+    usual = {c: float(np.median(v)) for c, v in usual.items()}
+    vs = val.nonzero()[0]
+    facts = []
+    for k, (s0, e0) in enumerate(sl):
+        if lead_r[k] != 0:
+            continue
+        lv = XvA[s0:e0, fidx["level"]]
+        lv = lv[~np.isnan(lv)]
+        c = int(course[vs[s0]])
+        facts.append({"miss": float(race_miss["trees + " + labels[1]][k]), "n": e0 - s0,
+                      "distance": float(XvA[s0, fidx["distance"]]),
+                      "usual": usual.get(c, math.nan) if c >= 0 else math.nan,
+                      "has_course": c >= 0, "levels": float(np.ptp(lv)) if len(lv) else 0.0,
+                      "name": str(names[vidx[k]]) if names is not None else ""})
+    lines += missCauses(facts)
 
     if a.site:
         lines += siteReport(a.site, pid[val], keys, rv, sl, lead_r, yv,

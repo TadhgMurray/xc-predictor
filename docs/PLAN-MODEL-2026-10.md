@@ -729,3 +729,28 @@ Same table (rows7), same races, `--train-frac 0.35`; "without" leaves out
   it from the pickle (`course_level`).
 - **Test:** rows7, with and `--without clv_`. Read the TIMES table and the
   race-level miss line.
+
+### 1.8 results (owner's run, 2026-10-28): the course's level record works
+
+rows7, `--train-frac 0.35`, with and `--without clv_`:
+
+| | With | Without |
+|---|---|---|
+| Median time miss | **2.83%** | 2.90% |
+| Mean miss (Kailo's statistic) | **4.25%** | 4.34% |
+| College 100+ | **3.43%** | 3.52% |
+| 7 / 28 days ahead, median | 2.94% / 3.40% | 3.01% / 3.44% |
+| Race-level miss, median | **1.87%** | 2.00% |
+| Races over 5% / over 10% | 13.5% / 2.9% | 14.6% / 3.0% |
+
+Order is untouched (the runner trees never see it). It stays in.
+
+### Next (owner, 2026-10-28: "only 4 and 6")
+
+- **#4, the data:** `race_trees` now prints where the race-level misses
+  are, by the first cause the data shows (an odd race name, a distance
+  unlike the course's usual one, mixed levels in one field, a field under
+  8, a course with no history). What to fix follows from it.
+- **#6, a sequence model:** each runner's last results, in order, read by
+  a small network trained for this target, as a `race_blend` member beside
+  the trees. Expected +0.1–0.3 points, mostly openers.

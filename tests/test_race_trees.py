@@ -163,3 +163,15 @@ def test_records_in_context_read_only_earlier_real_results_of_the_same_context()
     assert n[4] == 0                                     # runner 2 never sees runner 1
     assert T.ctxLookup(pack, int(keys["crs"][0]))[0] == 2         # the copy never counts
     assert T.ctxLookup(pack, 123456789)[0] == 0
+
+
+def test_a_race_miss_takes_the_first_cause_the_data_shows():
+    f = {"miss": 0.2, "n": 40, "distance": 5000.0, "usual": 5000.0, "has_course": True,
+         "levels": 0.0, "name": "Big Invitational Varsity"}
+    assert T.missCause(f) == "no cause found"
+    assert T.missCause(dict(f, distance=4828.0)) == "distance unlike the course's"
+    assert T.missCause(dict(f, name="Alumni Race")) == "a name that is not a normal race"
+    assert T.missCause(dict(f, levels=1.0)) == "mixed levels in one field"
+    assert T.missCause(dict(f, usual=float("nan"))) == "a course with no history"
+    lines = T.missCauses([f, dict(f, miss=0.01)])
+    assert "100.0%" in lines[-1] and "2" in lines[-1]
