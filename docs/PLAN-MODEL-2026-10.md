@@ -768,3 +768,17 @@ Order is untouched (the runner trees never see it). It stays in.
 - On a synthetic table where each runner has a hidden offset only the
   history shows, with the records off: mlp 82.09% (the ratings), seq
   86.89%. It reads the history.
+
+### #4, first look (owner's run, 2026-10-28)
+
+- **The twelve worst races** (+160% to +240%) are practices, time trials,
+  800s, a "Test Race", and meets with no distance on file. No forecaster
+  would publish them; they only inflate the mean.
+- The first cause table was too loose ("distance unlike the course's"
+  caught 31% of races, because one course hosts a 3K and a 5K). Now: no
+  distance on file; an odd name; **a distance the course never hosted**;
+  a course with no history; a field a quarter or more off its own level;
+  a small field.
+- **"published"** in the TIMES table: a known distance and a real race's
+  name, the scope to hold against Kailo.
+- **`--drop-odd`:** those races out of the training races, to test.

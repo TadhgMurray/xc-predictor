@@ -561,7 +561,7 @@ def orderReport(name, base_s, model_s, keep=None, labels=("ratings", "model"), e
 #            validation season marked, the training rows' practice blanks made.
 #            race_trees.main and race_blend.py both start here.
 def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0,
-              without=(), course_level=True, seq=0):
+              without=(), course_level=True, seq=0, drop_odd=False):
     import numpy as np
     t0 = datetime.datetime.now()
     z = np.load(rows, allow_pickle=False)
@@ -681,8 +681,23 @@ def loadTable(rows, val_from, own=True, no_ratings=False, seed=0, train_frac=1.0
     #   whole, and every runner's and team's record was already read from
     #   the FULL table above, so only the fitting gets cheaper. 4x the rows
     #   bought ~0.1 point (1.2 -> 1.4), so a third costs a few hundredths.
+    keep = None
     if train_frac < 1.0:
         keep = val | ((race % 1000) < int(train_frac * 1000))
+    if drop_odd:
+        # --drop-odd: no practice, time trial, relay or race with no
+        # distance among the TRAINING races (the validation season is scored
+        # on every race, and on the published ones)
+        names_ = z["race_names"] if "race_names" in z.files else None
+        bad_ids = {i for i, nm in enumerate(names_ if names_ is not None else ())
+                   if isOddRace(str(nm))}
+        odd = np.isin(race, np.fromiter(bad_ids, dtype=np.int64, count=len(bad_ids)))
+        if "distance" in fidx:
+            odd |= np.isnan(X[:, fidx["distance"]])
+        drop = ~val & odd
+        print(f"  --drop-odd: {len(np.unique(race[drop])):,} training races left out")
+        keep = ~drop if keep is None else keep & ~drop
+    if keep is not None:
         X, y, base, y_abs, base_abs = X[keep], y[keep], base[keep], y_abs[keep], base_abs[keep]
         base_page, base_page_abs = base_page[keep], base_page_abs[keep]
         race, day, tfrrs, lead, val, pid = (race[keep], day[keep], tfrrs[keep], lead[keep],
@@ -732,27 +747,41 @@ _TABLE_KEYS = ('z', 't0', 'feats_all', 'feats', 'fidx', 'X_all', 'X', 'y', 'base
                'ctx_packs', 'clv_pack', 'course', 'seq_ev', 'seq_idx')
 
 
+# ! NOT A RACE ANYONE WOULD FORECAST (owner's run, 2026-10-28: the twelve
+#   worst races were practices, time trials, 800s and test races, most with
+#   no distance on file)
 _ODD_NAME = ("relay", "time trial", "alumni", "fun run", "parent", "exhibition", "practice",
-             "scrimmage", "handicap", "predict", "community", "kids", "costume")
-MISS_CAUSES = ("a name that is not a normal race", "distance unlike the course's",
-               "mixed levels in one field", "a field under 8", "a course with no history",
-               "no cause found")
+             "scrimmage", "handicap", "predict", "community", "kids", "costume",
+             "test race", "800", "1600", "warm up", "warm-up")
+MISS_CAUSES = ("no distance on file", "a name that is not a normal race",
+               "a distance new to this course", "a course with no history",
+               "mixed levels in one field", "a field under 8", "no cause found")
+
+
+def isOddRace(name):
+    """A practice, time trial, relay, track distance ... by its name."""
+    nm = (name or "").lower()
+    return any(w in nm for w in _ODD_NAME)
 
 
 def missCause(f):
-    """The first reason a race's level could be wrong that the data shows."""
-    nm = (f.get("name") or "").lower()
-    if any(w in nm for w in _ODD_NAME):
+    """The first reason a race's level could be wrong that the data shows.
+    f["seen"]: the distances the course hosted before (None: no history)."""
+    d = f["distance"]
+    if d is None or math.isnan(d) or not f.get("known", True):
         return MISS_CAUSES[0]
-    if not math.isnan(f["usual"]) and abs(math.log(f["distance"] / f["usual"])) > 0.03:
+    if isOddRace(f.get("name")):
         return MISS_CAUSES[1]
-    if f["levels"] >= 1.0:
-        return MISS_CAUSES[2]
-    if f["n"] < 8:
+    if f["seen"]:
+        if not any(abs(math.log(d / u)) < 0.02 for u in f["seen"]):
+            return MISS_CAUSES[2]
+    else:
         return MISS_CAUSES[3]
-    if not f["has_course"] or math.isnan(f["usual"]):
+    if f["mixed"] >= 0.25:
         return MISS_CAUSES[4]
-    return MISS_CAUSES[5]
+    if f["n"] < 8:
+        return MISS_CAUSES[5]
+    return MISS_CAUSES[6]
 
 
 def missCauses(facts):
@@ -849,6 +878,9 @@ def main():
     ap.add_argument("--no-ratings", action="store_true",
                     help="a TEST: the same trees with nothing the engine made, from raw "
                          "times on a 5K by Riegel (RATING_INPUTS); the ratings print beside")
+    ap.add_argument("--drop-odd", action="store_true",
+                    help="leave practices, time trials, relays and races with no distance "
+                         "out of the TRAINING races (isOddRace)")
     ap.add_argument("--without", default="",
                     help="a TEST: leave these inputs out, comma separated; a name ending in "
                          "_ leaves out every input it starts (crs_,dif_,dst_,hot_,div_type "
@@ -858,7 +890,7 @@ def main():
         raise SystemExit("--no-ratings is a test, not a model to serve: drop --out")
 
     T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed, a.train_frac,
-                  [w for w in a.without.split(",") if w])
+                  [w for w in a.without.split(",") if w], drop_odd=a.drop_odd)
     (z, t0, feats_all, feats, fidx, X_all, X, y, base, y_abs, base_abs, base_page,
      base_page_abs, race, day, tfrrs, val, lead, own_pack, team_pack, labels, r, Xt,
      excluded, order, pid, ctx_packs, clv_pack, course, _seq_ev, _seq_idx) = \
@@ -966,8 +998,14 @@ def main():
     page = base_page_abs[val].copy()
     lines.append("\nTIMES, the validation season: mean |% miss| is Kailo's statistic")
     lines.append(f"  {'':18} {'median':>7} {'mean':>7} {'college':>8} {'clean races':>12} "
-                 f"{'known dist':>11} {'college 100+':>13}")
+                 f"{'known dist':>11} {'college 100+':>13} {'published':>10}")
     known_v = np.repeat(known[race_val], [e - s for s, e in sl])
+    # ★ PUBLISHED: what a forecaster would put out -- a known distance and a
+    #   name that is a race, not a practice or a time trial (isOddRace). The
+    #   number to hold against Kailo's.
+    rnames = z["race_names"] if "race_names" in z.files else None
+    odd_r = np.array([rnames is not None and isOddRace(str(rnames[int(rv[s])])) for s, _e in sl])
+    published = known_v & ~np.repeat(odd_r, [e - s for s, e in sl])
     big = np.repeat(np.array([tv[s] == 1 and e - s >= 100 for s, e in sl]),
                     [e - s for s, e in sl])
     preds = (("page (ratings)", page),
@@ -985,7 +1023,8 @@ def main():
         lines.append(f"  {lab:18} {np.median(miss[main_rows]):6.2f}% "
                      f"{mean_on(miss, np.ones_like(c)):6.2f}% "
                      f"{mean_on(miss, c):7.2f}% {mean_on(miss, clean):11.2f}% "
-                     f"{mean_on(miss, known_v):10.2f}% {mean_on(miss, big):12.2f}%")
+                     f"{mean_on(miss, known_v):10.2f}% {mean_on(miss, big):12.2f}% "
+                     f"{mean_on(miss, published):9.2f}%")
     leads_seen = sorted(set(lead_r.tolist()) - {0})
     if leads_seen:
         lines.append("  by how far ahead (trees; median / mean on races with a known distance):")
@@ -1015,12 +1054,13 @@ def main():
         lines.append(f"    {100 * race_miss['trees + ' + labels[1]][k]:+7.1f}%  {sl[k][1] - sl[k][0]:>4}  "
                      f"{dist:>7.0f}  {nm[:40]:40}  {keys[ri]}")
     # where the big misses come from (the data, not the model: plan #4)
-    usual = {}
+    seen = {}
     for k, (s0, _e) in enumerate(sl_all):
         if not race_val[k] and known[k] and course[s0] >= 0:
-            usual.setdefault(int(course[s0]), []).append(float(X_all[s0, fidx["distance"]]))
-    usual = {c: float(np.median(v)) for c, v in usual.items()}
+            seen.setdefault(int(course[s0]), set()).add(
+                round(float(X_all[s0, fidx["distance"]]), -1))
     vs = val.nonzero()[0]
+    known_r = known[race_val]
     facts = []
     for k, (s0, e0) in enumerate(sl):
         if lead_r[k] != 0:
@@ -1030,8 +1070,10 @@ def main():
         c = int(course[vs[s0]])
         facts.append({"miss": float(race_miss["trees + " + labels[1]][k]), "n": e0 - s0,
                       "distance": float(XvA[s0, fidx["distance"]]),
-                      "usual": usual.get(c, math.nan) if c >= 0 else math.nan,
-                      "has_course": c >= 0, "levels": float(np.ptp(lv)) if len(lv) else 0.0,
+                      "known": bool(known_r[k]),
+                      "seen": sorted(seen.get(c, ())) if c >= 0 else [],
+                      # the share of the field not at the field's own level
+                      "mixed": float((lv != np.median(lv)).mean()) if len(lv) else 0.0,
                       "name": str(names[vidx[k]]) if names is not None else ""})
     lines += missCauses(facts)
 

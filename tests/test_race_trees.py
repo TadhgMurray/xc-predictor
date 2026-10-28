@@ -166,15 +166,31 @@ def test_records_in_context_read_only_earlier_real_results_of_the_same_context()
 
 
 def test_a_race_miss_takes_the_first_cause_the_data_shows():
-    f = {"miss": 0.2, "n": 40, "distance": 5000.0, "usual": 5000.0, "has_course": True,
-         "levels": 0.0, "name": "Big Invitational Varsity"}
+    f = {"miss": 0.2, "n": 40, "distance": 5000.0, "known": True, "seen": [3000.0, 5000.0],
+         "mixed": 0.0, "name": "Big Invitational Varsity"}
     assert T.missCause(f) == "no cause found"
-    assert T.missCause(dict(f, distance=4828.0)) == "distance unlike the course's"
-    assert T.missCause(dict(f, name="Alumni Race")) == "a name that is not a normal race"
-    assert T.missCause(dict(f, levels=1.0)) == "mixed levels in one field"
-    assert T.missCause(dict(f, usual=float("nan"))) == "a course with no history"
+    assert T.missCause(dict(f, distance=float("nan"))) == "no distance on file"
+    assert T.missCause(dict(f, distance=4828.0)) == "a distance new to this course"
+    assert T.missCause(dict(f, distance=3010.0)) == "no cause found"     # the MS race there
+    assert T.missCause(dict(f, name="Canterbury Time Trial")) == "a name that is not a normal race"
+    assert T.missCause(dict(f, name="Fast Track 800")) == "a name that is not a normal race"
+    assert T.missCause(dict(f, mixed=0.3)) == "mixed levels in one field"
+    assert T.missCause(dict(f, seen=[])) == "a course with no history"
+    assert not T.isOddRace("Santa Clara vs Saint Mary's Duel Meet")
     lines = T.missCauses([f, dict(f, miss=0.01)])
     assert "100.0%" in lines[-1] and "2" in lines[-1]
+
+
+def test_drop_odd_leaves_odd_training_races_out_and_scores_every_val_race(tmp_path):
+    path = tmp_path / "rows.npz"
+    _table(str(path))
+    z = dict(np.load(path))
+    z["race_names"] = np.array(["Time Trial" if i % 3 == 0 else "Invitational"
+                                for i in range(900)])
+    np.savez(path, **z)
+    t = T.loadTable(str(path), "2024-08-01", own=False, drop_odd=True)
+    assert not np.any((t["race"] % 3 == 0) & ~t["val"])
+    assert np.any((t["race"] % 3 == 0) & t["val"])
 
 
 def test_the_sequence_reads_earlier_real_results_only_oldest_first():

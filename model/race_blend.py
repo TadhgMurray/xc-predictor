@@ -313,13 +313,16 @@ def main():
                          "a test in about a third of the time); the validation season stays whole")
     ap.add_argument("--mlp-epochs", type=int, default=6)
     ap.add_argument("--seq-epochs", type=int, default=4)
+    ap.add_argument("--drop-odd", action="store_true",
+                    help="as race_trees --drop-odd: no practices or time trials in training")
     a = ap.parse_args()
     want = [m.strip() for m in a.members.split(",") if m.strip()]
 
     import numpy as np
     t0 = datetime.datetime.now()
     T = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=False, seed=a.seed,
-                     train_frac=a.train_frac, seq=RT.SEQ_LEN if "seq" in want else 0)
+                     train_frac=a.train_frac, seq=RT.SEQ_LEN if "seq" in want else 0,
+                     drop_odd=a.drop_odd)
     val = T["val"]
     yv = T["y"][val]
     sl = RT.raceSlices(T["race"][val])
@@ -345,7 +348,7 @@ def main():
     if "raw" in want:
         t1 = datetime.datetime.now()
         T2 = RT.loadTable(a.rows, a.val_from, own=True, no_ratings=True, seed=a.seed,
-                          train_frac=a.train_frac)
+                          train_frac=a.train_frac, drop_odd=a.drop_odd)
         preds["raw"] = RT.centre(fitHgb(T2, a.seed), sl)
         del T2
         print(f"  raw: fitted ({datetime.datetime.now() - t1})", flush=True)
