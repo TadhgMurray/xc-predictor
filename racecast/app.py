@@ -7119,7 +7119,8 @@ def school_page(school_name):
                                    state=state, primary=primary_state)
                       if year else [])
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
-                                 state=state, primary=primary_state)
+                                 state=state, primary=primary_state,
+                                 level=level if lchips else None)
             # deeper than the old 25: the tables reveal in place now, and
             # the cap is what "show more" runs out against
             best   = schoolBest(cur, school_name, sport, limit=100,

@@ -398,7 +398,7 @@ def schoolRoster(cur, school, year, sport, state=None, primary=None,
 
 
 def schoolMeets(cur, school, sport, year=None, limit=2000,
-                state=None, primary=None):
+                state=None, primary=None, level=None):
     """Every meet this school has raced, newest first. One season if `year`.
 
     ⚠ LEFT JOIN ON meets, WITH A tfrrs FALLBACK. `meets` is anet-only: an
@@ -418,6 +418,13 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
     #   not from a join that would multiply the rows before it: meets_tf
     #   has ~21 rows per meet and meets one per division.
     year_clause = "AND rr.year = %(year)s" if year else ""
+    # ★ ONE INSTITUTION'S MEETS where the name is several (`level`, the
+    #   school page's chip; owner, 2026-10-28: the University of
+    #   Washington's Races tab listed the middle school's time trials). The
+    #   page's own predicate, in SQL: the row's pool is that level, and a
+    #   row with no pool is kept (app.school's _here).
+    level_clause = ("AND (rr.pool IS NULL OR split_part(split_part(rr.pool, '|', 1), '_', 1)"
+                    " = %(level)s)") if level else ""
     sf, sfp = stateFilterSql("rr", state, primary, school)
     if sport == "XC":
         # ! THE PIN PICKS THE TABLE (sweep 2026-10-10). anet and tfrrs
@@ -467,6 +474,7 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
             WHERE  rr.school = %(school)s
               AND  rr.sport  = %(sport)s
               {year_clause}
+              {level_clause}
               {sf}
             GROUP  BY rr.meet_id, (rr.result_id < 0)
         )
@@ -476,7 +484,7 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
         LEFT JOIN LATERAL ({name_sql}) n ON TRUE
         ORDER  BY g.date DESC
         LIMIT  %(lim)s
-    """, {"school": school, "sport": sport, "year": year,
+    """, {"school": school, "sport": sport, "year": year, "level": level,
           # +1: the extra row is how the cap reports that it bit. See capped.py.
           "lim": limit + 1, **sfp})
     rows = fetchCapped(cur, limit)
