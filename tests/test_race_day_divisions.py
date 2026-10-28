@@ -363,3 +363,65 @@ def test_the_table_is_written_and_listed_biggest_first(monkeypatch):
         cur.execute("DROP TABLE IF EXISTS race_day_suspect_division")
         cx.commit()
         cx.close()
+
+
+def _berrien(rng):
+    """Berrien County Fairgrounds, Sep 8 2026: two varsity 5000s that ran
+    normally (84 and 95 rows, about -2.5% against the race) and two divisions
+    filed 3218 m but run about 3,700 m (107 and 108 rows, +13% to +20%)."""
+    sizes = [84, 95, 107, 108]
+    sub = np.repeat(np.arange(4), sizes)
+    day = np.array([-0.025, -0.024, 0.14, 0.17])[sub]
+    r = day + rng.normal(0, 0.03, sub.size)
+    return r, sub
+
+
+def test_a_close_vote_goes_to_the_side_near_zero(monkeypatch):
+    rng = np.random.default_rng(7)
+    r, sub = _berrien(rng)
+    w = np.ones(sub.size)
+    race = np.zeros(sub.size, dtype=np.int64)
+    pen = 1e-3 / 0.01 ** 2
+    # off (the default): the bug -- the varsity races flagged, the day +14%
+    monkeypatch.delenv("XCP_DAY_GUARD_NEAR_ZERO", raising=False)
+    dd = js.raceDayDivisions(r, w, 1.0, race, sub, 1, pen)
+    assert dd["flag"].tolist() == [True, True, False, False]
+    assert dd["u"][0] > 0.10
+    # on: the long divisions are the broken sheets, the day the varsity's
+    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "1")
+    dd = js.raceDayDivisions(r, w, 1.0, race, sub, 1, pen)
+    assert dd["flag"].tolist() == [False, False, True, True]
+    assert abs(dd["u"][0] + 0.024) < 0.01
+    assert np.all(dd["offset"][sub < 2] == 0)
+
+
+def test_a_clear_majority_still_decides_with_the_tie_break_on(monkeypatch):
+    """Midlothian's five correct divisions of eight keep the day, and a
+    clear majority far from zero is not overturned by a small side near it."""
+    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "1")
+    test_the_rule_on_midlothians_numbers()
+    rng = np.random.default_rng(2)
+    sub = np.repeat(np.arange(4), [150, 150, 150, 40])
+    r = np.where(sub < 3, 0.13, 0.0) + rng.normal(0, 0.02, sub.size)
+    race = np.zeros(sub.size, dtype=np.int64)
+    dd = js.raceDayDivisions(r, np.ones(sub.size), 1.0, race, sub, 1, 10.0)
+    assert dd["flag"].tolist() == [False, False, False, True]
+
+
+def test_a_scattered_flagged_side_is_not_a_reading(monkeypatch):
+    """The flagged divisions disagree among themselves (one long, one short):
+    no single other reading, so the median's verdict stands."""
+    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "1")
+    rng = np.random.default_rng(4)
+    sub = np.repeat(np.arange(4), [100, 100, 90, 90])
+    # the kept side reads +6%: the flagged pair pooled (~+2.5%) is nearer
+    # zero, and only their disagreement keeps them from being the day
+    r = np.array([0.06, 0.07, 0.25, -0.20])[sub] + rng.normal(0, 0.02, sub.size)
+    race = np.zeros(sub.size, dtype=np.int64)
+    monkeypatch.delenv("XCP_DAY_GUARD_NEAR_ZERO")
+    off = js.raceDayDivisions(r, np.ones(sub.size), 1.0, race, sub, 1, 10.0)
+    monkeypatch.setenv("XCP_DAY_GUARD_NEAR_ZERO", "1")
+    on = js.raceDayDivisions(r, np.ones(sub.size), 1.0, race, sub, 1, 10.0)
+    assert on["flag"].tolist() == off["flag"].tolist()
+    assert on["flag"].tolist() == [False, False, True, True]
+    assert np.array_equal(on["u"], off["u"])
