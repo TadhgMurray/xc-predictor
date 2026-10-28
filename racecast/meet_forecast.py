@@ -29,7 +29,14 @@ import datetime
 import json
 import os
 
-TABLE = "meet_forecast"
+# ★ XCP_FORECAST_TABLE (review 2026-10): the same freeze into a side table,
+#   so a basis the site does not serve (XCP_PREDICT_BASIS=race) is recorded
+#   before every posted meet and scored after, exactly as the served one is.
+#   Only "meet_forecast" or a "pred_" name: anything else is refused.
+TABLE = os.environ.get("XCP_FORECAST_TABLE") or "meet_forecast"
+if not (TABLE == "meet_forecast" or (TABLE.startswith("pred_")
+                                     and TABLE.replace("_", "").isalnum())):
+    raise SystemExit(f"XCP_FORECAST_TABLE={TABLE!r}: meet_forecast or a pred_ name only")
 
 DDL = f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
@@ -103,12 +110,15 @@ def modelVersion():
     named by its file and when it was written; None with no checkpoint (the
     rating basis then predicts alone, and model_basis says so)."""
     try:
-        from predict import MODEL_PATH
-        st = os.stat(MODEL_PATH)
+        from predict import MODEL_PATH, _predictBasis
+        path = MODEL_PATH
+        if _predictBasis() == "race":
+            from race_model import MODEL_PATH as path        # the race model's own file
+        st = os.stat(path)
     except (ImportError, OSError):
         return None
     when = datetime.datetime.fromtimestamp(st.st_mtime, datetime.timezone.utc)
-    return f"{os.path.basename(MODEL_PATH)} {when:%Y-%m-%d %H:%M}"
+    return f"{os.path.basename(path)} {when:%Y-%m-%d %H:%M}"
 
 
 def modelBasis():
