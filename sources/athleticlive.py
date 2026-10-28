@@ -1125,15 +1125,25 @@ def cmdDiscover(a):
     return 0
 
 
+# ★ US MEETS ONLY (owner's first dry run, 2026-10-28: the newest twenty held
+#   New Zealand and Australian meets -- Canterbury Childrens Interclub,
+#   1,199 results; AC Senior Interclub; PSSA26 -- AthleticLIVE serves
+#   timers abroad, and athletic.net ids ride on those too). A meet lands
+#   only when its state is a US state (parseMeet reads it from 'City, ST' or
+#   the full state name; a place abroad reads None or a code that is not
+#   one of these). --meet names a meet outright and is not filtered.
+US_STATES = tuple(sorted(set(_STATE_ABBR.values())))
+
+
 def _candidates(cur, a):
     if a.meet:
         return [(m,) for m in a.meet]
     cur.execute("""SELECT DISTINCT u.anet_id, am.meet_date
                    FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
                    WHERE am.sport = 'TF' AND am.landed_at IS NULL
-                     AND am.meet_date <= %s
+                     AND am.meet_date <= %s AND am.state = ANY(%s)
                    ORDER BY am.meet_date DESC LIMIT %s""",
-                (datetime.date.today().isoformat(), a.limit))
+                (datetime.date.today().isoformat(), list(US_STATES), a.limit))
     return [(r[0],) for r in cur.fetchall()]
 
 

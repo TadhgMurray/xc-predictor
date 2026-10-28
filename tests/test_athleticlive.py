@@ -574,3 +574,15 @@ def test_a_race_with_ninety_percent_named_lands_and_sets_the_rest_aside():
     p = {"results_to_save": _race(10, 1), "own": True, "meets_to_save": [], "athletes": []}
     A.holdUnknown(p, share=0.9)
     assert len(p["results_to_save"]) == 9 and len(p["side"]) == 1
+
+
+def test_only_us_meets_are_land_candidates():
+    """The first dry run's newest twenty held New Zealand and Australian
+    meets; a place abroad never reads as a US state."""
+    assert "CA" in A.US_STATES and "DC" in A.US_STATES and len(A.US_STATES) == 51
+    nz = A.parseMeet(1, dict(MEET, ls="Christchurch, Canterbury", lsa="Canterbury"))
+    au = A.parseMeet(2, dict(MEET, ls="Sydney, NSW", lsa="New South Wales"))
+    nz2 = A.parseMeet(3, dict(MEET, ls="Auckland, NZ", lsa=""))
+    assert nz["state"] is None and au["state"] is None
+    assert nz2["state"] not in A.US_STATES
+    assert A.parseMeet(4, MEET)["state"] in A.US_STATES
