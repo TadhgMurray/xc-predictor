@@ -149,17 +149,18 @@ def api_next_race_school():
     import upcoming_preview as U
     school = (request.args.get("school") or "").strip()[:200]
     state = (request.args.get("state") or "").strip().upper()[:2] or None
+    level = (request.args.get("level") or "").strip().lower()[:16] or None
     if not school:
         return jsonify({"error": "school is required"}), 400
 
     def compute():
         with getConn() as conn:
             with _cursor(conn) as cur:
-                out = U.schoolNextRaces(cur, getConn, school, state, _today())
+                out = U.schoolNextRaces(cur, getConn, school, state, _today(), level=level)
                 conn.rollback()
                 return out
     try:
-        val, _ = ttlcache.get(("next_race_s", school, state, _today().isoformat()), compute,
+        val, _ = ttlcache.get(("next_race_s", school, state, level, _today().isoformat()), compute,
                               ttl=U.TTL, ttl_of=lambda v: U.TTL if v.get("available") else _FAIL_TTL)
     except Exception as exc:                            # noqa: BLE001
         print(f"next race school {school}: {type(exc).__name__}: {exc}", flush=True)

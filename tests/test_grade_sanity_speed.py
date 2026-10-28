@@ -383,9 +383,10 @@ def test_the_staged_statements_take_no_parameters():
     # runTimed executes them without params: a %(name)s would reach the server
     for sql in (GS.fieldBuild(), GS._FIELD_SQL, GS._FIELD_DROP):
         assert "%(" not in sql and GS._OPEN_TOKEN not in sql
+    assert GS.OPEN_FIELD_SHARE <= 1.0                     # on by default since 2026-10-28
     heads = [s.split("\n")[-1] if s.startswith("--") else s
-             for s in GS.splitStatements(GS.fieldBuild())]
-    # five stages and the open rule's (empty while it is off) fld_adult_ev,
+             for s in GS.splitStatements(GS.fieldBuild(GS.OPEN_FIELD_OFF))]
+    # five stages and the open rule's (empty when it is off) fld_adult_ev,
     # fld_withhold and fld_college_start
     assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 8
     assert "%(" not in GS.fieldBuild(0.5, [4]) and GS._OPEN_TOKEN not in GS.fieldBuild(0.5, [4])
@@ -477,11 +478,11 @@ def _newField(cur, share=None):
 @pytest.mark.parametrize("seed", range(8))
 def test_rule4_stages_match_the_one_statement(cur, seed):
     _load(cur, _fixture(random.Random(seed)))
-    cur.execute(oldField(), {"minc": GS.MIN_CORROBORATION})
+    cur.execute(oldField(GS.OPEN_FIELD_OFF), {"minc": GS.MIN_CORROBORATION})
     want = cur.fetchall()
     cur.execute(OLD_RACE_COUNT_SQL)
     want_races = cur.fetchall()
-    got, got_races = _newField(cur)
+    got, got_races = _newField(cur, GS.OPEN_FIELD_OFF)
     # DISTINCT ON: one row per season, so the row ORDER is the only freedom
     assert sorted(got) == sorted(want)
     assert {r[:2]: r[2] for r in got} == {r[:2]: r[2] for r in want}
@@ -512,9 +513,9 @@ def test_rule4_ties_and_ungraded_events(cur):
              (12, 2024, None, None, 4, 1, "anet", -1, 401)]
     # the athletes 1 and 5 are needy (one race each); 11 and 12 too
     _load(cur, rows)
-    cur.execute(oldField(), {"minc": GS.MIN_CORROBORATION})
+    cur.execute(oldField(GS.OPEN_FIELD_OFF), {"minc": GS.MIN_CORROBORATION})
     want = sorted(cur.fetchall())
-    got, _races = _newField(cur)
+    got, _races = _newField(cur, GS.OPEN_FIELD_OFF)
     assert sorted(got) == want
     levels = {p: lv for p, _a, lv in want}
     assert levels[1] == "hs" and levels[3] == "hs"
@@ -625,9 +626,8 @@ def test_an_open_races_graded_few_do_not_pool_its_ungraded_runners(cur):
     for pid in (55, 56):
         rows.append((pid, 2026, None, None, 8, 1, "anet", -1, 800 + pid))
     _load(cur, rows)
-    # the rule is off by default (unmeasured, see GS.OPEN_FIELD_OFF): the
-    # adults still take 'hs'
-    got_off, _r = _newField(cur)
+    # off (GS.OPEN_FIELD_OFF): the adults still take 'hs'
+    got_off, _r = _newField(cur, GS.OPEN_FIELD_OFF)
     assert {p: lv for p, _a, lv in got_off}[40] == "hs"
     cur.execute(oldField(0.5), {"minc": GS.MIN_CORROBORATION})
     want = sorted(cur.fetchall())
@@ -689,8 +689,8 @@ def test_an_open_race_keeps_the_vote_of_a_runner_on_a_school_team(cur):
     assert levels[41] == "hs"                              # the school kid keeps it
     assert levels[43] == "hs"                              # by the school's name
     assert levels[31] == "hs"                              # a graded runner as before
-    # off (the default) everyone keeps it
-    GS.runTimed(cur, GS.fieldBuild(None, [4]), label="test", slow=1e9)
+    # off: everyone keeps it
+    GS.runTimed(cur, GS.fieldBuild(GS.OPEN_FIELD_OFF, [4]), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     assert {p: lv for p, _a, lv in cur.fetchall()}[40] == "hs"
     cur.execute(GS._FIELD_DROP)
@@ -783,8 +783,8 @@ def test_a_college_race_gives_college_only_to_a_collegian(cur):
     assert levels[(44, 2025)] == "college"                 # the season after high school
     assert levels[(45, 2025)] == "college"                 # by the college's name
     assert levels[(31, 2025)] == "college"
-    # off (the default): the club adult still takes 'college'
-    GS.runTimed(cur, GS.fieldBuild(None, [4], [8]), label="test", slow=1e9)
+    # off: the club adult still takes 'college'
+    GS.runTimed(cur, GS.fieldBuild(GS.OPEN_FIELD_OFF, [4], [8]), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     assert {(p, a): lv for p, a, lv in cur.fetchall()}[(40, 2025)] == "college"
     cur.execute(GS._FIELD_DROP)

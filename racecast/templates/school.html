@@ -104,7 +104,8 @@
 </div></header>
 {# ★ NEXT RACE AND THE SEASON TRACKER (2026-10-10, upcoming_preview.py, team_tracker.py) #}
 {% if sport == 'XC' %}
-  {% set nr_api = "/api/next-race/school?school=" ~ (school|urlencode) ~ ("&state=" ~ header.state if header.state else "") %}
+  {% set nr_api = "/api/next-race/school?school=" ~ (school|urlencode) ~ ("&state=" ~ header.state if header.state else "")
+       ~ ("&level=" ~ level if (level_chips and level) else "") %}
   {% set nr_kind = "school" %}
   {# the tracker is a high-school page (a state meet): only for HS pools seen on this page #}
   {% set hs_pools = ((roster or []) + (top or []))|selectattr("pool", "in", ["hs_m", "hs_f"])|map(attribute="pool")|unique|sort|list %}

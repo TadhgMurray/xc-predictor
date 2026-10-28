@@ -207,11 +207,16 @@ MIN_FIELD_GRADED = 4
 #   kids too. --compare-open measures what it alone moves; XCP_OPEN_FIELD_SHARE
 #   (0.5, say) switches it on. Unset, the share is above 1 and no event is
 #   ever open.
+# ★ ON (owner, 2026-10-28, after six --compare-open runs: the last moved
+#   128,597 of 8.77M field verdicts, Ethan Weiner's three Cambridge Running
+#   seasons among them, with the adult-race, school-team, college-window
+#   and school-name refinements below). XCP_OPEN_FIELD_SHARE=2 turns it off.
 OPEN_FIELD_OFF = 2.0
+OPEN_FIELD_ON = 0.5
 try:
-    OPEN_FIELD_SHARE = float(os.environ.get("XCP_OPEN_FIELD_SHARE") or OPEN_FIELD_OFF)
+    OPEN_FIELD_SHARE = float(os.environ.get("XCP_OPEN_FIELD_SHARE") or OPEN_FIELD_ON)
 except ValueError:
-    OPEN_FIELD_SHARE = OPEN_FIELD_OFF
+    OPEN_FIELD_SHARE = OPEN_FIELD_ON
 _OPEN_TOKEN = "/*OPEN_FIELD_SHARE*/"
 
 # ★ BUT NOT A RUNNER WHO RAN IT FOR A SCHOOL (owner, 2026-10-28, after
