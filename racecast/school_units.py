@@ -147,7 +147,7 @@ def homeStateOf(cur, person_id):
 
 
 def unitsFor(cur, school, state=None, sport="XC", long=False,
-             collapse=True):
+             collapse=True, level=None):
     """[{label, kind, conflict}] for one school, or [] when unknown.
 
     state narrows a shared name to one real school; without it the row
@@ -186,6 +186,12 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
     if row is None:
         return []
     row = dict(zip(cols, row)) if isinstance(row, (tuple, list)) else dict(row)
+    # ★ A NAME THAT IS SEVERAL INSTITUTIONS (`level`, the school page's
+    #   chip): the unit row is one of them, and it is not this page's when
+    #   its college-ness disagrees with the level (owner, 2026-10-28: "NCAA
+    #   DI" over Washington High School's view).
+    if level and bool(row["is_college"]) != (level == "college"):
+        return []
     spec = _COLLEGE_CHIPS if row["is_college"] else _HS_CHIPS
     out = []
     for col in spec:

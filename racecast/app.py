@@ -400,6 +400,8 @@ def _stateTeamAware(fn):
 app.template_filter("school_label_in")(_stateTeamAware(school_identity.schoolLabelIn))
 app.template_filter("school_label_for")(_stateTeamAware(school_identity.schoolLabelFor))
 app.template_filter("with_state")(_stateTeamAware(school_identity.withState))
+# a pool's level ("college_m" -> "college"): a race row's crest (school_logo)
+app.template_filter("level_of")(school_identity.levelOf)
 app.template_filter("school_label")(_stateTeamAware(school_identity.schoolLabel))
 
 # the crest beside a school's name, everywhere one is named (305). Both
@@ -7084,6 +7086,16 @@ def school_page(school_name):
                 level = None
             if lchips and not level:
                 level = lchips[0]["level"]
+            # ★ THE HEADER IS THE CHOSEN INSTITUTION'S (owner, 2026-10-28:
+            #   Washington's high school view read "NCAA DI · Athletes 3223"
+            #   -- the units and count of the name, not of the school on
+            #   screen). Its own count, and units only when they are its own.
+            if lchips and level:
+                for c in lchips:
+                    if c["level"] == level:
+                        header["athletes"] = c["n"]
+                units = unitsFor(cur, school_name, state or primary_state,
+                                 sport, long=True, level=level)
 
             years = schoolYears(cur, school_name, state, primary_state)
 

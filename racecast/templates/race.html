@@ -142,9 +142,9 @@
         <td class="pl{% if row.pl and row.pl <= 3 %} rc-m{{ row.pl }}{% endif %}"><span>{{ row.pl if row.pl else row.pl_status }}</span></td>
         <td class="nm">
           {% if row.person_id %}<a href="{{ athlete_href(row.person_id, row.result_id) }}">{{ row.name if row.name else "Unknown" }}</a>{% else %}{{ row.name if row.name else "Unknown" }}{% endif %}
-          <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}{% endif %}{{ row.school|school_label_in(sst, sok) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>
+          <span class="rc-subline">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok, level=row.rating_pool|level_of) }}{% endif %}{{ row.school|school_label_in(sst, sok) if row.school else "" }}{% if row.grade %} · {{ row.grade|grade_label(row.rating_pool) }}{% endif %}</span>
         </td>
-        <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok) }}<a href="{{ school_href(row.school, sst, trusted=sok) }}">{{ row.school|school_label_in(sst, sok) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst, sok) }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool) }}</span>{% endif %}</td>
+        <td class="sch rc-wide">{% if row.school and row.school|is_team %}{{ crest(row.school, sst, trusted=sok, level=row.rating_pool|level_of) }}<a href="{{ school_href(row.school, sst, trusted=sok) }}">{{ row.school|school_label_in(sst, sok) }}</a>{% elif row.school %}{{ row.school|school_label_in(sst, sok) }}{% else %} - {% endif %}{% if row.grade %}<span class="gr">{{ row.grade|grade_label(row.rating_pool) }}</span>{% endif %}</td>
         <td class="n tm"{% if row.time_seconds %} data-t="{{ row.time_seconds }}"{% endif %}>{{ row.display_time }}{{ recflag(row) }}</td>
         <td class="n rt" data-rx="xc:{{ row.result_id }}"><span class="rc-rv">{{ rv(row.speed_rating, row.hs_rating) }}{{ ratflag(row) }}</span>{% if above_spec %}<span class="vs-level" data-rid="{{ row.result_id }}"></span>{% endif %}</td>
         {{ fk(row.speed_rating, row.rating_pool or row.label_pool, "XC", row.hs_rating, fk_label) }}
