@@ -1441,7 +1441,21 @@ def openSchoolBuild(on, codes, college_codes=()):
     school = ", ".join(map(str, sorted({int(c) for c in codes or ()}))) or "NULL"
     college = ", ".join(map(str, sorted({int(c) for c in college_codes or ()}))) or "NULL"
     if codes or college_codes:
-        team_stage = f"""    -- kept: the row was run for a team of the vote's kind
+        cond = f"""(o.kind = 'hs' AND (t.level IN ({school})
+                                   OR lower(btrim(r.school)) IN (SELECT name FROM fld_school_names)))
+           OR  (o.kind = 'college' AND (t.level IN ({college})
+                                   OR lower(btrim(r.school)) IN (SELECT name FROM fld_college_names)))"""
+        team_stage = f"""    -- kept: the row was run for a team of the vote's kind -- by its anet
+    -- team's level, or, a row with no anet team (another feed), by its
+    -- school string: an anet school team's name, or a college's
+    -- (fld_college_names, _collegeNames: the directory and tfrrs' college
+    -- slugs). Owner's --compare-open, 2026-10-28: Javan May, Saint Francis
+    -- (Ind.), lost 'college'; Shakeya Reid, Penwood High, lost 'hs'.
+    DROP TABLE IF EXISTS fld_school_names;
+    CREATE UNLOGGED TABLE fld_school_names AS
+        SELECT DISTINCT lower(btrim(name)) AS name FROM anet_team
+        WHERE  level IN ({school}) AND name IS NOT NULL;
+    ANALYZE fld_school_names;
     DROP TABLE IF EXISTS fld_wh_team;
     CREATE UNLOGGED TABLE fld_wh_team AS
         SELECT DISTINCT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
@@ -1449,9 +1463,8 @@ def openSchoolBuild(on, codes, college_codes=()):
         JOIN   results r
                ON r.person_id = o.person_id AND r.meet_id = o.meet_id
               AND r.div_id = o.div_id AND r.source = o.source AND o.event_key = -1
-        JOIN   anet_team t ON t.team_id = r.team_id
-        WHERE  (o.kind = 'hs' AND t.level IN ({school}))
-           OR  (o.kind = 'college' AND t.level IN ({college}))
+        LEFT   JOIN anet_team t ON t.team_id = r.team_id
+        WHERE  {cond}
         UNION
         SELECT o.person_id, o.acad, o.meet_id, o.div_id, o.source, o.event_key
         FROM   fld_wh_cand o
@@ -1459,9 +1472,9 @@ def openSchoolBuild(on, codes, college_codes=()):
                ON r.person_id = o.person_id AND r.meet_id = o.meet_id
               AND r.div_id = o.div_id AND r.source = o.source
               AND COALESCE(r.event_id, -1) = o.event_key
-        JOIN   anet_team t ON t.team_id = r.team_id
-        WHERE  (o.kind = 'hs' AND t.level IN ({school}))
-           OR  (o.kind = 'college' AND t.level IN ({college}));
+        LEFT   JOIN anet_team t ON t.team_id = r.team_id
+        WHERE  {cond};
+    DROP TABLE fld_school_names;
 """
     else:                     # no codes: nothing kept, no results tables read
         team_stage = """    DROP TABLE IF EXISTS fld_wh_team;
@@ -1469,6 +1482,10 @@ def openSchoolBuild(on, codes, college_codes=()):
         meet_id bigint, div_id bigint, source text, event_key bigint);
 """
     return f"""
+    -- the college names (loadCollegeNames fills it before the build; a
+    -- database where nobody did reads it empty)
+    CREATE UNLOGGED TABLE IF NOT EXISTS fld_college_names (name text PRIMARY KEY);
+
     -- the ungraded entrants of the open 'hs' events, every entrant's
     DROP TABLE IF EXISTS fld_open_ung;
     CREATE UNLOGGED TABLE fld_open_ung AS
@@ -1567,6 +1584,22 @@ def openSchoolBuild(on, codes, college_codes=()):
 """
 
 
+def loadCollegeNames(cur):
+    """fld_college_names: the normalised school strings that are colleges
+    (speed_ratings_db._collegeNames), for rule 4's college-vote exemption.
+    Returns how many."""
+    from speed_ratings_db import _collegeNames
+    names = sorted(_collegeNames(cur))
+    cur.execute("DROP TABLE IF EXISTS fld_college_names; "
+                "CREATE UNLOGGED TABLE fld_college_names (name text PRIMARY KEY)")
+    if names:
+        from psycopg2.extras import execute_values
+        execute_values(cur, "INSERT INTO fld_college_names VALUES %s ON CONFLICT DO NOTHING",
+                       [(n,) for n in names], page_size=10000)
+    cur.execute("ANALYZE fld_college_names")
+    return len(names)
+
+
 _CLASSES = ("FR", "SO", "JR", "SR")
 
 
@@ -1604,6 +1637,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_withhold;
     DROP TABLE IF EXISTS fld_adult_ev;
     DROP TABLE IF EXISTS fld_college_start;
+    DROP TABLE IF EXISTS fld_college_names;
     RESET enable_nestloop;
 """
 
@@ -3002,6 +3036,8 @@ def _resolve(cur):
     #   level identifies its own origin and the two stay countable apart.
     _tq = time.time()
     _on = OPEN_FIELD_SHARE <= 1.0
+    if _on:
+        loadCollegeNames(cur)
     runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if _on else (),
                              college_codes=_collegeTeamCodes() if _on else ()),
              label="[4] staging")
@@ -3543,6 +3579,8 @@ def compareOpen(cur, share=0.5, show=20, codes=None, college_codes=None):
     buildRaces(cur)
     out = {}
     for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
+        if label == "on":
+            print(f"    college names: {loadCollegeNames(cur):,}", flush=True)
         runTimed(cur, fieldBuild(sh, codes, college_codes), label=f"[open {label}] staging")
         if label == "on":
             cur.execute("SELECT count(*) FROM fld_adult_ev")

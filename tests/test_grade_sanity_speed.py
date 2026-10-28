@@ -668,21 +668,26 @@ def test_an_open_race_keeps_the_vote_of_a_runner_on_a_school_team(cur):
     rows += [(pid, 2026, None, None, 7, 1, "anet", -1, 700 + pid) for pid in range(40, 50)]
     _load(cur, rows)
     cols = ("result_id bigint, person_id bigint, meet_id bigint, div_id bigint, "
-            "source text, event_id bigint, team_id bigint")
+            "source text, event_id bigint, team_id bigint, school text")
     cur.execute(f"CREATE TABLE results ({cols}); CREATE TABLE results_tf ({cols})")
-    cur.execute("CREATE TABLE anet_team (team_id bigint, level int)")
-    execute_values(cur, "INSERT INTO anet_team VALUES %s", [(1, 16), (2, 4)])
+    cur.execute("CREATE TABLE anet_team (team_id bigint, level int, name text)")
+    execute_values(cur, "INSERT INTO anet_team VALUES %s",
+                   [(1, 16, "Cambridge Running"), (2, 4, "Lincoln HS"), (3, 4, "Penwood High")])
     # 40: Cambridge Running (a club); 41: Lincoln HS, no grade recorded;
-    # 42: no team at all
+    # 42: no team at all; 43: another feed's row, no anet team, school
+    # string an anet school's name (Shakeya Reid, Penwood High)
     execute_values(cur, "INSERT INTO results VALUES %s",
-                   [(1, 40, 7, 1, "anet", None, 1), (2, 41, 7, 1, "anet", None, 2),
-                    (3, 42, 7, 1, "anet", None, None)])
+                   [(1, 40, 7, 1, "anet", None, 1, "Cambridge Running"),
+                    (2, 41, 7, 1, "anet", None, 2, "Lincoln HS"),
+                    (3, 42, 7, 1, "anet", None, None, "Unattached"),
+                    (4, 43, 7, 1, "anet", None, None, "Penwood High ")])
     GS.runTimed(cur, GS.fieldBuild(0.5, [4]), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     levels = {p: lv for p, _a, lv in cur.fetchall()}
     cur.execute(GS._FIELD_DROP)
     assert 40 not in levels and 42 not in levels           # the adults: no 'hs'
     assert levels[41] == "hs"                              # the school kid keeps it
+    assert levels[43] == "hs"                              # by the school's name
     assert levels[31] == "hs"                              # a graded runner as before
     # off (the default) everyone keeps it
     GS.runTimed(cur, GS.fieldBuild(None, [4]), label="test", slow=1e9)
@@ -746,16 +751,23 @@ def test_a_college_race_gives_college_only_to_a_collegian(cur):
     rows.append((43, 2010, "SR", "SR", 51, 1, "anet", -1, 5043))
     # 44 was a high school senior last season: 2025 is a freshman's year
     rows += [(44, 2024, "12", "12", 52 + k, 1, "anet", -1, 5044 + k) for k in range(2)]
+    rows.append((45, 2025, None, None, 9, 1, "anet", -1, 945))
     _load(cur, rows)
     cols = ("result_id bigint, person_id bigint, meet_id bigint, div_id bigint, "
-            "source text, event_id bigint, team_id bigint")
+            "source text, event_id bigint, team_id bigint, school text")
     cur.execute(f"CREATE TABLE results ({cols}); CREATE TABLE results_tf ({cols})")
-    cur.execute("CREATE TABLE anet_team (team_id bigint, level int)")
-    execute_values(cur, "INSERT INTO anet_team VALUES %s", [(1, 16), (8, 8)])
-    # 40: Cambridge Running; 42: ran it for a college team, no class recorded
+    cur.execute("CREATE TABLE anet_team (team_id bigint, level int, name text)")
+    execute_values(cur, "INSERT INTO anet_team VALUES %s", [(1, 16, "Cambridge Running"),
+                                                            (8, 8, "Some College")])
+    # 40: Cambridge Running; 42: ran it for a college team, no class
+    # recorded; 45: another feed's row, a college's name (Javan May)
     execute_values(cur, "INSERT INTO results VALUES %s",
-                   [(1, 40, 9, 1, "anet", None, 1), (2, 41, 9, 1, "anet", None, None),
-                    (3, 42, 9, 1, "anet", None, 8)])
+                   [(1, 40, 9, 1, "anet", None, 1, "Cambridge Running"),
+                    (2, 41, 9, 1, "anet", None, None, "Unattached"),
+                    (3, 42, 9, 1, "anet", None, 8, "Some College"),
+                    (4, 45, 9, 1, "anet", None, None, "Saint Francis (Ind.)")])
+    cur.execute("CREATE TABLE fld_college_names (name text PRIMARY KEY)")
+    cur.execute("INSERT INTO fld_college_names VALUES ('saint francis (ind.)')")
     GS.runTimed(cur, GS.fieldBuild(0.5, [4], [8]), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     rows = cur.fetchall()
@@ -769,6 +781,7 @@ def test_a_college_race_gives_college_only_to_a_collegian(cur):
     assert levels[(42, 2025)] == "college"                 # on a college team
     assert (43, 2025) not in levels                        # fifteen years after college
     assert levels[(44, 2025)] == "college"                 # the season after high school
+    assert levels[(45, 2025)] == "college"                 # by the college's name
     assert levels[(31, 2025)] == "college"
     # off (the default): the club adult still takes 'college'
     GS.runTimed(cur, GS.fieldBuild(None, [4], [8]), label="test", slow=1e9)
