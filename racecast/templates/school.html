@@ -71,7 +71,11 @@
        header wraps on a phone, drawn by the same helper as every other
        mention of a school -- it returns nothing when there is no crest.
        header.state, not state: the route settles the identity there. #}
-    <h1>{{ crest(school, header.state, px=128, size=44, cls="school-crest") }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
+    {# ★ THE PAGE'S LEVEL, where the name is several institutions (owner,
+       2026-10-28: the University of Washington's page wore Washington High
+       School's crest). A crest pinned for the level wins; without one the
+       level-less row answers, as before (school_logo.crestState). #}
+    <h1>{{ crest(school, header.state, px=128, size=44, cls="school-crest", level=(level if level_chips else None)) }}{{ school }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
     {# the school's own facts, long-form #}
     {% if units %}<div class="rc-meta">{{ unit_chips(units) }}</div>{% endif %}
     {# ! EACH FACT IS OPTIONAL. schoolHeader's raw-results fallback is
