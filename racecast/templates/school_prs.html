@@ -30,7 +30,7 @@
 {% include "_topbar.html" %}
 
 {% macro qs(sport_v, year_v, course_v) -%}
-?sport={{ sport_v }}{% if year_v %}&amp;year={{ year_v }}{% endif %}{% if course_v %}&amp;course={{ course_v|urlencode }}{% endif %}{% if data.state %}&amp;state={{ data.state }}{% endif %}
+?sport={{ sport_v }}{% if year_v %}&amp;year={{ year_v }}{% endif %}{% if course_v %}&amp;course={{ course_v|urlencode }}{% endif %}{% if data.state %}&amp;state={{ data.state }}{% endif %}{% if level %}&amp;level={{ level }}{% endif %}
 {%- endmacro %}
 
 {% macro pr_table(sec, g, with_course) -%}
@@ -101,7 +101,7 @@
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ sport|sport_name }}</span></div>
-    <div class="rc-kick">{{ crest(school, data.state) }}<a href="{{ school_href(school, data.state, sport=sport) }}">{{ school|with_state(data.state) if data.state else school }}</a></div>
+    <div class="rc-kick">{{ crest(school, data.state, level=level) }}<a href="{{ school_href(school, data.state, sport=sport) }}">{{ school|with_state(data.state) if data.state else school }}</a></div>
     <h1>School PRs</h1>
     <div class="rc-meta">
       Best mark per athlete{% if data.year %}, {{ data.year }} season{% endif %}{% if data.course %}, at <a href="/course/{{ data.course|urlencode }}">{{ data.course }}</a>{% endif %}
@@ -148,7 +148,7 @@
       <nav class="seg rc-tabs">
         {% for s_ in ['XC', 'TF'] %}
           <a class="seg-btn{{ ' is-on' if s_ == sport }}"
-             href="/school/{{ school|urlencode }}/prs?sport={{ s_ }}{% if data.state %}&amp;state={{ data.state }}{% endif %}">{{ s_|sport_name }}</a>
+             href="/school/{{ school|urlencode }}/prs?sport={{ s_ }}{% if data.state %}&amp;state={{ data.state }}{% endif %}{% if level %}&amp;level={{ level }}{% endif %}">{{ s_|sport_name }}</a>
         {% endfor %}
       </nav>
       {# ★ NO SCALE SWITCH HERE (owner, 2026-10-10): one public rating scale. A single-pool page shows the HS-equivalent only; the "own pool" view lives behind Advanced on the multi-pool boards (_scale.html). #}

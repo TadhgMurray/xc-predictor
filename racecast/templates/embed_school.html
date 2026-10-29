@@ -49,7 +49,7 @@
 <body{% if theme in ('dark', 'light') %} data-theme="{{ theme }}"{% endif %}>
 <script>{% if theme in ('dark', 'light') %}document.documentElement.dataset.theme = "{{ theme }}";{% endif %}</script>
 <div class="hd">
-  {{ crest(school, state, px=64, size=32) }}
+  {{ crest(school, state, px=64, size=32, level=level) }}
   <div>
     <div class="nm"><a href="{{ page_url }}">{{ school }}</a>{% if state %} <span class="sub">{{ state }}</span>{% endif %}</div>
     <div class="sub">{{ sport|sport_name }}{% if season %} · {{ season }} season{% endif %}</div>

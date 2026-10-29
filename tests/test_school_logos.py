@@ -2265,7 +2265,7 @@ class Wiring(unittest.TestCase):
         #   now sits in the rc-kick header line beside the school's name,
         #   at that line's size, rather than as the big .school-crest badge
         prs = read("racecast", "templates", "school_prs.html")
-        self.assertIn('<div class="rc-kick">{{ crest(school, data.state) }}', prs)
+        self.assertIn('<div class="rc-kick">{{ crest(school, data.state, level=level) }}', prs)
         css = read("racecast", "static", "style.css")
         self.assertIn(".school-crest", css)
         self.assertIn(".school-mark", css)

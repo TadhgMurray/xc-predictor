@@ -252,7 +252,7 @@ def _stateFilter(cur, rows_lists, state, primary):
 
 
 def schoolPrData(cur, school, sport, year_label=None, course=None,
-                 per_table=100, state=None, primary=None):
+                 per_table=100, state=None, primary=None, level=None):
     """Everything the PRs page renders, one dict.
 
     {"sections": [{label, dist_note, kind, on_board, distance,
@@ -269,6 +269,12 @@ def schoolPrData(cur, school, sport, year_label=None, course=None,
     if state:
         running, field, hurdles = _stateFilter(
             cur, [running, field, hurdles], state, primary)
+    # ★ ONE INSTITUTION where the name is several (`level`, the school
+    #   page's chip): the running rows by their pool, a row with none kept
+    #   -- the school page's own predicate (app.school_page's _here)
+    if level:
+        from school_identity import levelOf
+        running = [r for r in running if levelOf(r.get("pool")) in (None, level)]
 
     # field and hurdle rows need gender BEFORE grouping (the tables
     # split on it); one bulk lookup covers every athlete in both. A

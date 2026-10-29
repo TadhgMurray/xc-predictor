@@ -7374,11 +7374,28 @@ def embed_school(school_name):
     page = (f"/school/{urllib.parse.quote(school_name, safe='/')}?sport={sport}"
             + (f"&state={state}" if state else "") + (f"&level={level}" if level else ""))
     resp = make_response(render_template(
-        "embed_school.html", school=school_name, state=state, sport=sport,
+        "embed_school.html", school=school_name, state=state, sport=sport, level=level,
         season=seasonLabel(sport, year) if year else None, squads=squads,
         meets=meets, page_url=SITE_ORIGIN + page,
         theme=(request.args.get("theme") or "").lower()))
     return resp
+
+
+def _subpageLevel(cur, school_name, state):
+    """The ?level= a school sub-page was opened with (the school page's
+    links carry it where the name is several institutions), checked against
+    the name's level chips; None where the name is one school. The school
+    page's own rule, so the sub-page shows the same institution's crest and,
+    where its rows carry a pool, the same institution's rows (owner,
+    2026-10-28: "why not fix all?")."""
+    from school_identity import levelChips
+    chips = levelChips(cur, school_name, state)
+    if not chips:
+        return None
+    level = (request.args.get("level") or "").strip().lower() or None
+    if level and any(c["level"] == level for c in chips):
+        return level
+    return chips[0]["level"]
 
 
 @app.route("/school/<path:school_name>/prs")
@@ -7407,9 +7424,10 @@ def school_prs_page(school_name):
             # no merged PR page either -- same per-school rule as school_page
             if chips and not state:
                 state = primary_state
+            level = _subpageLevel(cur, school_name, state or primary_state)
             data = schoolPrData(cur, school_name, sport,
                                 year_label=year, course=course,
-                                state=state, primary=primary_state)
+                                state=state, primary=primary_state, level=level)
 
     if not data["any"] and not year and not course:
         abort(404)
@@ -7454,7 +7472,7 @@ def school_prs_page(school_name):
             "-".join(str(x) for x in (school_name, state, sport, "prs", year, course) if x) + ".csv")
     return render_template("school_prs.html", school=school_name,
                            sport=sport, data=data, state_chips=chips,
-                           board_year=board_year,
+                           board_year=board_year, level=level,
                            has_hs_view=has_hs_view)
 
 
@@ -7522,10 +7540,11 @@ def school_records_page(school_name):
             if chips and not state:
                 state = primary_state
             book = RB.loadBook(cur, "school", RB.schoolKey(school_name, state, sport))
+            level = _subpageLevel(cur, school_name, state)
     has_hs_view = _record_pages.stampBook(book, stampBoardRows)
     return render_template("school_records.html", school=school_name,
                            state=state, sport=sport, record_book=book,
-                           has_hs_view=has_hs_view)
+                           level=level, has_hs_view=has_hs_view)
 
 
 @app.route("/card/athlete/<int:person_id>.png")

@@ -24,7 +24,7 @@
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ sport|sport_name }}</span></div>
-    <div class="rc-kick">{{ crest(school, state) }}<a href="{{ school_href(school, state, sport=sport) }}">{{ school|with_state(state) if state else school }}</a></div>
+    <div class="rc-kick">{{ crest(school, state, level=level) }}<a href="{{ school_href(school, state, sport=sport) }}">{{ school|with_state(state) if state else school }}</a></div>
     <h1>Record book</h1>
     <div class="rc-meta">
       All time
