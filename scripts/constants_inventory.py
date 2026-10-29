@@ -564,6 +564,7 @@ RULES = {
         **_all("DIST_BANDS DIST_N_BAND DIST_BAND_ANCHORS", "REMOVED",
                ENDUR + ": the event offsets by rating band were the population's guess at it"),
         "RACE_DAY_CAP": ("REMOVED", RACE + " (§5: all four of its jobs)"),
+        "DAY_GUARD_MAJORITY": ("REMOVED", RACE + " (the day guard's tie-break: a close vote to the side near zero)"),
         "DIVISION_TABLE_COLS": ("INFRA", "division-guard table columns (the guard itself goes: " + RACE + ")"),
         **_all("THETA_RACE_PRIOR_N EFFORT_THETA_FLOOR EFFORT_SHORT_CUT EFFORT_INNER_ITERS "
                "EFFORT_FAST_BEFORE_DAY EFFORT_CLASS_NAMES EFFORT_GROUP_NAMES", "REMOVED",
@@ -800,6 +801,7 @@ ENV_RULES = {
            "XCP_VENUE_DIST_SD", "DATA", COURSESEP),
     **_all("XCP_RACE_KEY XCP_RACE_EFFECT_OWN XCP_DAY_DIVISION_GUARD XCP_DAY_DIVISION_SHRINK XCP_DAY_SOFT "
            "XCP_DAY_PRIOR", "REMOVED", RACE),
+    "XCP_DAY_GUARD_NEAR_ZERO": ("REMOVED", RACE + " (ablation switch for the day guard's tie-break)"),
     "XCP_RACE_EFFECT_SPORTS": ("FITTED", "whether the track race day is credited: cross-validated on the "
                                          "forward scorecard (§4.7); the XC day is " + RACE),
     "XCP_OWN_SHIFT_SINCE": ("DATA", DISTSEP + " (the season own_race_shift starts judging from)"),
