@@ -26,7 +26,8 @@
 #
 #   so log(rating) is an exact SUM, and each term below is one addend. The
 #   waterfall starts from the time converted for distance alone (on an
-#   average outdoor track, where the anchor shift lives) and walks to the
+#   average outdoor track: the anchor shift, and for cross country the
+#   track's place on the XC scale, conversions.xcTrackZero) and walks to the
 #   stored rating; "other" is whatever the site cannot separate, so the
 #   steps always land on the number the page shows.
 #
@@ -349,7 +350,7 @@ def buildChain(t):
       w_stored    log(time * factor / norm)  -- the weather inside the row
       w_live      the current weather model's log credit, w_detail
       difficulty, course_source ('champ'|'era'|'latest'), course_applied,
-      venue, tilt, shift
+      venue, tilt, shift, track_zero
       day_u, day_n, day_mode
       offset, gain
     """
@@ -362,11 +363,19 @@ def buildChain(t):
     pool_words = POOL_WORDS.get((t.get("pool") or "").split("|")[0], t.get("pool") or "this pool")
 
     # --- the start: distance alone, on an average outdoor track --------- #
+    # ★ THE TRACK IN SECONDS (2026-10-28). The stored course scale's 0.0 is
+    #   the track in normalised units; on the XC scale a real track sits at
+    #   log1p(d) = track_zero (difficulty_view.sportMeanLog). The start
+    #   carries it and the course step reads against it, so the two still
+    #   sum to tilt * (log1p(d) + shift) -- only when a course step follows.
     eq = (tsec * t["f_dist"]) if (tsec and t.get("f_dist")) else None
     shift = t.get("shift") or 0.0
+    zero = 0.0
+    if t.get("difficulty") is not None and t.get("course_applied") is not False:
+        zero = t.get("track_zero") or 0.0
     base_log = None
     if eq and pm:
-        base_log = math.log(100.0 * pm / eq) + tilt * shift
+        base_log = math.log(100.0 * pm / eq) + tilt * (shift + zero)
     ref_m = t.get("ref_distance")
     if eq:
         txt = (f"{clock(tsec)} over {_m(dist)} converts to {clock(eq, 1)} at the "
@@ -478,15 +487,16 @@ def buildChain(t):
         add("course", "Course", None,
             "Not available: the venue has no fitted difficulty.", available=False)
     else:
-        x = tilt * math.log1p(float(d))
+        ld = math.log1p(float(d)) - zero          # against the track, in seconds
+        x = tilt * ld
         ref = "an average outdoor track"
         era_note = {"era": " in this race's era", "champ": " as a championship course",
                     "latest": ""}.get(src, "")
-        if abs(float(d)) < 0.0005:
-            txt = f"{venue} is average{era_note} ({_p(math.log1p(float(d)))}): no course adjustment."
+        if abs(ld) < 0.0005:
+            txt = f"{venue} is average{era_note} ({_p(ld)}): no course adjustment."
         else:
-            harder = float(d) > 0
-            txt = (f"{venue} runs {_a(math.log1p(float(d)))} "
+            harder = ld > 0
+            txt = (f"{venue} runs {_a(ld)} "
                    f"{'slower' if harder else 'faster'} than {ref}{era_note}, so the "
                    f"time {'is credited' if harder else 'counts'} {_a(x, 2)}"
                    f"{'' if harder else ' less'}")
@@ -882,6 +892,15 @@ def gatherTerms(cur, sport, row, ce_col="NULL::real", has_day_table=False,
         except Exception:                              # noqa: BLE001
             t["pm"] = sc[0] if sc else None
     t["shift"] = sc[2] if sc else 0.0
+    # where the average outdoor track sits on this sport's course scale: the
+    # course pages' own zero (difficulty_view.sportMeanLog reads the same
+    # pooled number), so the course step reads the % they print
+    t["track_zero"] = 0.0
+    if sc and sport == "XC" and hasattr(cv, "xcTrackZero"):
+        try:
+            t["track_zero"] = float(cv.xcTrackZero())
+        except Exception:                              # noqa: BLE001
+            t["track_zero"] = 0.0
     try:
         t["tilt"] = cv._tilt(rating, pool) if (rating and sc) else 1.0
     except Exception:                                  # noqa: BLE001
