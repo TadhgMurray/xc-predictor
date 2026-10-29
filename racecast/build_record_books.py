@@ -704,10 +704,38 @@ def schoolClusters(cur):
     return out
 
 
-def changedSchools(fps, stored, clusters, is_team, cap):
-    """[(school, sport, state, primary, fp)] to rebuild, biggest first.
-    A key is stale when its stored sig differs from the fingerprint (or it
-    was never built). Pure; the test drives it."""
+def schoolLevels(cur):
+    """{(school, STATE): [level, ...]} for the names that are several
+    institutions in one state -- school_identity.levelChips' own rule (two
+    or more levels past MIN_ATHLETES and MIN_SHARE, buckets out), read in
+    one query. {} before school_level exists."""
+    from school_identity import MIN_ATHLETES, MIN_SHARE
+    cur.execute("SELECT to_regclass('public.school_level') AS t")
+    if cur.fetchone()["t"] is None:
+        return {}
+    out = {}
+    for clause in (" AND NOT is_bucket", ""):
+        try:
+            cur.execute(f"""SELECT school, state, level FROM school_level
+                            WHERE n_athletes >= %s AND share >= %s{clause}
+                            ORDER BY n_athletes DESC""", (MIN_ATHLETES, MIN_SHARE))
+            rows = cur.fetchall()
+            break
+        except Exception:                               # noqa: BLE001
+            cur.connection.rollback()
+            rows = []
+    for r in rows:
+        out.setdefault((r["school"], (r["state"] or "").upper()), []).append(r["level"])
+    return {k: v for k, v in out.items() if len(v) >= 2}
+
+
+def changedSchools(fps, stored, clusters, is_team, cap, levels=None):
+    """[(school, sport, state, primary, fp, level)] to rebuild, biggest
+    first: each (name, state)'s combined book (level None) and, where the
+    name is several institutions there (`levels`, schoolLevels), one book
+    per level. A key is stale when its stored sig differs from the
+    fingerprint (or it was never built). Pure; the test drives it."""
+    levels = levels or {}
     todo = []
     for (school, sport), (fp, n) in fps.items():
         if not is_team(school):
@@ -715,21 +743,23 @@ def changedSchools(fps, stored, clusters, is_team, cap):
         cl = clusters.get(school) or [(None, True)]
         primary = next((s for s, p in cl if p), cl[0][0])
         for state, _p in cl:
-            key = RB.schoolKey(school, state, sport)
-            if stored.get(key) != fp:
-                todo.append((n, school, sport, state, primary, fp))
-    todo.sort(key=lambda t: (-t[0], t[1], t[2], t[3] or ""))
+            for lv in [None] + list(levels.get((school, (state or "").upper()), ())):
+                key = RB.schoolKey(school, state, sport, lv)
+                if stored.get(key) != fp:
+                    todo.append((n, school, sport, state, primary, fp, lv))
+    todo.sort(key=lambda t: (-t[0], t[1], t[2], t[3] or "", t[6] or ""))
     if cap:
         todo = todo[:cap]
     return [t[1:] for t in todo]
 
 
-def schoolBook(cur, school, state, primary, sport):
-    """One school's record book ctx (module docstring, part 'school')."""
+def schoolBook(cur, school, state, primary, sport, level=None):
+    """One school's record book ctx (module docstring, part 'school');
+    `level` keeps one institution's rows where the name is several."""
     from school_prs import schoolPrData
     from rankings import POOLS
     data = schoolPrData(cur, school, sport, per_table=RB.SCHOOL_EVENT_N,
-                        state=state, primary=primary)
+                        state=state, primary=primary, level=level)
     events = []
     for sec in data["sections"]:
         tables = {g: [slim(r, _RACE_KEYS + ("speed_rating", "mark", "date",
@@ -753,10 +783,10 @@ def schoolBook(cur, school, state, primary, sport):
         by_pool.setdefault(s.get("pool"), []).append(s)
     grades, improved, teams = [], [], []
     for pool in sorted(by_pool, key=_poolSort):
-        level = (pool or "").split("_")[0]
-        if level not in RB.LEVELS:
+        pool_level = (pool or "").split("_")[0]
+        if pool_level not in RB.LEVELS or (level and pool_level != level):
             continue
-        gb = RB.gradeBests(by_pool[pool], RB.LEVELS[level][2], RB.SCHOOL_GRADE_N)
+        gb = RB.gradeBests(by_pool[pool], RB.LEVELS[pool_level][2], RB.SCHOOL_GRADE_N)
         if gb:
             grades.append({"pool": pool, "grades": gb})
         mi = RB.mostImproved(by_pool[pool])
@@ -771,7 +801,7 @@ def schoolBook(cur, school, state, primary, sport):
              + [r for b in improved for r in b["rows"]])
     fillBestRaces(cur, shown, sport)
     return {
-        "school": school, "state": state, "sport": sport,
+        "school": school, "state": state, "sport": sport, "level": level,
         "events": events,
         "grades": [{"pool": b["pool"],
                     "grades": [(g, w, [slim(r, _SEASON_KEYS) for r in rs])
@@ -800,7 +830,7 @@ def buildSchools(conn, cur, cap, force=False, workers=None):
     if not force:
         cur.execute("SELECT key, sig FROM record_books WHERE kind = 'school'")
         stored = {r["key"]: r["sig"] for r in cur.fetchall()}
-    todo = changedSchools(fps, stored, clusters, isTeamName, cap)
+    todo = changedSchools(fps, stored, clusters, isTeamName, cap, schoolLevels(cur))
     workers = schoolWorkers(workers)
     print(f"  school: {len(fps):,} (school, sport) fingerprints, "
           f"{len(todo):,} pages to build (cap {cap or 'none'}), "
@@ -843,16 +873,18 @@ def _schoolPage(cur, item):
     """One page: ((key, ctx, fp), None), or (None, the log line) when it
     failed. The savepoint keeps a failed page from taking the rest of the
     transaction with it."""
-    school, sport, state, primary, fp = item
+    # a 5-tuple is a combined book (the shape before level books)
+    school, sport, state, primary, fp, *rest = item
+    level = rest[0] if rest else None
     try:
         cur.execute("SAVEPOINT rb_school")
-        ctx = schoolBook(cur, school, state, primary, sport)
+        ctx = schoolBook(cur, school, state, primary, sport, level)
         cur.execute("RELEASE SAVEPOINT rb_school")
     except Exception as exc:                            # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT rb_school")
-        return None, (f"  ! {school} ({state}) {sport}: "
+        return None, (f"  ! {school} ({state}{'/' + level if level else ''}) {sport}: "
                       f"{type(exc).__name__}: {exc}")
-    return (RB.schoolKey(school, state, sport), ctx, fp), None
+    return (RB.schoolKey(school, state, sport, level), ctx, fp), None
 
 
 def buildSchoolPages(conn, cur, todo, workers=1, opener=None, t0=None):

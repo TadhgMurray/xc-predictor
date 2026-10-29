@@ -234,13 +234,20 @@ def test_changed_schools_only_moved_fingerprints_biggest_first():
     def is_team(s):
         return s != "Unattached"
     todo = B.changedSchools(fps, stored, clusters, is_team, cap=0)
-    assert [(s, sp, st) for s, sp, st, _pr, _fp in todo] == [
+    assert [(s, sp, st) for s, sp, st, _pr, _fp, _lv in todo] == [
         ("Jesuit", "TF", "CA"), ("Jesuit", "TF", "OR"),
         ("Jesuit", "XC", "CA"), ("Summit", "XC", None)]
     assert todo[0][3] == "OR"                                 # the primary rides along
     assert len(B.changedSchools(fps, stored, clusters, is_team, cap=2)) == 2
     assert B.changedSchools(fps, {RB.schoolKey("Summit", None, "XC"): "fp3"},
                             {}, lambda s: s == "Summit", cap=0) == []
+    # ★ a name that is several institutions in one state gets a book per
+    #   level beside the combined one (owner, 2026-10-28: Washington)
+    lv = B.changedSchools({("Washington", "XC"): ("fp9", 3000)}, {},
+                          {"Washington": [("WA", True)]}, lambda s: True, cap=0,
+                          levels={("Washington", "WA"): ["ms", "hs", "college"]})
+    assert [t[5] for t in lv] == [None, "college", "hs", "ms"]
+    assert RB.schoolKey("Washington", "WA", "XC", "college") == "Washington|WA|XC|college"
 
 
 def test_keys_and_paths():

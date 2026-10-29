@@ -7143,8 +7143,13 @@ def school_page(school_name):
             # ★ THE RECORD BOOK TAB (2026-10-10): one primary-key read of
             #   the precomputed book (build_record_books.py); None until built
             import record_books as _RB
-            record_book = _RB.loadBook(cur, "school",
-                                       _RB.schoolKey(school_name, state, sport))
+            # the chosen institution's book where the name is several, the
+            # combined one until the next build has written it
+            record_book = ((_RB.loadBook(cur, "school",
+                                         _RB.schoolKey(school_name, state, sport, level))
+                            if (lchips and level) else None)
+                           or _RB.loadBook(cur, "school",
+                                           _RB.schoolKey(school_name, state, sport)))
 
     # ! SCOPED IN PYTHON, NOT IN SQL. Every row already carries its pool,
     #   so the level filter is a predicate rather than another parameter
@@ -7539,8 +7544,12 @@ def school_records_page(school_name):
                 state = None
             if chips and not state:
                 state = primary_state
-            book = RB.loadBook(cur, "school", RB.schoolKey(school_name, state, sport))
             level = _subpageLevel(cur, school_name, state)
+            # the institution's own book where the name is several; the
+            # combined book until the next build has written it
+            book = ((RB.loadBook(cur, "school", RB.schoolKey(school_name, state, sport, level))
+                     if level else None)
+                    or RB.loadBook(cur, "school", RB.schoolKey(school_name, state, sport)))
     has_hs_view = _record_pages.stampBook(book, stampBoardRows)
     return render_template("school_records.html", school=school_name,
                            state=state, sport=sport, record_book=book,

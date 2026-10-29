@@ -85,10 +85,15 @@ def stateKey(sport, pool, state):
     return f"{sport.upper()}|{pool}|{state.upper()}"
 
 
-def schoolKey(school, state, sport):
+def schoolKey(school, state, sport, level=None):
     # ! the state may be None (a name with no identity cluster): '' keeps
     #   the key a plain string and the PK unique
-    return f"{school}|{(state or '').upper()}|{sport.upper()}"
+    # ★ AND A LEVEL where the name is several institutions (owner,
+    #   2026-10-28: Washington's record book mixed the university, the high
+    #   school and the middle school). The level-less key stays the combined
+    #   book, so a page built before the level books still has one to read.
+    key = f"{school}|{(state or '').upper()}|{sport.upper()}"
+    return f"{key}|{level}" if level else key
 
 
 def courseKey(course):
