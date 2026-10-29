@@ -628,42 +628,57 @@ def parseUnits(meet_name, div_title, college=False, state=None):
 
 
 # ---- the votes -------------------------------------------------------- #
+# ★ EACH ROW'S OWN LEVEL (owner, 2026-10-28: Wake Forest the university
+#   read "NCAA DI · NAC 6" -- the high school's conference). College-ness
+#   was decided once per (school, state) by the name's pool mix, so a name
+#   that is a university AND a high school voted one institution's meets
+#   into the other's units. Each attendance row now carries the share of
+#   that school's rows IN THAT MEET the engine pooled college; NULL where
+#   none reached a board (the name's mix then decides, as before).
+_COLL_SHARE = ("avg(CASE WHEN rr.pool LIKE 'college!_%%' ESCAPE '!' THEN 1.0 "
+               "WHEN rr.pool IS NOT NULL THEN 0.0 END) AS coll_share")
+
+
 def _rows(cur, sport, lo, hi):
     """DISTINCT (school, season, meet_name, div_title, state) attendance
     rows from late-season meets, both feeds."""
     if sport == "XC":
-        cur.execute("""
-            SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source
+        cur.execute(f"""
+            SELECT r.school, substr(r.date, 1, 4) AS yr,
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
             FROM results r
             JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                         AND m.source = r.source
+            LEFT JOIN ranking_results rr ON rr.result_id = r.result_id AND rr.sport = 'XC'
             WHERE COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
               AND m.meet_name ~* 'champ|finals|meet of champions'
+            GROUP BY 1, 2, 3, 4, 5, 6
         """, {"lo": lo, "hi": hi})
         yield from cur.fetchall()
-        cur.execute("""
-            SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
+        cur.execute(f"""
+            SELECT r.school, substr(r.date, 1, 4) AS yr,
                    mt.meet_name, NULL::text AS division, mt.state,
-                   'tfrrs'::text AS source
+                   'tfrrs'::text AS source, {_COLL_SHARE}
             FROM results r
             JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                AND mt.source = 'tfrrs'
+            LEFT JOIN ranking_results rr ON rr.result_id = r.result_id AND rr.sport = 'XC'
             WHERE r.source = 'tfrrs'
               AND COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
               AND mt.meet_name ~* 'champ|finals|meet of champions'
+            GROUP BY 1, 2, 3, 4, 5, 6
         """, {"lo": lo, "hi": hi})
         yield from cur.fetchall()
     else:
-        cur.execute("""
+        cur.execute(f"""
             -- ! MEET-GRAIN LATERAL, not the (div, event) triple: result ids
             --   drift between scrape vintages and the exact join erased
             --   modern college meets entirely (Tufts stopped at 2016).
             --   meet_name is meet-level, so any row of the meet names it.
-            SELECT DISTINCT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source
+            SELECT r.school, substr(r.date, 1, 4) AS yr,
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
             FROM results_tf r
             JOIN LATERAL (
                 SELECT mm.meet_name, mm.division, mm.state
@@ -671,8 +686,10 @@ def _rows(cur, sport, lo, hi):
                 WHERE mm.meet_id = r.meet_id AND mm.source = r.source
                 LIMIT 1
             ) m ON m.meet_name ~* 'champ|finals|meet of champions'
+            LEFT JOIN ranking_results rr ON rr.result_id = r.result_id AND rr.sport = 'TF'
             WHERE COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
+            GROUP BY 1, 2, 3, 4, 5, 6
         """, {"lo": lo, "hi": hi})
         yield from cur.fetchall()
 
@@ -716,12 +733,16 @@ def rivals(counter):
     return out.most_common()
 
 
-def buildVotes(cur, sport, state_filter=None):
+def buildVotes(cur, sport, state_filter=None, split_level=False):
     """(votes, seasons, unit_eg, stats) over one sport's late season.
 
     votes[(school, state)][kind][(unit, year)] = n. This is the single
     place the corpus is turned into units -- the census prints it, the
-    writer stores it, and neither can drift from the other."""
+    writer stores it, and neither can drift from the other.
+
+    split_level: key (school, state, is_college) instead, so a name that is
+    a university and a high school votes two sets of units (the writer's
+    mode; the census keeps its shape)."""
     lo, hi = _WINDOW[sport]
     votes = defaultdict(lambda: defaultdict(Counter))
     seasons = defaultdict(set)
@@ -729,17 +750,21 @@ def buildVotes(cur, sport, state_filter=None):
     st_ = {"rows": 0, "excluded": 0, "hits": 0, "lvl": 0, "name": 0}
     name_hits, name_miss = Counter(), Counter()
     maps = _levelMaps(cur)          # BEFORE _rows: same cursor
-    for school, yr, meet_name, div_title, state, feed in _rows(
+    for school, yr, meet_name, div_title, state, feed, *rest in _rows(
             cur, sport, lo, hi):
         st_["rows"] += 1
         st = (state or "").upper()
         if state_filter and st != state_filter.upper():
             continue
-        is_coll = _schoolIsCollege(school, st, maps)
-        if is_coll is None:
+        share = rest[0] if rest else None
+        is_coll = (bool(float(share) >= 0.5) if share is not None
+                   else _schoolIsCollege(school, st, maps))
+        if share is not None:
+            st_["row_lvl"] = st_.get("row_lvl", 0) + 1
+        elif is_coll is None:
             st_["name"] += 1
             is_coll = (feed == 'tfrrs' and _isCollegeName(meet_name))
-        else:
+        elif share is None:
             st_["lvl"] += 1
             # ! THE MEET NAME VETOES THE LEVEL (304, 2026-09-08). The level
             #   map is keyed by the state the rows RACED in, so Georgetown
@@ -761,7 +786,7 @@ def buildVotes(cur, sport, state_filter=None):
             name_miss[meet_name] += 1
             continue
         name_hits[meet_name] += 1
-        key = (school, st)
+        key = (school, st, bool(is_coll)) if split_level else (school, st)
         for kind, unit in facts:
             if kind == "state" and unit == "STATE":
                 unit = st or "STATE"

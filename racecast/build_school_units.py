@@ -87,7 +87,10 @@ CREATE TABLE school_unit_new (
     conflict    boolean NOT NULL DEFAULT false,
     votes       integer NOT NULL DEFAULT 0,
     asof        text,
-    CONSTRAINT school_unit_new_pkey PRIMARY KEY (school, state, sport)
+    -- ★ A COLLEGE ROW AND A SCHOOL ROW per (school, state, sport) where a
+    --   name is both (owner, 2026-10-28: Wake Forest the university read
+    --   "NCAA DI · NAC 6"). Every reader already picks by is_college.
+    CONSTRAINT school_unit_new_pkey PRIMARY KEY (school, state, sport, is_college)
 )"""
 
 
@@ -139,14 +142,15 @@ def _rowFor(school, st, kinds):
 # Output:    the number of rows filled.
 def crossFillAreas(rows):
     i_area = 3 + _COLS.index("area")
+    i_college = 3 + len(_COLS)
     by_key = {}
     for row in rows:
         if row[i_area]:
-            by_key.setdefault((row[0], row[1]), row[i_area])
+            by_key.setdefault((row[0], row[1], bool(row[i_college])), row[i_area])
     filled = 0
     for row in rows:
         if not row[i_area]:
-            got = by_key.get((row[0], row[1]))
+            got = by_key.get((row[0], row[1], bool(row[i_college])))
             if got:
                 row[i_area] = got
                 filled += 1
@@ -213,8 +217,19 @@ def directoryDivisions(cur, rows):
     known = {k: v for k, v in known.items() if v}
     i_div = 3 + _COLS.index("division")
     i_college = 3 + len(_COLS)
+    hs_cols = [3 + _COLS.index(c) for c in _COLS if c not in ("conference", "division", "region")]
+    # ! THE COLLEGE ROW ONLY where the name also has a school row: the
+    #   directory knows Wake Forest University, not Wake Forest High School,
+    #   and a school row it stamped "NCAA DI" would collide with the
+    #   college row (and print the university's division on the high
+    #   school). A lone row with no school units is a college the votes
+    #   could not place, as before.
+    has_college = {(r[0], r[1], r[2]) for r in rows if r[i_college]}
     n = 0
     for row in rows:
+        if not row[i_college] and ((row[0], row[1], row[2]) in has_college
+                                   or any(row[i] for i in hs_cols)):
+            continue
         d = lookup(known, row[0], state=row[1]) or _outsideNcaa(row[0])
         if d and row[i_div] != d:
             row[i_div] = d
@@ -234,9 +249,9 @@ def main():
     with getConn() as conn, conn.cursor() as cur:
         rows, census = [], {}
         for sport in sports:
-            votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(cur, sport)
+            votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(cur, sport, split_level=True)
             n_ok = n_clash = 0
-            for (school, st), kinds in votes.items():
+            for (school, st, _coll), kinds in votes.items():
                 if not isTeam(school):
                     continue
                 row = _rowFor(school, st, kinds)
@@ -270,7 +285,7 @@ def main():
             "INSERT INTO school_unit_new (school, state, sport, " +
             ", ".join(_COLS) +
             ", is_college, conflict, votes, asof) VALUES %s "
-            "ON CONFLICT (school, state, sport) DO NOTHING",
+            "ON CONFLICT (school, state, sport, is_college) DO NOTHING",
             rows, page_size=5000)
         # the pages look a school up by name, and by name+state
         cur.execute("CREATE INDEX idx_school_unit_new_school "

@@ -172,6 +172,12 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
     if state:
         sql += " AND state = %s"
         args.append(state.upper())
+    # ★ THE LEVEL'S OWN ROW where the name has a college row and a school
+    #   row (build_school_units, 2026-10-28): Wake Forest the university's
+    #   units are not the high school's
+    if level:
+        sql += " AND is_college = %s"
+        args.append(level == "college")
     sql += " ORDER BY votes DESC LIMIT 1"
     cur.execute(sql, args)
     row = cur.fetchone()
