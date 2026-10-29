@@ -863,3 +863,27 @@ the 90% band.
 - The sealed season's college mean (12.83%) is one meet: Jayton
   Invitational 2025 (TFRRS 25768), four races entered about 5x slow. College
   100+ is 3.79% (the page 4.79%).
+
+### Leakage (2026-10-29)
+
+- **K-fold: never.** Random folds put a runner's later races in training
+  and earlier ones in the test. Every number here is forward in time:
+  train before the cut, score a whole later season.
+- **Early stopping** held back random rows, so a race's runners sat on
+  both sides. Now whole races (`fitByRaces`).
+- **The real one: the engine's numbers are today's.** Every input reads
+  only results before the race, but the ratings and course numbers come
+  from the latest full solve, which has seen the races a backtest scores.
+  It flatters times more than order (both sides get the same help on
+  order).
+  - **A, measure it:** `score_frozen_forecasts.py --rebuild` re-predicts
+    each frozen `meet_forecast` race for the same runners and basis, history
+    cut at the freeze, on today's numbers. frozen − rebuilt is the leak plus
+    whatever changed since, so at most the leak.
+  - **B, stop it from now on:** with `XCP_RACE_INPUTS_DIR` set (the
+    pre-race recorder), every field the race model predicts is written
+    down with every input as the page had it (`race_model.keepInputs`, one
+    `.jsonl.gz` a day). Joined to the results after a season, they are a
+    table nothing after the forecast touched.
+  - **C, replay the past** (engine `forward_holdout` at monthly cutoffs):
+    only if A shows a large gap.

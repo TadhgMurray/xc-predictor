@@ -141,3 +141,19 @@ def test_the_forecast_is_asked_without_the_cursor(monkeypatch):
     assert M._weather(_Cur(), {"gps_lat": 1.0, "gps_long": 2.0, "date": "2026-10-31"}) == \
         {"temp_c": 12.0}
     assert seen["cur"] is None
+
+
+def test_the_inputs_are_kept_as_the_page_had_them(tmp_path):
+    import gzip
+    import json
+    field = [{"pid": 7, "school": "A", "base_ln": 6.9, "f": {"opener": 0.0, "x": math.nan}}]
+    race = {"day": D(2026, 10, 31), "lead_days": 2, "distance": 5000.0, "canonical_id": 3}
+    M.keepInputs(str(tmp_path), {"source": "anet", "meet_id": 1, "div_id": 2}, race, field,
+                 {"made": "2026-10-29"})
+    M.keepInputs(str(tmp_path), {"source": "anet", "meet_id": 1, "div_id": 3}, race, field, {})
+    (f,) = tmp_path.iterdir()
+    lines = [json.loads(x) for x in gzip.open(f, "rt")]
+    assert [x["div_id"] for x in lines] == [2, 3]
+    r = lines[0]["runners"][0]
+    assert r["pid"] == 7 and r["f"] == {"opener": 0.0, "x": None} and lines[0]["lead_days"] == 2
+    assert M.keepInputs("/proc/no/such", {}, race, field, {}) is None      # never raises
