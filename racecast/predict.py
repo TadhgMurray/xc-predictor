@@ -863,15 +863,18 @@ def _score(field, preds):
         #   pool, newest weighted up (_formRating). Where the time is the
         #   rating's, the column now shows that same form rating and pool,
         #   so the two read together; the season figure rides beside it.
-        if pred.get("basis") == "rating" and pred.get("form_rating"):
-            row["season_rating"] = row["rating"]
-            row["rating"] = pred["form_rating"]
-            row["pool"] = (pred.get("form_pool") or row["pool"] or "").split("|")[0] or None
-        elif pred.get("time_rating"):
-            # a model-served time: the rating it is worth on this course
+        # ★ THE PREDICTED RACE'S RATING FIRST (owner, 2026-10-28): the time
+        #   on this course, read back as a rating, so the column and the
+        #   order always agree; the form rating where the time could not be
+        #   read back (no course conversion), as before.
+        if pred.get("time_rating"):
             row["season_rating"] = row["rating"]
             row["rating"] = pred["time_rating"]
             row["pool"] = (pred.get("time_pool") or row["pool"] or "").split("|")[0] or None
+        elif pred.get("basis") == "rating" and pred.get("form_rating"):
+            row["season_rating"] = row["rating"]
+            row["rating"] = pred["form_rating"]
+            row["pool"] = (pred.get("form_pool") or row["pool"] or "").split("|")[0] or None
         finishers.append(row)
         if not isTeam(team):
             continue
@@ -1515,15 +1518,24 @@ def _servedTimes(cur, person_ids, target):
         for e in preds:
             if e.get("basis") == "rating":
                 trendApply(e, table, has_cell, (spec or {}).get("sport"))
-    # the rating a model-served time is worth here (_secondsToRating)
+    # the rating the predicted time is worth here (_secondsToRating)
+    # ★ EVERY PREDICTED TIME, NOT ONLY A MODEL-SERVED ONE (owner,
+    #   2026-10-28: "why is the rating the season rating and not the rating
+    #   of that predicted race?" -- a 140.9 predicted ahead of a 141.3). The
+    #   race model refines rating-based times in place (basis stays
+    #   'rating'), so the column kept the form rating while the time and
+    #   the place were the model's. The race's own rating is the predicted
+    #   time read back on this course, in the runner's pool.
     if spec is not None:
         season = (_asDate(spec.get("date")) or datetime.date.today()).year
         for entry in preds:
-            if (entry.get("basis") != "rating" and entry.get("seconds")
-                    and entry.get("is_race_time") and entry.get("time_pool")):
+            pool = (entry.get("time_pool")
+                    or (entry.get("form_pool") or "").split("|")[0] or None)
+            if entry.get("seconds") and entry.get("is_race_time") and pool:
                 try:
                     entry["time_rating"] = _secondsToRating(
-                        entry["seconds"], entry["time_pool"], spec, season)
+                        entry["seconds"], pool, spec, season)
+                    entry.setdefault("time_pool", pool)
                 except Exception:                       # noqa: BLE001
                     pass
     return preds
