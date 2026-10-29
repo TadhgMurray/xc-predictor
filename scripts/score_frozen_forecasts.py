@@ -39,6 +39,12 @@ READ ONLY.
   numbers, as every backtest does. Both are scored on the runners they
   share, teams left out. frozen - rebuilt is the leak, plus whatever the
   engine and the models have changed since (so at most the leak's size).
+
+★ --against pred_meet_forecast: THE CLEAN HEAD-TO-HEAD. Two frozen archives
+  of the same races (the site's, and the pre-race recorder's race model,
+  build_meet_forecasts with XCP_FORECAST_TABLE), both made before the gun,
+  scored on the runners both listed. Nothing in either could know the
+  result or a later solve.
 """
 import argparse
 import datetime
@@ -192,6 +198,9 @@ def main():
     ap.add_argument("--rebuild", action="store_true",
                     help="also predict each frozen race again on today's ratings and score "
                          "both on the runners they share: how much a re-run flatters")
+    ap.add_argument("--against", default=None, metavar="TABLE",
+                    help="a second frozen archive (pred_meet_forecast: the pre-race "
+                         "recorder): both scored on the races and runners they share")
     ap.add_argument("--max-races", type=int, default=None,
                     help="with --rebuild: stop after this many races (about 2 s each)")
     a = ap.parse_args()
@@ -201,8 +210,12 @@ def main():
     import meet_forecast as MF
     from meet_recap import actualByDiv, actualTeams
 
+    if a.against and not (a.against == "meet_forecast" or (
+            a.against.startswith("pred_") and a.against.replace("_", "").isalnum())):
+        raise SystemExit(f"--against {a.against!r}: meet_forecast or a pred_ name only")
     groups = {}
     rebuilt = {}          # --rebuild: key -> [(frozen, rebuilt)] on shared runners
+    versus = {}           # --against: key -> [(this table, that table)] on shared runners
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
@@ -213,6 +226,17 @@ def main():
                           AND  meet_date < CURRENT_DATE
                         ORDER  BY meet_date, meet_id, div_id""", (a.lo, a.hi))
         stored = [MF._rowOut(r) for r in cur.fetchall()]
+        other = {}
+        if a.against:
+            cur.execute(f"""SELECT source, meet_id, div_id, meet_date, made_on, state,
+                                   runners, teams, model_basis, model_version
+                            FROM   {a.against}
+                            WHERE  meet_date >= %s AND meet_date <= %s
+                              AND  meet_date < CURRENT_DATE""", (a.lo, a.hi))
+            for r in cur.fetchall():
+                o = MF._rowOut(r)
+                other[(o["source"], int(o["meet_id"]), int(o["div_id"]))] = o
+            print(f"{len(other)} frozen races in {a.against}")
         by_meet = {}
         for fc in stored:
             by_meet.setdefault((fc["source"], int(fc["meet_id"])), []).append(fc)
@@ -269,6 +293,12 @@ def main():
                 groups.setdefault(key, []).append(m)
                 if pair is not None:
                     rebuilt.setdefault(key, []).append(pair)
+                o = other.get((fc["source"], int(fc["meet_id"]), int(fc["div_id"])))
+                if o is not None:
+                    f_, o_ = sharedRunners(fc, o)
+                    mf, mo = frozenMetrics(f_, fin, []), frozenMetrics(o_, fin, [])
+                    if mf is not None and mo is not None:
+                        versus.setdefault(key, []).append((mf, mo))
         conn.rollback()
 
     print(f"\n{a.by:22} {'races':>5} {'runners':>7} {'median|err|':>11} {'bias':>7} "
@@ -281,6 +311,18 @@ def main():
     allr = [m for v in groups.values() for m in v]
     if len(groups) > 1 and allr:
         print(_row("ALL", summarize(allr)))
+    if a.against:
+        print(f"\n{MF.TABLE} AGAINST {a.against}, the same races and runners, both frozen "
+              f"before the race (teams left out)")
+        keys = sorted(versus) + (["ALL"] if len(versus) > 1 else [])
+        for key in keys:
+            pairs = (versus[key] if key != "ALL" else [p for v in versus.values() for p in v])
+            sf, so = summarize([p[0] for p in pairs]), summarize([p[1] for p in pairs])
+            print(_row(f"{key} {MF.TABLE}"[:22], sf))
+            print(_row(f"{key} {a.against}"[:22], so))
+            print(f"  {'':20} {a.against} better by: median |err| {sf['mae'] - so['mae']:+.2f} "
+                  f"points, within {sf['within'] - so['within']:+.2f}, rho "
+                  f"{_fmt(so['rho'] - sf['rho'] if so['rho'] is not None and sf['rho'] is not None else None, '{:+.3f}')}")
     if a.rebuild:
         print("\nREBUILT ON TODAY'S RATINGS, the same runners (teams left out); "
               "frozen - rebuilt = how much a re-run flatters, at most")
