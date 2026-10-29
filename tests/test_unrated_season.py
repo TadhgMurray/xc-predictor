@@ -40,6 +40,7 @@
 import ast
 import io
 import os
+import sys
 import re
 import unittest
 
@@ -52,7 +53,9 @@ def _sql():
     with io.open(os.path.join(_ROOT, "racecast", "build_ranking_results.py"),
                  encoding="utf-8") as fh:
         src = fh.read()
-    ns = {}
+    sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+    from season_floor import seasonQuantileSql      # light: no numpy, no psycopg2
+    ns = {"seasonQuantileSql": seasonQuantileSql}
     want = {"_SEASON_Q", "_DECAY_K", "_ANCHOR", "_SEASON_OUTLIER_PTS", "_CLUB_NAME_RE",
             "_ATHLETE_SEASON_SQL"}
     for node in ast.parse(src).body:

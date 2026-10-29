@@ -3045,6 +3045,8 @@ _CLUB_NAME_RE = (r"\m(club|tc|ac|xtc|elite|striders|endurance|athletics|"
                  # boundary before it, and no school's name ends that way
                  r"|elite\M")
 
+from season_floor import seasonQuantileSql                      # noqa: E402
+
 _ATHLETE_SEASON_SQL = f"""
 WITH season_med AS (
     SELECT person_id, pool, sport, year,
@@ -3058,7 +3060,7 @@ INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
      n_races, first_race, last_race, state, school, grade)
 SELECT base.person_id, base.pool, base.sport, base.year,
-       (percentile_cont({_SEASON_Q}) WITHIN GROUP (ORDER BY speed_rating))::real,
+       {seasonQuantileSql("speed_rating", _SEASON_Q)}::real,
        (sum(speed_rating * power({_DECAY_K}, {_ANCHOR} - race_date))
         / nullif(sum(power({_DECAY_K}, {_ANCHOR} - race_date)), 0))::real,
        max(speed_rating)::real,

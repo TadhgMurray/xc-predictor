@@ -65,9 +65,15 @@ def test_event_filter():
     # and the SQL really uses them, rather than a hardcoded 0.8 / avg()
     params = {}
     src = rankings._abilitySource({"dist_min": 3000.0, "dist_max": None}, params)
-    ok(f"percentile_cont({rankings._SEASON_Q})" in src,
-       "the restricted board must use the season quantile, not a mean -- a mean "
-       "punishes the athlete who raced more (build_ranking_results says why)")
+    # the season quantile, by the same expression the build uses
+    # (season_floor.seasonQuantileSql), not a mean -- a mean punishes the
+    # athlete who raced more (build_ranking_results says why)
+    from season_floor import seasonQuantileSql
+    ok(seasonQuantileSql("e.speed_rating", rankings._SEASON_Q) in src,
+       "the restricted board must use the build's season quantile expression")
+    ok(seasonQuantileSql("speed_rating", rankings._SEASON_Q) in BRR
+       or 'seasonQuantileSql("speed_rating", _SEASON_Q)' in BRR,
+       "the build must use the same season quantile expression")
     ok(f"med.m - {rankings._SEASON_OUTLIER_PTS}" in src,
        "the restricted board must apply the same outlier guard as the build")
     ok("avg(" not in src, "no plain average: that is the estimator the build rejected")

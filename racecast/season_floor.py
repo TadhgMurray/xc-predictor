@@ -17,6 +17,34 @@ and the home-page season panels. One rule, three readers.
 """
 
 DEFAULT_FLOOR = 3
+
+
+def seasonQuantileSql(col, q):
+    """SQL for the season rating: the q-quantile of a group's non-null `col`
+    by Hyndman-Fan type 8 (median-unbiased), as an ordered-set aggregate
+    over the enclosing GROUP BY. One expression, used by the season build
+    (build_ranking_results) and the event-filtered board (rankings), so
+    the two cannot disagree.
+
+    ★ WHY NOT percentile_cont (owner, 2026-10-28: Meshack Kipruto beat Rocky
+      Hansen at Nuttycombe, but Hansen had one race and Kipruto two, so
+      Kipruto ranked below him). percentile_cont interpolates from the
+      worst race up: a second, slower race pulled a two-race season 20%
+      of the way down toward it -- racing again lowered the number. Type 8
+      sits at (n + 1/3) q + 1/3 in the sorted races: with q = 0.8, one to
+      three races give the best, four 80% of the way from the second best
+      to the best, five 60%, and a big season about where it was. It moves
+      smoothly with n (percentile_disc drops from the best to the second
+      best at the fifth race), and a race added below the season's top
+      moves it by tenths, never by a jump."""
+    return f"""(SELECT CASE WHEN v.n = 0 THEN NULL
+                          WHEN v.h >= v.n THEN v.a[v.n]
+                          WHEN v.h <= 1 THEN v.a[1]
+                          ELSE v.a[floor(v.h)::int] + (v.h - floor(v.h))
+                               * (v.a[floor(v.h)::int + 1] - v.a[floor(v.h)::int]) END
+             FROM (SELECT w.a, w.n, (w.n + 1.0 / 3) * {float(q)!r} + 1.0 / 3 AS h
+                   FROM (VALUES (array_agg({col} ORDER BY {col}) FILTER (WHERE {col} IS NOT NULL),
+                                 count({col})::int)) w(a, n)) v)"""
 OPEN_FROM = 2026        # stored year; see the note above
 
 

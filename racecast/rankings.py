@@ -437,7 +437,7 @@ def _multiInt(args, name, lo, hi):
     return out or None
 
 
-from season_floor import floorSql   # the race-count floor, one rule
+from season_floor import floorSql, seasonQuantileSql   # the race-count floor and the season quantile: one rule
 
 
 def parseFilters(args):
@@ -881,8 +881,7 @@ def _abilitySource(f, params, where=""):
             FROM   ev GROUP BY person_id, pool, sport, year
         )
         SELECT e.person_id, e.pool, e.sport, e.year,
-               (percentile_cont({_SEASON_Q})
-                    WITHIN GROUP (ORDER BY e.speed_rating))::real
+               {seasonQuantileSql("e.speed_rating", _SEASON_Q)}::real
                                                       AS mean_rating,
                max(e.speed_rating)::real              AS best_rating,
                count(*)                               AS n_races,
