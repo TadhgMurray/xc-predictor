@@ -1308,8 +1308,8 @@ _clock_tables = {}
 _clock_lock = threading.Lock()
 
 
-def _clockTable(pool, sport, distance):
-    key = (_bare(pool), str(sport or "XC").upper(), float(distance))
+def _clockTable(pool, sport, distance, track=False):
+    key = (_bare(pool), str(sport or "XC").upper(), float(distance), bool(track))
     stamp = _scale["at"]
     with _clock_lock:
         got = _clock_tables.get(key)
@@ -1317,6 +1317,8 @@ def _clockTable(pool, sport, distance):
             return got[1]
     pts = []
     ctx = {"distance": key[2], "pool": key[0], "sport": key[1]}
+    if track:
+        ctx["difficulty"] = 0.0          # the display zero: the average outdoor track
     for r in EQUIV_RATINGS:
         norm = _norm_from_rating(float(r), key[0], 0.0, key[1])
         t = normalized_to_time(norm, ctx) if norm else None
@@ -1330,10 +1332,11 @@ def _clockTable(pool, sport, distance):
     return pts
 
 
-def ratingSeconds(rating, pool, sport="XC", distance=None):
+def ratingSeconds(rating, pool, sport="XC", distance=None, track=False):
     """Seconds a `rating` (on `pool`'s own scale) stands for at `distance`
-    (default readerDistance) at a venue with no name; None when it cannot
-    be said."""
+    (default readerDistance) at a venue with no name -- the sport's typical
+    race, or with `track` the average outdoor track (difficulty 0.0, the
+    display zero); None when it cannot be said."""
     try:
         r = float(rating)
     except (TypeError, ValueError):
@@ -1343,13 +1346,14 @@ def ratingSeconds(rating, pool, sport="XC", distance=None):
     d = distance or readerDistance(pool, sport)
     if not d:
         return None
-    pts = _clockTable(pool, sport, d)
+    pts = _clockTable(pool, sport, d, track)
     if len(pts) < 2 or not pts[0][0] <= r <= pts[-1][0]:
         # off the table's ends (a 30 or a 190): convert this one directly
         norm = _norm_from_rating(r, pool, 0.0, sport)
-        t = normalized_to_time(norm, {"distance": float(d), "pool": pool,
-                                      "sport": str(sport or "XC").upper()}) \
-            if norm else None
+        ctx = {"distance": float(d), "pool": pool, "sport": str(sport or "XC").upper()}
+        if track:
+            ctx["difficulty"] = 0.0
+        t = normalized_to_time(norm, ctx) if norm else None
         return t if t and t > 0 else None
     lo, hi = 0, len(pts) - 1
     while hi - lo > 1:
@@ -1401,7 +1405,15 @@ def ratingClock(rating, pool, sport="XC", distance=None):
     else:
         where = None
     d = distance or readerDistance(pool, sport)
-    secs = ratingSeconds(rating, pool, sport, d)
+    # ★ "ON A TRACK" IS THE TRACK (owner, 2026-10-28: Robert Jazwinski III,
+    #   14:35.82 at WakeMed, a +9.6% course, rated 144.3 and quoted "14:20"
+    #   -- "at the top every 5k equivalent seems a little slow"). A cross
+    #   country conversion with no venue lands on the sport's MEDIAN race
+    #   (venueEffect), not on the 0.0 the comment above relied on, so every
+    #   high school and middle school 5K column was the median cross
+    #   country course's time, labelled a track's. The display zero is
+    #   asked for by name now.
+    secs = ratingSeconds(rating, pool, sport, d, track=(where == "on a track"))
     t = clockFor(secs)
     if not t:
         return None

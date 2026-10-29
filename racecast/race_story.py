@@ -99,10 +99,20 @@ def _plain(row):
     return Markup(f"{name} ({escape(school)})") if school else name
 
 
+# a generational suffix is not a surname (owner, 2026-10-28: "III won a
+# second straight title here" -- Robert Jazwinski III)
+_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v", "vi"}
+
+
 def surname(name):
-    """'Evan Noonan' -> 'Noonan'; a one-word name stays whole."""
+    """'Evan Noonan' -> 'Noonan', 'Robert Jazwinski III' -> 'Jazwinski';
+    a one-word name stays whole."""
     parts = (name or "").split()
-    return parts[-1] if len(parts) > 1 else (name or "Unknown")
+    while len(parts) > 2 and parts[-1].lower().rstrip(".,") in _SUFFIXES:
+        parts.pop()
+    if len(parts) > 1 and parts[-1].lower().rstrip(".,") in _SUFFIXES:
+        return " ".join(parts)              # 'Smith Jr.': nothing else to call them
+    return parts[-1].rstrip(",") if len(parts) > 1 else (name or "Unknown")
 
 
 # ★ THE HEADER ALREADY NAMES THE WINNER AND THE MARK (owner, 2026-10-07:

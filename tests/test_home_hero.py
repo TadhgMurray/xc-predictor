@@ -76,12 +76,31 @@ def test_track5k_matches_rating_clock():
     # 2026-10-25: the girls board said 15:15 for a 158.1 the page read 16:02)
     real = cv.ratingSeconds
     try:
-        cv.ratingSeconds = lambda r, p, sport, d: 960.0 if sport == "XC" else 915.0
+        cv.ratingSeconds = lambda r, p, sport, d, track=False: 960.0 if sport == "XC" else 915.0
         xc, tf = cv.stampTrack5k([{"rating": 150.0, "pool": "hs_f", "sport": "XC"},
                                   {"rating": 150.0, "pool": "hs_f", "sport": "TF"}])
     finally:
         cv.ratingSeconds = real
     assert (xc["track5k"], tf["track5k"]) == ("16:00", "15:15")
+
+
+def test_an_xc_5k_is_read_on_a_track_not_the_median_course():
+    """Robert Jazwinski III (owner, 2026-10-28): 14:35.82 on a +9.6% course
+    quoted "14:20 on a track" -- the conversion landed on the median cross
+    country race. ratingClock's XC path asks for the track by name."""
+    import conversions as cv
+    seen = {}
+    real = cv.ratingSeconds
+    try:
+        def fake(r, p, sport, d, track=False):
+            seen.update(sport=sport, track=track)
+            return 860.0
+        cv.ratingSeconds = fake
+        c = cv.ratingClock(144.3, "hs_m", "XC")
+    finally:
+        cv.ratingSeconds = real
+    if c is not None:                       # a stub scale may have no XC reader distance
+        assert seen == {"sport": "XC", "track": True} and c["where"] == "on a track"
 
 
 # ---------------------------------------------------------------- render
@@ -120,7 +139,7 @@ def _render(monkeypatch):
     monkeypatch.setattr(weekend, "comingUpCached", lambda getConn, today=None: [])
     import conversions as cv
     monkeypatch.setattr(cv, "ratingSeconds",
-                        lambda r, pool, sport="XC", distance=None: 1210.0 * (100.0 / float(r)) ** 0.77)
+                        lambda r, pool, sport="XC", distance=None, track=False: 1210.0 * (100.0 / float(r)) ** 0.77)
     monkeypatch.setattr(A.app, "before_request_funcs", {})
     with A.app.test_client() as c:
         r = c.get("/")
