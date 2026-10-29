@@ -887,3 +887,30 @@ the 90% band.
     table nothing after the forecast touched.
   - **C, replay the past** (engine `forward_holdout` at monthly cutoffs):
     only if A shows a large gap.
+
+### A's result (owner's run, 2026-10-29): a re-run flatters times, barely order
+
+400 frozen site forecasts (Aug–Oct 2026), the same runners predicted
+again on today's ratings and course numbers, history cut at the freeze:
+
+| | Frozen | Rebuilt | Flattered by |
+|---|---|---|---|
+| Median miss | 3.48% | 3.06% | **0.42 points** |
+| Within the race | 1.86% | 1.73% | 0.13 |
+| Rank correlation | 0.907 | 0.919 | 0.012 |
+
+(guard: 0.26 / 0.13 / 0.011; rating: 0.57 / 0.15 / 0.013.) An upper
+bound: it also holds the engine's own changes since September.
+
+- **Times in every backtest read up to about 0.4 points too good.** The
+  race model's 2.83% median is likely nearer 3.1–3.3% before the gun.
+- **Order much less:** 0.01 of rank correlation, and on both sides of any
+  model-against-ratings comparison. The +1.29-point gain should mostly
+  stand; the recorder will say.
+- **Live, the site is biased slow:** frozen median signed miss +2.9%
+  (rating basis), +1.2% (blend), +0.4% (guard); its ±1 sigma band holds 43%
+  (rating) to 71% (guard).
+- **The clean head-to-head:** `score_frozen_forecasts.py --against
+  pred_meet_forecast`, the site's frozen forecasts against the pre-race
+  recorder's race model on the same races and runners, once results come
+  in (from 2026-10-28).
