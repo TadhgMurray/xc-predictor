@@ -250,7 +250,83 @@ def test_builder_sql_is_first_college_seasons_with_the_boards_floor():
     assert "h.year < f.first_year AND h.year >= f.first_year - 2" in sql
     assert "s.division AS row_division" in sql
     assert "NULL::text AS row_division" in " ".join(B.recruitSql(False).split())
-    assert "i.is_primary" in sql and "u.is_college" in sql
+    # the states and units are resolved after the query (resolveRows), not
+    # by the name's primary cluster
+    assert "i.is_primary" not in sql and "p.state AS state" in sql
+
+
+def test_resolve_rows_files_a_college_in_its_own_state():
+    # Williams College races in CA; the name's biggest cluster is a CA high
+    # school. teamState with the college pool says MA; the units are MA's.
+    def ts(school, pool, state):
+        if pool.startswith("college"):
+            return {"Williams": "MA"}.get(school, state)
+        return {"Highland": "UT"}.get(school, state)
+    raw = [{"person_id": 1, "pool": "college_m", "sport": "XC", "school": "Williams", "state": "CA",
+            "hs_school": "Highland", "hs_state": "ID", "division": None, "conference": None, "region": None},
+           {"person_id": 2, "pool": "college_f", "sport": "TF", "school": "Williams", "state": "CA",
+            "hs_school": "Highland", "hs_state": "ID", "division": "x", "conference": None, "region": None}]
+    units = {("Williams", "MA"): [("TF", "NCAA DIII", "NESCAC", "New England"),
+                                  ("XC", "NCAA DIII", "NESCAC XC", "New England")]}
+    B.resolveRows(raw, ts, {("Highland", 2): "ID"}, units)
+    assert raw[0]["state"] == "MA" and raw[0]["conference"] == "NESCAC XC" and raw[0]["unit_college"]
+    # athlete 1 has no assignment: the HS teamState; athlete 2 is assigned to ID
+    assert raw[0]["hs_state"] == "UT" and raw[1]["hs_state"] == "ID"
+    assert raw[1]["conference"] == "NESCAC" and raw[1]["division"] == "NCAA DIII"
+    # no team_state, no units: the rows stay as stored
+    raw2 = [dict(raw[0], state="CA", conference=None, hs_state="ID")]
+    B.resolveRows(raw2)
+    assert raw2[0]["state"] == "CA" and raw2[0]["conference"] is None and not raw2[0]["unit_college"]
+
+
+def _season(pid, year, school, rating, state="NC", grade=None, sport="XC"):
+    return {"person_id": pid, "pool": "college_m", "sport": sport, "year": year, "school": school,
+            "state": state, "grade": grade, "mean_rating": rating, "n_races": 5, "division": None,
+            "conference": None, "region": None}
+
+
+def test_a_transfer_is_the_first_season_at_a_second_college():
+    def inst(se):
+        return ({"Wake Forest University": "wake forest"}.get(se["school"], se["school"].lower()),
+                se["state"])
+    raw = [_season(1, 2023, "UNCG", 120.0), _season(1, 2024, "UNCG", 124.0),
+           _season(1, 2025, "Wake Forest", 130.0, grade="SR-4"),
+           # a spelling of one school is not a move
+           _season(2, 2024, "Wake Forest", 110.0), _season(2, 2025, "Wake Forest University", 112.0),
+           # back to the first school: a mislink, the whole history goes
+           _season(3, 2023, "A", 100.0), _season(3, 2024, "B", 101.0), _season(3, 2025, "A", 102.0),
+           # two schools in one stored year: not a move
+           _season(4, 2025, "C", 100.0), _season(4, 2025, "D", 101.0),
+           # an arrival before the classes kept
+           _season(5, 2019, "E", 100.0), _season(5, 2020, "F", 101.0),
+           # the new school is not a college
+           _season(6, 2024, "G", 100.0), _season(6, 2025, "Club H", 101.0)]
+    rows, dropped = B.shapeTransfers(raw, 2021, inst, gate=lambda se: "Club" not in se["school"])
+    assert [(r["person_id"], r["from_school"], r["school"], r["year"]) for r in rows] == \
+        [(1, "UNCG", "Wake Forest", 2025)]
+    r = rows[0]
+    assert r["from_rating"] == 124.0 and r["to_rating"] == 130.0 and r["grade"] == "SR-4"
+    assert r["from_year"] == 2024 and r["gender"] == "m"
+    assert dropped == {"back": 1, "same_year": 1, "not_college": 1, "foreign": 0, "old": 1}
+    assert B.findTransfers(raw[:3], inst) == [(raw[1], raw[2])]
+
+
+def test_transfers_both_ways_on_the_college_page():
+    rows_in = [{"person_id": 9, "year": 2025, "grade": "SR-4", "school": "Wake Forest", "state": "NC",
+                "to_rating": 130.04, "from_school": "UNCG", "from_state": "NC", "from_year": 2024,
+                "from_rating": 124.0, "from_division": None, "division": None, "name": "X"}]
+    cur = FakeCur([("to_regclass", [{"to_regclass": "college_transfer"}]),
+                   ("t.school = %(school)s", rows_in), ("t.from_school = %(school)s", [])])
+    t = R.schoolTransfers(cur, "Wake Forest", "NC", "m", "XC")
+    assert t["in_summary"] == {"n": 1, "before": 124.0, "after": 130.0, "gain": 6.0}
+    assert t["out"] == [] and t["out_summary"]["n"] == 0 and t["in"][0]["gain"] == 6.0
+    assert any("t.state = %(state)s" in q for q in cur.sql)
+    assert R.schoolTransfers(FakeCur([("to_regclass", [{"to_regclass": None}])]), "W", None, "m", "XC") is None
+    js = read("racecast", "static", "recruiting.js")
+    assert "Transfers in / out" in js and "r.t_in" in js
+    tpl = read("racecast", "templates", "recruiting_school.html")
+    assert "Transfers in" in tpl and "b.transfers" in tpl
+    assert "R.recruitStates(cur, school_name)" in read("racecast", "app.py")
 
 
 # ---- the wiring, by source ---------------------------------------------

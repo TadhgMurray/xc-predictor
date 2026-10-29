@@ -12345,11 +12345,22 @@ def recruiting_school_page(school_name):
             except psycopg2.Error:
                 conn.rollback()
                 chips, primary = [], None
-            if chips and not state:
-                state = primary
+            # ★ THE COLLEGE'S OWN STATE when the URL names none (owner,
+            #   2026-10-29): the chips are the name's clusters at every
+            #   level, and their primary is often a high school wearing
+            #   the college's name -- the page then filtered the recruits
+            #   to that state and showed nobody, or another college
+            if not state:
+                try:
+                    filed = R.recruitStates(cur, school_name)
+                except psycopg2.Error:
+                    conn.rollback()
+                    filed = []
+                state = filed[0] if filed else (primary if chips else None)
             from school_units import unitsFor
             try:
-                units = unitsFor(cur, school_name, state or primary, "XC", long=True)
+                units = unitsFor(cur, school_name, state or primary, "XC", long=True,
+                                 level="college")
             except psycopg2.Error:
                 conn.rollback()
                 units = []
@@ -12359,13 +12370,18 @@ def recruiting_school_page(school_name):
             blocks = []
             for sport in R.SPORTS:
                 summary, recruits = R.schoolRecruits(cur, school_name, state, gender, sport)
-                if summary is None:
+                try:
+                    transfers = R.schoolTransfers(cur, school_name, state, gender, sport)
+                except psycopg2.Error:
+                    conn.rollback()
+                    transfers = None
+                if summary is None and transfers is None:
                     continue
                 rating = R.subjectRating(subject, sport) if subject else None
                 blocks.append({"sport": sport, "summary": summary, "recruits": recruits,
-                               "rating": rating,
+                               "transfers": transfers, "rating": rating,
                                "tier": R.tierFor(rating, summary, summary.get("division"))
-                               if rating is not None else None})
+                               if (rating is not None and summary) else None})
             other = "f" if gender == "m" else "m"
             # ! one EXISTS, not two more full schoolRecruits (sweep 2026-10-10)
             has_other = R.hasRecruits(cur, school_name, state, other)
@@ -12376,13 +12392,16 @@ def recruiting_school_page(school_name):
     if events != list(R.THRESHOLD_EVENTS):
         for b in blocks:
             s_ = b["summary"]
+            if not s_:
+                continue
             s_["times"] = {k: R.timesFor(s_.get(k), gender, events)
                            for k in ("min", "p25", "median", "p75", "max")}
     event_cols = [(k, R.eventLabel(k)) for k, _d, _s in events]
     if not blocks and not has_other:
         abort(404)
     for b in blocks:
-        for r in b["recruits"]:
+        for r in b["recruits"] + ((b["transfers"] or {}).get("in") or []) \
+                + ((b["transfers"] or {}).get("out") or []):
             r["grade_label"] = _grade_label.gradeLabel(r.get("grade"), f"college_{gender}") \
                 if r.get("grade") else ""
     return render_template("recruiting_school.html", school=school_name, state=state,
@@ -12390,7 +12409,8 @@ def recruiting_school_page(school_name):
                            subject=subject, subject_error=serr, fmt_time=R.fmtTime,
                            event_cols=event_cols,
                            scholarship=R.scholarshipDivision(
-                               (blocks[0]["summary"].get("division") if blocks else None)))
+                               next((b["summary"].get("division") for b in blocks
+                                     if b["summary"]), None)))
 
 
 @app.route("/api/recruiting")

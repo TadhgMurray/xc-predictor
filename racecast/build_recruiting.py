@@ -56,7 +56,8 @@ from season_floor import floorSql, DEFAULT_FLOOR        # noqa: E402
 from grade_label import gradeLabel                      # noqa: E402
 from panels import isTeamName                           # noqa: E402
 from us_state import isFiftyState                       # noqa: E402
-from build_college_directory import loadDirectory, lookup  # noqa: E402
+from build_college_directory import loadDirectory, lookup, normName  # noqa: E402
+from school_identity import loadLabels, teamState, assignedStates  # noqa: E402
 
 CLASSES = 6              # recruiting classes kept, newest first
 MIN_GAIN_PAIRS = 50      # linked pairs before the freshman gain is trusted
@@ -107,9 +108,11 @@ def _hasColumn(cur, table, col):
 
 
 def recruitSql(season_units):
-    """The one query: first college seasons, their last HS season, the
-    school's identity state and units. season_units says whether
-    athlete_season carries the unit columns (older databases do not)."""
+    """The one query: first college seasons and their last HS season. The
+    states are the seasons' own (the venues' mode) and the units the
+    season's; resolveRows makes both the institution's. season_units says
+    whether athlete_season carries the unit columns (older databases do
+    not)."""
     own = ("s.division AS row_division, s.conference AS row_conference, s.region AS row_region"
            if season_units else
            "NULL::text AS row_division, NULL::text AS row_conference, NULL::text AS row_region")
@@ -143,26 +146,85 @@ def recruitSql(season_units):
         )
         SELECT p.person_id, p.sport, p.school, p.pool, p.year AS first_year, p.grade,
                p.mean_rating AS first_rating, p.n_races,
-               COALESCE(si.state, p.state) AS state,
+               p.state AS state,
                hs.mean_rating AS hs_rating, hs.year AS hs_year,
                hs.school AS hs_school, hs.state AS hs_state,
-               (u.is_college_unit IS TRUE)              AS unit_college,
-               COALESCE(u.division, p.row_division)     AS division,
-               COALESCE(u.conference, p.row_conference) AS conference,
-               COALESCE(u.region, p.row_region)         AS region
+               p.row_division AS division, p.row_conference AS conference,
+               p.row_region AS region
         FROM   pick p
         LEFT JOIN hs ON hs.person_id = p.person_id AND hs.sport = p.sport AND hs.rn = 1
-        LEFT JOIN LATERAL (
-            SELECT state FROM school_identity i
-            WHERE  i.school = p.school AND i.is_primary
-            ORDER  BY n_athletes DESC LIMIT 1) si ON true
-        LEFT JOIN LATERAL (
-            SELECT division, conference, region, true AS is_college_unit
-            FROM   school_unit u
-            WHERE  u.school = p.school AND u.is_college
-            ORDER  BY (u.sport = p.sport) DESC, u.votes DESC LIMIT 1) u ON true
     """
     # %(min_races)s is bound by the caller: floorSql reads it
+
+
+# ★ WHICH SCHOOL, BY THE BOARDS' OWN RULE (owner, 2026-10-29: "in the
+#   recruiting page the schools aren't correct (same school state thing)").
+#   The state used to be the name's PRIMARY identity -- the biggest cluster
+#   of athletes wearing the string, whatever their level -- so a college
+#   whose name a bigger high school shares was filed in the high school's
+#   state (Williams College as CA, Amherst College as WI) and two colleges
+#   sharing a name merged into one row; the units came from whichever
+#   college row of the name had the most votes, any state. Now:
+#     the college   school_identity.teamState with the college pool -- the
+#                   directory's state for the name, settled by the
+#                   season's own state where the name is two colleges --
+#                   the same verdict build_team_season keys the boards on;
+#     the HS        the identity's assignment of THIS athlete to that
+#                   school (school_athlete_state, else their home state),
+#                   else teamState with the HS pool;
+#     the units     school_unit's college row for that (school, state),
+#                   this sport's first; the season's own units when the
+#                   name has no college row there.
+def collegeUnits(cur):
+    """{(school, state): [(sport, division, conference, region), ...]}
+    from school_unit's college rows, the most-voted first; {} when the
+    table is missing."""
+    cur.execute("SELECT to_regclass('public.school_unit') AS t")
+    row = cur.fetchone()
+    if (row["t"] if isinstance(row, dict) else row[0]) is None:
+        return {}
+    cur.execute("""SELECT school, state, sport, division, conference, region
+                   FROM   school_unit WHERE is_college
+                   ORDER  BY school, state, votes DESC NULLS LAST""")
+    out = {}
+    for r in cur.fetchall():
+        r = tuple(r.values()) if isinstance(r, dict) else tuple(r)
+        out.setdefault((r[0], r[1]), []).append(r[2:])
+    return out
+
+
+def pickUnit(units, school, state, sport):
+    """(division, conference, region) for one college, or None."""
+    rows = units.get((school, state)) or []
+    for r in rows:
+        if r[0] == sport:
+            return r[1:]
+    return rows[0][1:] if rows else None
+
+
+def resolveRows(raw, team_state=None, assigned=None, units=None):
+    """Stamp each raw row's college state, HS state, units and
+    unit_college in place (see the note above). team_state is
+    school_identity.teamState (None: states stay as stored); assigned is
+    assignedStates' {(school, person_id): state}. Returns raw."""
+    assigned = assigned or {}
+    units = units or {}
+    college_names = {sc for sc, _st in units}
+    for r in raw:
+        pool = r["pool"].split("|", 1)[0]
+        if team_state and r.get("school"):
+            r["state"] = team_state(r["school"], pool, r.get("state"))
+        if r.get("hs_school"):
+            st = assigned.get((r["hs_school"], r["person_id"]))
+            if not st and team_state:
+                st = team_state(r["hs_school"], "hs_" + pool.rsplit("_", 1)[-1], r.get("hs_state"))
+            r["hs_state"] = st or r.get("hs_state")
+        u = pickUnit(units, r.get("school"), r.get("state"), r.get("sport"))
+        if u:
+            r["division"], r["conference"], r["region"] = (
+                u[0] or r.get("division"), u[1] or r.get("conference"), u[2] or r.get("region"))
+        r["unit_college"] = u is not None or r.get("school") in college_names
+    return raw
 
 
 def _factors():
@@ -300,6 +362,137 @@ def shapeRows(raw, factors, directory=None):
     return rows, dropped, gains
 
 
+# ★ TRANSFERS (owner, 2026-10-29: "can we also have stats for transfers?
+#   so it's not just a hs page"). The other way onto a college roster. A
+#   transfer is the season an athlete FIRST appears at a second college
+#   after seasons at a first, in one sport: stints of one institution in
+#   year order, and each change of institution is one row -- from the last
+#   season at the old school to the first at the new. Ratings stay on the
+#   college scale (both ends are college seasons). An institution is the
+#   directory's own name where it knows the spelling ("Wake Forest" and
+#   "Wake Forest University" are one), else the normalised string, with
+#   the state teamState gives it.
+# ! NOT A TRANSFER, all three being how a linking error looks:
+#     - an athlete who goes BACK to a school (A, B, A): a name variant the
+#       directory missed, or two people on one id -- the whole history is
+#       dropped, not just the return;
+#     - a "new" school in the same stored year as the old one (two schools
+#       in one season is a mislink, not a move);
+#     - either school failing the recruits' own college gate.
+def transferSql(season_units):
+    own = ("s.division AS row_division, s.conference AS row_conference, s.region AS row_region"
+           if season_units else
+           "NULL::text AS row_division, NULL::text AS row_conference, NULL::text AS row_region")
+    return f"""
+        SELECT s.person_id, s.pool, s.sport, s.year, s.school, s.state, s.grade,
+               s.mean_rating, s.n_races, {own}
+        FROM   athlete_season s
+        WHERE  s.pool IN ('college_m', 'college_f')
+          AND  s.mean_rating IS NOT NULL AND s.school IS NOT NULL
+          AND  s.year >= %(from_year)s
+          AND  {floorSql(False, 's')}
+    """
+
+
+def stints(seasons, inst):
+    """[(institution, [season, ...]), ...] in year order: one person's
+    seasons in one sport, consecutive seasons at one institution merged."""
+    out = []
+    for se in sorted(seasons, key=lambda x: x["year"]):
+        k = inst(se)
+        if out and out[-1][0] == k:
+            out[-1][1].append(se)
+        else:
+            out.append((k, [se]))
+    return out
+
+
+def findTransfers(seasons, inst):
+    """[(last season at the old school, first season at the new)] for one
+    person and sport; [] when the history goes back to a school."""
+    st = stints(seasons, inst)
+    keys = [k for k, _ in st]
+    if len(set(keys)) != len(keys):
+        return []
+    out = []
+    for (_ka, a), (_kb, b) in zip(st, st[1:]):
+        if b[0]["year"] > a[-1]["year"]:
+            out.append((a[-1], b[0]))
+    return out
+
+
+def shapeTransfers(raw, since, inst, gate=None):
+    """The college seasons -> the transfer rows whose arrival is in the
+    classes kept. gate(season) says whether a season's school is a college
+    (None: every school is). Returns (rows, dropped)."""
+    by = {}
+    for r in raw:
+        by.setdefault((r["person_id"], r["sport"]), []).append(r)
+    dropped = {"back": 0, "same_year": 0, "not_college": 0, "foreign": 0, "old": 0}
+    rows = []
+    for (_pid, _sp), seasons in by.items():
+        st = stints(seasons, inst)
+        if len(st) < 2:
+            continue
+        keys = [k for k, _ in st]
+        if len(set(keys)) != len(keys):
+            dropped["back"] += 1
+            continue
+        pairs = findTransfers(seasons, inst)
+        dropped["same_year"] += len(st) - 1 - len(pairs)
+        for a, b in pairs:
+            if int(b["year"]) < since:
+                dropped["old"] += 1
+                continue
+            if gate and not (gate(a) and gate(b)):
+                dropped["not_college"] += 1
+                continue
+            if not isFiftyState(b.get("state")):
+                dropped["foreign"] += 1
+                continue
+            pool = b["pool"].split("|", 1)[0]
+            rows.append({
+                "person_id": b["person_id"], "sport": b["sport"],
+                "gender": pool.rsplit("_", 1)[-1], "year": b["year"], "grade": b.get("grade"),
+                "school": b["school"], "state": b.get("state"),
+                "to_rating": float(b["mean_rating"]), "n_races": b["n_races"],
+                "from_school": a["school"], "from_state": a.get("state"),
+                "from_year": a["year"], "from_rating": float(a["mean_rating"]),
+                "from_division": a.get("division"),
+                "division": b.get("division"), "conference": b.get("conference"),
+                "region": b.get("region"),
+            })
+    return rows, dropped
+
+
+_T_DDL = """
+DROP TABLE IF EXISTS college_transfer_new;
+CREATE TABLE college_transfer_new (
+    person_id     bigint  NOT NULL,
+    sport         text    NOT NULL,
+    gender        text    NOT NULL,
+    year          integer NOT NULL,
+    grade         text,
+    school        text    NOT NULL,
+    state         text,
+    to_rating     real    NOT NULL,
+    n_races       integer NOT NULL,
+    from_school   text    NOT NULL,
+    from_state    text,
+    from_year     integer NOT NULL,
+    from_rating   real    NOT NULL,
+    from_division text,
+    division      text,
+    conference    text,
+    region        text,
+    CONSTRAINT college_transfer_new_pkey PRIMARY KEY (person_id, sport, year)
+)"""
+
+_T_COLS = ("person_id", "sport", "gender", "year", "grade", "school", "state", "to_rating",
+           "n_races", "from_school", "from_state", "from_year", "from_rating", "from_division",
+           "division", "conference", "region")
+
+
 _COLS = ("person_id", "sport", "school", "state", "gender", "first_year", "grade",
          "first_rating", "hs_equiv", "n_races", "hs_rating", "hs_year", "hs_school",
          "hs_state", "recruit_rating", "source", "division", "conference", "region")
@@ -336,11 +529,21 @@ def main():
                   f"season unit columns: {'yes' if season_units else 'no'}")
             cur.execute(recruitSql(season_units), {"since": since, "min_races": DEFAULT_FLOOR})
             raw = [dict(r) for r in cur.fetchall()]
+            cur.execute(transferSql(season_units),
+                        {"from_year": since - int(args.classes), "min_races": DEFAULT_FLOOR})
+            t_raw = [dict(r) for r in cur.fetchall()]
+            units = collegeUnits(cur)
+            loadLabels(getConn)
+            assigned = assignedStates(cur, [(r["hs_school"], r["person_id"])
+                                            for r in raw if r.get("hs_school")])
         conn.rollback()
-        print(f"  first college seasons: {len(raw):,}")
+        print(f"  first college seasons: {len(raw):,}; college seasons for transfers: "
+              f"{len(t_raw):,}; college unit rows: {len(units):,}")
+        resolveRows(raw, teamState, assigned, units)
 
         with conn.cursor() as cur:
             directory = loadDirectory(cur, "state")
+            names = loadDirectory(cur, "name")
         conn.rollback()
         if not directory:
             print("  college_directory missing -- the college gate falls back "
@@ -357,6 +560,20 @@ def main():
         for (g, sp), (gain, n) in sorted(gains.items()):
             note = "" if n >= MIN_GAIN_PAIRS else f"  (under {MIN_GAIN_PAIRS} pairs: 0 applied)"
             print(f"  freshman gain {g}/{sp}: {gain:+.2f} over {n:,} pairs{note}")
+
+        resolveRows(t_raw, teamState, None, units)
+        college_names = {sc for sc, _st in units}
+
+        def inst(se):
+            return ((names and lookup(names, se["school"], se.get("state")))
+                    or normName(se["school"]), se.get("state"))
+
+        def gate(se):
+            return (isTeamName(se["school"]) and "club" not in se["school"].lower()
+                    and keepSchool(se["school"], se.get("state"), directory,
+                                   se["school"] in college_names))
+        transfers, t_dropped = shapeTransfers(t_raw, since, inst, gate)
+        print(f"  transfers kept: {len(transfers):,}  dropped: {t_dropped}")
         if args.dry_run or not rows:
             if not rows:
                 print("  NOTHING TO WRITE -- college_recruit left as it was.")
@@ -385,7 +602,23 @@ def main():
                 ("idx_college_recruit_new_pool", "idx_college_recruit_pool")])
             swapTable(conn, "college_recruit_meta", renames=[
                 ("college_recruit_meta_new_pkey", "college_recruit_meta_pkey")])
-    print(f"  college_recruit: {len(rows):,} rows written.")
+            cur.execute(_T_DDL)
+            psycopg2.extras.execute_values(
+                cur,
+                f"INSERT INTO college_transfer_new ({', '.join(_T_COLS)}) VALUES %s "
+                "ON CONFLICT DO NOTHING",
+                [tuple(r[c] for c in _T_COLS) for r in transfers], page_size=5000)
+            cur.execute("CREATE INDEX idx_college_transfer_new_to "
+                        "ON college_transfer_new (school, state)")
+            cur.execute("CREATE INDEX idx_college_transfer_new_from "
+                        "ON college_transfer_new (from_school, from_state)")
+            conn.commit()
+            swapTable(conn, "college_transfer", renames=[
+                ("college_transfer_new_pkey", "college_transfer_pkey"),
+                ("idx_college_transfer_new_to", "idx_college_transfer_to"),
+                ("idx_college_transfer_new_from", "idx_college_transfer_from")])
+    print(f"  college_recruit: {len(rows):,} rows written; "
+          f"college_transfer: {len(transfers):,}.")
 
 
 if __name__ == "__main__":

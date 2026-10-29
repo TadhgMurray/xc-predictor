@@ -230,6 +230,7 @@
       <td class="rc-dim">${esc(r.division || "")}</td>
       <td class="rc-dim">${esc(r.conference || "")}</td>
       <td class="num">${r.n}</td>
+      <td class="num rc-dim">${r.t_in || 0} / ${r.t_out || 0}</td>
       <td class="num rc-dim">${num(r.min)}</td>
       <td class="num rc-strong">${num(r.median)}</td>
       <td class="num rc-dim">${num(r.max)}</td>
@@ -241,6 +242,7 @@
 
   function tableHead(withTier) {
     return `<thead><tr><th>School</th><th>Division</th><th>Conference</th><th class="num" title="recruits in the classes counted">Recruits</th>
+      <th class="num" title="transfers in from other colleges / out to other colleges, same classes">Transfers in / out</th>
       <th class="num" title="the slowest recruit's rating: the walk-on line">Slowest</th>
       <th class="num" title="the median recruit's rating">Typical</th>
       <th class="num" title="the fastest recruit's rating">Fastest</th>

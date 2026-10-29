@@ -40,7 +40,7 @@
       <h1>{{ crest(school, state, px=128, size=44, cls="school-crest", level='college') }}{{ school }} <span class="dist-note">{{ who|lower }}</span></h1>
       <div class="rc-meta">
         {% if units %}{{ unit_chips(units) }} · {% endif %}
-        <a href="{{ school_href(school, state) }}">School page</a>
+        <a href="{{ school_href(school, state, pool='college_' ~ gender) }}">School page</a>
         {% if has_other %} · <a href="/recruiting/school/{{ school|urlencode }}?gender={{ 'f' if gender == 'm' else 'm' }}{% if state %}&amp;state={{ state }}{% endif %}">{{ "Women" if gender == "m" else "Men" }}</a>{% endif %}
         · <a href="/recruiting">Every college</a>
         <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' recruiting on Racecast' }}"
@@ -50,7 +50,7 @@
          first event column #}
       {% if blocks %}
       <div class="rc-champs">
-        {% for b in blocks %}{% set s = b.summary %}{% if s.median is not none %}
+        {% for b in blocks %}{% set s = b.summary %}{% if s and s.median is not none %}
         <div><span class="k">Typical {{ sport_words[b.sport]|lower }} recruit</span>
           <span class="rc-crow"><b class="rc-cn">{{ "%.1f"|format(s.median) }}</b>{% if e1 and s.times.median[e1[0]] %}<i>{{ fmt_time(s.times.median[e1[0]]) }} {{ e1[1] }}</i>{% endif %}</span></div>
         {% endif %}{% endfor %}
@@ -81,7 +81,7 @@
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
       {% for b in blocks %}
-      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#{{ b.sport|lower }}" data-tab="{{ b.sport|lower }}">{{ sport_words[b.sport] }}<span class="n">{{ b.summary.n }}</span></a>
+      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#{{ b.sport|lower }}" data-tab="{{ b.sport|lower }}">{{ sport_words[b.sport] }}<span class="n">{{ b.summary.n if b.summary else b.transfers.in_summary.n }}</span></a>
       {% endfor %}
       <a class="seg-btn" href="#how" data-tab="how">How this works</a>
     </nav>
@@ -92,6 +92,7 @@
   {% set s = b.summary %}
   <section class="rc-panel" id="{{ b.sport|lower }}" data-panel="{{ b.sport|lower }}">
   {% if not tabbed %}<h2>{{ sport_words[b.sport] }} recruits</h2>{% endif %}
+  {% if s %}
   <p class="meta rc-lead">{{ s.n }} recruits, classes of {{ s.classes }}{% if s.n_hs %}, {{ s.n_hs }} with a linked high-school season{% endif %}. Ratings{{ rating_i() }} on the high-school scale.</p>
 
   {% if b.tier %}
@@ -124,7 +125,7 @@
       <tr>
         <td>{{ r.class_label }}</td>
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
-        <td>{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
+        <td>{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
         <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong>{% if r.source != "hs" %} <span class="dist-note" title="No high-school season linked: the first college season, on the high-school scale, less the measured freshman gain">est.</span>{% endif %}</td>
         {{ fk(r.recruit_rating, "hs_" ~ gender, b.sport, none, "5K") }}
         <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>
@@ -134,6 +135,42 @@
     {% endfor %}
     </tbody>
   </table></div>
+  {% else %}
+  <p class="meta">No {{ who|lower }}'s {{ sport_words[b.sport]|lower }} recruits on file.</p>
+  {% endif %}
+
+  {# ★ TRANSFERS (owner, 2026-10-29): who arrived from another college and
+     who left for one, on the college scale at both ends #}
+  {% set t = b.transfers %}
+  {% if t %}
+  {% for side, rows, ts, head in [("in", t["in"], t.in_summary, "Transfers in"), ("out", t["out"], t.out_summary, "Transfers out")] %}
+  {% if rows %}
+  <h3>{{ head }}</h3>
+  <p class="meta rc-lead">{{ ts.n }} {{ "arrived from another college" if side == "in" else "left for another college" }} in the classes counted.
+     Typical rating{{ rating_i() }} {{ "before" if side == "in" else "here" }} {{ "%.1f"|format(ts.before) if ts.before is not none else "-" }},
+     {{ "here" if side == "in" else "after" }} {{ "%.1f"|format(ts.after) if ts.after is not none else "-" }}{% if ts.gain is not none %} ({{ "%+.1f"|format(ts.gain) }} typical change){% endif %}. College scale.</p>
+  <div class="r-scroll"><table class="recruit-tbl r-list">
+    <thead><tr><th>Season</th><th>Athlete</th><th>{{ "From" if side == "in" else "To" }}</th><th class="num">Rating there</th><th class="num">{{ "Rating here" if side == "in" else "Last here" }}</th><th class="num">Change</th><th>Year</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      {% set other_school = r.from_school if side == "in" else r.school %}
+      {% set other_state = r.from_state if side == "in" else r.state %}
+      {% set other_label = r.from_label if side == "in" else r.to_label %}
+      <tr>
+        <td>{{ r.class_label }}</td>
+        <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
+        <td>{{ crest(other_school, other_state, level='college') }}<a href="/recruiting/school/{{ other_school|urlencode }}?gender={{ gender }}{% if other_state %}&amp;state={{ other_state }}{% endif %}">{{ other_label }}</a></td>
+        <td class="num">{{ "%.1f"|format(r.from_rating if side == "in" else r.to_rating) }}</td>
+        <td class="num"><strong>{{ "%.1f"|format(r.to_rating if side == "in" else r.from_rating) }}</strong></td>
+        <td class="num">{{ ("%+.1f"|format(r.gain)) if r.gain is not none else " - " }}</td>
+        <td>{{ r.grade_label or " - " }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+  {% endfor %}
+  {% endif %}
   </section>
   {% endfor %}
 
@@ -142,6 +179,9 @@
   <p class="meta">A recruit is an athlete's first college season; "recruited at" is their last high-school season where Racecast has it,
      otherwise (est.) the first college season on the high-school scale less the measured freshman gain. Ratings are on the
      high-school {{ who|lower }}'s scale so they compare with your own; the college-scale column is the number their college page shows.</p>
+  <p class="meta">A transfer is the first season at a new college after seasons at another, in the same sport. Both ratings are
+     college-scale season ratings: the last season at the old school and the first at the new. An athlete whose history returns
+     to a school is left out, since that is usually two spellings of one school rather than a move.</p>
   </section>
   </div>
   </div>

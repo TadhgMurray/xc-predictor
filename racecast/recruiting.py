@@ -838,6 +838,7 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
             return hit[1]
     if not _tableExists(cur, "college_recruit"):
         return []
+    tc = transferCounts(cur, gender, sport)
     cur.execute(_AGG_SQL.format(extra=""),
                 {"gender": gender, "sport": sport, "min_n": int(min_n),
                  "half_life": float(RECENCY_HALF_LIFE)})
@@ -845,7 +846,10 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
     for r in rows:
         for k in ("min", "p25", "median", "p75", "max"):
             r[k] = round(float(r[k]), 1) if r[k] is not None else None
-        r["label"] = schoolLabelIn(r["school"], r.get("state")) if r.get("school") else ""
+        r["t_in"], r["t_out"] = tc.get((r["school"], r.get("state")), (0, 0))
+        # trusted: build_recruiting resolved the state (teamState), and the
+        #   name's biggest cluster is not a second opinion on it
+        r["label"] = schoolLabelIn(r["school"], r.get("state"), trusted=True) if r.get("school") else ""
         r["times"] = {k: timesFor(r[k], gender) for k in ("p25", "median", "p75")}
         r["classes"] = (f"{labelYear(r['first_year'], sport)}" if r["first_year"] == r["last_year"]
                         else f"{labelYear(r['first_year'], sport)} to {labelYear(r['last_year'], sport)}")
@@ -941,7 +945,7 @@ def schoolRecruits(cur, school, state, gender, sport):
     summary = agg[0]
     for k in ("min", "p25", "median", "p75", "max"):
         summary[k] = round(float(summary[k]), 1) if summary[k] is not None else None
-    summary["label"] = schoolLabelIn(summary["school"], summary.get("state"))
+    summary["label"] = schoolLabelIn(summary["school"], summary.get("state"), trusted=True)
     summary["times"] = {k: timesFor(summary[k], gender) for k in ("min", "p25", "median", "p75", "max")}
     summary["classes"] = (f"{labelYear(summary['first_year'], sport)}"
                           if summary["first_year"] == summary["last_year"] else
@@ -958,7 +962,7 @@ def schoolRecruits(cur, school, state, gender, sport):
     recruits = _rowsOf(cur)
     for r in recruits:
         r["class_label"] = labelYear(r["first_year"], sport)
-        r["hs_label"] = (schoolLabelIn(r["hs_school"], r.get("hs_state"))
+        r["hs_label"] = (schoolLabelIn(r["hs_school"], r.get("hs_state"), trusted=True)
                          if r.get("hs_school") else "")
         for k in ("first_rating", "hs_equiv", "hs_rating", "recruit_rating"):
             r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
@@ -987,6 +991,112 @@ def hasRecruits(cur, school, state, gender):
         LIMIT  1
     """, params)
     return cur.fetchone() is not None
+
+
+def recruitStates(cur, school):
+    """The states a college name is filed under in college_recruit and
+    college_transfer, most rows first: the college page's state when the
+    URL names none. The school page's chips are the NAME's clusters, every
+    level -- their primary is a high school as often as not (owner,
+    2026-10-29)."""
+    out = {}
+    for table in ("college_recruit", "college_transfer"):
+        if not _tableExists(cur, table):
+            continue
+        cur.execute(f"""SELECT state, count(*) AS n FROM {table}
+                        WHERE school = %s AND state IS NOT NULL GROUP BY state""", (school,))
+        for r in _rowsOf(cur):
+            out[r["state"]] = out.get(r["state"], 0) + int(r["n"])
+    return sorted(out, key=lambda st: (-out[st], st))
+
+
+def _median(xs):
+    xs = sorted(x for x in xs if x is not None)
+    if not xs:
+        return None
+    m = len(xs) // 2
+    return round(float(xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2), 1)
+
+
+# ★ TRANSFERS, BOTH WAYS (owner, 2026-10-29: "stats for transfers? so it's
+#   not just a hs page"). build_recruiting writes college_transfer: the
+#   first season at a new college after seasons at another, on the college
+#   scale at both ends. In is who came, from where, at what; out is who
+#   left and where they went. The same classes window as the recruits.
+_TRANSFER_SQL = """
+    SELECT t.person_id, t.year, t.grade, t.school, t.state, t.to_rating,
+           t.from_school, t.from_state, t.from_year, t.from_rating, t.from_division,
+           t.division, a.name
+    FROM   college_transfer t
+    {lateral}
+    WHERE  t.gender = %(gender)s AND t.sport = %(sport)s AND {side}
+    ORDER  BY t.year DESC, t.to_rating DESC, t.person_id
+"""
+
+
+def schoolTransfers(cur, school, state, gender, sport):
+    """{"in": rows, "out": rows, "in_summary": {...}, "out_summary": {...}}
+    for one college, gender and sport; None when the table is missing or
+    the college has neither."""
+    from rankings import nameLateral
+    from school_identity import schoolLabelIn
+    if not _tableExists(cur, "college_transfer"):
+        return None
+    out = {}
+    for key, col in (("in", "t.school"), ("out", "t.from_school")):
+        side = f"{col} = %(school)s"
+        params = {"gender": gender, "sport": sport, "school": school}
+        if state:
+            side += f" AND {col.replace('school', 'state')} = %(state)s"
+            params["state"] = state
+        cur.execute(_TRANSFER_SQL.format(lateral=nameLateral("t"), side=side), params)
+        rows = _rowsOf(cur)
+        for r in rows:
+            r["class_label"] = labelYear(r["year"], sport)
+            for k in ("to_rating", "from_rating"):
+                r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+            r["gain"] = (round(r["to_rating"] - r["from_rating"], 1)
+                         if r["to_rating"] is not None and r["from_rating"] is not None else None)
+            r["from_label"] = schoolLabelIn(r["from_school"], r.get("from_state"), trusted=True)
+            r["to_label"] = schoolLabelIn(r["school"], r.get("state"), trusted=True)
+        out[key] = rows
+        out[key + "_summary"] = {
+            "n": len(rows),
+            "before": _median([r["from_rating"] for r in rows]),
+            "after": _median([r["to_rating"] for r in rows]),
+            "gain": _median([r["gain"] for r in rows]),
+        }
+    if not out["in"] and not out["out"]:
+        return None
+    return out
+
+
+_TCOUNTS = {}                    # (gender, sport) -> (at, {(school, state): (in, out)})
+
+
+def transferCounts(cur, gender, sport):
+    """{(school, state): (n_in, n_out)} for the table's columns, cached as
+    the table is; {} when college_transfer is not built."""
+    key = (gender, sport)
+    with _schools_lock:
+        hit = _TCOUNTS.get(key)
+        if hit and _time.time() - hit[0] < CACHE_TTL:
+            return hit[1]
+    if not _tableExists(cur, "college_transfer"):
+        return {}
+    cur.execute("""
+        SELECT school, state, sum(n_in)::int AS n_in, sum(n_out)::int AS n_out
+        FROM  (SELECT school, state, 1 AS n_in, 0 AS n_out FROM college_transfer
+               WHERE gender = %(g)s AND sport = %(s)s
+               UNION ALL
+               SELECT from_school, from_state, 0, 1 FROM college_transfer
+               WHERE gender = %(g)s AND sport = %(s)s) x
+        GROUP  BY school, state
+    """, {"g": gender, "s": sport})
+    counts = {(r["school"], r["state"]): (r["n_in"], r["n_out"]) for r in _rowsOf(cur)}
+    with _schools_lock:
+        _TCOUNTS[key] = (_time.time(), counts)
+    return counts
 
 
 # ---- the subject: you ------------------------------------------------- #
