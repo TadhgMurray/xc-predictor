@@ -1451,7 +1451,12 @@ def saveMeet(conn, meetData: dict, divData: dict):
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (div_id) DO UPDATE SET
             meet_date   = COALESCE(EXCLUDED.meet_date, meets.meet_date),
-            course_name = EXCLUDED.course_name,
+            -- ★ A HAND-MADE SPLIT STAYS (owner, 2026-10-29: Mt. SAC on its
+            --   rain course again). "Mt. San Antonio College (rain course)"
+            --   is set by hand per meet; a re-scrape wrote the venue's plain
+            --   name back over it. course_merge._PROTECTED's tags, \y for \b.
+            course_name = CASE WHEN meets.course_name ~* '\\(rain course\\)|\\(alt\\y|\\(short\\y|\\(long\\y'
+                                THEN meets.course_name ELSE EXCLUDED.course_name END,
             distance    = EXCLUDED.distance,
             gps_lat     = EXCLUDED.gps_lat,
             gps_long    = EXCLUDED.gps_long,

@@ -467,7 +467,11 @@ def saveTFRRSMeetMeta(conn, meta: dict, meet_id, sport) -> None:
             meet_name    = EXCLUDED.meet_name,
             date         = EXCLUDED.date,
             date_end     = EXCLUDED.date_end,
-            venue_name   = EXCLUDED.venue_name,
+            -- ★ a hand-made split stays (the rain course; scripts/database.py
+            --   saveMeet says why)
+            venue_name   = CASE WHEN meets_tfrrs.venue_name
+                                     ~* '\\(rain course\\)|\\(alt\\y|\\(short\\y|\\(long\\y'
+                                THEN meets_tfrrs.venue_name ELSE EXCLUDED.venue_name END,
             city         = EXCLUDED.city,
             state        = EXCLUDED.state,
             location_raw = EXCLUDED.location_raw,
