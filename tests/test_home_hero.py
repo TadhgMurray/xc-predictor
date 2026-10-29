@@ -72,8 +72,9 @@ def test_track5k_matches_rating_clock():
     assert cv.track5k(146, "hs_m") < t                     # m:ss, faster
     rows = cv.stampTrack5k([{"rating": 130.0, "pool": "hs_f"}, {"rating": None, "pool": "hs_m"}])
     assert rows[0]["track5k"] and rows[1]["track5k"] is None
-    # an XC row reads on the XC scale, the athlete page's own 5K (owner,
-    # 2026-10-25: the girls board said 15:15 for a 158.1 the page read 16:02)
+    # an XC row reads as the athlete page's own 5K does (owner, 2026-10-25:
+    # the girls board said 15:15 for a 158.1 the page read 16:02) -- since
+    # 2026-10-28 both read the track event's scale (diag_xc_track_gap)
     real = cv.ratingSeconds
     try:
         cv.ratingSeconds = lambda r, p, sport, d, track=False: 960.0 if sport == "XC" else 915.0
@@ -81,26 +82,29 @@ def test_track5k_matches_rating_clock():
                                   {"rating": 150.0, "pool": "hs_f", "sport": "TF"}])
     finally:
         cv.ratingSeconds = real
-    assert (xc["track5k"], tf["track5k"]) == ("16:00", "15:15")
+    assert (xc["track5k"], tf["track5k"]) == ("15:15", "15:15")
 
 
-def test_an_xc_5k_is_read_on_a_track_not_the_median_course():
-    """Robert Jazwinski III (owner, 2026-10-28): 14:35.82 on a +9.6% course
-    quoted "14:20 on a track" -- the conversion landed on the median cross
-    country race. ratingClock's XC path asks for the track by name."""
+def test_an_xc_5k_is_read_on_the_track_events_scale():
+    """The 5K column reads a cross country rating on the track event's
+    scale at every level (owner, 2026-10-28, diag_xc_track_gap: within 1%
+    of the same runners' spring 3200s, where the XC scale read 4-6% fast)."""
     import conversions as cv
-    seen = {}
+    seen = []
     real = cv.ratingSeconds
     try:
         def fake(r, p, sport, d, track=False):
-            seen.update(sport=sport, track=track)
+            seen.append((p, sport, d))
             return 860.0
         cv.ratingSeconds = fake
-        c = cv.ratingClock(144.3, "hs_m", "XC")
+        for pool in ("hs_m", "hs_f", "ms_m", "college_m"):
+            c = cv.ratingClock(140.0, pool, "XC")
+            if c is not None:               # a stub scale may lack a reader distance
+                assert c["where"] == "on a track"
     finally:
         cv.ratingSeconds = real
-    if c is not None:                       # a stub scale may have no XC reader distance
-        assert seen == {"sport": "XC", "track": True} and c["where"] == "on a track"
+    assert seen and all(sport == "TF" for _p, sport, _d in seen)
+    assert {(p, d) for p, _s, d in seen} >= {("hs_m", 5000.0), ("ms_m", 3200.0)}
 
 
 # ---------------------------------------------------------------- render

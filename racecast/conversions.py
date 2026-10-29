@@ -1387,32 +1387,32 @@ def ratingClock(rating, pool, sport="XC", distance=None):
         level = (_bare(pool) or "").partition("_")[0]
         if readerDistance(pool, "XC") is None or level not in XC_TRACK_M:
             return None
-        # ★ NO CURVE WHERE NONE IS NEEDED (owner, 2026-10-19: Rose City,
-        #   14:20.61 rated 138.1, its breakdown "14:20.6 ... a 136.5 on an
-        #   average outdoor track" -- and the 5K column read 14:22, slower
-        #   than the race). Read through the TRACK curve, a high schooler's
-        #   5K is extrapolated past that curve's 3200 m fit; on the XC scale
-        #   it is the pool's own anchor, no curve at all, and the course
-        #   zero is the average outdoor track -- the breakdown's own
-        #   arithmetic. So where the quoted distance IS the pool's XC
-        #   anchor (high school 5000, middle school 3200) the XC scale says
-        #   it; college (8000/6000 anchors) keeps the track curve, which is
-        #   fitted through 5000 m.
-        if readerDistance(pool, "XC") != XC_TRACK_M[level]:
-            sport = "TF"
+        # ★ THE TRACK EVENT'S SCALE, FOR EVERY LEVEL (owner, 2026-10-28,
+        #   scripts/diag_xc_track_gap.py: 48,772 high school boys and 27,808
+        #   girls with a fall 2025 XC season and a spring 2026 3200, and
+        #   ~12,000 collegians at 5000). Read on the TRACK event's scale, a
+        #   fall XC best predicted the spring track best within 1% for high
+        #   school (-0.5% boys, -0.9% girls) and ~2% for college; read on
+        #   the XC scale at the track's zero it was 4.4% / 5.8% FAST for
+        #   high school -- the model's cross country to track gap is bigger
+        #   than the runners' own (a Portage 14:23 read "13:25"). Before
+        #   that the column read high school on the XC scale at the MEDIAN
+        #   course (venueEffect's no-venue answer), labelled a track: ~4%
+        #   slow. The 2026-10-19 Rose City objection (the track curve
+        #   extrapolates a high schooler past its 3200 m fit) is weighed
+        #   against a measured 5% and loses; middle school's 3200 is inside
+        #   its fit.
+        sport = "TF"
         distance = XC_TRACK_M[level]
         where = "on a track"
     else:
         where = None
     d = distance or readerDistance(pool, sport)
-    # ★ "ON A TRACK" IS THE TRACK (owner, 2026-10-28: Robert Jazwinski III,
-    #   14:35.82 at WakeMed, a +9.6% course, rated 144.3 and quoted "14:20"
-    #   -- "at the top every 5k equivalent seems a little slow"). A cross
-    #   country conversion with no venue lands on the sport's MEDIAN race
-    #   (venueEffect), not on the 0.0 the comment above relied on, so every
-    #   high school and middle school 5K column was the median cross
-    #   country course's time, labelled a track's. The display zero is
-    #   asked for by name now.
+    # ! "on a track" asks for the track's zero by name: a no-venue XC
+    #   conversion is the sport's MEDIAN race (venueEffect), never a track.
+    #   (Every caller that says "on a track" reads TF since 2026-10-28,
+    #   where the zero is the default anyway; the flag keeps any later XC
+    #   caller honest.)
     secs = ratingSeconds(rating, pool, sport, d, track=(where == "on a track"))
     t = clockFor(secs)
     if not t:
