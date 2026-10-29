@@ -56,3 +56,23 @@ def test_the_summary():
     assert s["races"] == 3 and s["runners"] == 36
     assert s["mae"] == pytest.approx(0.0) and s["cov68"] == 1.0
     assert s["team_err"] == pytest.approx(2.5) and s["winner"] == 1.0
+
+
+def test_a_rebuild_asks_the_frozen_basis_with_history_cut_at_the_freeze(monkeypatch):
+    import score_frozen_forecasts as S
+    seen = {}
+
+    def predict(cur, ids, target):
+        seen["target"], seen["basis"] = target, os.environ.get("XCP_PREDICT_BASIS")
+        return [{"seconds": 1000.0 + p, "lo": 990.0, "hi": 1010.0} if p != 3 else {}
+                for p in ids]
+    monkeypatch.setenv("XCP_PREDICT_BASIS", "race")
+    fc = {"source": "anet", "meet_id": 5, "div_id": 2, "made_on": "2026-10-20",
+          "model_basis": "blend", "runners": [{"person_id": p, "seconds": 900.0}
+                                              for p in (1, 2, 3)]}
+    got = S.rebuildRace(None, fc, [1, 2, 3], predict)
+    assert seen["basis"] == "blend" and os.environ["XCP_PREDICT_BASIS"] == "race"
+    assert seen["target"]["history_before"] == "2026-10-20"
+    assert [r["person_id"] for r in got["runners"]] == [1, 2]       # 3 had no time
+    a, b = S.sharedRunners(fc, got)
+    assert [r["person_id"] for r in a["runners"]] == [1, 2] == [r["person_id"] for r in b["runners"]]

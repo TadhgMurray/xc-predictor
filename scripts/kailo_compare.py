@@ -65,7 +65,10 @@ for _p in (_HERE, os.path.join(_ROOT, "racecast"), os.path.join(_ROOT, "engine")
         sys.path.insert(0, _p)
 
 API = "https://kailo.fit/api/v1/rankings"
-STORE = os.path.join(_ROOT, "engine", "data", "kailo")
+# XCP_KAILO_STORE: record and read somewhere else (review 2026-10: a review
+# checkout's recordings, with bases the live recorder does not have, must not
+# land in -- or be overwritten in -- the live store)
+STORE = os.environ.get("XCP_KAILO_STORE") or os.path.join(_ROOT, "engine", "data", "kailo")
 _S = requests.Session()
 _S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
                    "Accept": "application/json"})
@@ -75,9 +78,10 @@ _S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
 #   before the start all the same, and the results are in our tfrrs rows.
 SCORED = {"scored", "results_unavailable", "awaiting_results", "held", "locked"}
 UPCOMING = {"published", "locked"}
-# trend (review 2026-10, predict.trendApply): recorded beside the others before
-#   race day, so the clean test can judge it before anyone serves it
-BASES = ("rating", "guard", "model", "blend", "trend")
+# trend and race (review 2026-10: predict.trendApply, racecast/race_model.py):
+#   recorded beside the others before race day, so the clean test can judge
+#   them before anyone serves them
+BASES = ("rating", "guard", "model", "blend", "trend", "race")
 _STOP = {"the", "of", "and", "at", "xc", "cross", "country", "invitational",
          "invite", "meet", "championship", "championships", "college", "open"}
 

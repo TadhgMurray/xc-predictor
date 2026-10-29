@@ -523,3 +523,367 @@ model is worse in every band (in season 1.99% → 2.04%; openers 2.12% →
   **Gate:** if trees cannot beat prior on openers, a retrained network
   is unlikely to either, and the GPU work (E3 onward) should not start.
   If they can, the features that won go into the retrain.
+
+### The race model, version 1 (trees), run 2026-10-25 (owner)
+
+`model/race_rows.py` builds the table and `model/race_trees.py` trains and
+scores it. Trained on 2018-19 to 2023-24 (a quarter of those races, kept
+whole), scored on all of 2024-25.
+
+| 2024-25 (never seen) | Races | Ratings pairs | Model pairs | Gain [90%] |
+|---|---|---|---|---|
+| All | 35,321 | 84.24% | **85.52%** | **+1.28** [+1.26, +1.30] |
+| College | 941 | 81.10% | 82.67% | +1.57 [+1.44, +1.70] |
+
+- Rho went from 0.814 to 0.840, and the within-race miss from 2.91% to
+  2.62%.
+- It is better in every month, at every level, and in every runner band.
+  Openers off a summer went from 5.15% to 4.60%; mid-season runners
+  from 2.37% to 2.13%.
+- The ratings read lower here than in E0 because this table includes
+  every race with 8 or more rated runners (JV, small and middle-school
+  fields too); E0 used fields of 20 or more.
+- **Times:** median 4.44% → 3.85%, mean 7.64% → 5.89% (college 8.41% →
+  7.24%), against a rough (level, distance) table. The gap between
+  median and mean says a few very bad races drive the mean.
+- **What it leans on most:** the runner's gap to the field's median,
+  form level, rank in the field, distance, form, week of season, grade,
+  teammates opening their season.
+- **Not finished:** the trees stopped at the 1,500-round cap while still
+  improving.
+
+**Version 1.1, on the branch:**
+
+- The starting point is the page's own clock: each runner's rating
+  through `predict._ratingToSeconds` on the race's distance and course
+  cell (`race_rows.pageBase`). "Ratings" in every comparison is then what
+  the site prints, and the level part corrects the page.
+- Times are printed against the page itself, with the 12 worst races by
+  name (to find the wrong distances and mixed fields behind the mean).
+- Calibrated ranges: a place spread per runner band and a race-level
+  spread, fitted on half the validation races and checked on the other.
+  Both are saved with the model.
+- Up to 4,000 rounds.
+- The switch: `XCP_PREDICT_BASIS=race` (`racecast/race_model.py`)
+  re-predicts the rated field with the trees, and leaves the field to the
+  ratings when it cannot read it.
+- The Kailo recorder records `race` beside the other bases.
+- `XCP_KAILO_STORE` keeps review recordings out of the live store.
+
+### Version 1.1, run 2026-10-26 (owner): the page's own clock
+
+| 2024-25 (35,321 races) | Ratings (the page) | Model |
+|---|---|---|
+| Pairs in order | 87.22% | **88.33%** (+1.11 [+1.09, +1.12]) |
+| Rho | 0.885 | 0.901 |
+| Within-race miss | 2.75% | 2.41% |
+| Time miss, median / mean | 3.96% / 5.27% | **2.93%** / 4.24% |
+| College mean | 5.10% | 4.59% |
+
+- **On the page's clock, the ratings themselves order much better**
+  (87.2% against 84.2% on the 5K-equivalent). The page's distance and
+  course conversion matters for mixed fields.
+- **What the model leans on is now form:** this season's best and mean,
+  week of the season, the 30-day trend, grade, spring track. Before, it
+  leaned mostly on clock fixes.
+- **Ranges:** place 65% inside ±1σ (a little narrow); time 68% / 86%
+  (the 90% one is short: the tails are heavy).
+- **The mean is driven by bad distances.** 2.9% of races miss by more
+  than 10% as a whole. The worst twelve were all stored at 1, 2 or 3 m
+  ("Manhattan College XC Invitational", "SEC Batch Meet 1"), so they read
+  8× fast. **Version 1.2** reads the corrected distance
+  (`feature_extraction._XC_DIST`: the hand-verified override, the meet's
+  own distance, then a tfrrs division's), takes the median over the race,
+  and treats anything outside 1,500–15,000 m as no distance.
+
+### Version 1.2, run 2026-10-26 (owner)
+
+- **Order held:** 88.32% against 87.22% (+1.10 [+1.09, +1.12]).
+- **Times barely moved** (mean 4.25%). The 1–3 m races are gone; the
+  worst are now races that are not cross country at all: an NJCAA
+  half-marathon, "Fast Track 800", "Test Race", practice meets. They have
+  no sane distance, and no clock can be right there.
+- The server has 125 GB, 97 GB free: room to train on every earlier race.
+
+### Version 1.3, on the branch
+
+- **The day's weather** (temperature, dew point, rain, wind) for the
+  race's level, and as a runner input. The page's clock leaves weather
+  out, and Kailo says it has none. Training reads the `weather` table at
+  the cross country hour; the page passes the forecast, else the normal
+  for the place and date.
+- **Head-to-head, beyond the ratings** (`race_rows.headToHead`): from
+  the past races (400 days, last 15) in which runners of this field met,
+  the share of meetings won, and that share less what today's ratings
+  order expects. Prior races only; computed by sorting, not by pairs.
+- **The level is learned only on races with a real distance**
+  (`page_base`).
+- **Times are reported three more ways:** on races with a known
+  distance, on clean races, and on college fields of 100+ (Kailo's kind
+  of race).
+- **Trained on every earlier race** (`--train-frac 1`).
+
+### 1.4 and 1.5 (owner's runs, 2026-10-26)
+
+- **1.3/1.4 on every earlier race:** 88.45% against 87.22% (+1.23 [+1.21,
+  +1.24]). Time miss: median 2.88%; college fields of 100+ 3.54% against
+  the page's 4.20%. Head-to-head became the model's most important input.
+- **Without ratings:** raw times alone 86.31%; trees with nothing the
+  engine made 87.34% (the ratings 87.22%). The ratings are worth about
+  1.1 points of order to the model.
+
+### Version 1.6 (on the branch)
+
+- **Forecast copies** at 7 and 28 days, for a quarter of races each.
+- **The team's record** against the ratings.
+- **Missing-input practice:** a few training rows with weather, course
+  cell or head-to-head blanked.
+- **Scoring:** the headline is race morning, forecasts are scored per
+  lead, and ranges are saved per lead.
+- **`model/race_blend.py`:** six members (trees on the ratings, trees
+  without, LightGBM, LightGBM LambdaRank, XGBoost, a neural net),
+  blended on the even validation races and scored on the odd ones.
+- **The pre-race recorder** is step 13h unchanged, run with
+  `XCP_PREDICT_BASIS=race` and `XCP_FORECAST_TABLE=pred_meet_forecast`.
+  It records every posted meet, and `score_frozen_forecasts.py` scores it
+  with the same table setting.
+
+### Every baseline on the same races (owner's run, 2026-10-27)
+
+1,000 race-morning races of 2024-25, 64,806 runners. The transformer is
+run as the page runs it, history cut the day before.
+
+| | Pairs | Rho | Median miss | Mean miss |
+|---|---|---|---|---|
+| Last race | 86.30% | 0.871 | 3.68% | 5.19% |
+| Ratings | 87.17% | 0.887 | 3.84% | 5.14% |
+| Transformer alone | 87.73% | 0.895 | 3.09% | 4.40% |
+| **Site today (blend)** | 87.17% | 0.887 | 3.31% | 4.69% |
+| **New model (1.5)** | **88.56%** | **0.906** | **2.85%** | **4.13%** |
+
+- **Against the site:** +1.39 points on order, and times about 14%
+  closer.
+- **The transformer was trained on data that includes 2024-25,** so its
+  line is flattered; the new model never saw the season. It is still
+  ahead of the transformer on everything (+0.83 points on order, 2.85%
+  against 3.09% median miss).
+- **`--train-frac`** (race_trees, race_blend) fits on a sample of the
+  training races, for quicker tests.
+
+### 1.6 results (owner's run, 2026-10-27)
+
+- **Single model:** 88.59%, +1.37 [+1.35, +1.38].
+- **Forecasts:** 7 days ahead +1.38 (87.67% against 86.28%); 28 days
+  ahead +1.56 (85.06% against 83.50%). Time miss 7 days ahead 2.97%
+  median, 28 days ahead 3.40%.
+- **Ranges:** 69 / 70 / 90.
+- **Blend of six:** every member about 88.60%; the blend 88.68% (+0.07)
+  for about 6 hours of compute. The members agree because the inputs are
+  the limit, not the model, so new information is where the rest lies.
+
+### Version 1.7 (on the branch): new information
+
+- **Records in context** (owner: "the runner at this course's
+  difficulty"): the runner's residual against the ratings at this course,
+  on courses of similar difficulty (cell bands at 0.02 / 0.05 / 0.09), at
+  similar distances, and in similar heat. From real results before the
+  row's cut; vectorised, seconds.
+- **`div_type` from the division title:** varsity / JV / open.
+- `race_rows` saves each row's course id.
+- **The test protocol from here:** reuse a table, `--train-frac 0.35`,
+  old table against new, in minutes. One full run only for the final
+  model.
+
+### 1.7 results (owner's run, 2026-10-27): the new information buys nothing
+
+Same table (rows7), same races, `--train-frac 0.35`; "without" leaves out
+`crs_,dif_,dst_,hot_,div_type` (`race_trees --without`).
+
+| | With | Without |
+|---|---|---|
+| Order, race morning | 88.56% (+1.34) | 88.55% (+1.33) |
+| Order, 28 days ahead | 85.03% | 85.02% |
+| Median time miss | 2.90% | 2.90% |
+| College 100+ | 3.52% | 3.52% |
+
+- **+0.01 point: nothing.** The ratings are already course-adjusted (the
+  joint solve), and each runner's own record already carries how they run
+  against them. What is left of a runner at one course or one band of
+  difficulty is a handful of races of day-to-day noise.
+- **Order looks close to what results alone can tell.** Every model type
+  sits at about 88.6% (the blend), and E0's hindsight ceiling is about 90%.
+  More inputs of the same kind will not move it; only information the
+  results do not hold would (training, injury, entries).
+- **So the time is where to push,** and the level of the race more than
+  the order inside it.
+
+### Version 1.8 (on the branch): the course's own level record
+
+- **For the level, not the runners.** A course that keeps running slower
+  or faster than its cell says (a loop measured long, a cell from few
+  races, mud every October) misses the same way race after race. The
+  record is that miss: the race's mean (actual − page clock) at this
+  course and distance band, from real races on days before the race's cut
+  (`CLV_FEATURES`, clipped at 15% so a wrong distance is not a course).
+- The level model reads it; the runner trees never see it. The page reads
+  it from the pickle (`course_level`).
+- **Test:** rows7, with and `--without clv_`. Read the TIMES table and the
+  race-level miss line.
+
+### 1.8 results (owner's run, 2026-10-28): the course's level record works
+
+rows7, `--train-frac 0.35`, with and `--without clv_`:
+
+| | With | Without |
+|---|---|---|
+| Median time miss | **2.83%** | 2.90% |
+| Mean miss (Kailo's statistic) | **4.25%** | 4.34% |
+| College 100+ | **3.43%** | 3.52% |
+| 7 / 28 days ahead, median | 2.94% / 3.40% | 3.01% / 3.44% |
+| Race-level miss, median | **1.87%** | 2.00% |
+| Races over 5% / over 10% | 13.5% / 2.9% | 14.6% / 3.0% |
+
+Order is untouched (the runner trees never see it). It stays in.
+
+### Next (owner, 2026-10-28: "only 4 and 6")
+
+- **#4, the data:** `race_trees` now prints where the race-level misses
+  are, by the first cause the data shows (an odd race name, a distance
+  unlike the course's usual one, mixed levels in one field, a field under
+  8, a course with no history). What to fix follows from it.
+- **#6, a sequence model:** each runner's last results, in order, read by
+  a small network trained for this target, as a `race_blend` member beside
+  the trees. Expected +0.1–0.3 points, mostly openers.
+
+### #6 on the branch: the `seq` member
+
+- `race_trees.seqTable`: every row's runner's last 16 real results before
+  its cut, oldest first, from the full table: the residual against the
+  ratings, the place and the rated place in that field, distance, course
+  cell, meet type, level, college, field size, and how long before.
+- `race_blend --members seq`: the mlp's inputs plus those results, pooled
+  by attention (the query comes from who the runner is). Against `mlp` it
+  measures what the ORDER of the results is worth beyond the hand-made
+  summaries.
+- On a synthetic table where each runner has a hidden offset only the
+  history shows, with the records off: mlp 82.09% (the ratings), seq
+  86.89%. It reads the history.
+
+### #4, first look (owner's run, 2026-10-28)
+
+- **The twelve worst races** (+160% to +240%) are practices, time trials,
+  800s, a "Test Race", and meets with no distance on file. No forecaster
+  would publish them; they only inflate the mean.
+- The first cause table was too loose ("distance unlike the course's"
+  caught 31% of races, because one course hosts a 3K and a 5K). Now: no
+  distance on file; an odd name; **a distance the course never hosted**;
+  a course with no history; a field a quarter or more off its own level;
+  a small field.
+- **"published"** in the TIMES table: a known distance and a real race's
+  name, the scope to hold against Kailo.
+- **`--drop-odd`:** those races out of the training races, to test.
+
+### #6 result (owner's run, 2026-10-28): the order of the results adds nothing
+
+rows7, `--train-frac 0.35`, odd validation races, race morning: hgb 88.55%,
+mlp 88.53%, **seq 88.54%**, blend 88.59% (+0.04 over the trees). 28 days
+ahead: 85.06 / 85.02 / 85.05 / 85.10. The hand-made summaries already hold
+what a runner's results in order say. The trees alone stay the model; the
+blend's +0.04 is not worth serving three models. (seq is quick: 2.4 min an
+epoch on the server.)
+
+### #4, second look (owner's run, 2026-10-28)
+
+`--drop-odd` (5,357 training races out): order unchanged (+1.34).
+
+| Cause (first that fits) | Races | Median level miss | Over 10% | Error past 5% |
+|---|---|---|---|---|
+| No distance on file | 118 | 98.1% | 94.1% | 39.9% |
+| Odd name | 520 | 2.19% | 2.5% | 1.6% |
+| A distance new to the course | 3,859 | 2.54% | 6.3% | 15.9% |
+| A course with no history | 7,719 | 2.14% | 4.1% | 19.0% |
+| Mixed levels | 731 | 2.31% | 3.3% | 1.7% |
+| No cause found | 22,376 | 1.68% | 1.3% | 21.9% |
+
+- No distance: the page never predicts them (predictRace needs one); a
+  scoring matter only, and "published" leaves them out.
+- **Version 1.9: `dist_vs_course`**, a level input: the filed distance
+  against the nearest one the course ran before the cut. A 5K at a
+  course that only ever ran 4,828 m is likely three miles.
+- No history: nothing to learn from without course data.
+- No cause: mostly the day.
+
+### Ranges per runner (on the branch)
+
+- **Why** (owner, 2026-10-28): the band sigmas give every opener one width
+  and every in-season runner another; a steady kid and an erratic one get
+  the same range, so place and win chances are off for both.
+- `race_trees.spreadModel`: trees for the 68th percentile of each runner's
+  |within-race miss| from the runner inputs (own swing, record, band,
+  field, how far ahead). Fitted on the even validation races, checked on
+  the odd ones. **Honest means 68% inside in the narrowest fifth of
+  runners and in the widest**, not just overall. "RANGES PER RUNNER" in the
+  report prints both methods by fifth.
+- Saved as `spread` with `--out`; the page uses it when the pickle has it,
+  else the band sigmas. The time and score medians do not change.
+- On a synthetic table where swing depends on an input: per runner stays
+  within 6 points of 68% in every fifth; one width per band covers over 90%
+  of the steadiest and under 50% of the most erratic.
+
+### THE SEALED SEASON, 2025-26 (owner's run, 2026-10-28): it holds
+
+Run once. Table through 2026-07-31, trained on everything before
+2025-08-01, full data, `--without dist_vs_course` (1.9's input untested).
+
+| 2025-26, 41,923 races | Ratings | Model | Gain |
+|---|---|---|---|
+| Race morning | 87.54% | **88.82%** | **+1.29** [+1.27, +1.30] |
+| College | 86.14% | 87.63% | +1.49 [+1.37, +1.62] |
+| 7 days ahead | 86.67% | 87.98% | +1.31 [+1.28, +1.34] |
+| 28 days ahead | 83.67% | 85.15% | +1.48 |
+
+Validation (2024-25) said +1.34; the sealed season says +1.29. No sign
+of having tuned to the validation season.
+
+**Ranges per runner** (checked on the odd races of 2025-26): 68% inside
+in every fifth, narrowest to widest (widths 1.95% to 6.36%). One width
+per band: 87 / 77 / 68 / 59 / 50. Time: 71% inside ±1 sigma, 90% inside
+the 90% band.
+
+### Serving (2026-10-28)
+
+- **`deploy/race_model_weekly.sh`**, Mondays 14:17 UTC
+  (`deploy/install_race_model_timer.sh`): the table through yesterday, the
+  held-out fit and report, a gate (+1.0 points over the ratings or the old
+  model stays), then **`--refit-all`**: the served trees and level refit
+  on every season at the rounds early stopping chose (owner: "why not
+  everything?"). The ranges and spread stay the held-out ones, so they err
+  a little wide. A refit that scores worse on rows it has seen stops the
+  swap.
+- The sealed season's college mean (12.83%) is one meet: Jayton
+  Invitational 2025 (TFRRS 25768), four races entered about 5x slow. College
+  100+ is 3.79% (the page 4.79%).
+
+### Leakage (2026-10-29)
+
+- **K-fold: never.** Random folds put a runner's later races in training
+  and earlier ones in the test. Every number here is forward in time:
+  train before the cut, score a whole later season.
+- **Early stopping** held back random rows, so a race's runners sat on
+  both sides. Now whole races (`fitByRaces`).
+- **The real one: the engine's numbers are today's.** Every input reads
+  only results before the race, but the ratings and course numbers come
+  from the latest full solve, which has seen the races a backtest scores.
+  It flatters times more than order (both sides get the same help on
+  order).
+  - **A, measure it:** `score_frozen_forecasts.py --rebuild` re-predicts
+    each frozen `meet_forecast` race for the same runners and basis, history
+    cut at the freeze, on today's numbers. frozen − rebuilt is the leak plus
+    whatever changed since, so at most the leak.
+  - **B, stop it from now on:** with `XCP_RACE_INPUTS_DIR` set (the
+    pre-race recorder), every field the race model predicts is written
+    down with every input as the page had it (`race_model.keepInputs`, one
+    `.jsonl.gz` a day). Joined to the results after a season, they are a
+    table nothing after the forecast touched.
+  - **C, replay the past** (engine `forward_holdout` at monthly cutoffs):
+    only if A shows a large gap.

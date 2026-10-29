@@ -32,6 +32,13 @@ READ ONLY.
     cov68          share of finishers inside our posted band (lo..hi, which
                    is +-1 sigma, so honest = 68%)
     listed         share of finishers we had listed at all
+
+★ --rebuild: HOW MUCH A RE-RUN FLATTERS (owner, 2026-10-29). Each frozen
+  race is predicted again for the same runners, by the same basis, with the
+  history cut at the day it was frozen -- but on TODAY's ratings and course
+  numbers, as every backtest does. Both are scored on the runners they
+  share, teams left out. frozen - rebuilt is the leak, plus whatever the
+  engine and the models have changed since (so at most the leak's size).
 """
 import argparse
 import datetime
@@ -125,6 +132,42 @@ def summarize(races):
             "listed": statistics.fmean(r["listed"] for r in races)}
 
 
+def rebuildRace(cur, fc, ids, predict=None):
+    """The frozen race predicted again now: a meet_forecast-shaped dict with
+    the same runners' {person_id, seconds, lo, hi}, by the frozen basis,
+    history cut at made_on. predict(cur, ids, target) defaults to
+    predict._servedTimes."""
+    if predict is None:
+        import predict as P
+        predict = P._servedTimes
+    target = {"mode": "rerun_exact", "sport": "XC", "meet_id": int(fc["meet_id"]),
+              "div_id": int(fc["div_id"]), "source": fc["source"],
+              "history_before": str(fc["made_on"])[:10]}
+    old = os.environ.get("XCP_PREDICT_BASIS")
+    if fc.get("model_basis"):
+        os.environ["XCP_PREDICT_BASIS"] = str(fc["model_basis"])
+    try:
+        got = predict(cur, list(ids), target)
+    finally:
+        if old is None:
+            os.environ.pop("XCP_PREDICT_BASIS", None)
+        else:
+            os.environ["XCP_PREDICT_BASIS"] = old
+    runners = [{"person_id": p, "seconds": e.get("seconds"), "lo": e.get("lo"),
+                "hi": e.get("hi")} for p, e in zip(ids, got) if e and e.get("seconds")]
+    return dict(fc, runners=runners, teams=[])
+
+
+def sharedRunners(a, b):
+    """Two forecasts cut to the runners both have times for. Pure."""
+    ka = {r["person_id"] for r in a.get("runners") or [] if r.get("seconds")}
+    kb = {r["person_id"] for r in b.get("runners") or [] if r.get("seconds")}
+    both = ka & kb
+    return tuple(dict(x, runners=[r for r in x.get("runners") or []
+                                  if r.get("person_id") in both], teams=[])
+                 for x in (a, b))
+
+
 def _fmt(v, f):
     return "-" if v is None else f.format(v)
 
@@ -146,6 +189,11 @@ def main():
     ap.add_argument("--to", dest="hi", required=True)
     ap.add_argument("--by", choices=("all", "week", "basis", "lead", "level"),
                     default="all")
+    ap.add_argument("--rebuild", action="store_true",
+                    help="also predict each frozen race again on today's ratings and score "
+                         "both on the runners they share: how much a re-run flatters")
+    ap.add_argument("--max-races", type=int, default=None,
+                    help="with --rebuild: stop after this many races (about 2 s each)")
     a = ap.parse_args()
 
     import psycopg2.extras
@@ -154,6 +202,7 @@ def main():
     from meet_recap import actualByDiv, actualTeams
 
     groups = {}
+    rebuilt = {}          # --rebuild: key -> [(frozen, rebuilt)] on shared runners
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
@@ -189,6 +238,24 @@ def main():
                 m = frozenMetrics(fc, fin, teams)
                 if m is None:
                     continue
+                pair = None
+                if a.rebuild and (a.max_races is None
+                                  or sum(len(v) for v in rebuilt.values()) < a.max_races):
+                    ids = [r["person_id"] for r in fc.get("runners") or []
+                           if r.get("person_id") is not None]
+                    try:
+                        cur.execute("SAVEPOINT sf_rebuild")
+                        now = rebuildRace(cur, fc, ids)
+                        cur.execute("RELEASE SAVEPOINT sf_rebuild")
+                    except Exception as exc:         # noqa: BLE001
+                        cur.execute("ROLLBACK TO SAVEPOINT sf_rebuild")
+                        print(f"  rebuild {src}:{mid}/{fc['div_id']}: {type(exc).__name__}: {exc}")
+                        now = None
+                    if now is not None:
+                        f_, r_ = sharedRunners(fc, now)
+                        mf, mr = frozenMetrics(f_, fin, []), frozenMetrics(r_, fin, [])
+                        if mf is not None and mr is not None:
+                            pair = (mf, mr)
                 day = datetime.date.fromisoformat(str(fc["meet_date"])[:10])
                 made = datetime.date.fromisoformat(str(fc["made_on"])[:10])
                 levels = [r.get("pool") for r in fc.get("runners") or [] if r.get("pool")]
@@ -200,6 +267,8 @@ def main():
                        "level": (statistics.mode(levels).split("|")[0]
                                  if levels else "?")}[a.by]
                 groups.setdefault(key, []).append(m)
+                if pair is not None:
+                    rebuilt.setdefault(key, []).append(pair)
         conn.rollback()
 
     print(f"\n{a.by:22} {'races':>5} {'runners':>7} {'median|err|':>11} {'bias':>7} "
@@ -212,6 +281,19 @@ def main():
     allr = [m for v in groups.values() for m in v]
     if len(groups) > 1 and allr:
         print(_row("ALL", summarize(allr)))
+    if a.rebuild:
+        print("\nREBUILT ON TODAY'S RATINGS, the same runners (teams left out); "
+              "frozen - rebuilt = how much a re-run flatters, at most")
+        keys = sorted(rebuilt) + (["ALL"] if len(rebuilt) > 1 else [])
+        for key in keys:
+            pairs = (rebuilt[key] if key != "ALL"
+                     else [p for v in rebuilt.values() for p in v])
+            sf, sr = summarize([p[0] for p in pairs]), summarize([p[1] for p in pairs])
+            print(_row(f"{key} frozen"[:22], sf))
+            print(_row(f"{key} rebuilt"[:22], sr))
+            print(f"  {'':20} flattered by: median |err| {sf['mae'] - sr['mae']:+.2f} points, "
+                  f"within {sf['within'] - sr['within']:+.2f}, rho "
+                  f"{_fmt(sr['rho'] - sf['rho'] if sr['rho'] is not None and sf['rho'] is not None else None, '{:+.3f}')}")
 
 
 if __name__ == "__main__":

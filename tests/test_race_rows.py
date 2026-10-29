@@ -100,3 +100,59 @@ def test_races_are_kept_whole():
     assert R.keepRace(k, D(2020, 9, 1), D(2024, 8, 1), 0.25) == \
         R.keepRace(k, D(2020, 9, 1), D(2024, 8, 1), 0.25)
     assert R.keepRace(k, D(2024, 9, 1), D(2024, 8, 1), 0.0)
+
+
+def test_a_race_distance_is_the_rows_median_and_never_a_unit_slip():
+    assert R.raceDistance([5000.0, 5000.0, 4990.0]) == 5000.0
+    assert R.raceDistance([2.0, 3.0]) is None                # miles, or a typo
+    assert R.raceDistance([2.0, 8000.0, 8000.0]) == 8000.0
+    assert R.raceDistance([]) is None and R.raceDistance(None) is None
+
+
+def test_head_to_head_reads_only_past_meetings_and_beyond_the_ratings():
+    h1, h2 = R.raceHash(1, 1, "anet", "2025-09-06"), R.raceHash(2, 1, "anet", "2025-09-13")
+    # the ratings now put runner 1 ahead of runner 0, but 0 beat 1 twice
+    rs = [{"base_ln": 6.91, "past": [(h1, 6.90), (h2, 6.89)]},
+          {"base_ln": 6.90, "past": [(h1, 6.92), (h2, 6.93)]},
+          {"base_ln": 6.95, "past": []}]
+    got = R.headToHead(rs)
+    assert got[0] == (2, 1.0, 1.0) and got[1] == (2, 0.0, -1.0)
+    assert 2 not in got                                     # never met anyone here
+    assert R.raceHash(1, 1, "anet", "2025-09-06 00:00") == h1
+
+
+def test_raw_times_are_riegel_only_and_never_read_the_day():
+    t5 = math.log(1000.0)
+    raw = [(D(2025, 9, 6), t5), (D(2025, 9, 20), t5 - 0.02), (D(2025, 10, 11), t5 - 0.5)]
+    f = R.rawFeatures(raw, D(2025, 10, 11))
+    assert f["raw_n"] == 2 and f["raw_last_minus"] < 0       # the day's own -0.5 unseen
+    assert f["raw_season_best_minus"] == pytest.approx(t5 - 0.02 - f["raw_form"])
+    assert math.isnan(R.rawFeatures([], D(2025, 10, 11))["raw_form"])
+    # the raw clock carries raw_form to the race distance by Riegel
+    rs = []
+    for k, rf in enumerate((t5, t5 + 0.01, math.nan)):
+        f = {x: math.nan for x in R.RUNNER_FEATURES}
+        f.update(opener=0.0, raw_form=rf)
+        rs.append({"secs": 1000.0 + k, "base_ln": 7.0 + k / 100, "school": None, "f": f})
+    R.raceFeatures(rs, {"day": D(2025, 10, 11), "distance": 8000.0})
+    assert rs[0]["base_raw_abs"] == pytest.approx(t5 + R.RIEGEL * math.log(1.6))
+    assert rs[2]["base_raw_abs"] == pytest.approx(t5 + 0.005 + R.RIEGEL * math.log(1.6))
+    assert sum(r["base_raw"] for r in rs) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_forecast_copy_sees_less_but_counts_days_to_the_race():
+    day = D(2025, 10, 11)
+    t = {"pool": "hs_m", "grade": "11"}
+    _r0, _p0, now = R.runnerFeatures(_hist(), day, t)
+    _r7, _p7, week = R.runnerFeatures(_hist(), day, t, cut=day - datetime.timedelta(days=7))
+    assert now["season_n"] == 3 and week["season_n"] == 2          # 4 Oct is hidden
+    assert week["last_days"] == (day - D(2025, 9, 20)).days         # counted to the race
+    assert R.leadsFor((1, 2, "anet", "2025-10-11"), [7, 28], 0.0) == [0]
+    assert R.leadsFor((1, 2, "anet", "2025-10-11"), [7, 28], 1.0) == [0, 7, 28]
+
+
+def test_division_types():
+    assert R.divType("Varsity Boys 5K") == 2 and R.divType("Seeded Race") == 2
+    assert R.divType("JV Girls") == 0 and R.divType("Boys Junior Varsity") == 0
+    assert R.divType("Frosh/Soph Boys") == 0
+    assert R.divType("Middle School Boys") == 1 and R.divType(None) == 1
