@@ -1454,7 +1454,7 @@ def saveMeet(conn, meetData: dict, divData: dict):
             -- ★ A HAND-MADE SPLIT STAYS (owner, 2026-10-29: Mt. SAC on its
             --   rain course again). "Mt. San Antonio College (rain course)"
             --   is set by hand per meet; a re-scrape wrote the venue's plain
-            --   name back over it. course_merge._PROTECTED's tags, \y for \b.
+            --   name back over it. course_merge._PROTECTED's tags (Postgres word boundary for Python's).
             course_name = CASE WHEN meets.course_name ~* '\\(rain course\\)|\\(alt\\y|\\(short\\y|\\(long\\y'
                                 THEN meets.course_name ELSE EXCLUDED.course_name END,
             distance    = EXCLUDED.distance,
