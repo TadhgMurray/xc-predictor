@@ -8356,7 +8356,8 @@ def _courseHistory(cur, course_name, ctx):
         import explain_rating as _ex
         rows = _ch.fetchHistory(cur, course_name, dist, _raceDayCourseSql(cur))
         out = _ch.summarize(rows, ctx.get("meets"), int(dist),
-                            _ex.dayModes().get("XC"))
+                            _ex.dayModes().get("XC"),
+                            zero=difficulty_view.sportMeanLog("XC"))
         if out:
             # ! A NAME LOOKUP THAT FAILS LEAVES THE TABLE, not the section
             cur.execute("SAVEPOINT day_meets")
@@ -9626,6 +9627,10 @@ def conversions_page():
                            prefill_pool=prefill_pool,
                            prefill_name=prefill_name,
                            xc_courses=xc_courses,
+                           # the course column reads against the track as
+                           # the course pages do (difficulty_view); the raw
+                           # number still rides in data-difficulty
+                           xc_zero=difficulty_view.sportMeanLog("XC"),
                            tf_distances=_TF_DEFAULT_DISTANCES,
                            pools=_POOLS)
 

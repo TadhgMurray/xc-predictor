@@ -16,6 +16,9 @@
 #     field ran      the rated runners' day term, runner-weighted
 #     together       (1 + course) * e^day - 1: how hard the course
 #                    actually played that day against an average track
+#                    (printed through diffpct, which reads cross country
+#                    against where the track lands on the XC scale;
+#                    `zero` here is that same number, for the bars)
 #
 # ! ONE CELL, NOT A NAME. Course pages are keyed by name and 21 venues are
 #   called Woodward Park; the history is the cell with the most results at
@@ -101,9 +104,11 @@ def meetsByDate(meets, dist=None):
     return {d: m for d, (_k, m) in out.items()}
 
 
-def summarize(rows, meets=None, dist=None, day_mode=None):
+def summarize(rows, meets=None, dist=None, day_mode=None, zero=0.0):
     """The section's data from race_day_effect rows (newest first), or
-    None when there is nothing to show. Pure."""
+    None when there is nothing to show. Pure. `zero` is the display zero
+    in log units (difficulty_view.sportMeanLog('XC')): each season's `bar`
+    is its together read against it, as the page prints it."""
     days = []
     for r in rows or ():
         day = str(r.get("race_date") or "")[:10]
@@ -155,9 +160,11 @@ def summarize(rows, meets=None, dist=None, day_mode=None):
         course = (max(s["courses"], key=lambda k: s["courses"][k])
                   if s["courses"] else None)
         day = s["_u"] / s["_w"] if s["_w"] else None
+        tog = together(course, day)
         out_seasons.append({"season": y, "days": s["days"], "runners": s["runners"],
-                            "course": course, "day": day,
-                            "together": together(course, day)})
+                            "course": course, "day": day, "together": tog,
+                            "bar": (None if tog is None
+                                    else (1.0 + tog) * math.exp(-zero) - 1.0)})
 
     # the eras: consecutive seasons sharing one course number (to 0.1%)
     eras = []
@@ -169,8 +176,8 @@ def summarize(rows, meets=None, dist=None, day_mode=None):
             eras[-1]["last"] = s["season"]
         else:
             eras.append({"first": s["season"], "last": s["season"], "course": c})
-    biggest = max((abs(s["together"]) for s in out_seasons
-                   if s["together"] is not None), default=0.0)
+    biggest = max((abs(s["bar"]) for s in out_seasons
+                   if s["bar"] is not None), default=0.0)
     return {"days": days, "seasons": out_seasons, "eras": eras,
             "dist": dist, "day_mode": day_mode,
             "has_course": any(s["course"] is not None for s in out_seasons),

@@ -34,6 +34,10 @@ class DisplayDoesNotMoveIt(unittest.TestCase):
         # a stored anchor that is NOT zero, to prove nothing is subtracted
         dv._state["at"] = float("inf")
         dv._state["mean"] = 0.0583
+        # where the track sits on the XC scale, measured in seconds from the
+        # engine scale (tests/test_xc_track_zero.py); pinned at none here
+        dv._zero["at"] = float("inf")
+        dv._zero["XC"] = 0.0
 
     def test_the_display_zero_is_zero(self):
         self.assertEqual(self.dv.sportMeanLog(), 0.0)
@@ -52,7 +56,9 @@ class DisplayDoesNotMoveIt(unittest.TestCase):
 
     def test_the_sport_argument_changes_nothing(self):
         """Two sports, one line -- the same stored number reads the same
-        whichever sport it is labelled."""
+        whichever sport it is labelled, while the track sits at the XC
+        scale's own 0.0. (Where it does not, in seconds, cross country
+        reads against where it does sit: tests/test_xc_track_zero.py.)"""
         self.assertEqual(self.dv.relativePct(0.069, "XC"),
                          self.dv.relativePct(0.069, "TF"))
 

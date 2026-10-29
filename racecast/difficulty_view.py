@@ -8,9 +8,14 @@ it.
     scale"), AND THAT ZERO IS A TRACK (owner, 2026-09-10: "the average tf
     course will have difficulty 0.0 and be the baseline"). Both hold at
     once: the two sports are on one line, and the line starts at a flat
-    400m oval. An ordinary cross country course therefore reads about +7%,
-    and that gap IS the sport gap the engine measured -- it is the answer,
-    not an offset to remove.
+    400m oval.
+
+  ★ BUT A TRACK IN SECONDS, NOT IN NORMALISED TIME (2026-10-28). The stored
+    XC zero is the track in the engine's units; put back into seconds it
+    sat 4-6% faster than a real track for high school (diag_xc_track_gap).
+    So a cross country % is read against where the track actually lands on
+    the XC scale (sportMeanLog -> conversions.xcTrackZero). The stored
+    number is still not moved; only what "0.0%" means on the page is.
 
   ⚠ THIS FILE USED TO SUBTRACT THE CORPUS MEAN, and that quietly undid the
     engine's anchor. The note here claimed "the engine anchors to this same
@@ -77,16 +82,50 @@ def _refresh():
     _state["at"] = time.time()
 
 
-def sportMeanLog(sport=None):
-    """THE DISPLAY ZERO, WHICH IS NOW ALWAYS 0.0.
+# ★ WHERE THE TRACK SITS ON THE CROSS COUNTRY SCALE (owner, 2026-10-28:
+#   "Portage West MS shows +8.4% slower than an average outdoor track").
+#   The stored zero is the average track in the engine's NORMALISED units;
+#   in seconds an XC course of 0.0 ran 4-6% faster than the same high
+#   schoolers' spring track (scripts/diag_xc_track_gap.py), because each
+#   sport has its own distance curve, pool mean and track-only terms.
+#   conversions.xcTrackZero measures, in seconds, where the average outdoor
+#   track lands on the XC scale; a cross country % is read against that,
+#   so "+X%" is slower than a track as a runner's own track times say.
+#   Display only: the stored number, the shift and every rating stay put.
+#   Track reads against 0.0 as before. Re-read with the other state; 0.0
+#   when conversions or the engine scale cannot answer (the old reading).
+_zero = {"at": 0.0, "XC": 0.0}
 
-    The engine anchors the average track at zero, so the stored number is
-    already the number to show. This returns 0 and exists only so every
-    caller and template filter keeps working.
+
+def _xcZero():
+    with _lock:
+        stale = time.time() - _zero["at"] > _TTL
+    if stale:
+        try:
+            import conversions
+            z = float(conversions.xcTrackZero())
+            if not math.isfinite(z):
+                z = 0.0
+        except Exception:                                # noqa: BLE001
+            z = 0.0
+        with _lock:
+            _zero["XC"], _zero["at"] = z, time.time()
+    return _zero["XC"]
+
+
+def sportMeanLog(sport=None):
+    """THE DISPLAY ZERO in the stored units: log1p of the difficulty at
+    which a course of `sport` runs as the average outdoor track does.
+
+    0.0 for track (the engine anchors the average track at zero) and for no
+    sport; for cross country, where the track lands on the XC scale once
+    both are put back into seconds (_xcZero). relativePct subtracts it.
 
     trackDriftLog() is the guard: it reads what the average track actually
     stored, for the log, without moving anything.
     """
+    if str(sport or "").upper() == "XC":
+        return _xcZero()
     return 0.0
 
 
@@ -102,8 +141,8 @@ def trackDriftLog():
 
 
 def relativePct(difficulty, sport="XC"):
-    """Percent slower (+) or faster (-) than a typical course of the sport,
-    or None."""
+    """Percent slower (+) or faster (-) than the average outdoor track
+    (sportMeanLog), or None."""
     if difficulty is None:
         return None
     try:

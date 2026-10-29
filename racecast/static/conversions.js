@@ -340,10 +340,19 @@
     }
 
     /* A course difficulty as the site shows it everywhere else: a signed
-       percentage, how much slower than an average course (+) or faster (-). */
+       percentage, how much slower than an average outdoor track (+) or
+       faster (-). Every difficulty here is a cross country course's, read
+       against where the track sits on the XC scale (data-xc-zero, the
+       server's difficulty_view.sportMeanLog('XC')); the raw number is what
+       goes back to the API. */
+    var xcZero = (function () {
+        var t = document.getElementById('xc-table');
+        var z = t ? parseFloat(t.getAttribute('data-xc-zero')) : NaN;
+        return isNaN(z) ? 0 : z;
+    })();
     function pct(d) {
         if (d == null || d === '' || isNaN(d)) return '?';
-        d = parseFloat(d);
+        d = Math.exp(Math.log1p(parseFloat(d)) - xcZero) - 1;
         return (d >= 0 ? '+' : '\u2212') + Math.abs(d * 100).toFixed(1) + '%';
     }
 

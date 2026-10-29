@@ -28,6 +28,8 @@ def test_difficulty_one_scale():
     # pin the zero without a database
     dv._state["at"] = float("inf")
     dv._state["mean"] = 0.0
+    dv._zero["at"] = float("inf")      # the track's place on the XC scale:
+    dv._zero["XC"] = 0.0               # none here (test_xc_track_zero.py)
 
     ok(dv.diffPct(0.04, "XC") == dv.diffPct(0.04, "TF") == "+4.0%",
        "the same raw difficulty reads the same on either sport")

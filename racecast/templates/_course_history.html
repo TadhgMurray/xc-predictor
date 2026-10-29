@@ -51,8 +51,8 @@
                 <td class="{{ 'cdh-slow' if s.day and s.day > 0.0005 else ('cdh-fast' if s.day and s.day < -0.0005 else '') }}">{{ s.day|daypct if s.day is not none else " - " }}</td>
                 <td class="cdh-barc">
                     {% if s.together is not none %}
-                    {% set w = (100.0 * (s.together|abs) / ch.scale)|round(1) %}
-                    <span class="cdh-bar"><span class="cdh-fill {{ 'neg' if s.together < 0 }}" style="width: {{ [w, 100]|min }}%"></span></span>
+                    {% set w = (100.0 * (s.bar|abs) / ch.scale)|round(1) %}
+                    <span class="cdh-bar"><span class="cdh-fill {{ 'neg' if s.bar < 0 }}" style="width: {{ [w, 100]|min }}%"></span></span>
                     <span class="cdh-val">{{ s.together|diffpct("XC") }}</span>
                     {% endif %}
                 </td>

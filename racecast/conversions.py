@@ -180,21 +180,23 @@ def _bandOf(rating):
 #   without the table falls back to the old (1 + difficulty) arithmetic.
 _TILT_K = -0.031            # must match joint_solve.TILT_K (pinned by test)
 _TILT_LO, _TILT_HI = 40.0, 200.0     # must match joint_solve.TILT_RATING_LO/HI (pinned by test)
-_scale = {"at": 0.0, "map": {}}
+_scale = {"at": 0.0, "map": {}, "rows": {}}
 
 
 def _loadEngineScale():
-    out = {}
+    out, rows = {}, {}
     try:
         with getConn() as conn, conn.cursor() as cur:
             cur.execute("SELECT pool, sport, pool_mean, median_effect, "
-                        "anchor_shift FROM engine_scale")
-            for pool, sport, pm, me, sh in cur.fetchall():
-                out[(_bare(pool), (sport or "").upper())] = (
-                    float(pm), float(me), float(sh))
+                        "anchor_shift, n_rows FROM engine_scale")
+            for pool, sport, pm, me, sh, n in cur.fetchall():
+                key = (_bare(pool), (sport or "").upper())
+                out[key] = (float(pm), float(me), float(sh))
+                rows[key] = rows.get(key, 0) + int(n or 0)
     except Exception:                                    # noqa: BLE001
-        out = {}
+        out, rows = {}, {}
     _scale["map"] = out
+    _scale["rows"] = rows
     # ! AN EMPTY ANSWER IS RE-ASKED IN A MINUTE. The go-live writes these
     #   tables while the site is up; a worker that loaded an empty one
     #   cached it for the hour and converted without it (a 136.1 came back
@@ -1318,7 +1320,7 @@ def _clockTable(pool, sport, distance, track=False):
     pts = []
     ctx = {"distance": key[2], "pool": key[0], "sport": key[1]}
     if track:
-        ctx["difficulty"] = 0.0          # the display zero: the average outdoor track
+        ctx["difficulty"] = trackDifficulty(key[0], key[1])    # the average outdoor track
     for r in EQUIV_RATINGS:
         norm = _norm_from_rating(float(r), key[0], 0.0, key[1])
         t = normalized_to_time(norm, ctx) if norm else None
@@ -1335,8 +1337,9 @@ def _clockTable(pool, sport, distance, track=False):
 def ratingSeconds(rating, pool, sport="XC", distance=None, track=False):
     """Seconds a `rating` (on `pool`'s own scale) stands for at `distance`
     (default readerDistance) at a venue with no name -- the sport's typical
-    race, or with `track` the average outdoor track (difficulty 0.0, the
-    display zero); None when it cannot be said."""
+    race, or with `track` the average outdoor track (trackDifficulty: 0.0
+    for track, where the cross country scale puts a track for XC); None when
+    it cannot be said."""
     try:
         r = float(rating)
     except (TypeError, ValueError):
@@ -1352,7 +1355,7 @@ def ratingSeconds(rating, pool, sport="XC", distance=None, track=False):
         norm = _norm_from_rating(r, pool, 0.0, sport)
         ctx = {"distance": float(d), "pool": pool, "sport": str(sport or "XC").upper()}
         if track:
-            ctx["difficulty"] = 0.0
+            ctx["difficulty"] = trackDifficulty(pool, sport)
         t = normalized_to_time(norm, ctx) if norm else None
         return t if t and t > 0 else None
     lo, hi = 0, len(pts) - 1
@@ -1377,6 +1380,106 @@ def ratingSeconds(rating, pool, sport="XC", distance=None, track=False):
 #   schooler's track 5K is one step of the curve past its fitted span.
 #   College track is fitted through 5000 m.
 XC_TRACK_M = {"hs": 5000.0, "college": 5000.0, "ms": 3200.0}
+
+
+# ★★ WHERE THE AVERAGE OUTDOOR TRACK SITS ON THE CROSS COUNTRY SCALE (owner,
+#    2026-10-28, scripts/diag_xc_track_gap.py). The go-live anchors the
+#    displayed difficulty on the track cells, so an XC course of 0.0 is
+#    "the average outdoor track" -- in the engine's NORMALISED units, where
+#    the asserted sport level (0.0583) separates the two sports. A time is
+#    not a normalised time: each sport has its own distance curve, the track
+#    carries its event offsets and the winter gain, and each has its own pool
+#    mean. Put back into seconds, a rating on an XC course of 0.0 came out
+#    4.4% (high school boys) and 5.8% (girls) faster than the same runners'
+#    spring 3200s, where the track event's own scale was within 1%. So
+#    "+8.4% slower than an average outdoor track" (Portage West) overstated
+#    the gap to a real track by the distance between those two zeros.
+#
+#    This measures that distance from the model itself, in seconds: a 100
+#    (the pool's average runner, where the tilt is 1) at the 5K column's
+#    distance, on the XC scale at difficulty 0.0 against the track event's
+#    scale at the average outdoor track --
+#        z(pool) = ln(t_track / t_xc(0.0)) / tilt(100)
+#    -- so an XC course of log1p(d) = z runs exactly as the track does. The
+#    track event's scale is the side the runners confirmed. One number for
+#    the course pages (a cell is shared by every pool that races it): the
+#    pools' z weighted by their rated XC rows (engine_scale.n_rows).
+#
+#  ! DISPLAY AND CONVERSION ONLY. The stored difficulty, the anchor shift and
+#    every rating are untouched; difficulty_view, explain_rating and the
+#    track=True conversion read the course against this zero instead of 0.0.
+#  ! AT THE 5K COLUMN'S DISTANCE, so a course's % and the "≈ 13:37 5K on a
+#    track" beside it say the same thing. The model's gap moves with the
+#    distance (the two curves have different shapes); diag_xc_track_gap
+#    prints it at 3200 and 5000 per pool so the choice can be checked.
+_xc_zero = {"at": None, "map": {}}
+
+
+def _xcTrackZeroPool(pool):
+    """z for one pool (log), or None when the scale cannot say."""
+    level = (_bare(pool) or "").partition("_")[0]
+    d = XC_TRACK_M.get(level)
+    if not d or engineScale(pool, "XC") is None or engineScale(pool, "TF") is None:
+        return None
+    r = 100.0
+    try:
+        t_xc = normalized_to_time(_norm_from_rating(r, pool, 0.0, "XC"),
+                                  {"distance": d, "pool": pool, "sport": "XC",
+                                   "difficulty": 0.0})
+        t_tf = normalized_to_time(_norm_from_rating(r, pool, 0.0, "TF"),
+                                  {"distance": d, "pool": pool, "sport": "TF",
+                                   "difficulty": 0.0})
+        tilt = _tilt(r, pool)
+    except Exception:                                    # noqa: BLE001
+        return None
+    if not t_xc or not t_tf or t_xc <= 0 or t_tf <= 0 or tilt <= 0:
+        return None
+    z = math.log(t_tf / t_xc) / tilt
+    return z if math.isfinite(z) else None
+
+
+def xcTrackZero(pool=None):
+    """log1p of the XC difficulty at which a course runs as the average
+    outdoor track does: for `pool`, or with no pool the rated-row-weighted
+    mean over the XC pools (the number the course pages use). 0.0 when the
+    engine scale is not available, which is the old reading exactly."""
+    engineScale("hs_m", "XC")                    # (re)load the scale if stale
+    stamp = _scale["at"]
+    with _clock_lock:
+        if _xc_zero["at"] != stamp:
+            _xc_zero["at"], _xc_zero["map"] = stamp, {}
+        got = _xc_zero["map"].get(_bare(pool) if pool else None)
+    if got is not None:
+        return got
+    if pool:
+        z = _xcTrackZeroPool(pool)
+        z = 0.0 if z is None else z
+    else:
+        num = den = 0.0
+        rows = _scale.get("rows") or {}
+        for (p, sp) in list(_scale["map"]):
+            if sp != "XC":
+                continue
+            zp = _xcTrackZeroPool(p)
+            w = float(rows.get((p, sp), 0) or 0)
+            if zp is None or w <= 0:
+                continue
+            num += w * zp
+            den += w
+        z = num / den if den > 0 else 0.0
+    with _clock_lock:
+        if _xc_zero["at"] == stamp:
+            _xc_zero["map"][_bare(pool) if pool else None] = z
+    return z
+
+
+def trackDifficulty(pool, sport):
+    """The displayed difficulty of the average outdoor track on `sport`'s
+    course scale: 0.0 for track (the go-live's anchor), e^z - 1 for cross
+    country (xcTrackZero, this pool's)."""
+    if str(sport or "XC").upper() == "TF":
+        return 0.0
+    return math.expm1(xcTrackZero(pool))
 
 
 def ratingClock(rating, pool, sport="XC", distance=None):
@@ -1408,11 +1511,10 @@ def ratingClock(rating, pool, sport="XC", distance=None):
     else:
         where = None
     d = distance or readerDistance(pool, sport)
-    # ! "on a track" asks for the track's zero by name: a no-venue XC
-    #   conversion is the sport's MEDIAN race (venueEffect), never a track.
-    #   (Every caller that says "on a track" reads TF since 2026-10-28,
-    #   where the zero is the default anyway; the flag keeps any later XC
-    #   caller honest.)
+    # ! "on a track" asks for the track by name: a no-venue XC conversion
+    #   is the sport's MEDIAN race (venueEffect), never a track. (Every
+    #   caller that says "on a track" reads TF since 2026-10-28, where the
+    #   track is 0.0 anyway; an XC caller gets xcTrackZero's track.)
     secs = ratingSeconds(rating, pool, sport, d, track=(where == "on a track"))
     t = clockFor(secs)
     if not t:
