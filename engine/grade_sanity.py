@@ -1391,30 +1391,36 @@ _FIELD_BUILD = f"""
                    >= {MIN_FIELD_GRADED}
             OR (sum(n_graded) = 0 AND sum(n) >= {MIN_FIELD_GRADED});
     ANALYZE fld_event_level;
+
 """
 
 # ! RACES, NOT ROWS (pooling review P4): a race scraped by both feeds is
 #   one race (allraces.race, raceIdent) and votes once.
 _FIELD_SQL = f"""
-    SELECT DISTINCT ON (n.person_id, n.acad)
-           n.person_id, n.acad, e.level
-    FROM   fld_needy n
-    JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-    JOIN   fld_event_level e
-           ON e.meet_id = a.meet_id AND e.div_id = a.div_id
-          AND e.source = a.source AND e.event_key = a.event_key
-    LEFT   JOIN fld_withhold wh
-           ON wh.person_id = a.person_id AND wh.acad = a.acad
-          AND wh.meet_id = a.meet_id AND wh.div_id = a.div_id
-          AND wh.source = a.source AND wh.event_key = a.event_key
-    WHERE  e.level IS NOT NULL
-      -- the ungraded rows whose field says nothing of the runner
-      -- (openSchoolBuild): an adult open race's 'hs', a college race's
-      -- 'college' for someone who never was a collegian
-      AND  wh.person_id IS NULL
-    GROUP  BY n.person_id, n.acad, e.level
-    ORDER  BY n.person_id, n.acad, count(DISTINCT a.race) DESC,
-              {_LEVEL_RANK_SQL.format(x="e.level")} DESC
+    SELECT DISTINCT ON (person_id, acad) person_id, acad, level
+    FROM  (SELECT n.person_id, n.acad, a.race,
+                  -- a college field does not overrule the runner's own
+                  -- school grade (fld_own_school)
+                  CASE WHEN e.level = 'college' AND os.own IS NOT NULL
+                       THEN os.own ELSE e.level END AS level
+           FROM   fld_needy n
+           JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+           JOIN   fld_event_level e
+                  ON e.meet_id = a.meet_id AND e.div_id = a.div_id
+                 AND e.source = a.source AND e.event_key = a.event_key
+           LEFT   JOIN fld_own_school os ON os.person_id = n.person_id AND os.acad = n.acad
+           LEFT   JOIN fld_withhold wh
+                  ON wh.person_id = a.person_id AND wh.acad = a.acad
+                 AND wh.meet_id = a.meet_id AND wh.div_id = a.div_id
+                 AND wh.source = a.source AND wh.event_key = a.event_key
+           WHERE  e.level IS NOT NULL
+             -- the ungraded rows whose field says nothing of the runner
+             -- (openSchoolBuild): an adult open race's 'hs', a college
+             -- race's 'college' for someone who never was a collegian
+             AND  wh.person_id IS NULL) x
+    GROUP  BY person_id, acad, level
+    ORDER  BY person_id, acad, count(DISTINCT race) DESC,
+              {_LEVEL_RANK_SQL.format(x="level")} DESC
 """
 
 def openSchoolBuild(on, codes, college_codes=()):
@@ -1624,12 +1630,43 @@ def collegeClasses(field_rows, starts):
     return out
 
 
-def fieldBuild(share=None, codes=None, college_codes=None):
+_OWN_SCHOOL_SQL = """
+    -- ★ THE RUNNER'S OWN SCHOOL GRADE OUTRANKS A COLLEGE FIELD (owner,
+    --   2026-10-28: Rocky Hansen, a Wake Forest (NC) high school junior,
+    --   "11" on his row, #1 on the COLLEGE board off one college 8K). One
+    --   grade is not corroboration (MIN_CORROBORATION), so the season fell
+    --   to the field, and the field was collegians. But a collegian's row
+    --   carries a class year, never a "9".."12": a needy season whose own
+    --   rows carry a school grade and no class year takes its own school
+    --   level wherever the field says 'college'. (An adult club's "12" --
+    --   years with the club -- is rule 8's, which runs after and moves it.)
+    DROP TABLE IF EXISTS fld_own_school;
+    CREATE UNLOGGED TABLE fld_own_school AS
+        SELECT a.person_id, a.acad,
+               mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
+                   FILTER (WHERE gradeLevel(a.grade) IN ('hs', 'ms', 'elem')) AS own
+        FROM   fld_needy n
+        JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
+        GROUP  BY 1, 2
+        HAVING bool_or(gradeLevel(a.grade) IN ('hs', 'ms', 'elem'))
+           AND NOT bool_or(gradeLevel(a.grade) = 'college');
+    ANALYZE fld_own_school;
+"""
+_OWN_SCHOOL_OFF = """
+    DROP TABLE IF EXISTS fld_own_school;
+    CREATE UNLOGGED TABLE fld_own_school (person_id bigint, acad int, own text);
+"""
+
+
+def fieldBuild(share=None, codes=None, college_codes=None, own_grade=True):
     """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
-    None; above 1 is off), and the withheld votes after it (openSchoolBuild;
+    None; above 1 is off), the runner's own school grade over a college
+    field (_OWN_SCHOOL_SQL; own_grade=False for the old statement's
+    equivalence tests), and the withheld votes after it (openSchoolBuild;
     `codes` / `college_codes` the school and college team codes)."""
     share = float(OPEN_FIELD_SHARE if share is None else share)
     return (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
+            + (_OWN_SCHOOL_SQL if own_grade else _OWN_SCHOOL_OFF)
             + openSchoolBuild(share <= 1.0, codes, college_codes))
 
 
@@ -1643,6 +1680,7 @@ _FIELD_DROP = """
     DROP TABLE IF EXISTS fld_adult_ev;
     DROP TABLE IF EXISTS fld_college_start;
     DROP TABLE IF EXISTS fld_college_names;
+    DROP TABLE IF EXISTS fld_own_school;
     RESET enable_nestloop;
 """
 
