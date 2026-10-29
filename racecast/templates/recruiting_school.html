@@ -31,7 +31,14 @@
 <body>
 {% include "_topbar.html" %}
 {% set sport_words = {"XC": "XC"|sport_name, "TF": "TF"|sport_name} %}
-{% set tabbed = blocks|length > 1 %}
+{# ★ TRANSFERS ARE THEIR OWN TAB (owner, 2026-10-29: "how do you actually
+   see the transfer section vs hs? Very obfuscated"): one tab per sport's
+   high-school recruits, then one for every transfer in and out #}
+{% set rec_blocks = blocks|selectattr("summary")|list %}
+{% set tr_blocks = blocks|selectattr("transfers")|list %}
+{% set t_in = tr_blocks|sum(attribute="transfers.in_summary.n") %}
+{% set t_out = tr_blocks|sum(attribute="transfers.out_summary.n") %}
+{% set tabbed = (rec_blocks|length + (1 if tr_blocks else 0)) > 1 %}
 {% set e1 = event_cols[0] if event_cols else none %}
 <main class="page-wide recruit-page recruit-school rc">
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
@@ -54,6 +61,10 @@
         <div><span class="k">Typical {{ sport_words[b.sport]|lower }} recruit</span>
           <span class="rc-crow"><b class="rc-cn">{{ "%.1f"|format(s.median) }}</b>{% if e1 and s.times.median[e1[0]] %}<i>{{ fmt_time(s.times.median[e1[0]]) }} {{ e1[1] }}</i>{% endif %}</span></div>
         {% endif %}{% endfor %}
+        {% if tr_blocks %}
+        <div><span class="k">Transfers</span>
+          <span class="rc-crow"><a class="rc-cn" href="#transfers">{{ t_in }} in · {{ t_out }} out</a><i>from and to other colleges</i></span></div>
+        {% endif %}
       </div>
       {% endif %}
     </div>
@@ -73,22 +84,25 @@
 
   <div class="rc-grid rc-grid-one">
   <div class="rc-mainc">
-  {% if not blocks %}
-  <p class="meta">No {{ who|lower }}'s recruits on file for {{ school }} yet.</p>
+  {% if not rec_blocks %}
+  <p class="meta">No {{ who|lower }}'s high-school recruits on file for {{ school }} yet.</p>
   {% endif %}
 
   {% if tabbed %}
   <div class="rc-tbar">
     <nav class="seg rc-tabs" role="tablist">
-      {% for b in blocks %}
-      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#{{ b.sport|lower }}" data-tab="{{ b.sport|lower }}">{{ sport_words[b.sport] }}<span class="n">{{ b.summary.n if b.summary else b.transfers.in_summary.n }}</span></a>
+      {% for b in rec_blocks %}
+      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#{{ b.sport|lower }}" data-tab="{{ b.sport|lower }}">{{ sport_words[b.sport] }} recruits<span class="n">{{ b.summary.n }}</span></a>
       {% endfor %}
+      {% if tr_blocks %}
+      <a class="seg-btn{{ ' is-on' if not rec_blocks }}" href="#transfers" data-tab="transfers">Transfers<span class="n">{{ t_in + t_out }}</span></a>
+      {% endif %}
       <a class="seg-btn" href="#how" data-tab="how">How this works</a>
     </nav>
   </div>
   {% endif %}
 
-  {% for b in blocks %}
+  {% for b in rec_blocks %}
   {% set s = b.summary %}
   <section class="rc-panel" id="{{ b.sport|lower }}" data-panel="{{ b.sport|lower }}">
   {% if not tabbed %}<h2>{{ sport_words[b.sport] }} recruits</h2>{% endif %}
@@ -139,16 +153,21 @@
   <p class="meta">No {{ who|lower }}'s {{ sport_words[b.sport]|lower }} recruits on file.</p>
   {% endif %}
 
-  {# ★ TRANSFERS (owner, 2026-10-29): who arrived from another college and
-     who left for one, on the college scale at both ends #}
+  </section>
+  {% endfor %}
+
+  {% if tr_blocks %}
+  <section class="rc-panel" id="transfers" data-panel="transfers">
+  {% if not tabbed %}<h2>Transfers</h2>{% endif %}
+  <p class="meta rc-lead">Athletes who came to {{ school }} from another college ({{ t_in }}), and who left it for one ({{ t_out }}), in the classes counted.
+     Ratings{{ rating_i() }} are college-scale season ratings: the last season at the old school and the first at the new.</p>
+  {% for b in tr_blocks %}
   {% set t = b.transfers %}
-  {% if t %}
-  {% for side, rows, ts, head in [("in", t["in"], t.in_summary, "Transfers in"), ("out", t["out"], t.out_summary, "Transfers out")] %}
+  {% for side, rows, ts, head in [("in", t["in"], t.in_summary, "transfers in"), ("out", t["out"], t.out_summary, "transfers out")] %}
   {% if rows %}
-  <h3>{{ head }}</h3>
-  <p class="meta rc-lead">{{ ts.n }} {{ "arrived from another college" if side == "in" else "left for another college" }} in the classes counted.
-     Typical rating{{ rating_i() }} {{ "before" if side == "in" else "here" }} {{ "%.1f"|format(ts.before) if ts.before is not none else "-" }},
-     {{ "here" if side == "in" else "after" }} {{ "%.1f"|format(ts.after) if ts.after is not none else "-" }}{% if ts.gain is not none %} ({{ "%+.1f"|format(ts.gain) }} typical change){% endif %}. College scale.</p>
+  <h3>{{ sport_words[b.sport] }} {{ head }} <span class="dist-note">{{ ts.n }}</span></h3>
+  <p class="meta">Typical rating {{ "before" if side == "in" else "here" }} {{ "%.1f"|format(ts.before) if ts.before is not none else "-" }},
+     {{ "here" if side == "in" else "after" }} {{ "%.1f"|format(ts.after) if ts.after is not none else "-" }}{% if ts.gain is not none %} ({{ "%+.1f"|format(ts.gain) }} typical change){% endif %}.</p>
   <div class="r-scroll"><table class="recruit-tbl r-list">
     <thead><tr><th>Season</th><th>Athlete</th><th>{{ "From" if side == "in" else "To" }}</th><th class="num">Rating there</th><th class="num">{{ "Rating here" if side == "in" else "Last here" }}</th><th class="num">Change</th><th>Year</th></tr></thead>
     <tbody>
@@ -159,7 +178,7 @@
       <tr>
         <td>{{ r.class_label }}</td>
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
-        <td>{{ crest(other_school, other_state, level='college') }}<a href="/recruiting/school/{{ other_school|urlencode }}?gender={{ gender }}{% if other_state %}&amp;state={{ other_state }}{% endif %}">{{ other_label }}</a></td>
+        <td>{{ crest(other_school, other_state, level='college') }}<a href="/recruiting/school/{{ other_school|urlencode }}?gender={{ gender }}{% if other_state %}&amp;state={{ other_state }}{% endif %}#transfers">{{ other_label }}</a></td>
         <td class="num">{{ "%.1f"|format(r.from_rating if side == "in" else r.to_rating) }}</td>
         <td class="num"><strong>{{ "%.1f"|format(r.to_rating if side == "in" else r.from_rating) }}</strong></td>
         <td class="num">{{ ("%+.1f"|format(r.gain)) if r.gain is not none else " - " }}</td>
@@ -170,9 +189,9 @@
   </table></div>
   {% endif %}
   {% endfor %}
-  {% endif %}
-  </section>
   {% endfor %}
+  </section>
+  {% endif %}
 
   <section class="rc-panel" id="how" data-panel="how">
   {% if not tabbed and blocks %}<h2>How this works</h2>{% endif %}

@@ -10492,7 +10492,7 @@ def api_teams():
         # ★ the top-5 average's track 5K (owner, 2026-10-10)
         from conversions import stampFiveK
         stampFiveK(rows, "top5_mean", pool=f.get("pool"), sport="XC")
-        stampCrests(rows)
+        stampCrests(rows, pool=f.get("pool"))
         return jsonify({"filters": f, "count": len(rows),
                         "course_mode": True,
                         # One venue: everyone was measured on the same
@@ -10555,7 +10555,7 @@ def api_teams():
     from conversions import stampFiveK
     stampFiveK(rows, "top5_mean", pool=f.get("pool"), sport=f.get("sport"))
 
-    stampCrests(rows)
+    stampCrests(rows, pool=f.get("pool"))
     return jsonify({"filters": f, "count": len(rows),
                     "board_scope": f["board_scope"],
                     "national_bias": f["board_scope"] == "usa",
@@ -12314,7 +12314,7 @@ def api_recruiting_schools():
     stampFiveK(rows, "median", pool="hs_" + f["gender"], sport=f["sport"])
     # ★ the crest before each college's name (owner, 2026-10-11), as the
     #   other JS boards draw it; stamped before the suggestions copy the rows
-    stampCrests(rows)
+    stampCrests(rows, pool="college_" + f["gender"])
     return jsonify({
         "rows": rows, "gender": f["gender"], "sport": f["sport"], "sort": f["sort"],
         "built": built, "total": len(every),
@@ -12455,7 +12455,7 @@ def api_recruiting():
     from conversions import stampFiveK
     stampFiveK(rows, "mean_rating", pool=f["pool"], sport=f["sport"])
     # ★ the high school's crest before its name (owner, 2026-10-11)
-    stampCrests(rows)
+    stampCrests(rows, pool=f["pool"])
     return jsonify({"rows": rows, "season": f["label"], "sport": f["sport"], "pool": f["pool"],
                     "limit": f["limit"], "offset": f["offset"], "note": note})
 

@@ -325,7 +325,22 @@ def test_transfers_both_ways_on_the_college_page():
     js = read("racecast", "static", "recruiting.js")
     assert "Transfers in / out" in js and "r.t_in" in js
     tpl = read("racecast", "templates", "recruiting_school.html")
-    assert "Transfers in" in tpl and "b.transfers" in tpl
+    assert "b.transfers" in tpl
+    # their own tab, linked from the header and the board (owner, 2026-10-29)
+    assert 'data-tab="transfers"' in tpl and 'data-panel="transfers"' in tpl
+    assert 'href="#transfers"' in tpl and '#transfers' in js
+    # the board's colleges wear their college crest
+    assert 'stampCrests(rows, pool="college_" + f["gender"])' in read("racecast", "app.py")
+
+
+def test_a_board_row_without_a_pool_takes_the_board_s_level(monkeypatch):
+    import school_logo as L
+    seen = []
+    monkeypatch.setattr(L, "crestUrl", lambda s, st, px=64, level=None: seen.append(level))
+    L.stampCrests([{"school": "Wake Forest", "state": "NC"}], pool="college_m")
+    L.stampCrests([{"school": "Wake Forest", "state": "NC", "pool": "hs_m"}], pool="college_m")
+    L.stampCrests([{"school": "Wake Forest", "state": "NC"}])
+    assert seen == ["college", "hs", None]
     assert "R.recruitStates(cur, school_name)" in read("racecast", "app.py")
 
 
@@ -382,9 +397,9 @@ def test_crests_before_the_school_names():
     for route in ('"/api/recruiting/schools"', '"/api/recruiting")'):
         body = app[app.index("@app.route(" + route):]
         body = body[:body.index("\n@app.route(", 1)]
-        assert "stampCrests(rows)" in body, route
+        assert "stampCrests(rows, pool=" in body, route
     sch = app[app.index('@app.route("/api/recruiting/schools")'):]
-    assert sch.index("stampCrests(rows)") < sch.index("R.suggestions(rows")   # the bands copy the rows
+    assert sch.index("stampCrests(rows, pool=") < sch.index("R.suggestions(rows")   # the bands copy the rows
     for js, cell in (("recruiting.js", '<td class="rc-school">${crestMark(r.crest)}<a href="${schoolHref(r)}">'),
                      ("recruiting-search.js", '${crestMark(r.crest)}<a href="/school/')):
         src = read("racecast", "static", js)

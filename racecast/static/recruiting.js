@@ -230,7 +230,7 @@
       <td class="rc-dim">${esc(r.division || "")}</td>
       <td class="rc-dim">${esc(r.conference || "")}</td>
       <td class="num">${r.n}</td>
-      <td class="num rc-dim">${r.t_in || 0} / ${r.t_out || 0}</td>
+      <td class="num rc-dim">${(r.t_in || r.t_out) ? `<a href="${schoolHref(r)}#transfers" title="this college's transfers in and out">${r.t_in || 0} / ${r.t_out || 0}</a>` : "0 / 0"}</td>
       <td class="num rc-dim">${num(r.min)}</td>
       <td class="num rc-strong">${num(r.median)}</td>
       <td class="num rc-dim">${num(r.max)}</td>

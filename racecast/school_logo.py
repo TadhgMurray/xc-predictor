@@ -323,7 +323,8 @@ def crestImg(school, state=None, px=64, size=18, cls="school-mark",
                   f'loading="lazy" decoding="async">')
 
 
-def stampCrests(rows, school_key="school", state_key="state", px=64, pool_key="pool"):
+def stampCrests(rows, school_key="school", state_key="state", px=64, pool_key="pool",
+                pool=None):
     """Give each row its crest URL, for the boards the BROWSER draws: JS
     cannot ask whether a crest exists without fetching it, and a broken
     <img> per school is worse than no crests. No query -- the answer is in
@@ -331,12 +332,17 @@ def stampCrests(rows, school_key="school", state_key="state", px=64, pool_key="p
 
     The row's pool (`pool_key`, or `rating_pool`) names the crest's LEVEL
     where the name is several institutions (Wake Forest); only the level --
-    the state is resolved as before, not by teamState."""
+    the state is resolved as before, not by teamState.
+
+    ★ `pool`: THE BOARD'S, for rows that carry none (owner, 2026-10-29: the
+      recruiting board's colleges wore high school crests -- its rows are
+      schools, not results, and have no pool of their own). A row's own
+      pool still wins."""
     from school_identity import levelOf
     for r in rows or []:
-        pool = r.get(pool_key) or r.get("rating_pool")
+        rp = r.get(pool_key) or r.get("rating_pool") or pool
         url = crestUrl(r.get(school_key), r.get(state_key), px,
-                       level=levelOf(pool) if pool else None)
+                       level=levelOf(rp) if rp else None)
         if url:
             r["crest"] = url
     return rows
