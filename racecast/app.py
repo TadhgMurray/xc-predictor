@@ -402,6 +402,19 @@ app.template_filter("school_label_for")(_stateTeamAware(school_identity.schoolLa
 app.template_filter("with_state")(_stateTeamAware(school_identity.withState))
 # a pool's level ("college_m" -> "college"): a race row's crest (school_logo)
 app.template_filter("level_of")(school_identity.levelOf)
+
+
+# ★ THE LEVEL OF A LIST OF ROWS, for a crest drawn beside a TEAM (owner,
+#   2026-10-28: Nuttycombe's team scores wore Wake Forest HIGH SCHOOL's
+#   crest beside the university). A team row carries no pool of its own;
+#   the race's does -- the most common level among its rows' pools.
+def _modalLevel(pools):
+    from collections import Counter
+    got = Counter(lv for lv in (school_identity.levelOf(p) for p in (pools or ())) if lv)
+    return got.most_common(1)[0][0] if got else None
+
+
+app.template_filter("modal_level")(_modalLevel)
 app.template_filter("school_label")(_stateTeamAware(school_identity.schoolLabel))
 
 # the crest beside a school's name, everywhere one is named (305). Both

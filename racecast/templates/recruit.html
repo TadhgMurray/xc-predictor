@@ -33,7 +33,7 @@
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
       <div class="rc-sport"><span class="sport-tag">Recruiting profile</span></div>
-      <h1>{% if p.school and p.school|is_team %}{{ crest(p.school, p.state, px=128, size=44, cls="school-crest") }}{% endif %}{{ p.name }}</h1>
+      <h1>{% if p.school and p.school|is_team %}{{ crest(p.school, p.state, px=128, size=44, cls="school-crest", pool=p.pool) }}{% endif %}{{ p.name }}</h1>
       <div class="rc-meta">
         {% if p.school and p.school|is_team %}<a href="{{ school_href(p.school, p.state) }}">{{ p.school_label }}</a>{% elif p.school %}{{ p.school_label }}{% else %} - {% endif %}
         {% if p.grad_year %} · Class of {{ p.grad_year }}{% endif %}

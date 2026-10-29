@@ -294,7 +294,7 @@ def athleteCardData(cur, person_id):
         "unnamed": a["unnamed"],
         "school": schoolLabelFor(school, team_pool, team_state) if school else "",
         # their team's crest (305), beside the name
-        "crest": crestPath(cur, school, teamState(school, team_pool, team_state)),
+        "crest": crestPath(cur, school, teamState(school, team_pool, team_state), team_pool),
         "grade": gradeLabel(grade, grade_pool) or "",
         "units": [u["label"] for u in units][:4],   # kept for a later use; not drawn
         # ★ ON THE SCALE THE PAGE OPENS ON (HS-equivalent, issue #50)
@@ -392,14 +392,17 @@ def _crest(img, path, x, y, size=CREST, radius=18):
     return True
 
 
-def crestPath(cur, school, state=None):
+def crestPath(cur, school, state=None, pool=None):
     """The school's crest file, or None. Never raises: a card is drawn on
-    a live request and a missing logo table must not cost a preview."""
+    a live request and a missing logo table must not cost a preview.
+    `pool` names the crest's level where the name is several institutions
+    (Wake Forest the university, Wake Forest the high school)."""
     if not school:
         return None
     try:
         import school_logo
-        return school_logo.logoPath(cur, school, state)
+        from school_identity import levelOf
+        return school_logo.logoPath(cur, school, state, levelOf(pool) if pool else None)
     except Exception:                              # noqa: BLE001
         try:
             cur.connection.rollback()
@@ -820,7 +823,7 @@ def schoolCardData(cur, school, state=None):
     ranks = teamRanks(cur, school, state, sport, year, top[0]["pool"] if top else None)
     from school_identity import teamState, withState
     return {"ranks": ranks,
-            "crest": crestPath(cur, school, state or teamState(school)),
+            "crest": crestPath(cur, school, state or teamState(school), pool),
             "title": schoolLabel(school) if not state else withState(school, state),
             "sub": (f"{label} {'cross country' if sport == 'XC' else 'track'}"
                     f"{' · ' + poolWord(pool) if poolWord(pool) else ''} · top seven by season rating"),

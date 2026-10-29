@@ -37,7 +37,7 @@
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
       <div class="rc-sport"><span class="sport-tag">College {{ who|lower }}'s recruiting</span></div>
-      <h1>{{ crest(school, state, px=128, size=44, cls="school-crest") }}{{ school }} <span class="dist-note">{{ who|lower }}</span></h1>
+      <h1>{{ crest(school, state, px=128, size=44, cls="school-crest", level='college') }}{{ school }} <span class="dist-note">{{ who|lower }}</span></h1>
       <div class="rc-meta">
         {% if units %}{{ unit_chips(units) }} · {% endif %}
         <a href="{{ school_href(school, state) }}">School page</a>
@@ -124,7 +124,7 @@
       <tr>
         <td>{{ r.class_label }}</td>
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
-        <td>{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state) }}<a href="{{ school_href(r.hs_school, r.hs_state) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
+        <td>{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
         <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong>{% if r.source != "hs" %} <span class="dist-note" title="No high-school season linked: the first college season, on the high-school scale, less the measured freshman gain">est.</span>{% endif %}</td>
         {{ fk(r.recruit_rating, "hs_" ~ gender, b.sport, none, "5K") }}
         <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>

@@ -80,7 +80,7 @@
          crest centred on the NAME, not on the label and name together
          (owner, 2026-10-07: "this is off") #}
       <div><span class="k">Individual</span>
-        <span class="rc-crow">{% if champ.school and champ.school|is_team %}{{ crest(champ.school, csst, trusted=champ.school_state) }}{% endif %}<b class="rc-cn">{% if champ.person_id %}<a href="{{ athlete_href(champ.person_id, champ.result_id) }}">{{ champ.name or "Unknown" }}</a>{% else %}{{ champ.name or "Unknown" }}{% endif %}</b><i>{{ champ.display_time }}</i></span></div>
+        <span class="rc-crow">{% if champ.school and champ.school|is_team %}{{ crest(champ.school, csst, trusted=champ.school_state, level=(champ.rating_pool or champ.label_pool)|level_of) }}{% endif %}<b class="rc-cn">{% if champ.person_id %}<a href="{{ athlete_href(champ.person_id, champ.result_id) }}">{{ champ.name or "Unknown" }}</a>{% else %}{{ champ.name or "Unknown" }}{% endif %}</b><i>{{ champ.display_time }}</i></span></div>
       {% endif %}
     </div>
     {% endif %}
@@ -172,7 +172,7 @@
           data-label="{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}"
           data-href="{{ school_href(t.school, t.state or header.state) if t.school|is_team else '' }}">
         <td class="pl"><span>{{ t.place if t.place else loop.index }}</span></td>
-        <td>{% if t.school|is_team %}{{ crest(t.school, t.state) }}<a class="rc-team-open" href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
+        <td>{% if t.school|is_team %}{{ crest(t.school, t.state, level=(results|map(attribute="label_pool")|modal_level)) }}<a class="rc-team-open" href="{{ school_href(t.school, t.state or header.state) }}">{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</a>{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}</td>
         <td class="n"><b>{{ t.points if t.points is not none else " - " }}</b></td>
         {% for i in range(7) %}
           {% set r = t.runners[i] if t.runners and t.runners|length > i else none %}
@@ -220,7 +220,7 @@
         data-label="{% if t.state %}{{ t.school|with_state(t.state) }}{% else %}{{ t.school|school_label_in(header.state) }}{% endif %}"
         data-href="{{ school_href(t.school, t.state or header.state) if t.school|is_team else '' }}">
       <td class="tp">{{ t.place if t.place else loop.index }}</td>
-      <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state or header.state) }}{% endif %}<button type="button" class="rc-team-name">{{ t.school }}</button>
+      <td class="tn">{% if t.school|is_team %}{{ crest(t.school, t.state or header.state, level=(results|map(attribute="label_pool")|modal_level)) }}{% endif %}<button type="button" class="rc-team-name">{{ t.school }}</button>
         <span class="sp">{% for i in range(5) %}{% set r = t.runners[i] if t.runners and t.runners|length > i else none %}<i>{{ r.score_place if r else "-" }}</i>{% endfor %}</span></td>
       <td class="n tpts">{{ t.points if t.points is not none else "-" }}</td>
     </tr>

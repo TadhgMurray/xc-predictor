@@ -78,7 +78,7 @@
   <table class="sl-table">
     <thead><tr><th scope="col"></th>
       {% for c in cols %}
-      <th scope="col">{{ crest(c.school, c.state or none, px=64, size=22) }}<a href="{{ c.href }}">{{ c.summary.label if c.summary else c.school }}</a>
+      <th scope="col">{{ crest(c.school, c.state or none, px=64, size=22, level='college') }}<a href="{{ c.href }}">{{ c.summary.label if c.summary else c.school }}</a>
         <form method="post" action="/api/shortlist" class="sl-rm"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="school" value="{{ c.school }}"><input type="hidden" name="state" value="{{ c.state }}"><input type="hidden" name="action" value="remove"><button type="submit" class="acct-x">remove</button></form></th>
       {% endfor %}</tr></thead>
     <tbody>

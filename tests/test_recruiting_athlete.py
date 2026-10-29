@@ -315,4 +315,4 @@ def test_crests_before_the_school_names():
         assert cell in src, js
         assert '`<img class="school-mark" src="${esc(url)}" alt=""`' in src, js
         assert 'width="18" height="18" loading="lazy"' in src, js
-    assert "{{ crest(r.hs_school, r.hs_state) }}" in read("racecast", "templates", "recruiting_school.html")
+    assert "{{ crest(r.hs_school, r.hs_state, level='hs') }}" in read("racecast", "templates", "recruiting_school.html")

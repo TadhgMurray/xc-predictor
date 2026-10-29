@@ -96,7 +96,7 @@ def stubs(monkeypatch):
     monkeypatch.setattr(app, "get_races", lambda cur, pid: [
         _race("2006-10-01"), _race("2006-09-01"), _race("2007-04-01", "TF"),
         _race("2005-10-01")])
-    monkeypatch.setattr(cards, "crestPath", lambda cur, school, state=None: None)
+    monkeypatch.setattr(cards, "crestPath", lambda cur, school, state=None, pool=None: None)
     monkeypatch.setattr(school_units, "homeStateOf", lambda cur, pid: None)
     monkeypatch.setattr(school_units, "unitsFor", lambda *a, **k: [])
     monkeypatch.setattr(school_units, "unitsForPerson", lambda *a, **k: [])

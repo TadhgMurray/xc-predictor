@@ -68,7 +68,7 @@
       {% set st = (d0.official and d0.official[g]) or d0.teams[g] %}
       {% if st %}{% set t = st[0] %}
       <div><span class="k">{{ g_label }} team</span>
-        <span class="rc-crow">{% if (t.link_school or t.school)|is_team %}{{ crest(t.link_school or t.school, t.link_state) }}{% endif %}<b class="rc-cn">{% if (t.link_school or t.school)|is_team %}<a href="{{ school_href(t.link_school or t.school, t.link_state) }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</b><i>{{ t.display }} pts</i></span></div>
+        <span class="rc-crow">{% if (t.link_school or t.school)|is_team %}{{ crest(t.link_school or t.school, t.link_state, level=(t.pool|level_of) or ('college' if college|default(false) else none)) }}{% endif %}<b class="rc-cn">{% if (t.link_school or t.school)|is_team %}<a href="{{ school_href(t.link_school or t.school, t.link_state) }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</b><i>{{ t.display }} pts</i></span></div>
       {% endif %}
       {% endfor %}
     </div>
@@ -187,7 +187,7 @@
     {% for t in st[:5] %}
     <tr>
       <td class="tp">{{ t.place_label }}</td>
-      <td class="tn">{% if (t.link_school or t.school)|is_team %}{{ crest(t.link_school or t.school, t.link_state) }}<a href="{{ school_href(t.link_school or t.school, t.link_state) }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
+      <td class="tn">{% if (t.link_school or t.school)|is_team %}{{ crest(t.link_school or t.school, t.link_state, level=(t.pool|level_of) or ('college' if college|default(false) else none)) }}<a href="{{ school_href(t.link_school or t.school, t.link_state) }}">{{ t.school|school_label }}</a>{% else %}{{ t.school|school_label }}{% endif %}</td>
       <td class="n tpts">{{ t.display }}</td>
     </tr>
     {% endfor %}
