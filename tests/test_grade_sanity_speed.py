@@ -386,9 +386,9 @@ def test_the_staged_statements_take_no_parameters():
     assert GS.OPEN_FIELD_SHARE <= 1.0                     # on by default since 2026-10-28
     heads = [s.split("\n")[-1] if s.startswith("--") else s
              for s in GS.splitStatements(GS.fieldBuild(GS.OPEN_FIELD_OFF))]
-    # five stages, fld_own_school, and the open rule's (empty when it is
-    # off) fld_adult_ev, fld_withhold and fld_college_start
-    assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 9
+    # five stages and the open rule's (empty when it is off) fld_adult_ev,
+    # fld_withhold and fld_college_start
+    assert sum("CREATE UNLOGGED TABLE" in s for s in heads) == 8
     assert "%(" not in GS.fieldBuild(0.5, [4]) and GS._OPEN_TOKEN not in GS.fieldBuild(0.5, [4])
 
 
@@ -466,8 +466,7 @@ def _load(cur, rows):
 
 
 def _newField(cur, share=None):
-    # own_grade off: the old statement had no own-grade rule
-    GS.runTimed(cur, GS.fieldBuild(share, own_grade=False), label="test", slow=1e9)
+    GS.runTimed(cur, GS.fieldBuild(share), label="test", slow=1e9)
     cur.execute(GS._FIELD_SQL)
     got = cur.fetchall()
     cur.execute("SELECT person_id, acad, races FROM season_races")
@@ -800,25 +799,3 @@ def test_college_classes_count_from_the_first_college_year():
     starts = {1: 2025, 2: 2023, 3: 2020, 4: 2025, 6: 2030}
     assert GS.collegeClasses(rows, starts) == {(1, 2025): "FR", (2, 2025): "JR",
                                                (3, 2025): "SR"}
-
-
-def test_a_school_grade_outranks_a_college_field(cur):
-    """Rocky Hansen (owner, 2026-10-28): a high school junior, "11" on his
-    one row, in a college 8K, sat #1 on the college board. His own school
-    grade beats the collegians' vote; a runner with a class year anywhere
-    that season, or no grade at all, still takes the field's 'college'."""
-    rows = [(pid, 2026, g, g, 9, 1, "anet", -1, 900 + pid)
-            for pid, g in ((31, "FR"), (32, "SO"), (33, "JR"), (34, "SR"), (35, "SO"))]
-    rows.append((40, 2026, "11", "11", 9, 1, "anet", -1, 940))        # Rocky
-    rows.append((41, 2026, None, None, 9, 1, "anet", -1, 941))        # no grade
-    rows.append((42, 2026, "11", "11", 9, 1, "anet", -1, 942))        # an "11" ...
-    rows.append((42, 2026, "JR", "JR", 50, 1, "anet", -1, 5042))      # ... and a class year
-    _load(cur, rows)
-    GS.runTimed(cur, GS.fieldBuild(GS.OPEN_FIELD_OFF), label="test", slow=1e9)
-    cur.execute(GS._FIELD_SQL)
-    levels = {p: lv for p, _a, lv in cur.fetchall()}
-    cur.execute(GS._FIELD_DROP)
-    assert levels[40] == "hs"
-    assert levels[41] == "college" and levels[42] == "college"
-    cur.execute("SELECT to_regclass('fld_own_school')")
-    assert cur.fetchone() == (None,)
