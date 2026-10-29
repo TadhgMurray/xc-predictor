@@ -341,4 +341,38 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
             "page_base": True, "weather": _weather(cur, spec),
             # how far ahead this is asked: the forecast copies' lead_days
             "lead_days": max(0, (day - datetime.date.today()).days)}
-    return predictField(model, field, race)
+    out = predictField(model, field, race)
+    if os.environ.get("XCP_RACE_INPUTS_DIR"):
+        keepInputs(os.environ["XCP_RACE_INPUTS_DIR"], spec, race, field, model)
+    return out
+
+
+# ★ THE INPUTS AS THEY WERE (owner, 2026-10-29, the leak in docs/PLAN-MODEL
+#   "Leakage"). Every backtest reads TODAY's ratings and course numbers,
+#   which have seen the races it scores. With XCP_RACE_INPUTS_DIR set (the
+#   pre-race recorder sets it), every field the race model predicts is
+#   written down with every input as the page had it that day: one JSON line
+#   per race, one gzip file per day. Joined to the results later, they are a
+#   table nothing after the forecast could have touched.
+def keepInputs(where, spec, race, field, model):
+    """Append one race's inputs to <where>/<today>.jsonl.gz. Never raises."""
+    import gzip
+    import json
+    try:
+        os.makedirs(where, exist_ok=True)
+        today = datetime.date.today().isoformat()
+
+        def num(v):
+            return None if v is None or (isinstance(v, float) and math.isnan(v)) else v
+        line = {"made_on": today, "day": race["day"].isoformat(),
+                "lead_days": race.get("lead_days"), "source": spec.get("source"),
+                "meet_id": spec.get("meet_id"), "div_id": spec.get("div_id"),
+                "distance": race.get("distance"), "canonical_id": race.get("canonical_id"),
+                "model_made": model.get("made"),
+                "runners": [{"pid": r["pid"], "school": r.get("school"),
+                             "base_ln": r["base_ln"],
+                             "f": {k: num(v) for k, v in r["f"].items()}} for r in field]}
+        with gzip.open(os.path.join(where, today + ".jsonl.gz"), "at") as fh:
+            fh.write(json.dumps(line, default=str) + "\n")
+    except Exception as exc:                             # noqa: BLE001
+        print(f"race model inputs not kept: {type(exc).__name__}: {exc}", flush=True)
