@@ -754,7 +754,12 @@ bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$
 # (started in the background after 01_season_year; collected here, before
 #  the refit and the backfill read the grid)
 bgjoin 04e_weather_grid
-bgjoin 04e2_weather_recent
+# ★ NOT 04e2 (2026-10-29: one month's CDS request took 6.6 h -- 23,739 s,
+#   nearly all of it the CDS queue -- and the backfill waited on it). The
+#   recent weather is collected at the end (bgwait) instead: whatever it has
+#   written by the time 05 reads the grid is used, the rest on the next run.
+#   Rows go in with ON CONFLICT DO NOTHING, so a write beside the backfill's
+#   read is safe.
 # ! THE REFIT IS OPT-IN. fit_weather_correction is the heavy stage (hours)
 #   and its answer only changes when the grid's numbers do -- after
 #   scripts/recompute_apparent_temp.py, or a new season's worth of rows.
