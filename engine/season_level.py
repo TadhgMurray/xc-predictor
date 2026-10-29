@@ -664,8 +664,10 @@ def audit(cur, limit=25):
         LIMIT %s
     """, (limit,))
     print("\n[season] race verdict vs grade kind")
+    # ! A NULL LEVEL IS A ROW (refuseCollegeBeforeCollege blanks a verdict
+    #   and keeps the row); 2026-10-29 the f-string died on it after 4h 19m
     for lvl, kind, n in cur.fetchall():
-        print(f"    {lvl:<9} {kind:<8} {n:>12,}")
+        print(f"    {lvl or '(none)':<9} {kind or '-':<8} {n or 0:>12,}")
 
 
 # ------------------------------------------------------------------ #
@@ -690,12 +692,19 @@ def main(live=False):
             print("\n[season] resolving...")
             _resolveSeasons(cur)
 
-            audit(cur)
-
+            # ★ THE WRITE BEFORE THE AUDIT (2026-10-29): the audit is a
+            #   printout, and a crash in it rolled back four hours of work
             if live:
                 conn.commit()
                 print("\n[season] wrote athlete_season_level")
-            else:
+            try:
+                audit(cur)
+            except Exception as exc:                     # noqa: BLE001
+                print(f"[season] audit failed ({type(exc).__name__}: {exc}); "
+                      f"the table is {'written' if live else 'not written (dry run)'}")
+                if live:
+                    conn.rollback()
+            if not live:
                 conn.rollback()
                 print("\n[season] DRY RUN -- pass --write to save")
 

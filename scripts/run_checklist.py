@@ -159,16 +159,29 @@ def checkRestored(cur):
                 "(meet_id bigint, div_id bigint)")
     args = ",".join(cur.mogrify("(%s,%s)", k).decode() for k in keys)
     cur.execute("INSERT INTO _chk_restored VALUES " + args)
-    cur.execute("""
-        SELECT count(*) FROM _chk_restored c
-        WHERE NOT EXISTS (SELECT 1 FROM dist_override d
-                          WHERE d.meet_id = c.meet_id
-                            AND d.div_id = c.div_id)""")
-    missing = cur.fetchone()[0]
+    # ★ A VETO IS A SUPERSEDING DECISION, NOT A LOSS (2026-10-29: "115 of
+    #   4,978 MISSING"). wrong_distance's distance_pin vetoes a dict entry
+    #   whose distance the times contradict, and dump_overrides keeps it in
+    #   dist_override_vetoed for the next run to judge again -- the same
+    #   standing as a drop above. Only a key in neither table is lost.
+    vetoed_sql = ("AND NOT EXISTS (SELECT 1 FROM dist_override_vetoed v "
+                  "WHERE v.meet_id = c.meet_id AND v.div_id = c.div_id)"
+                  if _exists(cur, "dist_override_vetoed") else "")
+    cur.execute(f"""
+        SELECT count(*) FILTER (WHERE NOT EXISTS (
+                   SELECT 1 FROM dist_override d
+                   WHERE d.meet_id = c.meet_id AND d.div_id = c.div_id) {vetoed_sql}),
+               count(*) FILTER (WHERE NOT EXISTS (
+                   SELECT 1 FROM dist_override d
+                   WHERE d.meet_id = c.meet_id AND d.div_id = c.div_id))
+        FROM _chk_restored c""")
+    missing, absent = cur.fetchone()
+    vetoed = absent - missing
+    note = f" ({vetoed:,} more vetoed by distance_pin)" if vetoed else ""
     _mark("FAIL" if missing else "PASS", "restored corrections",
           f"{missing:,} of {len(keys):,} restored overrides MISSING from "
-          "dist_override" if missing else
-          f"all {len(keys):,} restored overrides present in dist_override")
+          f"dist_override{note}" if missing else
+          f"all {len(keys) - vetoed:,} restored overrides present in dist_override{note}")
 
 
 # ---- 3. canaries ------------------------------------------------------ #

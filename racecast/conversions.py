@@ -1381,6 +1381,19 @@ def ratingSeconds(rating, pool, sport="XC", distance=None, track=False):
 #   College track is fitted through 5000 m.
 XC_TRACK_M = {"hs": 5000.0, "college": 5000.0, "ms": 3200.0}
 
+# ★ COLLEGE WOMEN'S 5K, CALIBRATED TO WHAT THEY RAN (owner, 2026-10-29:
+#   "yes correct it"). scripts/diag_xc_track_gap.py --year 2025 on the
+#   server: a college woman's fall XC best, read on the track event's scale
+#   at 5000 m, came out 2.6% faster than her spring track best (5,319
+#   runners; -1.9% below 100, -2.8% 100-130, -2.9% 130+ on 45) -- the same
+#   size in every band, so it is a level, not a tilt. College men read
+#   -1.9% overall but +0.7% at 120 and up, where the owner's own read was
+#   that the top men's 5K is if anything slow, so men are left alone; high
+#   school's 3200 comparison is within 1% and its spring bests carry a
+#   winter of growth. Log units, added to the 5K column's seconds for an XC
+#   rating only (ratingClock); a track rating's 5K is its own event.
+XC_TRACK_CAL = {"college_f": 0.026}
+
 
 # ★★ WHERE THE AVERAGE OUTDOOR TRACK SITS ON THE CROSS COUNTRY SCALE (owner,
 #    2026-10-28, scripts/diag_xc_track_gap.py). The go-live anchors the
@@ -1516,6 +1529,9 @@ def ratingClock(rating, pool, sport="XC", distance=None):
     #   caller that says "on a track" reads TF since 2026-10-28, where the
     #   track is 0.0 anyway; an XC caller gets xcTrackZero's track.)
     secs = ratingSeconds(rating, pool, sport, d, track=(where == "on a track"))
+    cal = XC_TRACK_CAL.get(_bare(pool) or "") if where == "on a track" else None
+    if secs and cal:
+        secs = secs * math.exp(cal)
     t = clockFor(secs)
     if not t:
         return None
