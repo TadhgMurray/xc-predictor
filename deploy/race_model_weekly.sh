@@ -57,6 +57,7 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 mkdir -p "$LOGDIR" "$DIR"
+say() { echo "[race model] $(date -u +%H:%M) UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 fail() {
   echo "[race model] FAILED: $1 -- the served model is unchanged" | tee -a "$LOGDIR/summary.log"
   "$PY" scripts/notify_owner.py "$LOGDIR" "$1" 2>&1 | tail -3 || true
@@ -65,15 +66,19 @@ fail() {
 }
 
 exec 9>"$ROOT/.pipeline.lock"
+say "waiting for the pipeline lock (up to $WAIT_MIN min)"
 if ! flock -w $(( WAIT_MIN * 60 )) 9; then
   echo "[race model] the pipeline held $ROOT/.pipeline.lock for $WAIT_MIN min -- skipping this week"
   exit 0
 fi
+say "building the table (about 1.5 h): tail -f $LOGDIR/race_rows.log"
 "$PY" -u model/race_rows.py --out "$ROWS_NEW" --to "$TO" --val-from "$VAL_FROM" \
       --train-frac 1 > "$LOGDIR/race_rows.log" 2>&1 || fail race_rows
 flock -u 9
 exec 9>&-
+say "table built; lock released"
 
+say "fitting, held out then on every season (about 1.5 h): tail -f $LOGDIR/race_trees.log"
 "$PY" -u model/race_trees.py --rows "$ROWS_NEW" --val-from "$VAL_FROM" \
       --without dist_vs_course --refit-all --out "$PKL_NEW" > "$LOGDIR/race_trees.log" 2>&1 \
       || fail race_trees
