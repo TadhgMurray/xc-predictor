@@ -527,6 +527,24 @@ def runnerModel(seed=0, big=False):
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
 
 
+def fitByRaces(model, X, y, race):
+    """model.fit with early stopping on WHOLE races: every tenth race id is
+    held back (owner, 2026-10-29). sklearn's own validation_fraction takes
+    random rows, so a race's other runners sit on both sides and stopping
+    is a little optimistic. Falls back to that on a scikit-learn older than
+    1.4 (no X_val), and says so."""
+    import numpy as np
+    stop = (np.asarray(race) // 2) % 10 == 0      # // 2: the even/odd splits keep both
+    if not stop.any() or stop.all():
+        return model.fit(X, y)
+    try:
+        return model.fit(X[~stop], y[~stop], X_val=X[stop], y_val=y[stop])
+    except TypeError:
+        print("  (this scikit-learn cannot hold out whole races for early stopping: "
+              "random rows)", flush=True)
+        return model.fit(X, y)
+
+
 def levelModel(seed=0):
     from sklearn.ensemble import HistGradientBoostingRegressor
     return HistGradientBoostingRegressor(
@@ -859,7 +877,7 @@ def missCauses(facts):
 SPREAD_MIN, SPREAD_MAX = 0.003, 0.20
 
 
-def spreadModel(X, em, rows, seed=0, cap=1_500_000):
+def spreadModel(X, em, rows, seed=0, cap=1_500_000, race=None):
     """Trees for each runner's 1-sigma half-width: the 68.27th percentile of
     |within-race miss| given the runner inputs, fitted on `rows`."""
     import numpy as np
@@ -876,7 +894,12 @@ def spreadModel(X, em, rows, seed=0, cap=1_500_000):
         validation_fraction=0.1, n_iter_no_change=20, random_state=seed)
     # ! by the module's name, not __main__'s, so the page can unpickle it
     import race_trees as _rt
-    return _rt.Spread(m.fit(Xf[:, cols], np.abs(em[ix])), cols)
+    target = np.abs(em[ix])
+    if race is not None:
+        m = fitByRaces(m, Xf[:, cols], target, np.asarray(race)[ix])
+    else:
+        m = m.fit(Xf[:, cols], target)
+    return _rt.Spread(m, cols)
 
 
 class Spread:
@@ -888,12 +911,14 @@ class Spread:
         return self.model.predict(X[:, self.cols])
 
 
-def spreadReport(X, em, err_abs, even_rows, main_rows, band_sig, level_sig, seed=0):
+def spreadReport(X, em, err_abs, even_rows, main_rows, band_sig, level_sig, seed=0,
+                 race=None):
     """(per-runner place sigmas, their measured 90% multiple, report lines):
     fitted on the even races, checked on the odd ones, beside the band
     sigmas."""
     import numpy as np
-    ps = np.clip(spreadModel(X, em, even_rows, seed).predict(X), SPREAD_MIN, SPREAD_MAX)
+    ps = np.clip(spreadModel(X, em, even_rows, seed, race=race).predict(X),
+                 SPREAD_MIN, SPREAD_MAX)
     ts = np.sqrt(ps ** 2 + level_sig ** 2)
     fit, chk = even_rows & main_rows, ~even_rows & main_rows
     z90 = float(np.percentile(np.abs(err_abs[fit]) / ts[fit], 90)) if fit.any() else 1.645
@@ -1017,7 +1042,7 @@ def main():
      excluded, order, pid, ctx_packs, clv_pack, course, _seq_ev, _seq_idx) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
-    rm = runnerModel(a.seed, a.big).fit(Xt, r[~val])
+    rm = fitByRaces(runnerModel(a.seed, a.big), Xt, r[~val], race[~val])
     del Xt
     print(f"runner trees: {rm.n_iter_} rounds ({datetime.datetime.now() - t0})")
     Xv, yv, bv = X[val], y[val], base[val]
@@ -1251,12 +1276,14 @@ def main():
     #   for the narrowest fifth of runners AND the widest, not just overall.
     sizes_v = [e - s for s, e in sl]
     ps_r, z90_r, spread_lines = spreadReport(Xv, em, err_abs, np.repeat(even, sizes_v),
-                                             main_rows, place_sig, sg["_level"], a.seed)
+                                             main_rows, place_sig, sg["_level"], a.seed,
+                                             race=rv)
     lines += spread_lines
     sig_all = sigmas(lead_r == 0)
     # the page reads the set for the nearest lead (race_model)
     sig_lead = {int(ld): sigmas(lead_r == ld) for ld in set(lead_r.tolist())}
-    spread = spreadModel(Xv, em, np.ones(len(em), dtype=bool), a.seed) if a.out else None
+    spread = (spreadModel(Xv, em, np.ones(len(em), dtype=bool), a.seed, race=rv)
+              if a.out else None)
     print("\n".join(lines))
 
     if a.importance:

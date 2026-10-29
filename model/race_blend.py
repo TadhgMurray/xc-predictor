@@ -57,7 +57,8 @@ def _stopRaces(T, frac=0.1):
 
 
 def fitHgb(T, seed, big=False):
-    m = RT.runnerModel(seed, big).fit(T["Xt"], T["r"][~T["val"]])
+    m = RT.fitByRaces(RT.runnerModel(seed, big), T["Xt"], T["r"][~T["val"]],
+                      T["race"][~T["val"]])
     return T["base"][T["val"]] + m.predict(T["X"][T["val"]])
 
 
