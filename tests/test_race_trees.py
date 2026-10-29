@@ -249,3 +249,18 @@ def test_ranges_per_runner_stay_honest_where_one_width_per_band_is_not():
     bnd = [float(v.rstrip("%")) for v in lines[4].split()[2:]]
     assert max(abs(v - 68) for v in per) < 6
     assert bnd[0] > 90 and bnd[-1] < 50
+
+
+def test_early_stopping_holds_back_whole_races():
+    seen = {}
+
+    class _M:
+        def fit(self, X, y, X_val=None, y_val=None):
+            seen["fit"], seen["val"] = len(X), len(X_val)
+            return self
+    race = np.repeat(np.arange(40), 5)
+    X, y = np.zeros((200, 2)), np.zeros(200)
+    T.fitByRaces(_M(), X, y, race)
+    held = set(race[(race // 2) % 10 == 0])
+    assert seen["val"] == 5 * len(held) and seen["fit"] == 200 - seen["val"]
+    assert held == {0, 1, 20, 21}                     # whole races, even and odd alike
