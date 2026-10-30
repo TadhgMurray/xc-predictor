@@ -26,6 +26,7 @@
 #   school whose class votes conflict is FLAGGED, never averaged.
 
 import argparse
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -639,6 +640,24 @@ _COLL_SHARE = ("avg(CASE WHEN rr.pool LIKE 'college!_%%' ESCAPE '!' THEN 1.0 "
                "WHEN rr.pool IS NOT NULL THEN 0.0 END) AS coll_share")
 
 
+# ★ COLLEGE REGIONALS VOTE (owner, 2026-10-30: Wake Forest read "NCAA DI ·
+#   ACC" with no region). The pre-filter below only let names with champ /
+#   finals / meet of champions through, and "NCAA DI Southeast Regional"
+#   has none of those words -- so the region the college parser reads off a
+#   regional (_collegeUnits) was never voted, for any college. The parser's
+#   gate (_CHAMP_RX) takes regionals already; this lets the college ones
+#   reach it. ! COLLEGE ONLY: an HS "regional" without "champ" stays out
+#   until its effect on the high-school units is measured.
+_COLLEGE_REGIONAL_SQL = ("({col} ~* 'regional' AND {col} ~* "
+                         "'\\y(ncaa|naia|njcaa|uscaa|cccaa)\\y')")
+
+
+def _champSql(col):
+    """The pre-filter: a championship name, or a college regional."""
+    return (f"({col} ~* 'champ|finals|meet of champions' OR "
+            + _COLLEGE_REGIONAL_SQL.format(col=col) + ")")
+
+
 def _rows(cur, sport, lo, hi):
     """DISTINCT (school, season, meet_name, div_title, state) attendance
     rows from late-season meets, both feeds."""
@@ -652,7 +671,7 @@ def _rows(cur, sport, lo, hi):
             LEFT JOIN ranking_results rr ON rr.result_id = r.result_id AND rr.sport = 'XC'
             WHERE COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
-              AND m.meet_name ~* 'champ|finals|meet of champions'
+              AND {_champSql('m.meet_name')}
             GROUP BY 1, 2, 3, 4, 5, 6
         """, {"lo": lo, "hi": hi})
         yield from cur.fetchall()
@@ -667,7 +686,7 @@ def _rows(cur, sport, lo, hi):
             WHERE r.source = 'tfrrs'
               AND COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
-              AND mt.meet_name ~* 'champ|finals|meet of champions'
+              AND {_champSql('mt.meet_name')}
             GROUP BY 1, 2, 3, 4, 5, 6
         """, {"lo": lo, "hi": hi})
         yield from cur.fetchall()
@@ -685,7 +704,7 @@ def _rows(cur, sport, lo, hi):
                 FROM meets_tf mm
                 WHERE mm.meet_id = r.meet_id AND mm.source = r.source
                 LIMIT 1
-            ) m ON m.meet_name ~* 'champ|finals|meet of champions'
+            ) m ON {_champSql('m.meet_name')}
             LEFT JOIN ranking_results rr ON rr.result_id = r.result_id AND rr.sport = 'TF'
             WHERE COALESCE(TRIM(r.school), '') <> ''
               AND substr(r.date, 6, 2)::int BETWEEN %(lo)s AND %(hi)s
@@ -731,6 +750,18 @@ def rivals(counter):
         if yr == latest:
             out[u] += n
     return out.most_common()
+
+
+def _collegeHome(school, st):
+    """The state a college belongs to, from the meet's state (teamState
+    with a college pool); the meet's state when the identity cannot say."""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "racecast"))
+        from school_identity import teamState
+        return (teamState(school, "college_m", st or None) or st or "").upper()
+    except Exception:                                    # noqa: BLE001
+        return st
 
 
 def buildVotes(cur, sport, state_filter=None, split_level=False):
@@ -786,6 +817,15 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
             name_miss[meet_name] += 1
             continue
         name_hits[meet_name] += 1
+        # ★ A COLLEGE VOTES IN ITS OWN STATE (owner, 2026-10-30, Wake
+        #   Forest's missing region): st is the MEET's state, and a college
+        #   races its conference and its regional away -- the 2025 Southeast
+        #   Regional voted for a (Wake Forest, KY) row the page never asks
+        #   for. teamState is the boards' answer to "which college is this";
+        #   it needs school_identity's labels loaded (build_school_units
+        #   does), and without them the meet's state stands as before.
+        if split_level and is_coll:
+            st = _collegeHome(school, st)
         key = (school, st, bool(is_coll)) if split_level else (school, st)
         for kind, unit in facts:
             if kind == "state" and unit == "STATE":

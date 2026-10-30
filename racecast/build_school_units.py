@@ -245,6 +245,10 @@ def main():
     ap.add_argument("--sport", choices=("XC", "TF"))
     args = ap.parse_args()
     sports = (args.sport,) if args.sport else ("XC", "TF")
+    # the identity's labels and the college directory, for a college's own
+    # state (check_school_units._collegeHome)
+    from school_identity import loadLabels
+    loadLabels(getConn)
 
     with getConn() as conn, conn.cursor() as cur:
         rows, census = [], {}
