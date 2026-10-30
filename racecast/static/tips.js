@@ -21,11 +21,12 @@
  *   wider than a phone also answers -- so a badge opened at the bottom of the
  *   screen while the rating beside it (rating-explain.js, decided by width)
  *   opened by its cell. Now: a hover shows the small tooltip wherever a
- *   pointer is hovering (pointer events), and a click or tap on any badge opens a
- *   compact panel in rating-explain's look, anchored below or above the
- *   badge; a sheet from the bottom only on a phone-width screen (700 px, the
- *   rating panel's own rule). A badge that is a link still follows it with a
- *   mouse, and offers "More" in the panel on a touch screen.
+ *   pointer is hovering (pointer events), and a click or tap on any badge
+ *   opens a compact panel in rating-explain's look, anchored below or above
+ *   the badge on every screen -- never a sheet from the bottom (owner,
+ *   2026-10-30: "That should never be an option for any pop-up"). A badge
+ *   that is a link still follows it with a mouse, and offers "More" in the
+ *   panel on a touch screen.
  * ! With this script running, html.js-tips turns the CSS bubbles off
  *   (style.css); without it they are the fallback, as before.
  * ! Delegated from the document, so badges drawn later (boards, predictions,
@@ -44,9 +45,7 @@
   var lastPointer = "mouse";
   document.addEventListener("pointerdown", function (e) { lastPointer = e.pointerType || "mouse"; }, true);
   var floatEl = null, panel = null, backdrop = null, openFor = null, panelFor = null, lastFocus = null;
-  function narrow() {
-    return !!(window.matchMedia && window.matchMedia("(max-width: 700px)").matches);
-  }
+
 
   function badgeOf(t) {
     return t && t.closest ? t.closest(".flag[data-blurb], .flag[data-title]") : null;
@@ -93,10 +92,10 @@
     if (lastFocus && lastFocus.focus) { try { lastFocus.focus({ preventScroll: true }); } catch (e) { /* old browser */ } }
   }
   function placePanel() {
-    if (!panel || panel.hidden || !panelFor || panel.classList.contains("rx-sheet")) return;
+    if (!panel || panel.hidden || !panelFor) return;
     var r = panelFor.getBoundingClientRect();
     var vw = document.documentElement.clientWidth, vh = window.innerHeight;
-    var w = Math.min(320, vw - 24);
+    var w = Math.min(320, vw - 16);
     panel.style.width = w + "px";
     var h = panel.offsetHeight;
     var top = (vh - r.bottom - 12 >= h || r.top - 12 < h) ? r.bottom + 6 : r.top - 6 - h;
@@ -141,9 +140,9 @@
       e.stopPropagation();
       closePanel();
     });
-    var sheet = narrow();
-    panel.classList.toggle("rx-sheet", sheet);
-    backdrop.hidden = !sheet;
+    // never a sheet from the bottom (owner, 2026-10-30): beside the badge
+    panel.classList.remove("rx-sheet");
+    backdrop.hidden = true;
     panel.hidden = false;
     panelFor = el;
     lastFocus = el;
@@ -159,7 +158,7 @@
       if (panel && !panel.hidden && !panel.contains(e.target)) closePanel();
       return;
     }
-    if (lastPointer !== "touch" && !narrow() && el.tagName === "A") return;   // a link, with a mouse: follow it
+    if (lastPointer !== "touch" && el.tagName === "A") return;   // a link, with a mouse: follow it
     e.preventDefault();
     e.stopPropagation();
     if (panelFor === el) { closePanel(); return; }

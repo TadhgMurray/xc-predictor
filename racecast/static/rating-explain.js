@@ -12,10 +12,10 @@
  *
  * ! LAZY: nothing is fetched until a rating is pressed, so a 200-row race
  *   page costs nothing extra to load.
- * ! A POPOVER BESIDE THE CELL ON DESKTOP, A SHEET FROM THE BOTTOM ON A
- *   PHONE. On a phone every table scrolls inside its own box (layout.js),
- *   so anything anchored to a cell would be clipped by that box; the sheet
- *   is fixed to the viewport instead. Either way it hangs off <body>.
+ * ! A POPOVER BESIDE THE CELL, ON EVERY SCREEN (owner, 2026-10-30: no
+ *   pop-up is ever a sheet from the bottom). It hangs off <body> with a
+ *   fixed position, so the box a phone's table scrolls in (layout.js)
+ *   cannot clip it.
  * ! THE PAGE'S SCALE IS NOT THE STEPS' SCALE. The steps are on the pool the
  *   rating was solved in; when scale-view.js is showing the HS-equivalent,
  *   the sheet says both numbers rather than leave a reader to wonder why
@@ -27,9 +27,6 @@
   var cache = {};                      /* "tf:123" -> body (or a pending Promise) */
   var pop = null, backdrop = null, opener = null, anchorCell = null;
 
-  function isPhone() {
-    return window.matchMedia && window.matchMedia("(max-width: 700px)").matches;
-  }
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -127,8 +124,11 @@
     if (!m) return;
     opener = rv;
     anchorCell = td;
-    pop.classList.toggle("rx-sheet", isPhone());
-    backdrop.hidden = !isPhone();
+    // ★ NEVER A SHEET (owner, 2026-10-30: "they show as a tab in the bottom.
+    //   That should never be an option for any pop-up"): beside the cell on
+    //   every screen, as tips.js's badge panels are
+    pop.classList.remove("rx-sheet");
+    backdrop.hidden = true;
     pop.hidden = false;
     pop.innerHTML = head(null) +
       '<div class="rx-body"><p class="rx-loading">Working it out…</p></div>';

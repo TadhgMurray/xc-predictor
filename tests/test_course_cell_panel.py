@@ -22,7 +22,10 @@ def test_badges_hover_and_open_a_panel_beside_them():
     assert 'addEventListener("pointerover"' in tips and 'e.pointerType === "touch"' in tips
     assert '"(hover: none)"' not in tips and "any-hover" not in tips.split("*/", 1)[1]
     assert 'panel.className = "rx-pop rx-tip";' in tips
-    assert 'window.matchMedia("(max-width: 700px)")' in tips      # the rating panel's own rule
+    # never a sheet from the bottom, on any screen (owner, 2026-10-30)
+    assert 'panel.classList.remove("rx-sheet");' in tips and "max-width: 700px" not in tips
+    rx = read("racecast", "static", "rating-explain.js")
+    assert 'pop.classList.remove("rx-sheet");' in rx and "isPhone" not in rx
     assert "function placePanel()" in tips and "function showSheet" not in tips
     # every badge, the course cell included
     assert 'closest(".flag[data-blurb], .flag[data-title]")' in tips and "dv-day" not in tips.split("function badgeOf")[1][:200]
