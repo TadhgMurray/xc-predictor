@@ -209,6 +209,18 @@ def _deleteQueueRow(conn, meet_id, sport):
         (meet_id, sport),
     )
 
+# _markNotAMeet
+# Purpose: State 4 ("not a meet") with the time we asked, for a cross country
+#          id that showed nothing -- kept so queue_meets.tfrrsHoles can ask
+#          again once it has rested. Scoped to source='tfrrs'. Caller commits.
+def _markNotAMeet(conn, meet_id, sport):
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE meet_queue SET scraped = 4, requeued_at = now() "
+        "WHERE meet_id = %s AND sport = %s AND source = 'tfrrs'",
+        (meet_id, sport),
+    )
+
 # _markMeetDone
 # Purpose: Flip a tfrrs meet's row to scraped=1 (success) - the LAST step, run
 #          only after a full save. Scoped to (meet_id, sport, source='tfrrs')
@@ -285,6 +297,14 @@ async def processMeet(conn, meet_id, sport, meet_url, page=None):
         return _meetBundle(meet_id, sport, False, [], [], note=f"error: {exc}")
 
     if not _isMeetPage(html, meet_id, sport):
+        # ★ CROSS COUNTRY KEEPS THE ROW (2026-10-30, the Mike Woods Classic):
+        #   an XC id with nothing to show is usually a meet not posted yet,
+        #   and queue_meets.tfrrsHoles re-asks it daily below the watermark.
+        #   Track's ids are shared with its event pages, which are deleted.
+        if sport == SPORT_XC:
+            await asyncio.to_thread(_markNotAMeet, conn, meet_id, sport)
+            await asyncio.to_thread(conn.commit)
+            return _meetBundle(meet_id, sport, True, [], [], note="not a meet yet - kept")
         # _deleteQueueRow + commit are blocking psycopg2 -> run in a thread.
         await asyncio.to_thread(_deleteQueueRow, conn, meet_id, sport)
         await asyncio.to_thread(conn.commit)

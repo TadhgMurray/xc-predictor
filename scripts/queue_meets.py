@@ -219,6 +219,60 @@ def scheduledAbove(cur, sport, top, source="anet"):
     return cur.fetchone()[0]
 
 
+
+# ★ TFRRS'S HOLES BELOW THE WATERMARK (owner, 2026-10-30: "it still hasn't
+#   scraped the Mike Woods Classic" -- XC 28447, 571 ids under the watermark
+#   and in no queue state at all). TFRRS hands out an id when a meet is
+#   created and shows nothing until its results are posted; the drain called
+#   that "not a meet" and DELETED the row, and the forward walk only ever
+#   looks above the watermark. So a meet created early or posted late was
+#   never asked again. run_tfrrs now keeps a cross country "not a meet" as
+#   state 4 with its requeued_at, and this re-asks those below the watermark,
+#   at most once per TFRRS_HOLE_REST_HOURS, within TFRRS_HOLE_SPAN ids of it;
+#   ids in the span with no row (deleted before this) are queued once. Holes
+#   are rare in the XC id space (track's ids are their own, ~97k against
+#   ~29k), so a night asks a handful.
+# ! CROSS COUNTRY ONLY. Track's id space is shared with its event pages, which
+#   are deleted on purpose (run_tfrrs._deleteQueueRow).
+TFRRS_HOLE_SPAN = int(os.environ.get("SEED_TFRRS_HOLE_SPAN", "1500"))
+TFRRS_HOLE_REST_HOURS = float(os.environ.get("SEED_TFRRS_HOLE_REST_HOURS", "20"))
+
+
+def tfrrsHoles(cur, top, write=False, span=TFRRS_HOLE_SPAN,
+               rest_hours=TFRRS_HOLE_REST_HOURS):
+    """(queued, re-asked) for TFRRS cross country ids in [top - span, top]:
+    ids with no queue row are queued, and state-4 rows not asked within
+    rest_hours go back to due. With write=False, the counts only."""
+    lo = max(0, int(top) - int(span))
+    if not write:
+        cur.execute("""
+            SELECT count(*) FROM generate_series(%s, %s) g
+            WHERE NOT EXISTS (SELECT 1 FROM meet_queue q WHERE q.meet_id = g
+                              AND q.sport = 'XC' AND q.source = 'tfrrs')
+        """, (lo, top))
+        missing = cur.fetchone()[0]
+        cur.execute("""
+            SELECT count(*) FROM meet_queue
+            WHERE source = 'tfrrs' AND sport = 'XC' AND scraped = 4
+              AND meet_id BETWEEN %s AND %s
+              AND (requeued_at IS NULL OR requeued_at < now() - %s * interval '1 hour')
+        """, (lo, top, rest_hours))
+        return missing, cur.fetchone()[0]
+    cur.execute("""
+        INSERT INTO meet_queue (meet_id, sport, source, scraped, requeued_at)
+        SELECT g, 'XC', 'tfrrs', 0, now() FROM generate_series(%s, %s) g
+        ON CONFLICT (meet_id, sport, source) DO NOTHING
+    """, (lo, top))
+    queued = cur.rowcount
+    cur.execute("""
+        UPDATE meet_queue SET scraped = 0, requeued_at = now()
+        WHERE source = 'tfrrs' AND sport = 'XC' AND scraped = 4
+          AND meet_id BETWEEN %s AND %s
+          AND (requeued_at IS NULL OR requeued_at < now() - %s * interval '1 hour')
+    """, (lo, top, rest_hours))
+    return queued, cur.rowcount
+
+
 # ------------------------------------------------------------------ the work
 
 def ensureRequeuedAt(cur):
@@ -857,6 +911,14 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         if write and todo:
             out["requeued"] = requeue(cur, sport, todo, source)
             say(f"  [{tag}]   {out['requeued']:,} reset to scraped=0")
+        if source == "tfrrs" and sport == "XC":
+            if write:
+                ensureRequeuedAt(cur)
+            queued, woken = tfrrsHoles(cur, top, write=write)
+            out["holes"] = queued + woken
+            say(f"  [{tag}] holes in the last {TFRRS_HOLE_SPAN:,} ids below the watermark: "
+                f"{queued:,} never queued, {woken:,} 'not a meet' due a re-ask"
+                + ("" if write else " (dry run)"))
     return out
 
 
