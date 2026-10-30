@@ -1,22 +1,19 @@
 # Project: xc-predictor
-# File:    tfrrs/fetch/fetch_tf.py
-# Purpose: Fetch a TFRRS results page's raw HTML, via an escalating ladder that
-#          spends the least effort that works:
-#            tier 1  requests.get        (cheap, no browser)
-#            tier 2  curl_cffi           (Chrome TLS fingerprint — defeats most
-#                                         fingerprint blocks, still no browser)
-#            tier 3  Playwright in-page  (heavy; only if a live page is supplied)
-#          Mirrors the project's anet fast-path-with-fallback philosophy
-#          (getAllResultsTF) and reuses the same exception TYPES so a launcher
-#          can catch blocks uniformly across both sources.
+# File:    tfrrs/scraper/fetch_tfrrs.py
+# Purpose: Fetch a TFRRS results page's raw HTML in the scraper's real Chrome
+#          (Playwright), the way the athletic.net launcher reads its pages.
 #
-#          KEY DIFFERENCE FROM anet: anet expects JSON, so "got HTML" = blocked.
+# ★ THE BROWSER ONLY (owner, 2026-10-30: "it should just be like the athletic
+#   net launcher where it uses playwright and an actual browser"). There used
+#   to be a ladder in front of it: a plain requests.get under a made-up
+#   Windows Chrome user agent, then curl_cffi impersonating Chrome's TLS
+#   handshake to get past fingerprint checks. Both are gone. The page is
+#   loaded in the real browser with its own user agent; a challenge page is
+#   a block, counted and left alone -- nothing here tries to get past one.
+#
 #          TFRRS expects HTML (the results page IS html), so the failure signal
 #          is content-based: did we get the RESULTS page, or a CHALLENGE page?
-#          That distinction (not the status code) drives tier escalation.
  
-import requests
-from curl_cffi import requests as curl_requests   # Chrome-impersonating HTTP
 import sys
 import asyncio
 
@@ -122,46 +119,10 @@ def _classifyResponse(status, html):
 # ------------------------------------------------------------------ #
 
 
-# A realistic browser User-Agent. Tier 1 (plain requests) sends no browser
-# fingerprint, but a real UA string still avoids the laziest UA-only blocks.
-_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
- 
 # Per-request timeout (seconds). Generous like the anet 15s budget; a real
 # TFRRS page returns fast, so this only guards against a hung connection.
 _TIMEOUT = 20
 
-# _tierRequests
-# Purpose: Tier 1 — a plain requests.get. Cheapest path; works if TFRRS serves
-#          the page without a fingerprint challenge.
-# Arguments:
-#           url: the TFRRS results page URL.
-# Output:   (status, html). On any transport error, (None, "") so the ladder
-#           escalates instead of crashing.
-def _tierRequests(url):
-    try:
-        resp = requests.get(url, headers={"User-Agent": _UA}, timeout=_TIMEOUT)
-        return resp.status_code, resp.text
-    except requests.RequestException:
-        # DNS/connection/timeout — let the next tier try.
-        return None, ""
-    
-# _tierCurlCffi
-# Purpose: Tier 2 — curl_cffi impersonating Chrome. Sends a real Chrome TLS
-#          fingerprint, defeating fingerprint-based blocks that stop tier 1
-#          without needing a full browser.
-# Arguments:
-#           url: the TFRRS results page URL.
-# Output:   (status, html), or (None, "") on transport error.
-def _tierCurlCffi(url):
-    try:
-        # impersonate="chrome" makes the TLS/JA3 handshake look like real Chrome.
-        resp = curl_requests.get(url, impersonate="chrome", timeout=_TIMEOUT)
-        return resp.status_code, resp.text
-    except Exception:
-        # curl_cffi raises its own error types; any failure -> escalate.
-        return None, ""
-    
 # _tierPlaywright
 # Purpose: Tier 3 — fetch the page's HTML from inside a live Playwright page,
 #          inheriting its cookies/Cloudflare clearance (the anet model). Only
@@ -215,32 +176,23 @@ def _handleVerdict(status, html):
     return None
 
 # fetchTFPage
-# Purpose: Fetch a TFRRS results page's HTML via the escalating ladder. Returns
-#          the raw HTML of a confirmed results page, or raises if every tier was
-#          blocked. SYNC: tiers 1-2 are plain HTTP; the optional Playwright tier
-#          is async and is only reached if a `page` is supplied AND tiers 1-2
-#          both failed.
+# Purpose: Load a TFRRS results page in the session's browser page and return
+#          its HTML when it is the results page.
 # Arguments:
 #           url:  the TFRRS results page URL.
-#           page: an OPTIONAL Playwright async page for tier 3. If omitted, the
-#                 ladder stops after tier 2 (no browser fallback available).
+#           page: the session's Playwright async page (required).
 # Output:   the results-page HTML string. Raises RateLimitException on a 429,
-#           or CloudflareException if all available tiers returned a block.
+#           IPBlockedException on a CloudFront 403, CloudflareException on a
+#           challenge page.
 async def fetchTFPage(url, page=None):
-    # Tier 2 — curl_cffi, also blocking -> thread.
-    status, body = await asyncio.to_thread(_tierCurlCffi, url)
+    if page is None:
+        raise RuntimeError("fetchTFPage reads TFRRS in a browser page; "
+                           "launch_tfrrs opens one per session")
+    status, body = await _tierPlaywright(page, url)
     html = _handleVerdict(status, body)
     if html is not None:
         return html
-
-    # Tier 3 — async Playwright, awaited directly (no asyncio.run bridge).
-    if page is not None:
-        status, body = await _tierPlaywright(page, url)
-        html = _handleVerdict(status, body)
-        if html is not None:
-            return html
-
-    raise CloudflareException(f"TFRRS: all tiers blocked for {url}")
+    raise CloudflareException(f"TFRRS: blocked for {url}")
  
  
 # _runPlaywrightTier

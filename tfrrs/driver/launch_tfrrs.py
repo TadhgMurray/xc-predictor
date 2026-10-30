@@ -59,9 +59,8 @@ def _urlFor(meet_id, sport):
     return f"https://www.tfrrs.org/results/{meet_id}"
 
 # _openPage
-# Purpose: Launch a single headful Chromium page for fetch_tf's tier-3 fallback.
-#          Headful because Cloudflare blocks headless (the anet lesson). Tiers 1-2
-#          carry the load; this page only runs when both fail.
+# Purpose: Launch a single headful Chrome page, which fetch_tfrrs reads every
+#          TFRRS page through (no plain-HTTP path since 2026-10-30).
 # Arguments: none.
 # Output:   (playwright, browser, page) bundled so _closePage can tear all down.
 def _openPage():

@@ -349,7 +349,7 @@ async def _processXCMeet(html, meet_id, page=None):
 # Arguments:
 #           landing_html: the meet landing page HTML (already fetched).
 #           meet_id:      stamped onto every row.
-#           page:         optional Playwright page for fetchTFPage tier-3.
+#           page:         the session's Playwright page (fetchTFPage reads through it).
 # Output:   a meet bundle.
 async def _processTFMeet(landing_html, meet_id, page=None):
     meta  = parseXCMeetMeta(landing_html)

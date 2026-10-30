@@ -30,4 +30,3 @@ playwright-stealth       # anet launcher only
 beautifulsoup4           # tfrrs parsers
 lxml                     # the parser bs4 is asked for BY NAME: BeautifulSoup(html, "lxml")
 requests                 # tfrrs fetch tier 1
-curl_cffi                # tfrrs fetch tier 2 (Chrome TLS fingerprint)

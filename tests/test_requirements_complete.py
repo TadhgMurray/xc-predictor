@@ -120,7 +120,7 @@ class EveryDependencyIsWrittenDown(unittest.TestCase):
                   encoding="utf-8") as fh:
             scrape = fh.read().lower()
         for pkg in ("psycopg2-binary", "playwright", "beautifulsoup4",
-                    "lxml", "requests", "curl_cffi"):
+                    "lxml", "requests"):
             self.assertIn(pkg, scrape)
 
 
