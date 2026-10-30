@@ -254,7 +254,7 @@ def main():
         rows, census = [], {}
         for sport in sports:
             votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(cur, sport, split_level=True)
-            n_ok = n_clash = 0
+            n_ok = n_clash = n_coll = 0
             for (school, st, _coll), kinds in votes.items():
                 if not isTeam(school):
                     continue
@@ -263,10 +263,15 @@ def main():
                     continue
                 rows.append(row[:2] + [sport] + row[2:])
                 n_ok += 1
+                n_coll += 1 if _coll else 0
                 n_clash += 1 if row[-3] else 0
             census[sport] = (n_ok, n_clash, st_)
+            # ★ COLLEGE AND SCHOOL ROWS APART (2026-10-30): a college's votes
+            #   moved to its own state, so its away-meet rows merged -- the
+            #   college count falls and the school count must not move
             print(f"  {sport}: {n_ok:,} schools with a unit "
-                  f"({n_clash:,} carry a latest-season conflict) "
+                  f"({n_coll:,} college rows, {n_ok - n_coll:,} school rows; "
+                  f"{n_clash:,} carry a latest-season conflict) "
                   f"from {st_['hits']:,} parsed rows")
         n_area = crossFillAreas(rows)
         if n_area:
