@@ -196,7 +196,7 @@
         <div class="rc-subject-who"><div class="rc-subject-name">${who}</div><div class="rc-subject-sub">${sub}</div>
           <div class="rc-subject-times">${times}</div></div>
       </div>
-      <div class="rc-subject-note">Placed on the ${state.gender === "m" ? "men's" : "women's"} ${state.sport === "XC" ? "cross country" : "track"} ${state.view === "transfers" ? "transfers below, from their latest college season (college scale)" : "recruits below"}. <button type="button" class="rc-link" id="r-clear">Change</button></div>`;
+      <div class="rc-subject-note">Placed on the ${state.gender === "m" ? "men's" : "women's"} ${state.sport === "XC" ? "cross country" : "track"} ${state.view === "transfers" ? "transfers below, from their latest college season (as its HS-equivalent rating)" : "recruits below"}. <button type="button" class="rc-link" id="r-clear">Change</button></div>`;
     $("r-clear").addEventListener("click", () => {
       $("r-athlete").value = ""; qbox.value = ""; $("r-time").value = "";
       load();
@@ -318,10 +318,10 @@
     return `<thead><tr><th>School</th><th>Division</th><th>Conference</th>
       <th class="num" title="athletes who arrived from another college, in the classes counted">In</th>
       <th class="num" title="athletes who left for another college">Out</th>
-      <th class="num" title="the typical transfer's last season at their old college (college scale)">Before</th>
-      <th class="num" title="the typical transfer's first season here (college scale)">Typical here</th>
+      <th class="num" title="the typical transfer's last season at their old college (HS-equivalent rating)">Before</th>
+      <th class="num" title="the typical transfer's first season here (HS-equivalent rating)">Typical here</th>
       <th class="num" title="the typical change from the old college to this one">Change</th>
-      <th class="num" title="the fastest transfer's first season here (college scale)">Fastest</th>
+      <th class="num" title="the fastest transfer's first season here (HS-equivalent rating)">Fastest</th>
       ${fkTh("5K")}${withTier ? "<th>You</th>" : ""}</tr></thead>`;
   }
 
@@ -339,7 +339,7 @@
       $("r-out").innerHTML = `<p class="meta">No college matches. Widen the filters.</p>`;
       return;
     }
-    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes with transfers. Ratings on the college scale: a transfer's last season before and first season here; the 5K is the typical transfer's.</p>
+    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes with transfers. College seasons as HS-equivalent ratings, the scale the rest of the site shows: a transfer's last season before and first season here; the 5K is the typical transfer's.</p>
       <div class="r-scroll"><table class="rk rc-tbl">${transferHead(d.rating != null)}<tbody>${rows.map((r) => transferRow(r, d.rating != null)).join("")}</tbody></table></div>`;
   }
 

@@ -12365,16 +12365,16 @@ def api_recruiting_transfers():
     # the tiers read the transfers' own college-scale spread (min/p25/median/
     # p75/max), the same rule the recruits' table uses on theirs
     R.placeRows([r for r in rows if r.get("n")], rating)
-    # the typical transfer's college-scale rating as a track 5K, on the
-    # college pool (the recruits' column reads the high-school pool)
+    # the typical transfer's HS-equivalent as a track 5K, read on the HS
+    # pool like the recruits' column beside it
     from conversions import stampFiveK
-    stampFiveK(rows, "median", pool="college_" + f["gender"], sport=f["sport"])
+    stampFiveK(rows, "median", pool="hs_" + f["gender"], sport=f["sport"])
     stampCrests(rows, pool="college_" + f["gender"])
     return jsonify({"rows": rows, "gender": f["gender"], "sport": f["sport"],
                     "sort": f["sort"], "built": built, "total": len(every),
                     "divisions": R.distinctUnits(every, "division"),
                     "subject": subject, "subject_error": serr, "rating": rating,
-                    "subject_times": (R.timesFor(rating, f["gender"], level="college")
+                    "subject_times": (R.timesFor(rating, f["gender"])
                                       if rating is not None else None)})
 
 

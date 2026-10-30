@@ -143,7 +143,9 @@
         <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong>{% if r.source != "hs" %} <span class="dist-note" title="No high-school season linked: the first college season, on the high-school scale, less the measured freshman gain">est.</span>{% endif %}</td>
         {{ fk(r.recruit_rating, "hs_" ~ gender, b.sport, none, "5K") }}
         <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>
-        <td class="num">{{ "%.1f"|format(r.first_rating) }}<span class="dist-note-quiet"> college scale</span></td>
+        {# the first college season as its HS-equivalent, the number the
+           rest of the site shows a collegian (owner, 2026-10-30) #}
+        <td class="num">{% if r.hs_equiv is not none %}{{ "%.1f"|format(r.hs_equiv) }}{% else %}{{ "%.1f"|format(r.first_rating) }}<span class="dist-note-quiet"> college scale</span>{% endif %}</td>
         <td>{{ r.grade_label or " - " }}</td>
       </tr>
     {% endfor %}
@@ -160,7 +162,7 @@
   <section class="rc-panel" id="transfers" data-panel="transfers">
   {% if not tabbed %}<h2>Transfers</h2>{% endif %}
   <p class="meta rc-lead">Athletes who came to {{ school }} from another college ({{ t_in }}), and who left it for one ({{ t_out }}), in the classes counted.
-     Ratings{{ rating_i() }} are college-scale season ratings: the last season at the old school and the first at the new.</p>
+     Ratings{{ rating_i() }} are college seasons as HS-equivalent ratings: the last season at the old school and the first at the new.</p>
   {% for b in tr_blocks %}
   {% set t = b.transfers %}
   {% for side, rows, ts, head in [("in", t["in"], t.in_summary, "transfers in"), ("out", t["out"], t.out_summary, "transfers out")] %}
@@ -197,9 +199,9 @@
   {% if not tabbed and blocks %}<h2>How this works</h2>{% endif %}
   <p class="meta">A recruit is an athlete's first college season; "recruited at" is their last high-school season where Racecast has it,
      otherwise (est.) the first college season on the high-school scale less the measured freshman gain. Ratings are on the
-     high-school {{ who|lower }}'s scale so they compare with your own; the college-scale column is the number their college page shows.</p>
+     high-school {{ who|lower }}'s scale so they compare with your own; the first college season is shown the same way, as its HS-equivalent rating.</p>
   <p class="meta">A transfer is the first season at a new college after seasons at another, in the same sport. Both ratings are
-     college-scale season ratings: the last season at the old school and the first at the new. An athlete whose history returns
+     college seasons shown as HS-equivalent ratings: the last season at the old school and the first at the new. An athlete whose history returns
      to a school is left out, since that is usually two spellings of one school rather than a move.</p>
   </section>
   </div>

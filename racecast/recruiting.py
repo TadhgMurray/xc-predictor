@@ -1066,8 +1066,11 @@ def schoolTransfers(cur, school, state, gender, sport):
         rows = _rowsOf(cur)
         for r in rows:
             r["class_label"] = labelYear(r["year"], sport)
+            # the public (HS-equivalent) number, as every other page shows a
+            # collegian (owner, 2026-10-30)
             for k in ("to_rating", "from_rating"):
-                r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+                h = _hsEquiv(r.get(k), f"college_{gender}", sport)
+                r[k] = round(h, 1) if h is not None else None
             r["gain"] = (round(r["to_rating"] - r["from_rating"], 1)
                          if r["to_rating"] is not None and r["from_rating"] is not None else None)
             r["from_label"] = schoolLabelIn(r["from_school"], r.get("from_state"), trusted=True)
@@ -1115,14 +1118,42 @@ def transferCounts(cur, gender, sport):
 _TRANSFERS = {}                  # (gender, sport) -> (at, rows)
 
 
+def _pct(vals, q):
+    """percentile_cont over a sorted list (linear between ranks)."""
+    if not vals:
+        return None
+    pos = (len(vals) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(vals) - 1)
+    return vals[lo] + (vals[hi] - vals[lo]) * (pos - lo)
+
+
+def _hsEquiv(rating, pool, sport):
+    """A college-pool rating as the public HS-equivalent number (pool_view.
+    toHs); the rating itself when the pool has no HS twin."""
+    if rating is None:
+        return None
+    try:
+        from pool_view import toHs
+        h = toHs(float(rating), pool, sport)
+    except Exception:                                    # noqa: BLE001
+        h = None
+    return float(h) if h is not None else float(rating)
+
+
 def transferTable(cur, gender, sport):
-    """Every college's transfers summarised, for one gender and sport, ON
-    THE COLLEGE SCALE (owner, 2026-10-30: "transfers should use a collegiate
-    rating"): the in-transfers' first season at the new school -- median,
-    quartiles, fastest -- with their last season before and the typical
-    change, and the count who left. Rows carry the same keys the school
-    table's sorts read (median, p75, min, n, school). Cached as the school
-    table is; [] when college_transfer is not built."""
+    """Every college's transfers summarised, for one gender and sport: the
+    in-transfers' first season at the new school -- median, quartiles,
+    fastest -- with their last season before and the typical change, and
+    the count who left. Rows carry the same keys the school table's sorts
+    read (median, p75, min, n, school). Cached as the school table is; []
+    when college_transfer is not built.
+
+    ★ COLLEGE SEASONS, ON THE PUBLIC SCALE (owner, 2026-10-30: "transfers
+      should use a collegiate rating" and then "it doesn't use hs
+      equivalent rating"). Both ends are college seasons, each converted to
+      its HS-equivalent (pool_view.toHs) before the medians and the changes
+      are taken -- the number every other page shows for a collegian."""
     from school_identity import schoolLabelIn
     key = (gender, sport)
     with _schools_lock:
@@ -1131,43 +1162,48 @@ def transferTable(cur, gender, sport):
             return hit[1]
     if not _tableExists(cur, "college_transfer"):
         return []
+    pool = f"college_{gender}"
     cur.execute("""
-        SELECT school, state, min(division) AS division, min(conference) AS conference,
-               count(*)::int AS n,
-               percentile_cont(0.25) WITHIN GROUP (ORDER BY to_rating)  AS p25,
-               percentile_cont(0.5)  WITHIN GROUP (ORDER BY to_rating)  AS median,
-               percentile_cont(0.75) WITHIN GROUP (ORDER BY to_rating)  AS p75,
-               min(to_rating) AS min, max(to_rating) AS max,
-               percentile_cont(0.5)  WITHIN GROUP (ORDER BY from_rating) AS before,
-               percentile_cont(0.5)  WITHIN GROUP (ORDER BY to_rating - from_rating) AS gain,
-               min(year) AS first_year, max(year) AS last_year
+        SELECT school, state, division, conference, to_rating, from_rating, year,
+               from_school, from_state
         FROM   college_transfer
         WHERE  gender = %(g)s AND sport = %(s)s
-        GROUP  BY school, state
     """, {"g": gender, "s": sport})
-    rows = {(r["school"], r["state"]): dict(r) for r in _rowsOf(cur)}
-    cur.execute("""
-        SELECT from_school AS school, from_state AS state, count(*)::int AS n_out
-        FROM   college_transfer
-        WHERE  gender = %(g)s AND sport = %(s)s
-        GROUP  BY 1, 2
-    """, {"g": gender, "s": sport})
+    ins, outs = {}, {}
     for r in _rowsOf(cur):
-        row = rows.setdefault((r["school"], r["state"]),
-                              {"school": r["school"], "state": r["state"], "n": 0,
-                               "division": None, "conference": None})
-        row["n_out"] = r["n_out"]
+        to_h = _hsEquiv(r["to_rating"], pool, sport)
+        from_h = _hsEquiv(r["from_rating"], pool, sport)
+        g = ins.setdefault((r["school"], r["state"]), {
+            "school": r["school"], "state": r["state"], "division": r.get("division"),
+            "conference": r.get("conference"), "to": [], "from": [], "gain": [], "years": []})
+        g["division"] = g["division"] or r.get("division")
+        g["conference"] = g["conference"] or r.get("conference")
+        g["to"].append(to_h)
+        if from_h is not None:
+            g["from"].append(from_h)
+            g["gain"].append(to_h - from_h)
+        g["years"].append(r["year"])
+        k = (r["from_school"], r.get("from_state"))
+        outs[k] = outs.get(k, 0) + 1
     out = []
-    for r in rows.values():
-        r.setdefault("n_out", 0)
-        for k in ("p25", "median", "p75", "min", "max", "before", "gain"):
-            r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
-        r["label"] = schoolLabelIn(r["school"], r.get("state"), trusted=True) if r.get("school") else ""
-        fy, ly = r.get("first_year"), r.get("last_year")
-        r["classes"] = ("" if fy is None else labelYear(fy, sport) if fy == ly
-                        else f"{labelYear(fy, sport)} to {labelYear(ly, sport)}")
-        out.append(r)
-    out.sort(key=lambda r: (-(r["n"] or 0), r["school"]))
+    for k in set(ins) | set(outs):
+        g = ins.get(k)
+        row = {"school": k[0], "state": k[1], "n": 0, "n_out": outs.get(k, 0),
+               "division": None, "conference": None}
+        if g:
+            to, fr, gain = sorted(g["to"]), sorted(g["from"]), sorted(g["gain"])
+            row.update(division=g["division"], conference=g["conference"], n=len(to),
+                       p25=_pct(to, 0.25), median=_pct(to, 0.5), p75=_pct(to, 0.75),
+                       min=to[0], max=to[-1], before=_pct(fr, 0.5), gain=_pct(gain, 0.5),
+                       first_year=min(g["years"]), last_year=max(g["years"]))
+        for f in ("p25", "median", "p75", "min", "max", "before", "gain"):
+            row[f] = round(float(row[f]), 1) if row.get(f) is not None else None
+        row["label"] = schoolLabelIn(row["school"], row.get("state"), trusted=True) if row.get("school") else ""
+        fy, ly = row.get("first_year"), row.get("last_year")
+        row["classes"] = ("" if fy is None else labelYear(fy, sport) if fy == ly
+                          else f"{labelYear(fy, sport)} to {labelYear(ly, sport)}")
+        out.append(row)
+    out.sort(key=lambda r: (-(r["n"] or 0), r["school"] or ""))
     with _schools_lock:
         _TRANSFERS[key] = (_time.time(), out)
     return out
@@ -1196,7 +1232,12 @@ def _athleteSubject(cur, person_id, level="hs"):
     ratings, seasons = {}, {}
     for r in rows:
         if r["sport"] not in ratings:
-            ratings[r["sport"]] = round(float(r["mean_rating"]), 1)
+            v = float(r["mean_rating"])
+            if level == "college":
+                # a college season placed among HS-equivalent numbers is its
+                # own HS-equivalent (pool_view.toHs)
+                v = _hsEquiv(v, r["pool"], r["sport"])
+            ratings[r["sport"]] = round(v, 1)
             seasons[r["sport"]] = labelYear(r["year"], r["sport"])
     grad = (next((r["year"] + 13 - r["grade_num"] for r in rows if r.get("grade_num")), None)
             if level != "college" else None)
@@ -1240,7 +1281,9 @@ def subjectFrom(cur, args, account_person_id=None, level="hs"):
     gender = (args.get("gender") or "m").strip().lower()
     if gender not in GENDERS:
         return None, "gender must be m or f"
-    rating, sport = ratingFromTime(seconds, event, gender, level)
+    # ! THE PUBLIC SCALE, WHATEVER THE SECTION: the transfers are shown as
+    #   HS-equivalents too, so a typed time converts on the HS pool
+    rating, sport = ratingFromTime(seconds, event, gender)
     if rating is None:
         return None, "That time could not be converted to a rating right now."
     return {"kind": "time", "level": level, "gender": gender, "event": event,

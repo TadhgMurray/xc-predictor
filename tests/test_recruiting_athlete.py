@@ -409,28 +409,32 @@ def test_crests_before_the_school_names():
     assert "{{ crest(r.hs_school, r.hs_state, level='hs') }}" in read("racecast", "templates", "recruiting_school.html")
 
 
-def test_the_board_has_a_transfers_section_on_the_college_scale():
+def test_the_board_has_a_transfers_section_on_the_public_scale(monkeypatch):
     # owner, 2026-10-30: "These should be like separate sections in that tab.
-    # transfers should use a collegiate rating"
+    # transfers should use a collegiate rating" -- "it doesn't use hs
+    # equivalent rating": college seasons, shown as their HS-equivalents
     tpl = read("racecast", "templates", "recruiting.html")
     assert 'data-set="view" data-value="recruits"' in tpl and 'data-set="view" data-value="transfers"' in tpl
     js = read("racecast", "static", "recruiting.js")
     assert '"/api/recruiting/transfers?"' in js and "function renderTransfers(d)" in js
     app = read("racecast", "app.py")
     assert '@app.route("/api/recruiting/transfers")' in app
-    assert 'stampFiveK(rows, "median", pool="college_" + f["gender"], sport=f["sport"])' in app
-    rows = [{"school": "Wake Forest", "state": "NC", "division": "NCAA DI", "conference": "ACC", "n": 2,
-             "p25": 120.0, "median": 125.04, "p75": 128.0, "min": 118.0, "max": 130.0, "before": 117.0,
-             "gain": 6.0, "first_year": 2024, "last_year": 2025}]
-    outs = [{"school": "Wake Forest", "state": "NC", "n_out": 1}, {"school": "UNCG", "state": "NC", "n_out": 3}]
-    cur = FakeCur([("to_regclass", [{"to_regclass": "college_transfer"}]),
-                   ("GROUP BY school, state", rows), ("from_school AS school", outs)])
+    assert 'stampFiveK(rows, "median", pool="hs_" + f["gender"], sport=f["sport"])' in app
+    import pool_view
+    monkeypatch.setattr(pool_view, "toHs", lambda r, pool, sport=None: r * 1.2 if pool == "college_m" else None)
+    rows = [{"school": "Wake Forest", "state": "NC", "division": "NCAA DI", "conference": "ACC",
+             "to_rating": 125.0, "from_rating": 120.0, "year": 2025, "from_school": "UNCG", "from_state": "NC"},
+            {"school": "Wake Forest", "state": "NC", "division": None, "conference": None,
+             "to_rating": 115.0, "from_rating": 110.0, "year": 2024, "from_school": "Elon", "from_state": "NC"}]
+    cur = FakeCur([("to_regclass", [{"to_regclass": "college_transfer"}]), ("FROM college_transfer", rows)])
     R._TRANSFERS.clear()
     t = R.transferTable(cur, "m", "XC")
     by = {r["school"]: r for r in t}
-    assert by["Wake Forest"]["n"] == 2 and by["Wake Forest"]["n_out"] == 1 and by["Wake Forest"]["median"] == 125.0
-    assert by["UNCG"]["n"] == 0 and by["UNCG"]["n_out"] == 3 and by["UNCG"]["median"] is None
-    assert any("percentile_cont(0.5) WITHIN GROUP (ORDER BY to_rating)" in q for q in cur.sql)
+    w = by["Wake Forest"]
+    assert w["n"] == 2 and w["n_out"] == 0 and w["division"] == "NCAA DI"
+    assert w["median"] == 144.0 and w["max"] == 150.0 and w["before"] == 138.0 and w["gain"] == 6.0
+    assert w["classes"] == "2024 to 2025"
+    assert by["UNCG"]["n"] == 0 and by["UNCG"]["n_out"] == 1 and by["UNCG"]["median"] is None
     R._TRANSFERS.clear()
 
 
@@ -450,5 +454,5 @@ def test_the_transfers_section_places_the_college_athlete():
     assert R._levelPool("f", "college") == "college_f" and R._levelPool("m") == "hs_m"
     app = read("racecast", "app.py")
     assert 'R.subjectFrom(cur, request.args, level="college")' in app
-    assert 'R.timesFor(rating, f["gender"], level="college")' in app
+    assert 'R.timesFor(rating, f["gender"])' in app
     assert "renderSubject(d);" in read("racecast", "static", "recruiting.js").split("function renderTransfers(d)")[1][:300]
