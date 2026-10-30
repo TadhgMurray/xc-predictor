@@ -432,3 +432,23 @@ def test_the_board_has_a_transfers_section_on_the_college_scale():
     assert by["UNCG"]["n"] == 0 and by["UNCG"]["n_out"] == 3 and by["UNCG"]["median"] is None
     assert any("percentile_cont(0.5) WITHIN GROUP (ORDER BY to_rating)" in q for q in cur.sql)
     R._TRANSFERS.clear()
+
+
+def test_the_transfers_section_places_the_college_athlete():
+    # owner, 2026-10-30: "transfers doesn't change it to a collegiate profile
+    # of the person, it keeps it as their hs profile/seasons"
+    seasons = [{"pool": "college_m", "sport": "XC", "year": 2025, "grade": "JR-3", "school": "Wake Forest",
+                "state": "NC", "mean_rating": 125.04, "n_races": 6, "last_race": "2025-11-22",
+                "grade_num": None, "name": "Test Runner"}]
+    cur = FakeCur([("FROM athlete_season s", seasons)])
+    s = R._athleteSubject(cur, 7, level="college")
+    assert s["level"] == "college" and s["ratings"] == {"XC": 125.0} and s["grad_year"] is None
+    assert cur.params[0][1] == ["college_m", "college_f"]
+    cur = FakeCur([("FROM athlete_season s", [])])
+    sub, err = R.subjectFrom(cur, {"athlete": "7"}, level="college")
+    assert sub is None and err == "That athlete has no college season to place."
+    assert R._levelPool("f", "college") == "college_f" and R._levelPool("m") == "hs_m"
+    app = read("racecast", "app.py")
+    assert 'R.subjectFrom(cur, request.args, level="college")' in app
+    assert 'R.timesFor(rating, f["gender"], level="college")' in app
+    assert "renderSubject(d);" in read("racecast", "static", "recruiting.js").split("function renderTransfers(d)")[1][:300]

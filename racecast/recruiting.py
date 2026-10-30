@@ -657,6 +657,19 @@ def _hsPool(gender):
     return "hs_f" if (gender or "m") == "f" else "hs_m"
 
 
+# ★ THE TRANSFERS SECTION PLACES THE COLLEGE ATHLETE (owner, 2026-10-30:
+#   "transfers doesn't change it to a collegiate profile of the person, it
+#   keeps it as their hs profile/seasons"). A transfer is a collegian
+#   choosing a second college, so the number placed among a college's
+#   transfers is the athlete's own latest COLLEGE season, and a typed time
+#   converts on the college pool -- the scale the transfer ratings are on.
+LEVEL_POOLS = {"hs": ("hs_m", "hs_f"), "college": ("college_m", "college_f")}
+
+
+def _levelPool(gender, level="hs"):
+    return f"{'college' if level == 'college' else 'hs'}_{'f' if (gender or 'm') == 'f' else 'm'}"
+
+
 def subjectEvents(subject):
     """The events a school's thresholds are quoted in (owner, 2026-10-05:
     "should prolly be based on athlete"): the reader's own -- the events
@@ -680,7 +693,7 @@ def eventLabel(key):
     return from_prs.get(key) or EVENTS.get(key, (None, None, key))[2]
 
 
-def timesFor(rating, gender, events=None):
+def timesFor(rating, gender, events=None, level="hs"):
     """{event key: sec} for a HS-scale rating, each at the sport's typical
     venue -- by default THRESHOLD_EVENTS (5K / 1600 / 3200), or the
     (key, metres, sport) list given; a value the conversion cannot give is
@@ -688,7 +701,7 @@ def timesFor(rating, gender, events=None):
     events = tuple(events or THRESHOLD_EVENTS)
     if rating is None:
         return {k: None for k, _, _ in events}
-    key = (round(float(rating) * 2.0) / 2.0, _hsPool(gender), events)
+    key = (round(float(rating) * 2.0) / 2.0, _levelPool(gender, level), events)
     with _times_lock:
         if _time.time() - _TIMES["at"] > CACHE_TTL:
             _TIMES["map"].clear()
@@ -713,14 +726,14 @@ def timesFor(rating, gender, events=None):
     return out
 
 
-def ratingFromTime(seconds, event, gender):
+def ratingFromTime(seconds, event, gender, level="hs"):
     """A typed time -> (rating on the HS scale, sport) or (None, sport).
     The event names the distance and the sport; the sport's typical venue
     is assumed, as the conversions page does with no course chosen."""
     if event not in EVENTS or seconds is None:
         return None, None
     dist, sport, _ = EVENTS[event]
-    pool = _hsPool(gender)
+    pool = _levelPool(gender, level)
     try:
         from conversions import _norm_from_time, normalized_to_rating
         norm = _norm_from_time(float(seconds), dist, pool, sport=sport)
@@ -1162,9 +1175,10 @@ def transferTable(cur, gender, sport):
 
 # ---- the subject: you ------------------------------------------------- #
 
-def _athleteSubject(cur, person_id):
+def _athleteSubject(cur, person_id, level="hs"):
     """The latest high-school season per sport for one athlete, as a
-    subject. None when the athlete has no HS season."""
+    subject -- or with level="college" the latest college season (the
+    Transfers section). None when the athlete has no season at that level."""
     from rankings import nameLateral
     from school_identity import schoolLabelIn
     cur.execute(f"""
@@ -1172,9 +1186,9 @@ def _athleteSubject(cur, person_id):
                s.n_races, s.last_race, {gradeNumSql('s')} AS grade_num, a.name
         FROM   athlete_season s
         {nameLateral('s')}
-        WHERE  s.person_id = %s AND s.pool IN ('hs_m', 'hs_f') AND s.mean_rating IS NOT NULL
+        WHERE  s.person_id = %s AND s.pool = ANY(%s) AND s.mean_rating IS NOT NULL
         ORDER  BY s.year DESC, s.last_race DESC NULLS LAST
-    """, (person_id,))
+    """, (person_id, list(LEVEL_POOLS.get(level, LEVEL_POOLS["hs"]))))
     rows = _rowsOf(cur)
     if not rows:
         return None
@@ -1184,9 +1198,11 @@ def _athleteSubject(cur, person_id):
         if r["sport"] not in ratings:
             ratings[r["sport"]] = round(float(r["mean_rating"]), 1)
             seasons[r["sport"]] = labelYear(r["year"], r["sport"])
-    grad = next((r["year"] + 13 - r["grade_num"] for r in rows if r.get("grade_num")), None)
+    grad = (next((r["year"] + 13 - r["grade_num"] for r in rows if r.get("grade_num")), None)
+            if level != "college" else None)
     return {
-        "kind": "athlete", "person_id": int(person_id), "name": latest.get("name") or "Unknown",
+        "kind": "athlete", "level": level, "person_id": int(person_id),
+        "name": latest.get("name") or "Unknown",
         "prs": personalBests(cur, int(person_id)),
         "school": latest.get("school"), "state": latest.get("state"),
         "school_label": schoolLabelIn(latest["school"], latest.get("state")) if latest.get("school") else "",
@@ -1195,7 +1211,7 @@ def _athleteSubject(cur, person_id):
     }
 
 
-def subjectFrom(cur, args, account_person_id=None):
+def subjectFrom(cur, args, account_person_id=None, level="hs"):
     """(subject, error). The reader's own number, from ?athlete=<id>, from
     a typed ?time=&event=(&gender=), or -- the accounts seam (283) -- from
     the signed-in athlete's claimed page when the query names nobody.
@@ -1206,9 +1222,11 @@ def subjectFrom(cur, args, account_person_id=None):
     if pid:
         if not pid.isdigit():
             return None, "athlete must be an id"
-        sub = _athleteSubject(cur, int(pid))
+        sub = _athleteSubject(cur, int(pid), level)
         if sub is None:
-            return None, "That athlete has no high-school season to place."
+            return None, ("That athlete has no college season to place."
+                          if level == "college" else
+                          "That athlete has no high-school season to place.")
         return sub, None
     text = (args.get("time") or "").strip()
     event = (args.get("event") or "").strip().lower()
@@ -1222,10 +1240,11 @@ def subjectFrom(cur, args, account_person_id=None):
     gender = (args.get("gender") or "m").strip().lower()
     if gender not in GENDERS:
         return None, "gender must be m or f"
-    rating, sport = ratingFromTime(seconds, event, gender)
+    rating, sport = ratingFromTime(seconds, event, gender, level)
     if rating is None:
         return None, "That time could not be converted to a rating right now."
-    return {"kind": "time", "gender": gender, "event": event, "event_label": EVENTS[event][2],
+    return {"kind": "time", "level": level, "gender": gender, "event": event,
+            "event_label": EVENTS[event][2],
             "seconds": seconds, "time": fmtTime(seconds), "sport": sport,
             # ★ ONE SCALE PER POOL: a rating from a track time places on the
             #   cross-country recruits too (the joint solve's sport level)

@@ -12350,12 +12350,21 @@ def api_recruiting_transfers():
                 return jsonify({"error": err}), 400
             try:
                 built = R._tableExists(cur, "college_transfer")
+                # the athlete placed here is the COLLEGE athlete: their latest
+                # college season, or a time converted on the college pool
+                subject, serr = R.subjectFrom(cur, request.args, level="college")
+                if subject and subject.get("gender"):
+                    f["gender"] = subject["gender"]
                 every = R.transferTable(cur, f["gender"], f["sport"])
             except psycopg2.Error as exc:
                 conn.rollback()
                 print(f"recruiting: transfers failed ({type(exc).__name__}: {exc})", flush=True)
                 return jsonify({"error": "The transfers table is not available right now."}), 200
     rows = [dict(r) for r in R.filterSchools(every, f)]
+    rating = R.subjectRating(subject, f["sport"]) if subject else None
+    # the tiers read the transfers' own college-scale spread (min/p25/median/
+    # p75/max), the same rule the recruits' table uses on theirs
+    R.placeRows([r for r in rows if r.get("n")], rating)
     # the typical transfer's college-scale rating as a track 5K, on the
     # college pool (the recruits' column reads the high-school pool)
     from conversions import stampFiveK
@@ -12363,7 +12372,10 @@ def api_recruiting_transfers():
     stampCrests(rows, pool="college_" + f["gender"])
     return jsonify({"rows": rows, "gender": f["gender"], "sport": f["sport"],
                     "sort": f["sort"], "built": built, "total": len(every),
-                    "divisions": R.distinctUnits(every, "division")})
+                    "divisions": R.distinctUnits(every, "division"),
+                    "subject": subject, "subject_error": serr, "rating": rating,
+                    "subject_times": (R.timesFor(rating, f["gender"], level="college")
+                                      if rating is not None else None)})
 
 
 @app.route("/recruiting/school/<path:school_name>")

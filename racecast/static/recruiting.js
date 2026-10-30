@@ -196,7 +196,7 @@
         <div class="rc-subject-who"><div class="rc-subject-name">${who}</div><div class="rc-subject-sub">${sub}</div>
           <div class="rc-subject-times">${times}</div></div>
       </div>
-      <div class="rc-subject-note">Placed on the ${state.gender === "m" ? "men's" : "women's"} ${state.sport === "XC" ? "cross country" : "track"} recruits below. <button type="button" class="rc-link" id="r-clear">Change</button></div>`;
+      <div class="rc-subject-note">Placed on the ${state.gender === "m" ? "men's" : "women's"} ${state.sport === "XC" ? "cross country" : "track"} ${state.view === "transfers" ? "transfers below, from their latest college season (college scale)" : "recruits below"}. <button type="button" class="rc-link" id="r-clear">Change</button></div>`;
     $("r-clear").addEventListener("click", () => {
       $("r-athlete").value = ""; qbox.value = ""; $("r-time").value = "";
       load();
@@ -297,7 +297,7 @@
   /* ★ THE TRANSFERS SECTION (owner, 2026-10-30): the same filters, every
      college's transfers in and out, on the COLLEGE scale -- the in-transfers'
      first season at their new school -- from /api/recruiting/transfers. */
-  function transferRow(r) {
+  function transferRow(r, withTier) {
     const href = schoolHref(r) + "#transfers";
     return `<tr>
       <td class="rc-school">${crestMark(r.crest)}<a href="${href}">${esc(r.label || r.school)}</a></td>
@@ -310,10 +310,11 @@
       <td class="num">${r.gain == null ? " - " : (r.gain > 0 ? "+" : "") + Number(r.gain).toFixed(1)}</td>
       <td class="num rc-dim">${num(r.max)}</td>
       <td class="fk">${r.median_5k ? esc(r.median_5k) + (r.median_5k_dist && r.median_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.median_5k_dist)}</span>` : "") : '<span class="fk-none">-</span>'}</td>
+      ${withTier ? (r.tier ? tierCell(r.tier) : "<td></td>") : ""}
     </tr>`;
   }
 
-  function transferHead() {
+  function transferHead(withTier) {
     return `<thead><tr><th>School</th><th>Division</th><th>Conference</th>
       <th class="num" title="athletes who arrived from another college, in the classes counted">In</th>
       <th class="num" title="athletes who left for another college">Out</th>
@@ -321,12 +322,14 @@
       <th class="num" title="the typical transfer's first season here (college scale)">Typical here</th>
       <th class="num" title="the typical change from the old college to this one">Change</th>
       <th class="num" title="the fastest transfer's first season here (college scale)">Fastest</th>
-      ${fkTh("5K")}</tr></thead>`;
+      ${fkTh("5K")}${withTier ? "<th>You</th>" : ""}</tr></thead>`;
   }
 
   function renderTransfers(d) {
     state.gender = d.gender; state.sport = d.sport;
+    $("r-tgender").value = d.gender;
     paintSeg();
+    renderSubject(d);
     const rows = (d.rows || []).filter((r) => r.n || r.n_out);
     if (!d.built) {
       $("r-out").innerHTML = `<p class="meta">The transfer numbers aren't ready yet; they arrive with the next recruiting build.</p>`;
@@ -337,7 +340,7 @@
       return;
     }
     $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes with transfers. Ratings on the college scale: a transfer's last season before and first season here; the 5K is the typical transfer's.</p>
-      <div class="r-scroll"><table class="rk rc-tbl">${transferHead()}<tbody>${rows.map(transferRow).join("")}</tbody></table></div>`;
+      <div class="r-scroll"><table class="rk rc-tbl">${transferHead(d.rating != null)}<tbody>${rows.map((r) => transferRow(r, d.rating != null)).join("")}</tbody></table></div>`;
   }
 
   async function load() {
@@ -349,6 +352,11 @@
       ? { median: "Fastest typical transfer", top: "Fastest top transfers", n: "Most transfers in" }
       : { median: "Fastest typical recruit", top: "Fastest top recruits", n: "Most recruits" };
     for (const o of $("r-sort").options) if (words[o.value]) o.textContent = words[o.value];
+    // and the finder says which season it places
+    const hint = document.querySelector(".rc-hint");
+    if (hint) hint.textContent = state.view === "transfers"
+      ? "Your latest college season's rating is what gets placed among the transfers."
+      : "Your latest high-school season's rating is what gets placed.";
     // ! THE HASH IS KEPT (owner, 2026-10-10): the page's tabs live in it
     //   (race-page.js), and dropping it broke /recruiting#fit links.
     try { history.replaceState(null, "", location.pathname + "?" + q.toString() + location.hash); } catch (e) { /* fine */ }
