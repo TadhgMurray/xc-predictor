@@ -911,7 +911,11 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         if write and todo:
             out["requeued"] = requeue(cur, sport, todo, source)
             say(f"  [{tag}]   {out['requeued']:,} reset to scraped=0")
-        if source == "tfrrs" and sport == "XC":
+        # ! THE HOLE PASS IS OFF BY DEFAULT (owner's run, 2026-10-30: 758 ids
+        #   in its window, half the span, so a daily re-ask would be a night
+        #   of probing). TFRRS's own results index finds a late-posted meet
+        #   instead (sources.tfrrs_hs latest). SEED_TFRRS_HOLES=1 runs it.
+        if source == "tfrrs" and sport == "XC" and os.environ.get("SEED_TFRRS_HOLES", "") == "1":
             if write:
                 ensureRequeuedAt(cur)
             queued, woken = tfrrsHoles(cur, top, write=write)

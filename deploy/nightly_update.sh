@@ -201,6 +201,14 @@ if [ "$SCRAPE" -eq 1 ]; then
   if [ "${XCP_NIGHTLY_TFRRS_HS:-1}" != "0" ]; then
     step 01_tfrrs_hs "$PY" -u -m sources.tfrrs_hs refresh --pages 3 --since-days 30 --out "$LOGDIR/tfrrs_hs_index.csv"
   fi
+  # ★ AND WWW.TFRRS.ORG'S NEWEST RESULTS (2026-10-30, the Mike Woods
+  #   Classic): its index names meets posted lately wherever their id sits,
+  #   queued at priority 1 so the scrape takes them first. A few requests;
+  #   XCP_NIGHTLY_TFRRS_LATEST=0 skips.
+  if [ "${XCP_NIGHTLY_TFRRS_LATEST:-1}" != "0" ]; then
+    step 01_tfrrs_latest "$PY" -u -m sources.tfrrs_hs latest --pages 3 --since-days 60 \
+      ${TFRRS_SPORT:+--sport "$TFRRS_SPORT"} --out "$LOGDIR/tfrrs_latest_index.csv"
+  fi
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
   pb=$!
   [ -n "${pa:-}" ] && wait "$pa"; wait "$pb"

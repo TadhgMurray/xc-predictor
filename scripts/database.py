@@ -3525,7 +3525,9 @@ def _claimTFRRSBatch(cursor, batch_size, states=(0,), sport=None):
             FROM meet_queue
             WHERE scraped = ANY(%s) AND source = 'tfrrs'
               AND (%s::text IS NULL OR sport = %s::text)
-            ORDER BY meet_id DESC
+            -- ★ A MEET THE RESULTS INDEX NAMED GOES FIRST (priority, set by
+            --   sources.tfrrs_hs), then the newest ids
+            ORDER BY COALESCE(priority, 0) DESC, meet_id DESC
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )

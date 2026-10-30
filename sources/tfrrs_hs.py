@@ -12,6 +12,7 @@
 #                                                                   # and the list -> tfrrs_hs_meets
 #   python -m sources.tfrrs_hs store --index hs_index.csv           # the list alone
 #   python -m sources.tfrrs_hs refresh [--pages 3]                  # nightly: newest pages, kept + queued
+#   python -m sources.tfrrs_hs latest [--pages 3] [--sport XC]      # www.tfrrs.org's newest, queued first
 #   then: docs/RUNBOOK-TIMERS-2026-10-25.md A4                      # scrape just those
 #
 # ★ THE SAME MEETS, THE SAME IDS (checked 2026-10-25). A state site is a
@@ -273,11 +274,14 @@ def queueMissing(cur, rows, since, apply, redo_done=True):
                    and r["date"] >= since and r["date"] <= datetime.date.today().isoformat()})
     if not apply or not todo:
         return todo, 0
+    # ★ PRIORITY 1: TFRRS's own index says these are meets with results, so
+    #   the drain takes them before blind forward-walk ids (database.
+    #   _claimTFRRSBatch orders by priority first)
     execute_values(cur, """
-        INSERT INTO meet_queue (meet_id, sport, source, scraped)
+        INSERT INTO meet_queue (meet_id, sport, source, scraped, priority)
         VALUES %s
-        ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0
-        WHERE meet_queue.scraped <> 3""", [(m, s, "tfrrs", 0) for m, s in todo])
+        ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0, priority = 1
+        WHERE meet_queue.scraped <> 3""", [(m, s, "tfrrs", 0, 1) for m, s in todo])
     return todo, cur.rowcount
 
 
@@ -298,6 +302,35 @@ def cmdRefresh(a):
         conn.commit()
     print(f"[tfrrs-hs] {len(rows):,} newest meets kept in tfrrs_hs_meets; {len(todo)} since {since} with no rows, "
           f"{n} queued (fetcher {stats})")
+    return 0
+
+
+def cmdLatest(a):
+    """★ THE WHOLE OF TFRRS'S NEWEST RESULTS (owner, 2026-10-30: the Mike
+    Woods Classic, XC 28447, posted after later ids had been walked and so
+    never asked). www.tfrrs.org's results_search.html lists every meet
+    newest first; its first pages name what was posted lately, wherever its
+    id sits, and the ones with no result rows are queued at priority 1.
+    NOT kept in tfrrs_hs_meets: that table says "high school meet" to 04a
+    pass 2b, and these are every level."""
+    from database import getConn
+    rows, stats = walk(("www.tfrrs.org",), a.pages)
+    if a.out:
+        writeIndex(a.out, rows)
+    if not rows:
+        print(f"[tfrrs-latest] no index rows read (fetcher {stats}) -- nothing queued")
+        return 0
+    if a.sport:
+        rows = [r for r in rows if r["sport"] == a.sport]
+    since = (datetime.date.today() - datetime.timedelta(days=a.since_days)).isoformat()
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            todo, n = queueMissing(cur, rows, since, True, redo_done=False)
+        conn.commit()
+    print(f"[tfrrs-latest] {len(rows):,} newest meets read; {len(todo)} since {since} with no rows, "
+          f"{n} queued at priority 1 (fetcher {stats})")
+    for m, sp in todo[:20]:
+        print(f"  queued {sp} {m}")
     return 0
 
 
@@ -349,9 +382,14 @@ def main(argv=None):
     q.add_argument("--index", required=True)
     q.add_argument("--since", help="only meets on or after this date (ISO)")
     q.add_argument("--apply", action="store_true")
+    lt = sub.add_parser("latest")
+    lt.add_argument("--pages", type=int, default=3)
+    lt.add_argument("--since-days", type=int, default=60)
+    lt.add_argument("--sport", choices=("XC", "TF"))
+    lt.add_argument("--out")
     a = ap.parse_args(argv)
     return {"index": cmdIndex, "check": cmdCheck, "store": cmdStore, "queue": cmdQueue,
-            "refresh": cmdRefresh}[a.cmd](a)
+            "refresh": cmdRefresh, "latest": cmdLatest}[a.cmd](a)
 
 
 if __name__ == "__main__":
