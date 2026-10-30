@@ -3492,10 +3492,10 @@ def _migrateMeetExtrasAddSource(cursor):
 #           batch_size: max rows to claim this round.
 # Output:   list of (meet_id, sport) tuples actually claimed (status 0 -> 3).
 #           Empty list = no tfrrs work left.
-def claimTFRRSMeetBatch(batch_size: int, states=(0,)) -> list:
+def claimTFRRSMeetBatch(batch_size: int, states=(0,), sport=None) -> list:
     with getConn() as conn:
         cursor = conn.cursor()
-        rows = _claimTFRRSBatch(cursor, batch_size, states)
+        rows = _claimTFRRSBatch(cursor, batch_size, states, sport)
         conn.commit()   # publish the 0->3 flip so a concurrent run can't re-grab
     return rows
  
@@ -3511,7 +3511,11 @@ def claimTFRRSMeetBatch(batch_size: int, states=(0,)) -> list:
 # Output:   list of (meet_id, sport) tuples.
 # ! states= IS THE RETRY PATH, exactly as in _claimMeetBatch: a retry claims
 #   2 and 3 themselves rather than resetting them to 0 and claiming everything.
-def _claimTFRRSBatch(cursor, batch_size, states=(0,)):
+# ! sport= SCOPES A RUN TO ONE SPORT (TFRRS_SPORT in run_tfrrs, owner
+#   2026-10-30): a track meet is three pages (the landing page and the /m and
+#   /f compiled results, where TFRRS keeps a track meet's marks), a cross
+#   country meet one, and the night is for cross country.
+def _claimTFRRSBatch(cursor, batch_size, states=(0,), sport=None):
     cursor.execute(
         """
         UPDATE meet_queue
@@ -3520,12 +3524,14 @@ def _claimTFRRSBatch(cursor, batch_size, states=(0,)):
             SELECT meet_id, sport, source
             FROM meet_queue
             WHERE scraped = ANY(%s) AND source = 'tfrrs'
+              AND (%s::text IS NULL OR sport = %s::text)
+            ORDER BY meet_id DESC
             FOR UPDATE SKIP LOCKED
             LIMIT %s
         )
         RETURNING meet_id, sport
         """,
-        (list(states), batch_size),
+        (list(states), sport, sport, batch_size),
     )
     return cursor.fetchall()
  

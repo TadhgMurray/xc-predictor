@@ -508,6 +508,13 @@ TFRRS_RETRY_FAILED = (os.environ.get("TFRRS_RETRY_FAILED", "")
 # ★ 2 = failed, 3 = a session died holding the claim. 0 is "never tried",
 #   which a retry must leave alone.
 CLAIM_STATES = (2, 3) if TFRRS_RETRY_FAILED else (0,)
+# ★ TFRRS_SPORT=XC CLAIMS ONLY CROSS COUNTRY (owner, 2026-10-30): the night
+#   scrapes cross country; a track meet's /m and /f compiled pages are two
+#   more requests each, and Cloudflare challenged them (76 of 76 on the
+#   2026-10-30 manual run). Unset claims both, as before.
+CLAIM_SPORT = (os.environ.get("TFRRS_SPORT") or "").strip().upper() or None
+if CLAIM_SPORT and CLAIM_SPORT not in ("XC", "TF"):
+    raise RuntimeError(f"TFRRS_SPORT must be XC or TF, not {CLAIM_SPORT!r}")
 
 
 async def _extendFrontier(label):
@@ -566,7 +573,7 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
             #   database._claimMeetBatch for why a reset-then-claim-0 retry
             #   silently became an ordinary scrape of the whole queue.
             batch = await asyncio.to_thread(claimTFRRSMeetBatch,
-                                            CLAIM_BATCH_SIZE, CLAIM_STATES)
+                                            CLAIM_BATCH_SIZE, CLAIM_STATES, CLAIM_SPORT)
             _tick("claim", time.perf_counter() - t0)
 
             # ★ EMPTY IS NOT "DONE" -- IT IS "EXTEND THE FRONTIER" (owner,

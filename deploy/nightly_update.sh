@@ -179,6 +179,11 @@ if [ "$SCRAPE" -eq 1 ]; then
   export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-150}"
   export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-2}"
   export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-300}"
+  # ★ TFRRS CROSS COUNTRY ONLY TOO (owner, 2026-10-30), as athletic.net
+  #   above: a track meet is its landing page plus the /m and /f compiled
+  #   pages, and Cloudflare challenged those on the manual run.
+  #   XCP_NIGHTLY_TFRRS_SPORT= (empty) claims both again.
+  export TFRRS_SPORT="${XCP_NIGHTLY_TFRRS_SPORT-XC}"
   # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
   #   blocked the old server and agreed only to a small scrape from the
   #   owner's side computer (ISSUES-RUNNING, 2026-10-12), so the server

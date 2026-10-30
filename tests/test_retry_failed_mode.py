@@ -41,7 +41,7 @@ class TheClaimIsScopedToTheFailures(unittest.TestCase):
         db = read("scripts", "database.py")
         self.assertIn("def _claimOneSport(cursor, limit, sport, states=(0,)):",
                       db)
-        self.assertIn("def _claimTFRRSBatch(cursor, batch_size, states=(0,)):",
+        self.assertIn("def _claimTFRRSBatch(cursor, batch_size, states=(0,), sport=None):",
                       db)
         self.assertEqual(db.count("WHERE scraped = ANY(%s)"), 2)
         self.assertNotIn("WHERE scraped = 0 AND source =", db)
@@ -51,7 +51,7 @@ class TheClaimIsScopedToTheFailures(unittest.TestCase):
             src = read(*mod.split("/"))
             self.assertIn("CLAIM_STATES = (2, 3)", src, mod)
             self.assertIn("else (0,)", src, mod)
-            self.assertIn("CLAIM_STATES)", src, mod)
+            self.assertTrue("CLAIM_STATES)" in src or "CLAIM_STATES, CLAIM_SPORT)" in src, mod)
 
     # ⚠⚠ AND THE START-UP RESET MUST NOT DRAIN STATE 3 OUT OF THAT SET.
     #    Both launchers flip 3 -> 0 at start; in retry mode that would move
