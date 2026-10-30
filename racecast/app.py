@@ -382,6 +382,7 @@ if _PREWARM == "1" or (_PREWARM != "0" and "gunicorn" in os.path.basename(
 app.template_filter("school_label")(school_identity.schoolLabel)
 # one spelling for a grade, by the row's pool (owner, 2026-09-06)
 import grade_label as _grade_label
+import season_floor as _season_floor
 app.template_filter("grade_label")(_grade_label.gradeLabel)
 # the same label in a known context: a race or a meet in one state
 # ★ ON A STATE-TEAM RACE A STATE'S NAME IS DRAWN BARE (owner, 2026-10-07:
@@ -2030,12 +2031,18 @@ def athlete(person_id):
                     --   that page. The page still SHOWS the sprint season in
                     --   its season blocks; it just is not the season the
                     --   header quotes a rating from.
+                    -- ★ AND THE OPEN SEASON COUNTS AS DEEP ENOUGH (owner,
+                    --   2026-10-30, Trey Caldwell: an Arkansas freshman headed
+                    --   by his 2025 high school track season and its HS ranks,
+                    --   because his 2026 college XC had two races so far).
+                    --   The boards hold the season in progress to no floor
+                    --   (season_floor.OPEN_FROM); neither does the header.
                     ORDER  BY (mean_rating IS NOT NULL) DESC,
-                              (n_races >= 3) DESC,
+                              (n_races >= 3 OR year >= %s) DESC,
                               last_race DESC NULLS LAST, year DESC,
                               n_races DESC
                     LIMIT  1
-                """, (person_id,))
+                """, (person_id, int(_season_floor.OPEN_FROM)))
                 season_rating = cur.fetchone()
             except psycopg2.errors.UndefinedTable:
                 # A database that has never run build_ranking_results.

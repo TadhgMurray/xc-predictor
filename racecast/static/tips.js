@@ -21,7 +21,7 @@
  *   wider than a phone also answers -- so a badge opened at the bottom of the
  *   screen while the rating beside it (rating-explain.js, decided by width)
  *   opened by its cell. Now: a hover shows the small tooltip wherever a
- *   pointer can hover (any-hover), and a click or tap on any badge opens a
+ *   pointer is hovering (pointer events), and a click or tap on any badge opens a
  *   compact panel in rating-explain's look, anchored below or above the
  *   badge; a sheet from the bottom only on a phone-width screen (700 px, the
  *   rating panel's own rule). A badge that is a link still follows it with a
@@ -36,7 +36,13 @@
   var root = document.documentElement;
   root.classList.add("js-tips");
 
-  var canHover = !!(window.matchMedia && window.matchMedia("(any-hover: hover)").matches);
+  // ★ THE POINTER, NOT THE DEVICE (owner, 2026-10-30: "the hover doesn't
+  //   work"). A media query says what a device COULD do, and a touch screen
+  //   with a mouse or trackpad answers it either way; the pointer events say
+  //   what is happening. A mouse or pen hovering shows the tooltip; a finger
+  //   never does (its tap opens the panel).
+  var lastPointer = "mouse";
+  document.addEventListener("pointerdown", function (e) { lastPointer = e.pointerType || "mouse"; }, true);
   var floatEl = null, panel = null, backdrop = null, openFor = null, panelFor = null, lastFocus = null;
   function narrow() {
     return !!(window.matchMedia && window.matchMedia("(max-width: 700px)").matches);
@@ -153,27 +159,25 @@
       if (panel && !panel.hidden && !panel.contains(e.target)) closePanel();
       return;
     }
-    if (canHover && !narrow() && el.tagName === "A") return;   // a link, with a mouse: follow it
+    if (lastPointer !== "touch" && !narrow() && el.tagName === "A") return;   // a link, with a mouse: follow it
     e.preventDefault();
     e.stopPropagation();
     if (panelFor === el) { closePanel(); return; }
     showPanel(el);
   }, true);
 
-  if (canHover) {
-    document.addEventListener("mouseover", function (e) {
-      if (panelFor) return;                                   // a panel is open: no bubble over it
-      var el = badgeOf(e.target);
-      if (el && el !== openFor) showFloat(el);
-      else if (!el && openFor) hideFloat();
-    });
-    document.addEventListener("focusin", function (e) {
-      if (panelFor) return;
-      var el = badgeOf(e.target);
-      if (el) showFloat(el); else if (openFor) hideFloat();
-    });
-    window.addEventListener("scroll", function () { if (openFor) hideFloat(); }, { passive: true });
-  }
+  document.addEventListener("pointerover", function (e) {
+    if (e.pointerType === "touch" || panelFor) return;      // a finger, or a panel open: no bubble
+    var el = badgeOf(e.target);
+    if (el && el !== openFor) showFloat(el);
+    else if (!el && openFor) hideFloat();
+  });
+  document.addEventListener("focusin", function (e) {
+    if (panelFor || lastPointer === "touch") return;         // keyboard focus, not a tap
+    var el = badgeOf(e.target);
+    if (el) showFloat(el); else if (openFor) hideFloat();
+  });
+  window.addEventListener("scroll", function () { if (openFor) hideFloat(); }, { passive: true });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape") {
       if (panel && !panel.hidden) closePanel(); else if (openFor) hideFloat();

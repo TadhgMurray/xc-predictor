@@ -19,7 +19,8 @@ def read(*p):
 
 def test_badges_hover_and_open_a_panel_beside_them():
     tips = read("racecast", "static", "tips.js")
-    assert '"(any-hover: hover)"' in tips and '"(hover: none)"' not in tips
+    assert 'addEventListener("pointerover"' in tips and 'e.pointerType === "touch"' in tips
+    assert '"(hover: none)"' not in tips and "any-hover" not in tips.split("*/", 1)[1]
     assert 'panel.className = "rx-pop rx-tip";' in tips
     assert 'window.matchMedia("(max-width: 700px)")' in tips      # the rating panel's own rule
     assert "function placePanel()" in tips and "function showSheet" not in tips
@@ -29,3 +30,12 @@ def test_badges_hover_and_open_a_panel_beside_them():
     assert "openCourse" not in read("racecast", "static", "rating-explain.js")
     css = read("racecast", "static", "features.css")
     assert ".rx-pop.rx-tip .rx-head" in css and "border-bottom: 0" in css
+
+
+def test_the_open_season_heads_the_athlete_page_and_the_card():
+    # owner, 2026-10-30, Trey Caldwell: a college freshman with two 2026 XC
+    # races was headed by his 2025 high school track season
+    app = read("racecast", "app.py")
+    assert "(n_races >= 3 OR year >= %s) DESC," in app and "int(_season_floor.OPEN_FROM)" in app
+    cards = read("racecast", "cards.py")
+    assert "(n_races >= 3 OR year >= %s) DESC" in cards and "int(OPEN_FROM)" in cards

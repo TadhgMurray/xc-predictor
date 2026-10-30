@@ -211,6 +211,7 @@ def athleteCardData(cur, person_id):
     from school_identity import schoolLabelFor
     from grade_label import gradeLabel
     from school_units import unitsForPerson, unitsFor, homeStateOf
+    from season_floor import OPEN_FROM
     a = _cardName(cur, person_id)
     if a is None:
         return None
@@ -221,8 +222,9 @@ def athleteCardData(cur, person_id):
     cur.execute("""SELECT mean_rating, sport, pool, year, n_races, state, school, grade
                    FROM athlete_season WHERE person_id = %s
                    ORDER BY (mean_rating IS NOT NULL) DESC,
-                            (n_races >= 3) DESC, last_race DESC NULLS LAST,
-                            year DESC, n_races DESC LIMIT 1""", (person_id,))
+                            (n_races >= 3 OR year >= %s) DESC, last_race DESC NULLS LAST,
+                            year DESC, n_races DESC LIMIT 1""",
+                (person_id, int(OPEN_FROM)))
     season = _row(cur.fetchone())
     pool = (season or {}).get("pool")
     fallback_rating = None
