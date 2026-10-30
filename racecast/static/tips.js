@@ -11,11 +11,21 @@
  *   With a mouse: the tooltip is one element on <body>, placed by the
  *   badge's position on screen -- above it, or below when there is no room,
  *   kept inside the window -- so no box around the badge can clip it.
- *   Without hover (a phone): a tap opens it as a sheet from the bottom of the
- *   screen, the same shape as "How this was rated" (rating-explain.js); a
- *   badge that is a link gets a "More" link in the sheet instead of leaving.
- *   Escape, the ×, the dimmed page or a second tap closes it.
+ *   A press opens the panel described below. Escape, the ×, a click
+ *   outside or a second press closes it.
  *
+ * ★ A PRESS OPENS A PANEL BESIDE THE BADGE (owner, 2026-10-30: "the
+ *   course difficulty thing shows up at the bottom rather than like the how
+ *   it was rated tab ... rated not ranked should be hoverable? maybe others
+ *   should too"). The sheet came from (hover: none), which a touch screen
+ *   wider than a phone also answers -- so a badge opened at the bottom of the
+ *   screen while the rating beside it (rating-explain.js, decided by width)
+ *   opened by its cell. Now: a hover shows the small tooltip wherever a
+ *   pointer can hover (any-hover), and a click or tap on any badge opens a
+ *   compact panel in rating-explain's look, anchored below or above the
+ *   badge; a sheet from the bottom only on a phone-width screen (700 px, the
+ *   rating panel's own rule). A badge that is a link still follows it with a
+ *   mouse, and offers "More" in the panel on a touch screen.
  * ! With this script running, html.js-tips turns the CSS bubbles off
  *   (style.css); without it they are the fallback, as before.
  * ! Delegated from the document, so badges drawn later (boards, predictions,
@@ -26,14 +36,14 @@
   var root = document.documentElement;
   root.classList.add("js-tips");
 
-  var noHover = !!(window.matchMedia && window.matchMedia("(hover: none)").matches);
-  var floatEl = null, sheet = null, backdrop = null, openFor = null, lastFocus = null;
+  var canHover = !!(window.matchMedia && window.matchMedia("(any-hover: hover)").matches);
+  var floatEl = null, panel = null, backdrop = null, openFor = null, panelFor = null, lastFocus = null;
+  function narrow() {
+    return !!(window.matchMedia && window.matchMedia("(max-width: 700px)").matches);
+  }
 
-  // ! NOT THE COURSE CELL (.dv-day): rating-explain.js opens it in the
-  //   "How this was rated" panel (owner, 2026-10-30)
   function badgeOf(t) {
-    var el = t && t.closest ? t.closest(".flag[data-blurb], .flag[data-title]") : null;
-    return el && el.classList.contains("dv-day") ? null : el;
+    return t && t.closest ? t.closest(".flag[data-blurb], .flag[data-title]") : null;
   }
 
   function text(el) {
@@ -68,71 +78,111 @@
     openFor = null;
   }
 
-  /* ---- without hover: a sheet from the bottom ----------------------- */
-  function closeSheet() {
-    if (sheet) sheet.hidden = true;
-    if (backdrop) backdrop.hidden = true;
-    openFor = null;
+  /* ---- a press: the panel beside the badge (a sheet on a phone) ---- */
+  function closePanel() {
+    if (!panel || panel.hidden) return;
+    panel.hidden = true;
+    backdrop.hidden = true;
+    panelFor = null;
     if (lastFocus && lastFocus.focus) { try { lastFocus.focus({ preventScroll: true }); } catch (e) { /* old browser */ } }
   }
-  function showSheet(el) {
-    if (!sheet) {
+  function placePanel() {
+    if (!panel || panel.hidden || !panelFor || panel.classList.contains("rx-sheet")) return;
+    var r = panelFor.getBoundingClientRect();
+    var vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    var w = Math.min(320, vw - 24);
+    panel.style.width = w + "px";
+    var h = panel.offsetHeight;
+    var top = (vh - r.bottom - 12 >= h || r.top - 12 < h) ? r.bottom + 6 : r.top - 6 - h;
+    panel.style.top = Math.max(8, top) + "px";
+    panel.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, vw - w - 8)) + "px";
+  }
+  var raf = 0;
+  function follow() {
+    if (raf || !panel || panel.hidden) return;
+    raf = window.requestAnimationFrame(function () { raf = 0; placePanel(); });
+  }
+  function showPanel(el) {
+    if (!panel) {
       backdrop = document.createElement("div");
-      backdrop.className = "rc-tips-backdrop";
-      backdrop.addEventListener("click", closeSheet);
-      sheet = document.createElement("div");
-      sheet.className = "rc-tips";
-      sheet.setAttribute("role", "dialog");
-      sheet.setAttribute("aria-modal", "true");
+      backdrop.className = "rx-backdrop";
+      backdrop.addEventListener("click", closePanel);
+      panel = document.createElement("div");
+      panel.className = "rx-pop rx-tip";
+      panel.setAttribute("role", "dialog");
       document.body.appendChild(backdrop);
-      document.body.appendChild(sheet);
+      document.body.appendChild(panel);
+      window.addEventListener("resize", follow);
+      window.addEventListener("scroll", follow, { passive: true });
+      document.addEventListener("scroll", follow, { passive: true, capture: true });
     }
     var t = text(el);
-    sheet.innerHTML = '<div class="rc-tips-head"><b></b><button type="button" class="rc-tips-x" aria-label="Close">&times;</button></div><p></p>';
-    sheet.querySelector("b").textContent = t.title;
-    sheet.querySelector("p").textContent = t.blurb;
-    sheet.setAttribute("aria-label", t.title || "About this");
+    panel.innerHTML = '<div class="rx-head"><div class="rx-title"></div>' +
+      '<button type="button" class="rx-close" aria-label="Close">&times;</button></div>' +
+      '<div class="rx-body"><p></p></div>';
+    panel.querySelector(".rx-title").textContent = t.title;
+    panel.querySelector(".rx-body p").textContent = t.blurb;
+    panel.setAttribute("aria-label", t.title || "About this");
     var href = el.tagName === "A" ? el.getAttribute("href") : null;
     if (href) {
       var a = document.createElement("a");
       a.className = "rc-tips-more";
       a.href = href;
       a.textContent = "More →";
-      sheet.appendChild(a);
+      panel.querySelector(".rx-body").appendChild(a);
     }
-    sheet.querySelector(".rc-tips-x").addEventListener("click", closeSheet);
+    panel.querySelector(".rx-close").addEventListener("click", function (e) {
+      e.stopPropagation();
+      closePanel();
+    });
+    var sheet = narrow();
+    panel.classList.toggle("rx-sheet", sheet);
+    backdrop.hidden = !sheet;
+    panel.hidden = false;
+    panelFor = el;
     lastFocus = el;
-    backdrop.hidden = false;
-    sheet.hidden = false;
-    sheet.querySelector(".rc-tips-x").focus({ preventScroll: true });
-    openFor = el;
+    hideFloat();
+    placePanel();
   }
 
-  if (noHover) {
-    // capture, so a badge inside a link or a sortable header opens the sheet
-    // instead of following the link or sorting
-    document.addEventListener("click", function (e) {
-      var el = badgeOf(e.target);
-      if (!el) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (openFor === el) { closeSheet(); return; }
-      showSheet(el);
-    }, true);
-  } else {
+  // capture, so a badge inside a link or a sortable header opens its panel
+  // instead of following the link or sorting
+  document.addEventListener("click", function (e) {
+    var el = badgeOf(e.target);
+    if (!el) {
+      if (panel && !panel.hidden && !panel.contains(e.target)) closePanel();
+      return;
+    }
+    if (canHover && !narrow() && el.tagName === "A") return;   // a link, with a mouse: follow it
+    e.preventDefault();
+    e.stopPropagation();
+    if (panelFor === el) { closePanel(); return; }
+    showPanel(el);
+  }, true);
+
+  if (canHover) {
     document.addEventListener("mouseover", function (e) {
+      if (panelFor) return;                                   // a panel is open: no bubble over it
       var el = badgeOf(e.target);
       if (el && el !== openFor) showFloat(el);
       else if (!el && openFor) hideFloat();
     });
     document.addEventListener("focusin", function (e) {
+      if (panelFor) return;
       var el = badgeOf(e.target);
       if (el) showFloat(el); else if (openFor) hideFloat();
     });
     window.addEventListener("scroll", function () { if (openFor) hideFloat(); }, { passive: true });
   }
   document.addEventListener("keydown", function (e) {
-    if (e.key !== "Escape" || !openFor) return;
-    if (sheet && !sheet.hidden) closeSheet(); else hideFloat();
+    if (e.key === "Escape") {
+      if (panel && !panel.hidden) closePanel(); else if (openFor) hideFloat();
+      return;
+    }
+    var el = badgeOf(e.target);
+    if (el && (e.key === "Enter" || e.key === " ") && el.tagName !== "A") {
+      e.preventDefault();
+      showPanel(el);
+    }
   });
 })();

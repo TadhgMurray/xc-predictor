@@ -98,6 +98,16 @@
     margin-bottom: 6px;
 }
 .rx-pop.rx-sheet .rx-body { margin-bottom: 0; }
+/* ★ A BADGE'S PANEL (tips.js, 2026-10-30): the same panel, compact -- one
+   title and a sentence or two, so no rule under the head and tight padding
+   (owner: "too much space"). */
+.rx-pop.rx-tip { font-size: 0.82rem; line-height: 1.45; }
+.rx-pop.rx-tip .rx-head { padding: 0.55rem 0.7rem 0.15rem; border-bottom: 0; align-items: center; }
+.rx-pop.rx-tip .rx-title { font-size: 0.85rem; }
+.rx-pop.rx-tip .rx-close { width: 1.6rem; height: 1.6rem; margin: -0.2rem -0.3rem 0 0; font-size: 1.15rem; }
+.rx-pop.rx-tip .rx-body { padding: 0 0.7rem 0.6rem; margin-bottom: 0; }
+.rx-pop.rx-tip .rx-body p { margin: 0; color: #374151; }
+.rx-pop.rx-tip .rc-tips-more { display: inline-block; margin-top: 0.35rem; font-weight: 600; }
 .rx-loading, .rx-na { color: var(--muted, #6b7280); margin: 0.4rem 0; }
 
 .rx-start { display: flex; gap: 0.6rem; align-items: flex-start; margin-bottom: 0.35rem; }
