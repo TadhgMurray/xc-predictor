@@ -29,8 +29,11 @@
   var noHover = !!(window.matchMedia && window.matchMedia("(hover: none)").matches);
   var floatEl = null, sheet = null, backdrop = null, openFor = null, lastFocus = null;
 
+  // ! NOT THE COURSE CELL (.dv-day): rating-explain.js opens it in the
+  //   "How this was rated" panel (owner, 2026-10-30)
   function badgeOf(t) {
-    return t && t.closest ? t.closest(".flag[data-blurb], .flag[data-title]") : null;
+    var el = t && t.closest ? t.closest(".flag[data-blurb], .flag[data-title]") : null;
+    return el && el.classList.contains("dv-day") ? null : el;
   }
 
   function text(el) {

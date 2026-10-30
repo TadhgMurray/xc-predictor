@@ -4407,7 +4407,7 @@ tr.hl-school td { background: #fef9c3; }
     background: none;
     border-radius: 0;
     border-bottom: 1px dotted #8a8a8a;
-    cursor: help;
+    cursor: pointer;          /* a press opens the rating panel (rating-explain.js) */
 }
 .dv-day::after { width: 260px; text-transform: none; }
 .dv-day .dv-tick {

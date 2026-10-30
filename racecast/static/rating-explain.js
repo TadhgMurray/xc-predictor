@@ -66,6 +66,14 @@
     }
   }
 
+  /* ★ THE COURSE CELL OPENS THE SAME PANEL (owner, 2026-10-30: "on athlete
+     page the course difficulty thing shows up at the bottom rather than like
+     the how it was rated tab"). The course % (_explain.html dv, .dv-day) was
+     a tips.js badge: a hover bubble with a mouse, a sheet from the bottom of
+     the screen on a tap. A press now opens this panel beside the cell, the
+     course and the race day in it; tips.js leaves .dv-day to this file. */
+  var COURSE = ".dv-day[data-title]";
+
   document.addEventListener("click", function (e) {
     var rv = e.target.closest && e.target.closest("td[data-rx] .rv");
     if (rv) {
@@ -73,8 +81,16 @@
       open(rv);
       return;
     }
+    var dv = e.target.closest && e.target.closest(COURSE);
+    if (dv) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (opener === dv && pop && !pop.hidden) { close(); return; }
+      openCourse(dv);
+      return;
+    }
     if (pop && !pop.hidden && !pop.contains(e.target)) close();
-  });
+  }, true);
 
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && pop && !pop.hidden) { close(); return; }
@@ -82,8 +98,32 @@
     if (rv && (e.key === "Enter" || e.key === " ")) {
       e.preventDefault();
       open(rv);
+      return;
+    }
+    var dv = e.target.closest && e.target.closest(COURSE);
+    if (dv && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      openCourse(dv);
     }
   });
+
+  function openCourse(dv) {
+    ensurePanel();
+    opener = dv;
+    anchorCell = dv.closest("td") || dv;
+    pop.classList.toggle("rx-sheet", isPhone());
+    backdrop.hidden = !isPhone();
+    pop.hidden = false;
+    var link = dv.getAttribute("data-course-href");
+    pop.innerHTML = '<div class="rx-head"><div><div class="rx-title">' +
+      esc(dv.getAttribute("data-title") || "Course") + '</div></div>' +
+      '<button type="button" class="rx-close" aria-label="Close">×</button></div>' +
+      '<div class="rx-body"><p>' + esc(dv.getAttribute("data-blurb") || "") + '</p>' +
+      (link ? '<p><a href="' + esc(link) + '">The course page →</a></p>' : "") +
+      '</div>';
+    wireClose();
+    place();
+  }
 
   /* --- the panel ----------------------------------------------------- */
   function ensurePanel() {
