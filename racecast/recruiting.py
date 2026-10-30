@@ -757,62 +757,39 @@ def ratingFromTime(seconds, event, gender, level="hs"):
 #   classes build_recruiting keeps. One number, here, to tune.
 RECENCY_HALF_LIFE = 1.5
 
-# ! WEIGHTED PERCENTILES, WHICH POSTGRES HAS NO AGGREGATE FOR.
-#   percentile_cont cannot take a weight, so the quantile is found by
-#   walking the ratings in order and taking the first one at which the
-#   running weight crosses the share. `min(...) FILTER (WHERE cum >= q *
-#   tot)` is exactly that, because cum only increases with the ordering.
-#   The result is the weighted LOWER quantile -- an actual recruit's
-#   rating rather than an interpolation between two, which is also the
-#   honest thing to print beside a name.
+# ★ PLAIN NUMBERS, SENIOR SEASONS ONLY (owner, 2026-10-30: "I am uncertain
+#   where it is getting ratings. Honestly the whole thing is way too
+#   complicated" -- and yes to the simpler rule). A college's numbers are the
+#   plain median and quartiles of its recruits' SENIOR high-school season
+#   ratings (source 'hs'; build_recruiting looks back one season) over the
+#   classes build_recruiting keeps (4). No recency weights (the 2026-09-17
+#   half-life is retired by the owner's later call) and no estimate for a
+#   recruit with no linked senior season: that recruit is listed on the
+#   college's page, and counted in n_all, but not in the numbers.
+#   RECENCY_HALF_LIFE stays defined for callers that still pass it.
 _AGG_SQL = """
     WITH src AS (
-        SELECT school, state, division, conference, recruit_rating, source,
-               first_year
+        SELECT school, state, division, conference, recruit_rating, source, first_year
         FROM   college_recruit
         WHERE  gender = %(gender)s AND sport = %(sport)s {extra}
-    ),
-    -- ⚠ THE NEWEST CLASS IN THE WHOLE POOL, NOT IN `src`. {extra} scopes
-    --   src to one school for the single-college page; anchoring the decay
-    --   to that school's own newest class would give a program that stopped
-    --   recruiting three years ago full weight on its stale top class, and
-    --   the college page would then disagree with the table it came from.
-    --   One anchor, both views.
-    newest AS (
-        SELECT max(first_year) AS y FROM college_recruit
-        WHERE  gender = %(gender)s AND sport = %(sport)s
-    ),
-    w AS (
-        SELECT src.*,
-               power(0.5, (newest.y - src.first_year)::float
-                          / %(half_life)s)::float AS wt
-        FROM   src CROSS JOIN newest
-    ),
-    c AS (
-        SELECT w.*,
-               sum(wt) OVER (PARTITION BY school, state
-                             ORDER BY recruit_rating
-                             ROWS BETWEEN UNBOUNDED PRECEDING
-                                      AND CURRENT ROW) AS cum,
-               sum(wt) OVER (PARTITION BY school, state) AS tot
-        FROM   w
     )
     SELECT school, state, min(division) AS division, min(conference) AS conference,
-           count(*)::int AS n,
-           sum(CASE WHEN source = 'hs' THEN 1 ELSE 0 END)::int AS n_hs,
-           min(recruit_rating)::real AS min,
-           min(recruit_rating) FILTER (WHERE cum >= 0.25 * tot)::real AS p25,
-           min(recruit_rating) FILTER (WHERE cum >= 0.50 * tot)::real AS median,
-           min(recruit_rating) FILTER (WHERE cum >= 0.75 * tot)::real AS p75,
-           max(recruit_rating)::real AS max,
+           count(*) FILTER (WHERE source = 'hs')::int AS n,
+           count(*) FILTER (WHERE source = 'hs')::int AS n_hs,
+           count(*)::int AS n_all,
+           (min(recruit_rating) FILTER (WHERE source = 'hs'))::real AS min,
+           (percentile_cont(0.25) WITHIN GROUP (ORDER BY recruit_rating)
+                FILTER (WHERE source = 'hs'))::real AS p25,
+           (percentile_cont(0.5) WITHIN GROUP (ORDER BY recruit_rating)
+                FILTER (WHERE source = 'hs'))::real AS median,
+           (percentile_cont(0.75) WITHIN GROUP (ORDER BY recruit_rating)
+                FILTER (WHERE source = 'hs'))::real AS p75,
+           (max(recruit_rating) FILTER (WHERE source = 'hs'))::real AS max,
            min(first_year) AS first_year, max(first_year) AS last_year,
-           -- how much of the verdict is the newest two classes, so the page
-           -- can say when a school's number is really an old school's
-           (sum(wt) FILTER (WHERE first_year >= (SELECT y FROM newest) - 1)
-            / nullif(sum(wt), 0))::real AS recent_share
-    FROM   c
+           NULL::real AS recent_share
+    FROM   src
     GROUP  BY school, state
-    HAVING count(*) >= %(min_n)s
+    HAVING count(*) FILTER (WHERE source = 'hs') >= %(min_n)s
 """
 _SCHOOLS = {}                    # (gender, sport) -> (at, rows)
 _schools_lock = threading.Lock()

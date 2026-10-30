@@ -107,7 +107,7 @@
   <section class="rc-panel" id="{{ b.sport|lower }}" data-panel="{{ b.sport|lower }}">
   {% if not tabbed %}<h2>{{ sport_words[b.sport] }} recruits</h2>{% endif %}
   {% if s %}
-  <p class="meta rc-lead">{{ s.n }} recruits, classes of {{ s.classes }}{% if s.n_hs %}, {{ s.n_hs }} with a linked high-school season{% endif %}. Ratings{{ rating_i() }} on the high-school scale.</p>
+  <p class="meta rc-lead">{{ s.n }} recruits with a senior high-school season, classes of {{ s.classes }}{% if s.n_all and s.n_all > s.n %}; {{ s.n_all - s.n }} more are listed below without one and do not count{% endif %}. Ratings{{ rating_i() }} on the high-school scale.</p>
 
   {% if b.tier %}
   <p class="r-tier r-tier-{{ b.tier.key }}"><strong>{{ b.tier.label }}</strong>: your {{ "%.1f"|format(b.rating) }} is {{ b.tier.blurb }}{% if b.tier.gap %}; {{ "%.1f"|format(b.tier.gap) }} points to {{ b.tier.next_label|lower }}{% endif %}.</p>
@@ -140,8 +140,15 @@
         <td>{{ r.class_label }}</td>
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
         <td>{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
-        <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong>{% if r.source != "hs" %} <span class="dist-note" title="No high-school season linked: the first college season, on the high-school scale, less the measured freshman gain">est.</span>{% endif %}</td>
+        {# ★ ONLY A SENIOR SEASON IS A NUMBER (owner, 2026-10-30): a recruit
+           with none linked is listed, and counts for nothing #}
+        {% if r.source == "hs" %}
+        <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong></td>
         {{ fk(r.recruit_rating, "hs_" ~ gender, b.sport, none, "5K") }}
+        {% else %}
+        <td class="num"><span class="dist-note" title="No senior high-school season is linked to this athlete, so they are listed but not counted">not linked</span></td>
+        <td class="fk"><span class="fk-none">-</span></td>
+        {% endif %}
         <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>
         {# the first college season as its HS-equivalent, the number the
            rest of the site shows a collegian (owner, 2026-10-30) #}
@@ -197,8 +204,9 @@
 
   <section class="rc-panel" id="how" data-panel="how">
   {% if not tabbed and blocks %}<h2>How this works</h2>{% endif %}
-  <p class="meta">A recruit is an athlete's first college season; "recruited at" is their last high-school season where Racecast has it,
-     otherwise (est.) the first college season on the high-school scale less the measured freshman gain. Ratings are on the
+  <p class="meta">A recruit is an athlete's first college season. "Recruited at" is their senior high-school season rating in the
+     same sport -- nothing else; a recruit whose senior season is not linked is listed but not counted. A college's numbers are the
+     plain median and quartiles of its recruits over the last four classes. Ratings are on the
      high-school {{ who|lower }}'s scale so they compare with your own; the first college season is shown the same way, as its HS-equivalent rating.</p>
   <p class="meta">A transfer is the first season at a new college after seasons at another, in the same sport. Both ratings are
      college seasons shown as HS-equivalent ratings: the last season at the old school and the first at the new. An athlete whose history returns

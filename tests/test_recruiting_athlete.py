@@ -186,9 +186,9 @@ def test_school_table_reads_the_recruit_table_and_stamps_labels():
          "min": 150.0, "p25": 158.0, "median": 163.5, "p75": 168.0, "max": 175.0, "first_year": 2021, "last_year": 2021},
     ]
     cur = FakeCur([("to_regclass", [{"to_regclass": "college_recruit"}]),
-                   # weighted quantiles, not percentile_cont: each class
-                   # decays by RECENCY_HALF_LIFE (_AGG_SQL's own comment)
-                   ("FILTER (WHERE cum >= 0.25 * tot)", agg)])
+                   # plain quantiles of the senior seasons (owner,
+                   # 2026-10-30: no weights, no estimate)
+                   ("FILTER (WHERE source = 'hs')", agg)])
     rows = R.schoolTable(cur, "m", "TF")
     assert [r["school"] for r in rows] == ["Stanford", "Tufts"]     # typical recruit, fastest first
     assert rows[1]["min"] == 128.0 and rows[1]["classes"] == "2023 to 2026"   # TF label years
@@ -247,7 +247,7 @@ def test_builder_sql_is_first_college_seasons_with_the_boards_floor():
     sql = " ".join(B.recruitSql(True).split())
     assert "min(year) AS first_year" in sql and "c.year = f.first_year" in sql
     assert "(c.n_races >= %(min_races)s OR c.year >= 2026)" in sql
-    assert "h.year < f.first_year AND h.year >= f.first_year - 2" in sql
+    assert "h.year < f.first_year AND h.year >= f.first_year - 1" in sql      # the senior season
     assert "s.division AS row_division" in sql
     assert "NULL::text AS row_division" in " ".join(B.recruitSql(False).split())
     # the states and units are resolved after the query (resolveRows), not

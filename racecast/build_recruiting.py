@@ -59,9 +59,13 @@ from us_state import isFiftyState                       # noqa: E402
 from build_college_directory import loadDirectory, lookup, normName  # noqa: E402
 from school_identity import loadLabels, teamState, assignedStates  # noqa: E402
 
-CLASSES = 6              # recruiting classes kept, newest first
+# ★ FOUR CLASSES AND THE SENIOR SEASON (owner, 2026-10-30: the simpler rule).
+#   A recruit's number is their high-school season in the sport the year
+#   before college -- the senior season -- and nothing else; recruiting.py
+#   counts only those (source 'hs').
+CLASSES = 4              # recruiting classes kept, newest first
 MIN_GAIN_PAIRS = 50      # linked pairs before the freshman gain is trusted
-HS_LOOKBACK = 2          # stored years before the first college season
+HS_LOOKBACK = 1          # stored years before the first college season: the senior season
 _NOT_RECRUIT_GRADES = {"JR-3", "SR-4", "JR-5", "SR-5", "SR-6", "JR-6"}
 
 _DDL = """

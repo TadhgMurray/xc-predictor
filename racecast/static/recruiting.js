@@ -286,7 +286,7 @@
       return;
     }
     const withTier = d.rating != null;
-    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes. Ratings on the high-school scale; the times are the typical recruit's.</p>
+    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes. Each recruit's senior high-school season rating; typical is the plain median of the last four classes, and the times are the typical recruit's.</p>
       <div class="r-scroll"><table class="rk rc-tbl">${tableHead(withTier)}<tbody>${rows.map((r) => schoolRow(r, withTier)).join("")}</tbody></table></div>`;
     const div = $("r-division");
     if (d.divisions && d.divisions.length && div.options.length <= 1) {
