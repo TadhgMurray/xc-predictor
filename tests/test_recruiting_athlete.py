@@ -164,7 +164,7 @@ def test_subject_from_the_query_string():
     assert sub["ratings"] == {"XC": 140.4, "TF": 135.0}          # the latest season per sport
     assert sub["seasons"] == {"XC": 2025, "TF": 2025}            # 2024 TF is the 2025 track season
     assert sub["grad_year"] == 2027 and sub["name"] == "Test Athlete"
-    assert cur.params[0] == (7,)
+    assert cur.params[0] == (7, ['hs_m', 'hs_f'])
     # the accounts seam: a signed-in athlete fills the slot when the query names nobody
     cur = FakeCur([("FROM athlete_season s", seasons)])
     sub, err = R.subjectFrom(cur, {}, account_person_id=7)
