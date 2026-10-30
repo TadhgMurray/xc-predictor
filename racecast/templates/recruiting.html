@@ -104,6 +104,13 @@
 
   {# ---- every school ------------------------------------------------ #}
   <section class="rc-panel rc-schools" id="schools" data-panel="schools">
+    {# ★ TWO SECTIONS IN THIS TAB (owner, 2026-10-30): the high-school
+       recruits, on the high-school scale, and the transfers between
+       colleges, on the college scale; one set of filters for both #}
+    <div class="rc-seg rc-view" id="r-view" role="group" aria-label="Which arrivals">
+      <button type="button" class="rc-seg-btn" data-set="view" data-value="recruits">High school recruits</button>
+      <button type="button" class="rc-seg-btn" data-set="view" data-value="transfers">Transfers</button>
+    </div>
     <div class="rc-filters">
       <select id="r-division" class="rc-input" aria-label="Division">
         <option value="">Any division</option>

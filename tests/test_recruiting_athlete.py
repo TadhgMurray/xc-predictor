@@ -407,3 +407,28 @@ def test_crests_before_the_school_names():
         assert '`<img class="school-mark" src="${esc(url)}" alt=""`' in src, js
         assert 'width="18" height="18" loading="lazy"' in src, js
     assert "{{ crest(r.hs_school, r.hs_state, level='hs') }}" in read("racecast", "templates", "recruiting_school.html")
+
+
+def test_the_board_has_a_transfers_section_on_the_college_scale():
+    # owner, 2026-10-30: "These should be like separate sections in that tab.
+    # transfers should use a collegiate rating"
+    tpl = read("racecast", "templates", "recruiting.html")
+    assert 'data-set="view" data-value="recruits"' in tpl and 'data-set="view" data-value="transfers"' in tpl
+    js = read("racecast", "static", "recruiting.js")
+    assert '"/api/recruiting/transfers?"' in js and "function renderTransfers(d)" in js
+    app = read("racecast", "app.py")
+    assert '@app.route("/api/recruiting/transfers")' in app
+    assert 'stampFiveK(rows, "median", pool="college_" + f["gender"], sport=f["sport"])' in app
+    rows = [{"school": "Wake Forest", "state": "NC", "division": "NCAA DI", "conference": "ACC", "n": 2,
+             "p25": 120.0, "median": 125.04, "p75": 128.0, "min": 118.0, "max": 130.0, "before": 117.0,
+             "gain": 6.0, "first_year": 2024, "last_year": 2025}]
+    outs = [{"school": "Wake Forest", "state": "NC", "n_out": 1}, {"school": "UNCG", "state": "NC", "n_out": 3}]
+    cur = FakeCur([("to_regclass", [{"to_regclass": "college_transfer"}]),
+                   ("GROUP BY school, state", rows), ("from_school AS school", outs)])
+    R._TRANSFERS.clear()
+    t = R.transferTable(cur, "m", "XC")
+    by = {r["school"]: r for r in t}
+    assert by["Wake Forest"]["n"] == 2 and by["Wake Forest"]["n_out"] == 1 and by["Wake Forest"]["median"] == 125.0
+    assert by["UNCG"]["n"] == 0 and by["UNCG"]["n_out"] == 3 and by["UNCG"]["median"] is None
+    assert any("percentile_cont(0.5) WITHIN GROUP (ORDER BY to_rating)" in q for q in cur.sql)
+    R._TRANSFERS.clear()

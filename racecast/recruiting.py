@@ -1099,6 +1099,67 @@ def transferCounts(cur, gender, sport):
     return counts
 
 
+_TRANSFERS = {}                  # (gender, sport) -> (at, rows)
+
+
+def transferTable(cur, gender, sport):
+    """Every college's transfers summarised, for one gender and sport, ON
+    THE COLLEGE SCALE (owner, 2026-10-30: "transfers should use a collegiate
+    rating"): the in-transfers' first season at the new school -- median,
+    quartiles, fastest -- with their last season before and the typical
+    change, and the count who left. Rows carry the same keys the school
+    table's sorts read (median, p75, min, n, school). Cached as the school
+    table is; [] when college_transfer is not built."""
+    from school_identity import schoolLabelIn
+    key = (gender, sport)
+    with _schools_lock:
+        hit = _TRANSFERS.get(key)
+        if hit and _time.time() - hit[0] < CACHE_TTL:
+            return hit[1]
+    if not _tableExists(cur, "college_transfer"):
+        return []
+    cur.execute("""
+        SELECT school, state, min(division) AS division, min(conference) AS conference,
+               count(*)::int AS n,
+               percentile_cont(0.25) WITHIN GROUP (ORDER BY to_rating)  AS p25,
+               percentile_cont(0.5)  WITHIN GROUP (ORDER BY to_rating)  AS median,
+               percentile_cont(0.75) WITHIN GROUP (ORDER BY to_rating)  AS p75,
+               min(to_rating) AS min, max(to_rating) AS max,
+               percentile_cont(0.5)  WITHIN GROUP (ORDER BY from_rating) AS before,
+               percentile_cont(0.5)  WITHIN GROUP (ORDER BY to_rating - from_rating) AS gain,
+               min(year) AS first_year, max(year) AS last_year
+        FROM   college_transfer
+        WHERE  gender = %(g)s AND sport = %(s)s
+        GROUP  BY school, state
+    """, {"g": gender, "s": sport})
+    rows = {(r["school"], r["state"]): dict(r) for r in _rowsOf(cur)}
+    cur.execute("""
+        SELECT from_school AS school, from_state AS state, count(*)::int AS n_out
+        FROM   college_transfer
+        WHERE  gender = %(g)s AND sport = %(s)s
+        GROUP  BY 1, 2
+    """, {"g": gender, "s": sport})
+    for r in _rowsOf(cur):
+        row = rows.setdefault((r["school"], r["state"]),
+                              {"school": r["school"], "state": r["state"], "n": 0,
+                               "division": None, "conference": None})
+        row["n_out"] = r["n_out"]
+    out = []
+    for r in rows.values():
+        r.setdefault("n_out", 0)
+        for k in ("p25", "median", "p75", "min", "max", "before", "gain"):
+            r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+        r["label"] = schoolLabelIn(r["school"], r.get("state"), trusted=True) if r.get("school") else ""
+        fy, ly = r.get("first_year"), r.get("last_year")
+        r["classes"] = ("" if fy is None else labelYear(fy, sport) if fy == ly
+                        else f"{labelYear(fy, sport)} to {labelYear(ly, sport)}")
+        out.append(r)
+    out.sort(key=lambda r: (-(r["n"] or 0), r["school"]))
+    with _schools_lock:
+        _TRANSFERS[key] = (_time.time(), out)
+    return out
+
+
 # ---- the subject: you ------------------------------------------------- #
 
 def _athleteSubject(cur, person_id):

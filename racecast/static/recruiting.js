@@ -4,7 +4,7 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const root = $("recruiting");
-  const state = { gender: "m", sport: "XC" };
+  const state = { gender: "m", sport: "XC", view: "recruits" };
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -86,6 +86,7 @@
                    ["q", $("r-q").value], ["min_n", $("r-minn").value]];
     for (const [k, v] of pairs) if (String(v || "").trim()) q.set(k, String(v).trim());
     q.set("sort", $("r-sort").value);
+    if (state.view === "transfers") q.set("view", "transfers");
     for (const [k, v] of subjectPairs()) q.set(k, v);
     return q;
   }
@@ -94,6 +95,7 @@
     const p = new URLSearchParams(location.search);
     if (p.get("gender") === "m" || p.get("gender") === "f") { state.gender = p.get("gender"); $("r-tgender").value = p.get("gender"); }
     if (p.get("sport") === "XC" || p.get("sport") === "TF") state.sport = p.get("sport");
+    if (p.get("view") === "transfers") state.view = "transfers";
     $("r-division").value = (p.get("division") || "").split(",")[0];
     $("r-state").value = (p.get("state") || "").split(",")[0];
     $("r-q").value = p.get("q") || "";
@@ -292,8 +294,61 @@
     }
   }
 
+  /* ★ THE TRANSFERS SECTION (owner, 2026-10-30): the same filters, every
+     college's transfers in and out, on the COLLEGE scale -- the in-transfers'
+     first season at their new school -- from /api/recruiting/transfers. */
+  function transferRow(r) {
+    const href = schoolHref(r) + "#transfers";
+    return `<tr>
+      <td class="rc-school">${crestMark(r.crest)}<a href="${href}">${esc(r.label || r.school)}</a></td>
+      <td class="rc-dim">${esc(r.division || "")}</td>
+      <td class="rc-dim">${esc(r.conference || "")}</td>
+      <td class="num">${r.n || 0}</td>
+      <td class="num rc-dim">${r.n_out || 0}</td>
+      <td class="num rc-dim">${num(r.before)}</td>
+      <td class="num rc-strong">${num(r.median)}</td>
+      <td class="num">${r.gain == null ? " - " : (r.gain > 0 ? "+" : "") + Number(r.gain).toFixed(1)}</td>
+      <td class="num rc-dim">${num(r.max)}</td>
+      <td class="fk">${r.median_5k ? esc(r.median_5k) + (r.median_5k_dist && r.median_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.median_5k_dist)}</span>` : "") : '<span class="fk-none">-</span>'}</td>
+    </tr>`;
+  }
+
+  function transferHead() {
+    return `<thead><tr><th>School</th><th>Division</th><th>Conference</th>
+      <th class="num" title="athletes who arrived from another college, in the classes counted">In</th>
+      <th class="num" title="athletes who left for another college">Out</th>
+      <th class="num" title="the typical transfer's last season at their old college (college scale)">Before</th>
+      <th class="num" title="the typical transfer's first season here (college scale)">Typical here</th>
+      <th class="num" title="the typical change from the old college to this one">Change</th>
+      <th class="num" title="the fastest transfer's first season here (college scale)">Fastest</th>
+      ${fkTh("5K")}</tr></thead>`;
+  }
+
+  function renderTransfers(d) {
+    state.gender = d.gender; state.sport = d.sport;
+    paintSeg();
+    const rows = (d.rows || []).filter((r) => r.n || r.n_out);
+    if (!d.built) {
+      $("r-out").innerHTML = `<p class="meta">The transfer numbers aren't ready yet; they arrive with the next recruiting build.</p>`;
+      return;
+    }
+    if (!rows.length) {
+      $("r-out").innerHTML = `<p class="meta">No college matches. Widen the filters.</p>`;
+      return;
+    }
+    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes with transfers. Ratings on the college scale: a transfer's last season before and first season here; the 5K is the typical transfer's.</p>
+      <div class="r-scroll"><table class="rk rc-tbl">${transferHead()}<tbody>${rows.map(transferRow).join("")}</tbody></table></div>`;
+  }
+
   async function load() {
     const q = query();
+    const minn = $("r-minn") && $("r-minn").closest("label");
+    if (minn) minn.style.display = state.view === "transfers" ? "none" : "";
+    // the sort menu speaks the section's noun
+    const words = state.view === "transfers"
+      ? { median: "Fastest typical transfer", top: "Fastest top transfers", n: "Most transfers in" }
+      : { median: "Fastest typical recruit", top: "Fastest top recruits", n: "Most recruits" };
+    for (const o of $("r-sort").options) if (words[o.value]) o.textContent = words[o.value];
     // ! THE HASH IS KEPT (owner, 2026-10-10): the page's tabs live in it
     //   (race-page.js), and dropping it broke /recruiting#fit links.
     try { history.replaceState(null, "", location.pathname + "?" + q.toString() + location.hash); } catch (e) { /* fine */ }
@@ -304,11 +359,12 @@
     });
     status("Loading…", false);
     try {
-      const res = await fetch("/api/recruiting/schools?" + q.toString());
+      const api = state.view === "transfers" ? "/api/recruiting/transfers?" : "/api/recruiting/schools?";
+      const res = await fetch(api + q.toString());
       const d = await readJson(res);
       if (!res.ok || d.error) { status(d.error || res.statusText || `The server had a problem (error ${res.status}).`, true, res.status >= 500 ? load : null); $("r-out").innerHTML = ""; return; }
       status("", false);
-      render(d);
+      if (state.view === "transfers") renderTransfers(d); else render(d);
     } catch (err) {
       status(err.friendly ? err.message : "Could not reach the server. Check your connection and try again.", true, load);
       $("r-out").innerHTML = "";

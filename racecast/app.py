@@ -12337,6 +12337,35 @@ def api_recruiting_schools():
     })
 
 
+@app.route("/api/recruiting/transfers")
+def api_recruiting_transfers():
+    """The board's Transfers section: every college's transfers for one
+    gender and sport, on the COLLEGE scale (recruiting.transferTable), with
+    the school table's filters and sorts."""
+    import recruiting as R
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            f, err = R.parseSchoolFilters(request.args)
+            if err:
+                return jsonify({"error": err}), 400
+            try:
+                built = R._tableExists(cur, "college_transfer")
+                every = R.transferTable(cur, f["gender"], f["sport"])
+            except psycopg2.Error as exc:
+                conn.rollback()
+                print(f"recruiting: transfers failed ({type(exc).__name__}: {exc})", flush=True)
+                return jsonify({"error": "The transfers table is not available right now."}), 200
+    rows = [dict(r) for r in R.filterSchools(every, f)]
+    # the typical transfer's college-scale rating as a track 5K, on the
+    # college pool (the recruits' column reads the high-school pool)
+    from conversions import stampFiveK
+    stampFiveK(rows, "median", pool="college_" + f["gender"], sport=f["sport"])
+    stampCrests(rows, pool="college_" + f["gender"])
+    return jsonify({"rows": rows, "gender": f["gender"], "sport": f["sport"],
+                    "sort": f["sort"], "built": built, "total": len(every),
+                    "divisions": R.distinctUnits(every, "division")})
+
+
 @app.route("/recruiting/school/<path:school_name>")
 def recruiting_school_page(school_name):
     """One college's recruiting page: who they took, at what rating, what
