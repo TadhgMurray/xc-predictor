@@ -12,6 +12,13 @@
 #   python -m sources.timers promote [--apply]                     # the rest into results / meets ...
 #   python -m sources.timers status                                # counts, and distances that disagree
 #
+#   python -m sources.timers all [--dry] [--only SLUG ...] [--per-source 10] [--since-year 2026]
+#       ★ THE ONE COMMAND (owner, 2026-10-31: "make all the local timers
+#       scrapers actually work with an easy command"): every enabled timer's
+#       results index is read for meet pages (sources/discover.py), the new
+#       ones fetched and parsed, then land -> dedup -> promote, written.
+#       --dry stops after the parse (logs/timers_<date>.jsonl, counts).
+#
 #   Then the pipeline's own steps do the rest: 04a pass 4 links the promoted
 #   rows (scripts/link_uploads.py --source timer), 04c flags a race a feed
 #   posts later (twin_upload), 05 normalises them.
@@ -283,6 +290,85 @@ def cmdStatus(a):
     return 0
 
 
+def cmdAll(a):
+    """discover -> fetch -> land -> dedup -> promote, every enabled timer."""
+    import datetime as _dt
+    from collections import Counter
+    from sources import discover
+    from sources.fetch import Fetcher, RawStore
+    since = a.since_year or _dt.date.today().year
+    srcs = [s for s in registry.load() if s.enabled and s.kind != "blocked"]
+    if a.only:
+        srcs = [s for s in srcs if s.slug in set(a.only)]
+    known = set()
+    if not a.dry:
+        from database import getConn
+        with getConn() as conn:
+            with conn.cursor() as cur:
+                land.initTables(cur)
+                cur.execute("SELECT url FROM meets_ext")
+                known = {r[0] for r in cur.fetchall()}
+            conn.commit()
+    print(f"[all] {len(srcs)} timers, meets from {since} on, up to {a.per_source} new each; "
+          f"{len(known):,} pages already landed")
+    fetcher = Fetcher(RawStore())
+
+    async def one(src):
+        try:
+            urls, note = await discover.discover(fetcher, src, since, a.per_source, known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for u, kind in urls:
+            try:
+                lm, why = await fetchMeet(fetcher, src.slug, u, kind if kind == "meetpro" else None)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((u, lm, why))
+        return src, got, note
+
+    async def go():
+        return await asyncio.gather(*(one(s) for s in srcs))
+
+    results = asyncio.run(go())
+    os.makedirs(os.path.join(_ROOT, "logs"), exist_ok=True)
+    out = a.out or os.path.join(_ROOT, "logs", f"timers_{_dt.date.today().isoformat()}.jsonl")
+    meets, tally = [], Counter()
+    with open(out, "w", encoding="utf-8") as f:
+        for src, got, note in results:
+            ok = 0
+            for u, lm, why in got:
+                if lm is None or not lm.races:
+                    tally["not parsed"] += 1
+                    print(f"  ✗ {src.slug}: {u} -- {why if lm is None else 'no individual races'}")
+                    continue
+                f.write(json.dumps(lm.toJson()) + "\n")
+                meets.append(lm)
+                ok += 1
+                print(f"  ✓ {src.slug}: {land.summary(lm)}")
+            tally["timers with a new meet"] += int(ok > 0)
+            print(f"[all] {src.slug:<44} {note}; parsed {ok}")
+    rows = sum(m.rowCount() for m in meets)
+    print(f"[all] parsed {len(meets)} meets, {rows:,} rows -> {out}; {dict(tally)}; fetcher {fetcher.stats}")
+    if a.dry or not meets:
+        print("[all] dry run -- nothing written" if a.dry else "[all] nothing new to land")
+        return 0
+    from database import getConn
+    from sources import dedup, promote
+    what = Counter()
+    with getConn() as conn:
+        with conn.cursor() as cur:
+            for lm in meets:
+                what[land.landMeet(cur, lm)[1]] += 1
+        conn.commit()
+        print(f"[all] landed: {dict(what)}")
+        dedup.run(conn, write=True, show=a.show)
+        promote.run(conn, apply=True, show=a.show)
+    print("[all] done. Link them now with: python scripts/link_uploads.py --source timer --apply "
+          "(the nightly 04a does it too), then the pipeline rates them")
+    return 0
+
+
 def cmdInit(_a):
     from database import getConn
     with getConn() as conn:
@@ -317,8 +403,15 @@ def main(argv=None):
     p.add_argument("--show", type=int, default=40)
     s = sub.add_parser("status")
     s.add_argument("--show", type=int, default=40)
+    al = sub.add_parser("all", help="discover + fetch + land + dedup + promote, every enabled timer")
+    al.add_argument("--dry", action="store_true", help="parse only; write nothing")
+    al.add_argument("--only", action="append", help="this timer's slug (repeatable)")
+    al.add_argument("--per-source", type=int, default=10)
+    al.add_argument("--since-year", type=int)
+    al.add_argument("--out")
+    al.add_argument("--show", type=int, default=20)
     a = ap.parse_args(argv)
-    return {"init": cmdInit, "fetch": cmdFetch, "land": cmdLand, "dedup": cmdDedup,
+    return {"all": cmdAll, "init": cmdInit, "fetch": cmdFetch, "land": cmdLand, "dedup": cmdDedup,
             "promote": cmdPromote, "status": cmdStatus}[a.cmd](a)
 
 
