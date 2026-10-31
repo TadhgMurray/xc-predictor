@@ -35,10 +35,15 @@ ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 #   morning. Started at 01:17 Pacific, three hours leaves the pricing and the
 #   boards (about an hour) done before people look.
 SCRAPE_MIN="${XCP_NIGHTLY_SCRAPE_MIN:-180}"
-SCRAPE=1; DRY=0
+SCRAPE=1; DRY=0; PUBLISH=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-scrape) SCRAPE=0; shift ;;
+    # ★ RATE, DO NOT REBUILD THE BOARDS (owner, 2026-10-30: "get just Mike
+    #   Woods and rate it in under 30 mins"): link, flag, normalise and price
+    #   the new rows, then stop. The race and athlete pages read the rows, so
+    #   the ratings show; the boards and search catch up on the next night.
+    --no-publish) PUBLISH=0; shift ;;
     --dry-run) DRY=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -152,9 +157,11 @@ if [ "$SCRAPE" -eq 1 ]; then
   #   The XCP_NIGHTLY_* names win over the full run's NUM_SESSIONS /
   #   PER_MEET_DELAY in the env file, which are sized for the VPN pool.
   export NUM_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
-  export TFRRS_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
+  # ★ TFRRS SLOWER STILL (owner, 2026-10-30: "slow the rate"): one session,
+  #   10-20 s between meets, whatever the athletic.net knobs say
+  export TFRRS_SESSIONS="${XCP_NIGHTLY_TFRRS_SESSIONS:-1}"
   export PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
-  export TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
+  export TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_TFRRS_DELAY:-10,20}"
   # ★ A SHORT PROBE PAST THE NEWEST MEET (owner, 2026-10-22: "lower probe
   #   for both"). Every id asked waits the 5-10 s above, a miss included, so
   #   the full run's probe (anet 500-id blocks until two come back empty --
@@ -264,7 +271,8 @@ if [ "$PEOPLE_OK" -eq 0 ]; then
   fi
 fi
 if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --apply --new-only \
-   && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue; then
+   && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue \
+   && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 
   # ---- 4. publish: boards, rank lines, teams, search -------------------- #
   if step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare; then
@@ -354,6 +362,16 @@ fi
 #   01a OVERWRITES the probe. Gated on the boards, a failed night lost its
 #   redirects for good: every id merged away tonight would 404.
 step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
+
+# --no-publish: rated and redirected; the sitemap, forecasts and watchdog
+# read the boards, which tonight's run did not rebuild -- the next night does
+if [ "$PUBLISH" -eq 0 ]; then
+  TOTAL=$(( $(date +%s) - T_START ))
+  echo ""
+  echo "== rated without publishing in $((TOTAL / 60)) min -- logs: $LOGDIR"
+  [ -n "$FAILED" ] && { echo "   FAILED:$FAILED"; exit 1; }
+  exit 0
+fi
 
 # ★ "WHAT WE SAID", FROZEN BEFORE EACH MEET, AND SCORED AFTER (owner,
 #   2026-10-10: the weekly "how we did" loop). The week's posted XC meets

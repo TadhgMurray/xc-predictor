@@ -57,3 +57,14 @@ def test_the_latest_index_queues_first_and_the_daily_hole_pass_is_off():
     assert "ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0, priority = 1" in hs
     assert "ORDER BY COALESCE(priority, 0) DESC, meet_id DESC" in read("scripts", "database.py")
     assert "sources.tfrrs_hs latest --pages 3" in read("deploy", "nightly_update.sh")
+
+
+def test_one_meet_runs_and_a_slower_night():
+    # owner, 2026-10-30: "get just Mike Woods and rate it in under 30 mins",
+    # "slow the rate"
+    db = read("scripts", "database.py")
+    assert 'os.environ.get("TFRRS_ONLY")' in db and "meet_id = ANY(%s::bigint[])" in db
+    sh = read("deploy", "nightly_update.sh")
+    assert "--no-publish) PUBLISH=0" in sh and 'if [ "$PUBLISH" -eq 0 ]; then' in sh
+    assert 'TFRRS_SESSIONS="${XCP_NIGHTLY_TFRRS_SESSIONS:-1}"' in sh
+    assert 'TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_TFRRS_DELAY:-10,20}"' in sh

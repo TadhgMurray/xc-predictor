@@ -184,15 +184,39 @@ def _handleVerdict(status, html):
 # Output:   the results-page HTML string. Raises RateLimitException on a 429,
 #           IPBlockedException on a CloudFront 403, CloudflareException on a
 #           challenge page.
-async def fetchTFPage(url, page=None):
+# ★ ONLY A CHALLENGE PAGE IS A BLOCK (owner, 2026-10-30: "I have a feeling it
+#   wasn't an actual challenge page" -- it was not: XC 29355 is TFRRS's
+#   ordinary 404 page, no Cloudflare marker on it). Anything that was not a
+#   results page used to raise CloudflareException, which stops the whole run
+#   (polite_stop): a 404 for an id past the newest meet, an unrecognised page,
+#   and an EMPTY body -- a browser load that timed out. Now:
+#     a challenge page (_BLOCK_MARKERS)   CloudflareException: the run stops
+#     a 404, or a page we do not know     returned: _isMeetPage says "not a meet"
+#     nothing at all (a timeout)          one reload after a pause, then
+#                                         FetchFailed: that meet fails, the run
+#                                         goes on
+class FetchFailed(Exception):
+    """The browser brought back nothing (a timeout, a dropped load)."""
+
+
+async def fetchTFPage(url, page=None, retry_after=20.0):
     if page is None:
         raise RuntimeError("fetchTFPage reads TFRRS in a browser page; "
                            "launch_tfrrs opens one per session")
-    status, body = await _tierPlaywright(page, url)
-    html = _handleVerdict(status, body)
-    if html is not None:
-        return html
-    raise CloudflareException(f"TFRRS: blocked for {url}")
+    import asyncio as _asyncio
+    for attempt in (1, 2):
+        status, body = await _tierPlaywright(page, url)
+        html = _handleVerdict(status, body)          # ok, or raises on 429 / 403
+        if html is not None:
+            return html
+        verdict = _classifyResponse(status, body)
+        if verdict == "block":
+            raise CloudflareException(f"TFRRS: challenge page at {url}")
+        if body:                                      # a 404, or a page we do not know
+            return body
+        if attempt == 1:
+            await _asyncio.sleep(retry_after)
+    raise FetchFailed(f"TFRRS: no page from {url} (status {status}) after a reload")
  
  
 # _runPlaywrightTier

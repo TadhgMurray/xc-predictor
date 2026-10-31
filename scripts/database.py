@@ -3516,6 +3516,9 @@ def claimTFRRSMeetBatch(batch_size: int, states=(0,), sport=None) -> list:
 #   /f compiled results, where TFRRS keeps a track meet's marks), a cross
 #   country meet one, and the night is for cross country.
 def _claimTFRRSBatch(cursor, batch_size, states=(0,), sport=None):
+    # ★ TFRRS_ONLY=28447,28448 CLAIMS JUST THOSE (owner, 2026-10-30: "get
+    #   just Mike Woods"): a one-meet run without draining the rest
+    only = [int(x) for x in (os.environ.get("TFRRS_ONLY") or "").replace(" ", "").split(",") if x.isdigit()]
     cursor.execute(
         """
         UPDATE meet_queue
@@ -3525,6 +3528,7 @@ def _claimTFRRSBatch(cursor, batch_size, states=(0,), sport=None):
             FROM meet_queue
             WHERE scraped = ANY(%s) AND source = 'tfrrs'
               AND (%s::text IS NULL OR sport = %s::text)
+              AND (cardinality(%s::bigint[]) = 0 OR meet_id = ANY(%s::bigint[]))
             -- ★ A MEET THE RESULTS INDEX NAMED GOES FIRST (priority, set by
             --   sources.tfrrs_hs), then the newest ids
             ORDER BY COALESCE(priority, 0) DESC, meet_id DESC
@@ -3533,7 +3537,7 @@ def _claimTFRRSBatch(cursor, batch_size, states=(0,), sport=None):
         )
         RETURNING meet_id, sport
         """,
-        (list(states), sport, sport, batch_size),
+        (list(states), sport, sport, only, only, batch_size),
     )
     return cursor.fetchall()
  
