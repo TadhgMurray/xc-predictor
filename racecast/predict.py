@@ -870,7 +870,8 @@ def _score(field, preds):
         if pred.get("time_rating"):
             row["season_rating"] = row["rating"]
             row["rating"] = pred["time_rating"]
-            row["pool"] = (pred.get("time_pool") or row["pool"] or "").split("|")[0] or None
+            row["pool"] = (pred.get("race_pool") or pred.get("time_pool")
+                           or row["pool"] or "").split("|")[0] or None
         elif pred.get("basis") == "rating" and pred.get("form_rating"):
             row["season_rating"] = row["rating"]
             row["rating"] = pred["form_rating"]
@@ -1395,6 +1396,37 @@ def trendApply(entry, table, has_cell, sport=None):
     return entry
 
 
+def _stampRaceRatings(preds, spec):
+    """entry['time_rating'] = each predicted time read back as a rating on
+    the target race -- ON THE RACE'S POOL, one for every runner of a gender
+    (owner, 2026-10-31: "fix how these don't make sense: the 5k equiv/rating
+    columns" -- 25:17.0 rated 136.0 above a 25:18.4 rated 136.8). Each time
+    used to be read back on the runner's OWN pool, the pool of their last
+    race, so a runner filed elsewhere came out on another scale and the
+    column stopped agreeing with the times. The race's pool for a gender is
+    the one most of its runners carry; every runner of that gender is read
+    on it, so the rating, its 5K and the order are one thing."""
+    from collections import Counter
+    season = (_asDate(spec.get("date")) or datetime.date.today()).year
+
+    def own(e):
+        return (e.get("time_pool")
+                or (e.get("form_pool") or "").split("|")[0] or None)
+    modal = {}
+    for p, _n in Counter(p for p in (own(e) for e in preds) if p).most_common():
+        modal.setdefault(p.rsplit("_", 1)[-1], p)
+    for entry in preds:
+        mine = own(entry)
+        pool = modal.get(mine.rsplit("_", 1)[-1], mine) if mine else None
+        if entry.get("seconds") and entry.get("is_race_time") and pool:
+            try:
+                entry["time_rating"] = _secondsToRating(entry["seconds"], pool, spec, season)
+                entry["race_pool"] = pool
+            except Exception:                           # noqa: BLE001
+                pass
+    return preds
+
+
 def _servedTimes(cur, person_ids, target):
     """_predictTimes, checked against the athletes' own ratings -- what every
     page entry point serves. See the note above."""
@@ -1525,19 +1557,9 @@ def _servedTimes(cur, person_ids, target):
     #   race model refines rating-based times in place (basis stays
     #   'rating'), so the column kept the form rating while the time and
     #   the place were the model's. The race's own rating is the predicted
-    #   time read back on this course, in the runner's pool.
+    #   time read back on this course, on the race's pool (_stampRaceRatings).
     if spec is not None:
-        season = (_asDate(spec.get("date")) or datetime.date.today()).year
-        for entry in preds:
-            pool = (entry.get("time_pool")
-                    or (entry.get("form_pool") or "").split("|")[0] or None)
-            if entry.get("seconds") and entry.get("is_race_time") and pool:
-                try:
-                    entry["time_rating"] = _secondsToRating(
-                        entry["seconds"], pool, spec, season)
-                    entry.setdefault("time_pool", pool)
-                except Exception:                       # noqa: BLE001
-                    pass
+        _stampRaceRatings(preds, spec)
     return preds
 
 

@@ -960,12 +960,19 @@ function crest(url) {
  *   on. This is a display value; writing a converted number into an
  *   attribute would convert the maths with it.
  */
+// ★ ONE DECIMAL, ALWAYS (owner, 2026-10-31: "136" beside "136.8"): a rating
+//   of exactly 136.0 arrives as the JSON number 136 and printed bare
+function r1(v) {
+  const n = Number(v);
+  return v === null || v === undefined || v === "" || !isFinite(n) ? String(v ?? "") : n.toFixed(1);
+}
+
 function rv(rating, hs) {
   if (rating === null || rating === undefined || rating === "") return "";
   const moves = hs !== null && hs !== undefined && hs !== ""
-                && String(hs) !== String(rating);
-  return `<span class="rv"${moves ? ` data-hs="${esc(hs)}"` : ""}` +
-         `>${esc(rating)}</span>`;
+                && r1(hs) !== r1(rating);
+  return `<span class="rv"${moves ? ` data-hs="${esc(r1(hs))}"` : ""}` +
+         `>${esc(r1(rating))}</span>`;
 }
 
 /*

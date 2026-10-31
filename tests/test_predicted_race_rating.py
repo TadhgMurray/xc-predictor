@@ -31,3 +31,24 @@ def test_the_column_is_the_time_read_back_on_the_course():
     preds2 = [dict(preds[0], time_rating=None), dict(preds[1], time_rating=None)]
     _t, fin2 = predict._score(field, preds2)
     assert {r["name"]: r["rating"] for r in fin2} == {"Palmer": 140.9, "Byl-Brann": 141.3}
+
+
+def test_every_runner_is_read_on_the_race_s_pool(monkeypatch):
+    # owner, 2026-10-31: 25:17.0 rated 136.0 above 25:18.4 rated 136.8 -- one
+    # runner's time read on another pool than the field's
+    seen = []
+
+    def fake(seconds, pool, spec, season):
+        seen.append(pool)
+        return round(200000.0 / seconds, 1)          # faster -> higher, one scale
+    monkeypatch.setattr(predict, "_secondsToRating", fake)
+    preds = [{"seconds": 1517.0, "is_race_time": True, "form_pool": "open_m"},
+             {"seconds": 1518.4, "is_race_time": True, "form_pool": "college_m"},
+             {"seconds": 1532.1, "is_race_time": True, "time_pool": "college_m"},
+             {"seconds": 1100.0, "is_race_time": True, "form_pool": "college_f"},
+             {"seconds": None, "is_race_time": True, "form_pool": "college_m"}]
+    predict._stampRaceRatings(preds, {"date": "2026-11-01"})
+    assert seen == ["college_m", "college_m", "college_m", "college_f"]
+    r = [p.get("time_rating") for p in preds]
+    assert r[0] > r[1] > r[2] and r[4] is None          # the order is the times'
+    assert preds[0]["race_pool"] == "college_m" and preds[3]["race_pool"] == "college_f"
