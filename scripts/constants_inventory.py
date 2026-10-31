@@ -722,8 +722,8 @@ RULES = {
         "FIVE_K_M": ("STATED", "definition: the 5K column is at 5000 m on a flat outdoor 400 (§4.3)"),
         "XC_TRACK_M": ("REMOVED", "the 5K column becomes five_k_s = exp(perf) at 5000 m for every level, "
                                   "no curve read-back (§4.3, §8 point 1)"),
-        "XC_TRACK_CAL": ("DATA", "college women's XC rating -> track 5K, calibrated to the same runners' "
-                                 "spring 5000s (diag_xc_track_gap, 2026-10-29)"),
+        "XC_TRACK_CAL": ("DATA", "college XC rating -> track 5K, calibrated by rating level to the same "
+                                 "runners' 5000 bests on the 2025 boards (2026-10-31)"),
     },
     "racecast/tilt.py": {
         "TILT_K": ("FITTED", KAPPA + " (mirror)"),
