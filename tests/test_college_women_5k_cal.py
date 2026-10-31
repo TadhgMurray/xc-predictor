@@ -19,9 +19,11 @@ import conversions as C                                          # noqa: E402
 def test_the_correction_moves_with_the_rating():
     assert C.xcTrackCal("college_m", 125.5) == -0.020          # the top: faster
     assert C.xcTrackCal("college_m", 140.0) == -0.020          # held beyond the end
-    assert C.xcTrackCal("college_m", 100.0) == 0.016           # deep: slower
-    assert abs(C.xcTrackCal("college_m", 116.2) - 0.0035) < 1e-9   # between points
-    assert C.xcTrackCal("hs_m", 140.0) == 0.0 and C.xcTrackCal("college_f", None) == 0.0
+    assert C.xcTrackCal("college_m", 100.0) == 0.0             # never slower
+    assert C.xcTrackCal("college_m", 113.0) == 0.0
+    assert abs(C.xcTrackCal("college_m", 116.2) - (-0.0045)) < 1e-9   # between points
+    assert all(c <= 0 for pts in C.XC_TRACK_CAL.values() for _r, c in pts)
+    assert C.xcTrackCal("hs_m", 140.0) == 0.0 and C.xcTrackCal("college_f", 133.0) == 0.0
 
 
 def test_only_college_xc_moves(monkeypatch):

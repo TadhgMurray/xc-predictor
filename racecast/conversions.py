@@ -1396,9 +1396,17 @@ XC_TRACK_M = {"hs": 5000.0, "college": 5000.0, "ms": 3200.0}
 #   interpolated between and held at the end values beyond them, so each
 #   level's 5K is what runners at that level ran. XC ratings only
 #   (ratingClock); a track rating's 5K is its own event.
+#   ! NEVER SLOWER, ONLY FASTER WHERE MEASURED SLOW (owner, 2026-10-31: "it
+#     somehow made the predicted 5k equivalents go up ... and also all 5k
+#     equivs for non elites"). The deep points said slower, from one sample
+#     of 11; the NESCAC front of the same week (Cote 14:20, Reisner 14:17,
+#     Iurilli-Hough 14:46, Welch 14:48, Hughes 15:04 for 5000, XC ~113 on
+#     the college scale) read 14:31-14:47 uncorrected, i.e. right to a
+#     little slow -- the +1.6% made them 14:53-15:01. So below the
+#     measured-slow range nothing moves, and women -- right at the top once
+#     the flat +2.6% is gone -- carry no correction.
 XC_TRACK_CAL = {
-    "college_m": ((113.4, 0.016), (119.0, -0.009), (125.5, -0.020)),
-    "college_f": ((116.2, 0.022), (124.0, 0.020), (133.5, 0.002)),
+    "college_m": ((113.4, 0.0), (119.0, -0.009), (125.5, -0.020)),
 }
 
 
