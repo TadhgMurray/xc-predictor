@@ -2828,6 +2828,15 @@ def get_races(cur, person_id):
     """
     # results.status exists only once the scraper has run after deploy
     status_sql = "r.status" if _hasResultsStatus(cur) else "NULL::text"
+    # a row that keeps a place (result_status.placedSql), the race page's
+    # rule; without a status column, every timed row does
+    _has_status = _hasResultsStatus(cur)
+
+    def _placed_sql(a):
+        if _has_status:
+            from result_status import placedSql
+            return placedSql(a)
+        return f"({a}.time_seconds IS NOT NULL AND {a}.time_seconds < 999999)"
     # ★ AND THE TRACK HALF'S (owner, 2026-09-25: "print status letters if we
     #   have"). results_tf carries DNS/DNF/DQ/NT/SCR/FS on 43,852 sentinel
     #   rows alone; this read NULL for every one of them.
@@ -2926,14 +2935,27 @@ def get_races(cur, person_id):
                -- the course, for the second line under the meet name
                {_xc_course_sql('r')}        AS course
         FROM results r
+        -- ★ THE RACE PAGE'S PLACE (owner, 2026-10-31: "The place on an
+        --   athlete's page is not the same as their place on the race
+        --   page"). The race page numbers its PLACED finishers in time order
+        --   (meet_compile.stampXcPlaces): a DQ keeps its time and loses its
+        --   place, and tied times take the next place each, by result_id
+        --   (get_race_results' order). This counted every timed row ahead,
+        --   DQs included, and gave ties one place. Now the same rule, the
+        --   same feed (source), and no place for a row that has none.
         LEFT JOIN LATERAL (
-            SELECT count(*) FILTER (WHERE r2.time_seconds < r.time_seconds)
-                       + 1 AS place,
-                   count(*) FILTER (WHERE r2.time_seconds < r.time_seconds
-                       AND r2.school IS NOT DISTINCT FROM r.school)
-                       + 1 AS team_place
+            SELECT CASE WHEN {_placed_sql('r')} THEN
+                       count(*) FILTER (WHERE {_placed_sql('r2')} AND (r2.time_seconds < r.time_seconds
+                           OR (r2.time_seconds = r.time_seconds AND r2.result_id < r.result_id)))
+                       + 1 END AS place,
+                   CASE WHEN {_placed_sql('r')} THEN
+                       count(*) FILTER (WHERE {_placed_sql('r2')} AND (r2.time_seconds < r.time_seconds
+                           OR (r2.time_seconds = r.time_seconds AND r2.result_id < r.result_id))
+                           AND r2.school IS NOT DISTINCT FROM r.school)
+                       + 1 END AS team_place
             FROM results r2
             WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
+              AND r2.source = r.source
               AND r2.time_seconds IS NOT NULL
               AND r2.time_seconds < 999999
         ) pl ON TRUE
@@ -4317,7 +4339,8 @@ def get_race_results(cur, meet_id, div_id, source=None):
           AND r.div_id  = %(div)s
           AND (%(src)s::text IS NULL OR r.source = %(src)s)
           AND r.time_seconds IS NOT NULL
-        ORDER BY r.time_seconds ASC
+        -- ties in result_id order: the athlete page's place counts them so
+        ORDER BY r.time_seconds ASC, r.result_id ASC
     """, {"meet": meet_id, "div": div_id, "src": source})
     return fillUnknownNames(cur, cur.fetchall(), "name")
 

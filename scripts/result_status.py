@@ -181,6 +181,15 @@ def startedRace(status, time_seconds=None):
 
 # The SQL a query needs when it wants only real results. One spelling, so the
 # five in the header cannot drift apart again.
+def placedSql(alias="r"):
+    """A WHERE fragment: rows that keep a PLACE -- finished (finishedSql)
+    and not disqualified (DQ / DSQ / FS: the time is real, the place is
+    void). kind() == 'ok' in SQL, the rule the race page places by
+    (meet_compile.xcPlaced)."""
+    return (f"({finishedSql(alias)} AND COALESCE(upper(btrim({alias}.status)), '') "
+            f"NOT IN ('DQ','DSQ','FS'))")
+
+
 def finishedSql(alias="r"):
     """A WHERE fragment: rows with a usable time, status-aware."""
     return (f"(COALESCE(upper(btrim({alias}.status)), '') NOT IN "
