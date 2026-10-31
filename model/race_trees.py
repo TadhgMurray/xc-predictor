@@ -1171,6 +1171,20 @@ def main():
                      f"{mean_on(miss, c):7.2f}% {mean_on(miss, clean):11.2f}% "
                      f"{mean_on(miss, known_v):10.2f}% {mean_on(miss, big):12.2f}% "
                      f"{mean_on(miss, published):9.2f}%")
+    # ★ BIAS, NOT JUST SIZE (owner, 2026-10-31: the site's frozen forecasts
+    #   ran slow -- +2.9% on the rating basis). The median signed miss on
+    #   published race-morning rows, + = we said slower than they ran
+    lvl_v = XvA[:, fidx["level"]]
+    sel = published & main_rows
+    parts = []
+    for lab, tot in preds[::2]:                    # the page, and the trees
+        sm = (np.exp(tot - yav) - 1.0) * 100.0
+        by = ", ".join(f"{nm} {np.median(sm[sel & (lvl_v == v)]):+.2f}%"
+                       for v, nm in ((1, "ms"), (2, "hs"), (3, "college"))
+                       if (sel & (lvl_v == v)).sum() >= 200)
+        parts.append(f"  bias, {lab}: {np.median(sm[sel]):+.2f}% ({by})")
+    lines.append("  median signed miss on published races, + = said slower than they ran:")
+    lines += parts
     leads_seen = sorted(set(lead_r.tolist()) - {0})
     if leads_seen:
         lines.append("  by how far ahead (trees; median / mean on races with a known distance):")
