@@ -690,6 +690,25 @@ _UNIT_KINDS_HS = ("league", "area", "section", "district", "county")
 _UNIT_KINDS_COLLEGE = ("conference", "region", "division")
 
 
+_FOLD_WORDS = {"conn": "connecticut", "conn.": "connecticut", "st": "saint", "st.": "saint",
+               "mass": "massachusetts", "mass.": "massachusetts", "univ": "university",
+               "univ.": "university"}
+
+
+def schoolFold(name):
+    """One key for a school's spellings, for counting: 'Trinity (Conn.)' =
+    'Trinity', 'Conn College' = 'Connecticut College', 'Wesleyan
+    University' = 'Wesleyan'. Pure."""
+    import re
+    t = re.sub(r"\s*\([^)]*\)\s*", " ", str(name or "").lower())
+    words = [_FOLD_WORDS.get(w, w) for w in t.split()]
+    while len(words) > 1 and words[-1] in ("college", "university"):
+        words.pop()
+    if len(words) > 1 and words[0] == "university" and words[1] == "of":
+        words = words[2:] or words
+    return " ".join(words)
+
+
 def unitLink(kind, unit, state, college):
     """The rankings board narrowed to one unit. High-school units are
     scoped to their state, college units are nationwide (app.unitArgs
@@ -721,19 +740,18 @@ def _load_units(conn):
             #   times, once per state its schools are in). Its board is
             #   nationwide (unitLink), so the state split only repeated it;
             #   high-school units stay per state, where a league name can
-            #   mean two different leagues.
-            #   One school under two spellings ("Williams", "Williams
-            #   College") is counted once.
-            by_state = "state" if not college else "NULL::text"
+            #   mean two different leagues. One school under several
+            #   spellings is counted once (schoolFold).
             cur.execute(f"""
-                SELECT "{kind}", {by_state},
-                       count(DISTINCT lower(regexp_replace(school,
-                             '[[:space:]]+(college|university|univ[.]?)$', '', 'i')))
+                SELECT "{kind}", state, school
                 FROM   school_unit
                 WHERE  "{kind}" IS NOT NULL AND is_college = %s
-                GROUP  BY 1, 2
             """, (college,))
-            for unit, state, n in cur.fetchall():
+            groups = {}
+            for unit, state, school in cur.fetchall():
+                groups.setdefault((unit, None if college else state), set()).add(schoolFold(school))
+            rows = [(u, st, len(v)) for (u, st), v in groups.items()]
+            for unit, state, n in rows:
                 label = str(unit)
                 sub = f"{kind}{' · ' + state if state and not college else ''}"
                 sub += f" · {n} school{'s' if n != 1 else ''}"

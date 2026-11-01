@@ -91,3 +91,15 @@ def test_the_other_feeds_copy_is_left_out_but_alt_numbering_holds():
     assert [(r["meet_id"], r["source"]) for r in kept] == [(7, "anet"), (9, "tfrrs")]
     assert alt[(9, "tfrrs")] == 0 and alt[(7, "anet")] == 0
     assert not S.isTwinCopy({"n_ath": 0, "n_twin": 0})
+
+
+def test_one_school_under_its_spellings_counts_once():
+    """2026-11-01: NESCAC said 15 schools for its 11 (school_unit holds the
+    feeds' spellings side by side)."""
+    import search_index as S
+    names = ["Amherst", "Bates", "Bowdoin", "Colby", "Conn College", "Connecticut College",
+             "Hamilton", "Middlebury", "Trinity", "Trinity (Conn.)", "Tufts", "Wesleyan",
+             "Wesleyan", "Wesleyan (Conn.)", "Williams"]
+    assert len({S.schoolFold(n) for n in names}) == 11
+    assert S.schoolFold("University of Michigan") == "michigan" != S.schoolFold("Michigan State")
+    assert S.schoolFold("College of Charleston") == "college of charleston"

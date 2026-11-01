@@ -240,6 +240,14 @@ def schoolLabelIn(school, state, trusted=False):
     return withState(school, st)
 
 
+CENSUS_REGION = {st: reg for reg, sts in (
+    ("NE", "CT ME MA NH RI VT NJ NY PA"),
+    ("MW", "IL IN MI OH WI IA KS MN MO NE ND SD"),
+    ("S", "DE DC FL GA MD NC SC VA WV AL KY MS TN AR LA OK TX"),
+    ("W", "AZ CO ID MT NV NM UT WY AK CA HI OR WA"),
+) for st in sts.split()}
+
+
 def _collegeState(school, state=None):
     """The directory's state for a college name, or None when it does not
     know the name.
@@ -268,6 +276,17 @@ def _collegeState(school, state=None):
         return None
     if state in cands:
         return state
+    # ★ AN AWAY MEET IS USUALLY IN THE TEAM'S OWN PART OF THE COUNTRY
+    #   (owner, 2026-11-01: Wesleyan (CT) at the NESCAC championship in
+    #   Maine filed as Wesleyan GA, tagged NESCAC). The name's biggest
+    #   cluster counts every athlete of that name -- a Georgia high school
+    #   called Wesleyan out-counts the university -- so a candidate in the
+    #   meet's census region goes first, and the clusters only break what
+    #   the region cannot (Georgetown DC and KY are both South).
+    region = CENSUS_REGION.get((state or "").upper())
+    near = [c for c in cands if region and CENSUS_REGION.get(c) == region]
+    if near:
+        cands = near
     clusters = (_LABELS.get("clusters") or {}).get(school) or {}
     return max(cands, key=lambda c: (clusters.get(c, 0.0), -cands.index(c)))
 

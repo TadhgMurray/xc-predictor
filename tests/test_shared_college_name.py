@@ -22,6 +22,7 @@ DIRECTORY = {
     "amherst": [("MA", "MA")],
     "oregon": [("OR", "OR")],
     "oregon state": [("OR", "OR")],
+    "wesleyan": [("CT", "CT"), ("GA", "GA")],
 }
 
 
@@ -32,6 +33,7 @@ def _labels():
         "Georgetown": {"TX": 0.55, "DC": 0.26, "KY": 0.04, "SC": 0.15},
         "Amherst": {"WI": 0.7, "MA": 0.3},
         "Highland": {"UT": 0.6, "CA": 0.4},
+        "Wesleyan": {"GA": 0.8, "CT": 0.2},
     }
     si._LABELS["college"] = DIRECTORY
     bcd._ANSWERS.clear()
@@ -65,3 +67,16 @@ def test_high_school_untouched():
 def test_known_college_still_directory():
     _labels()
     assert si.teamState("Amherst", "college_m", "WI") == "MA"
+
+
+def test_away_meet_goes_to_the_candidate_in_its_region():
+    """2026-11-01: Wesleyan (CT) at the NESCAC championship in Maine filed
+    as Wesleyan GA -- a Georgia high school called Wesleyan out-counts the
+    university."""
+    _labels()
+    assert si.teamState("Wesleyan", "college_m", "ME") == "CT"
+    assert si.teamState("Wesleyan", "college_f", "NY") == "CT"
+    assert si.teamState("Wesleyan", "college_f", "AL") == "GA"
+    assert si.teamState("Wesleyan", "college_m", "CT") == "CT"
+    # no region to go on: the clusters, as before
+    assert si.teamState("Wesleyan", "college_m", None) == "GA"
