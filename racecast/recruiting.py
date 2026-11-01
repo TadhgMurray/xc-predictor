@@ -824,6 +824,7 @@ _AGG_SQL = """
 #   quartiles of the recruits' own high-school PRs -- fastest first, so a
 #   time's 0th percentile is the rating board's max
 _PR_EVS = ("800", "1600", "3200")
+SPECIALTY_PTS = 3.0       # rating points under a recruit's best event that still count as theirs
 _PR_Q = "ARRAY[0, 0.25, 0.5, 0.75, 1]::float8[]"
 _HAS_PRS = {}
 
@@ -843,11 +844,19 @@ def _hasPrCols(cur):
 def _aggSql(cur, extra):
     if not _hasPrCols(cur):
         return _AGG_SQL.format(extra=extra, prs="", pr_cols="")
+    # ★ ONLY THE EVENTS A RECRUIT REALLY RACES (owner, 2026-11-01: "the
+    #   typical recruit shows as much slower, bcs most recruits are
+    #   all-rounders ... 11:00 3200m guys who run 1:50"): a PR counts toward
+    #   an event's times when its rating is within SPECIALTY_PTS of the
+    #   recruit's best event; an 800 runner's one-off 3200 stays on his row
+    #   and out of the college's 3200
     prs = "".join(f""",
            (percentile_cont({_PR_Q}) WITHIN GROUP (ORDER BY pr_{e})
-                FILTER (WHERE source = 'hs' AND pr_{e} IS NOT NULL)) AS q_{e}""" for e in _PR_EVS)
+                FILTER (WHERE source = 'hs' AND pr_{e} IS NOT NULL
+                          AND (pr_{e}_r IS NULL OR pr_{e}_r >= recruit_rating - {SPECIALTY_PTS}))) AS q_{e}"""
+                  for e in _PR_EVS)
     return _AGG_SQL.format(extra=extra, prs=prs,
-                           pr_cols=", " + ", ".join(f"pr_{e}" for e in _PR_EVS))
+                           pr_cols=", " + ", ".join(f"pr_{e}, pr_{e}_r" for e in _PR_EVS))
 
 
 def prTimes(row):
@@ -1063,6 +1072,9 @@ def schoolRecruits(cur, school, state, gender, sport):
             r["t_hs"] = {e: r.get(f"pr_{e}") for e in _PR_EVS}
             r["r_hs"] = {e: (round(float(r[f"pr_{e}_r"]), 1) if r.get(f"pr_{e}_r") is not None else None)
                          for e in _PR_EVS}
+            best = r.get("recruit_rating")
+            r["off"] = {e: bool(best is not None and r["r_hs"].get(e) is not None
+                                and r["r_hs"][e] < best - SPECIALTY_PTS) for e in _PR_EVS}
         else:
             best = r.get("recruit_rating") or r["hs_rating"]
             r["t_hs"] = timesFor(best, gender, BOARD_EVENTS)
@@ -1357,6 +1369,8 @@ def _athleteSubject(cur, person_id, level="hs"):
         return None
     latest = rows[0]
     ratings, seasons = {}, {}
+    prs = personalBests(cur, int(person_id),
+                        pools=LEVEL_POOLS["hs"] if level != "college" else None)
     for r in rows:
         if r["sport"] not in ratings:
             # ★ PLACED BY THE BEST RACE (owner, 2026-11-01: recruiting goes on
@@ -1370,12 +1384,25 @@ def _athleteSubject(cur, person_id, level="hs"):
                 v = _hsEquiv(v, r["pool"], r["sport"])
             ratings[r["sport"]] = round(v, 1)
             seasons[r["sport"]] = labelYear(r["year"], r["sport"])
+    if level != "college":
+        # ★ THE SUBJECT BY THE RECRUITS' OWN RULE (owner, 2026-11-01: "now
+        #   for me it has me as a 4:09.6 guy and a 8:57.9 guy. The actual
+        #   times for the already recruited people are right, but not for
+        #   the person using the site"): track is the best-rated high-school
+        #   PR among the 800, 1600 and 3200 (build_recruiting.bestRating),
+        #   cross country the best race of any high-school season
+        tf = [p["rating"] for p in prs if p["key"] in _PR_EVS and p.get("rating") is not None]
+        if tf:
+            ratings["TF"] = round(max(tf), 1)
+        xc = [float(r["best_rating"]) for r in rows if r["sport"] == "XC" and r.get("best_rating")]
+        if xc:
+            ratings["XC"] = round(max(xc), 1)
     grad = (next((r["year"] + 13 - r["grade_num"] for r in rows if r.get("grade_num")), None)
             if level != "college" else None)
     return {
         "kind": "athlete", "level": level, "person_id": int(person_id),
         "name": latest.get("name") or "Unknown",
-        "prs": personalBests(cur, int(person_id)),
+        "prs": prs,
         "school": latest.get("school"), "state": latest.get("state"),
         "school_label": schoolLabelIn(latest["school"], latest.get("state")) if latest.get("school") else "",
         "gender": latest["pool"].rsplit("_", 1)[-1], "grad_year": grad,
@@ -1423,6 +1450,24 @@ def subjectFrom(cur, args, account_person_id=None, level="hs"):
             # ★ ONE SCALE PER POOL: a rating from a track time places on the
             #   cross-country recruits too (the joint solve's sport level)
             "ratings": {"XC": rating, "TF": rating}}, None
+
+
+def subjectTimes(subject, gender):
+    """{event: seconds} for the reader: their high-school PRs as run in the
+    track events, and their cross country best as the track 5K; a typed
+    time converts. None without a subject."""
+    if not subject:
+        return None
+    xc = subjectRating(subject, "XC")
+    tf = subjectRating(subject, "TF")
+    out = {}
+    if xc is not None:
+        out["5k"] = timesFor(xc, gender, BOARD_EVENTS).get("5k")
+    conv = timesFor(tf, gender, BOARD_EVENTS) if tf is not None else {}
+    prs = {p["key"]: p["seconds"] for p in (subject.get("prs") or []) if p["key"] in _PR_EVS}
+    for e in _PR_EVS:
+        out[e] = prs.get(e) if prs.get(e) else (None if subject.get("kind") == "athlete" else conv.get(e))
+    return out
 
 
 def subjectRating(subject, sport):
@@ -1490,14 +1535,17 @@ PR_EVENTS = (
 )
 
 
-def personalBests(cur, person_id):
-    """[{key, label, sport, seconds, time, date}] fastest first by event
-    order, one per event the athlete has run; [] when nothing is on file."""
+def personalBests(cur, person_id, pools=None):
+    """[{key, label, sport, seconds, time, date, rating}] fastest first by
+    event order, one per event the athlete has run; [] when nothing is on
+    file. pools= keeps only those pools' races (the recruiting subject reads
+    its high-school ones)."""
     try:
-        cur.execute("""SELECT sport, distance, time_seconds, race_date
+        pool_sql = " AND pool = ANY(%s)" if pools else ""
+        cur.execute(f"""SELECT sport, distance, time_seconds, race_date, speed_rating
                        FROM   ranking_results
-                       WHERE  person_id = %s AND time_seconds > 0 AND distance > 0""",
-                    (person_id,))
+                       WHERE  person_id = %s AND time_seconds > 0 AND distance > 0{pool_sql}""",
+                    (person_id, list(pools)) if pools else (person_id,))
         rows = _rowsOf(cur)
     except Exception as exc:                            # noqa: BLE001
         try:
@@ -1513,6 +1561,8 @@ def personalBests(cur, person_id):
             if r["sport"] == sport and abs(d - metres) <= tol:
                 if key not in best or t < best[key]["seconds"]:
                     best[key] = {"key": key, "label": label, "sport": sport, "seconds": t,
-                                 "time": fmtTime(t), "date": str(r.get("race_date") or "")[:10]}
+                                 "time": fmtTime(t), "date": str(r.get("race_date") or "")[:10],
+                                 "rating": (round(float(r["speed_rating"]), 1)
+                                            if r.get("speed_rating") is not None else None)}
                 break
     return [best[k] for k, *_ in PR_EVENTS if k in best]

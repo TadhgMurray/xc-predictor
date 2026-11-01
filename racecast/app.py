@@ -12376,7 +12376,7 @@ def api_recruiting_schools():
         "divisions": R.distinctUnits(every, "division"),
         "conferences": R.distinctUnits(every, "conference"),
         "subject": subject, "subject_error": serr, "rating": rating,
-        "subject_times": R.timesFor(rating, f["gender"]) if rating is not None else None,
+        "subject_times": R.subjectTimes(subject, f["gender"]) if subject else None,
         # the suggestions come from the FILTERED rows: a reader who asked
         # for DIII in Ohio wants DIII in Ohio suggested
         "suggestions": R.suggestions(rows, rating) if rating is not None else [],
@@ -12479,8 +12479,7 @@ def recruiting_school_page(school_name):
                 rating = R.subjectRating(subject, sport) if subject else None
                 blocks.append({"sport": sport, "summary": summary, "recruits": recruits,
                                "transfers": transfers, "rating": rating,
-                               "you_times": (R.timesFor(rating, gender, R.BOARD_EVENTS)
-                                             if rating is not None else None),
+                               "you_times": R.subjectTimes(subject, gender) if subject else None,
                                "faster": (R.fasterThan(rating, summary.get("dots"))
                                           if summary else None),
                                "events": R.SPORT_EVENTS[sport],

@@ -6064,6 +6064,7 @@ th.fk.fk-l, td.fk.fk-l { text-align: left !important; }
 .recruit-school .rec-up { color: #146c2e; font-weight: 600; }
 .recruit-school .rec-dn { color: #9a2b2b; font-weight: 600; }
 .recruit-school .rec-eq { color: var(--muted); }
+.recruit-school .rec-off { color: var(--muted); font-weight: 400; }
 
 @media (max-width: 700px) {
   .recruit-athlete table.rc-board thead { display: none; }

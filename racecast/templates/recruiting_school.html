@@ -169,7 +169,7 @@
       <tr class="rec-r">
         <td class="rec-nm"><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
         <td class="rec-hs">{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% endif %}</td>
-        <td class="num rec-t"><b>{{ tt(r.t_hs, evs) }}</b><span class="rec-rt">{% for k in evs %}<span class="ev ev-{{ k }}">{{ ("%.1f"|format(r.r_hs[k])) if (r.r_hs or {}).get(k) is not none else "" }}</span>{% endfor %}</span></td>
+        <td class="num rec-t"><b>{% for k in evs %}<span class="ev ev-{{ k }}{{ ' rec-off' if (r.off or {}).get(k) }}"{% if (r.off or {}).get(k) %} title="Not one of this recruit's main events, so not counted in {{ school }}'s {{ evname[k] }} times"{% endif %}>{{ fmt_time((r.t_hs or {}).get(k)) or "-" }}</span>{% endfor %}</b><span class="rec-rt">{% for k in evs %}<span class="ev ev-{{ k }}">{{ ("%.1f"|format(r.r_hs[k])) if (r.r_hs or {}).get(k) is not none else "" }}</span>{% endfor %}</span></td>
         <td class="rec-c">{% if r.change is not none %}{% if r.change >= 1.5 %}<span class="rec-up">↑ faster</span>{% elif r.change <= -1.5 %}<span class="rec-dn">↓ slower</span>{% else %}<span class="rec-eq">about the same</span>{% endif %}
           <span class="rec-rt">{{ tt(r.t_col, evs) }} · {{ "%.1f"|format(r.hs_equiv) }}</span>{% else %}<span class="rc-dim">-</span>{% endif %}</td>
       </tr>
@@ -180,7 +180,7 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="meta">{% if b.sport == "XC" %}Each recruit's best high-school cross country race, as the track 5K it is worth (the 5K their athlete pages show){% else %}Each recruit's high-school PR in the event, as run; blank where they never ran it{% endif %}. The grey number is the same race as a rating{{ rating_i() }}. The college column compares the first college season with the last high-school season.</p>
+  <p class="meta">{% if b.sport == "XC" %}Each recruit's best high-school cross country race, as the track 5K it is worth (the 5K their athlete pages show){% else %}Each recruit's high-school PR in the event, as run; blank where they never ran it. A grey time is not one of their main events (more than 3 rating points under their best) and is left out of {{ school }}{{ "'" if school.endswith('s') else "'s" }} times for that event{% endif %}. The grey number is the same race as a rating{{ rating_i() }}. The college column compares the first college season with the last high-school season.</p>
   {% else %}
   <p class="meta">No {{ who|lower }}'s {{ sport_words[b.sport]|lower }} recruits on file.</p>
   {% endif %}

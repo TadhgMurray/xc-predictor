@@ -391,7 +391,9 @@ def test_personal_bests_are_the_athlete_s_own_fastest_per_event():
                                                      ("3200", "9:21.2"), ("5000", "15:40")]
     assert prs[0]["date"] == "2025-11-08" and prs[0]["seconds"] == 932.4
     assert R.personalBests(FakeCur([]), 7) == []
-    assert '"prs": personalBests(cur, int(person_id))' in read("racecast", "recruiting.py")
+    # the subject's PRs are its high-school ones (2026-11-01)
+    src = read("racecast", "recruiting.py")
+    assert 'prs = personalBests(cur, int(person_id),' in src and '"prs": prs,' in src
     # since 2026-11-01 the box shows the PRs alone when there are any
     assert "equivalent to" in read("racecast", "static", "recruiting.js")
 
@@ -505,3 +507,18 @@ def test_track_times_are_the_recruits_prs_as_run():
 def test_the_you_box_shows_real_prs_not_conversions():
     js = read("racecast", "static", "recruiting.js")
     assert 'const times = prs ? `<span class="rc-times-lbl">PRs</span>${prs}`' in js
+
+
+def test_a_recruit_s_off_events_do_not_count(monkeypatch):
+    monkeypatch.setattr(R, "_HAS_PRS", {"v": True})
+    sql = R._aggSql(type("C", (), {"execute": lambda *a: None, "fetchone": lambda *a: (1,)})(), "")
+    assert f"pr_3200_r >= recruit_rating - {R.SPECIALTY_PTS}" in sql
+
+
+def test_the_subject_s_track_times_are_their_prs(monkeypatch):
+    subj = {"kind": "athlete", "ratings": {"TF": 137.0, "XC": 132.6},
+            "prs": [{"key": "1600", "seconds": 253.01}, {"key": "3200", "seconds": 541.1}]}
+    monkeypatch.setattr(R, "timesFor", lambda rating, gender, events=None, level="hs":
+                        {"5k": 900.0, "800": 120.0, "1600": 249.6, "3200": 537.9})
+    t = R.subjectTimes(subj, "m")
+    assert t["1600"] == 253.01 and t["3200"] == 541.1 and t["800"] is None and t["5k"] == 900.0
