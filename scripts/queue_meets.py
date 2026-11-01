@@ -422,6 +422,11 @@ PARTIAL_MIN_EMPTY = 2
 #   empty meets of this season are still asked -- once a week, so a meet that
 #   never finishes posting costs one ask a week, not one a night.
 SEASON_REASK_HOURS = float(os.environ.get("SEED_SEASON_REASK_HOURS", "168"))
+# ! AND A CAP PER LAUNCH, NEWEST FIRST (owner's dry run, 2026-11-01: 2,273
+#   of them the first time). Each one asked is stamped, so the next launch
+#   takes the next batch; the backlog drains over a week and then the weekly
+#   asks are the steady state.
+SEASON_CAP = int(os.environ.get("SEED_SEASON_CAP", "300"))
 
 
 def seasonStartIso(today=None):
@@ -1058,14 +1063,18 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
                                                 hours=SEASON_REASK_HOURS))
                                 | set(partialRecent(cur, sport, s0, source, until=since,
                                                     hours=SEASON_REASK_HOURS)))
+        n_season = len(season)
+        season = sorted(season, reverse=True)[:SEASON_CAP]
         out["season"] = len(season)
         say(f"  [{tag}] earlier this season ({seasonStartIso()} to {since}), empty or "
-            f"partly in, not asked this week: {len(season):,}")
+            f"partly in, not asked this week: {n_season:,}"
+            + (f" (this launch takes the newest {len(season):,}; SEED_SEASON_CAP)"
+               if n_season > len(season) else ""))
         partial = sorted(set(partial) | set(season))
         dated = sorted(set(dated) | set(undated) | set(unrecorded) | set(partial))
         out["dated"] = len(dated)
         out["scheduled_retry"] = len(sched_retry)
-        say(f"  [{tag}] dated since {since} with 0 results: {len(dated):,}")
+        say(f"  [{tag}] all of the above, to ask again: {len(dated):,}")
         say(f"  [{tag}] scheduled above the watermark, worth asking again: "
             f"{len(sched_retry):,}")
         # ids answered "no meet" while the meets around them are this
