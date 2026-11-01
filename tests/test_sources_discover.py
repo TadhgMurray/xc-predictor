@@ -62,3 +62,31 @@ def test_season_folder_splits_into_meets_and_meet_folder_stays_whole():
     assert got == ["https://r/2026/outdoor/04-18-26-Webster.htm", "https://r/2026/outdoor/04-11-26-Mercy.htm"]
     got = asyncio.run(discover.walkListing(f, "https://r/2026/cross/10-31-26-WFL/", 2026, None, 5))
     assert got == ["https://r/2026/cross/10-31-26-WFL/"]
+
+
+def test_numbered_reports_in_one_folder_are_one_meet():
+    found = [("https://r/2026/Outdoor/Sub/Results2.htm", "hytek"),
+             ("https://r/2026/Outdoor/Sub/Results1.htm", "hytek"),
+             ("https://r/other.pdf", "hytek")]
+    assert discover.grouped(found) == [
+        ("https://r/2026/Outdoor/Sub/", ("group", ["https://r/2026/Outdoor/Sub/Results1.htm",
+                                                   "https://r/2026/Outdoor/Sub/Results2.htm"])),
+        ("https://r/other.pdf", "hytek")]
+
+
+def test_files_before_pages_and_xc_first_in_fall():
+    cands = [("https://t/indoor-results", "page"), ("https://t/cross-country-results", "page"),
+             ("https://s/2026/indoor/a.pdf", "hytek"), ("https://s/2026/XC/b.pdf", "hytek")]
+    assert [u for u, _ in discover.ordered(cands, month=10)] == [
+        "https://s/2026/XC/b.pdf", "https://s/2026/indoor/a.pdf",
+        "https://t/cross-country-results", "https://t/indoor-results"]
+
+
+def test_words_inside_words_are_not_nav_or_road():
+    assert not discover._NAV_WORDS.search("maple-leaf-classic-xc")
+    assert discover.ROAD.search("2026/roadrace/26Yankton.pdf")
+    assert not discover.ROAD.search("tri-county xc invitational")
+
+
+def test_crystal_reports_html_is_a_report():
+    assert discover.isReport(b'<HTML><HEAD><META NAME="Author" CONTENT="Crystal Reports 11.0">')

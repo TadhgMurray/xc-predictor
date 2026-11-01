@@ -121,21 +121,28 @@ async def fetchMeet(fetcher, slug, url, kind=None):
         return land.fromMeetPro(idx, results, slug, url), "meetpro"
     listing = directoryReports(got.body.decode("utf-8", "replace"), url) if got.body[:5] != b"%PDF-" else []
     if listing:
-        merged = None
-        for k, rurl in enumerate(listing[:MAX_PAGES], 1):
-            r = await fetcher.fetch(rurl, MAX_AGE)
-            if not r.body or _isChallenge(r.body):
-                continue
-            lm = await _hytekReport(fetcher, slug, rurl, r.body)
-            if merged is None:
-                merged = land.LandedMeet(slug=slug, url=url, name=lm.name, date=lm.date, venue=lm.venue,
-                                         place=lm.place, state=lm.state, licensee=lm.licensee)
-            for race in lm.races:            # each report numbers its events from 1
-                race.n = k * 1000 + race.n
-                merged.races.append(race)
-            merged.skipped += lm.skipped
-        return merged, f"hytek directory ({len(listing)} reports)"
+        return await mergeReports(fetcher, slug, url, listing)
     return await _hytekReport(fetcher, slug, url, got.body), "hytek"
+
+
+async def mergeReports(fetcher, slug, url, listing):
+    """Several report files that are one meet (a directory's per-race
+    reports, Ticker Timing's Results1.htm, Results2.htm ...) -> one
+    LandedMeet under `url`."""
+    merged = None
+    for k, rurl in enumerate(listing[:MAX_PAGES], 1):
+        r = await fetcher.fetch(rurl, MAX_AGE)
+        if not r.body or _isChallenge(r.body):
+            continue
+        lm = await _hytekReport(fetcher, slug, rurl, r.body)
+        if merged is None:
+            merged = land.LandedMeet(slug=slug, url=url, name=lm.name, date=lm.date, venue=lm.venue,
+                                     place=lm.place, state=lm.state, licensee=lm.licensee)
+        for race in lm.races:            # each report numbers its events from 1
+            race.n = k * 1000 + race.n
+            merged.races.append(race)
+        merged.skipped += lm.skipped
+    return merged, f"hytek directory ({len(listing)} reports)"
 
 
 async def _hytekReport(fetcher, slug, url, body):
@@ -325,7 +332,10 @@ def cmdAll(a):
         got = []
         for u, kind in urls:
             try:
-                lm, why = await fetchMeet(fetcher, src.slug, u, kind if kind == "meetpro" else None)
+                if isinstance(kind, tuple):          # ('group', [report files]) -- one meet
+                    lm, why = await mergeReports(fetcher, src.slug, u, kind[1])
+                else:
+                    lm, why = await fetchMeet(fetcher, src.slug, u, kind if kind == "meetpro" else None)
             except Exception as exc:                                # noqa: BLE001
                 lm, why = None, f"{type(exc).__name__}: {exc}"
             got.append((u, lm, why))
