@@ -53,7 +53,7 @@ for _p in (_ROOT, os.path.join(_ROOT, "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sources import hytek, land, meetpro, registry                 # noqa: E402
+from sources import hytek, land, meetpro, meetreport, registry     # noqa: E402
 
 MAX_AGE = 30 * 86400        # a page fetched within 30 days is read from the store
 MAX_PAGES = 40              # Hy-Tek page files followed per report
@@ -154,7 +154,11 @@ async def _hytekReport(fetcher, slug, url, body):
         r = await fetcher.fetch(cur, MAX_AGE)
         body = r.body
         meta = fetcher.store.meta(cur) or {}
-    meet = hytek.parseReport("\n".join(texts))
+    text = "\n".join(texts)
+    meet = hytek.parseReport(text)
+    if not any(e.rows for e in meet.events) and meetreport.isReport(text):
+        # not Hy-Tek: MeetPro's desktop report or a two-column results PDF
+        meet = meetreport.parseReport(text, url)
     return land.fromHytek(meet, slug, url)
 
 

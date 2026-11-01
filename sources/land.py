@@ -249,7 +249,7 @@ def fromHytek(meet, slug, url):
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
             continue
         lm.races.append(LandedRace(n=e.number, title=e.title, gender=e.gender,
-                                   sport=sportOf(e.title, meet.name, e.meters),
+                                   sport=getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters),
                                    meters=e.meters, rows=_landedRows(e.rows)))
     return lm
 
