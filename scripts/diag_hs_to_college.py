@@ -176,6 +176,18 @@ def main():
     factor = {p: (repFactor(p, "XC") or 1.0) for p in ("hs_m", "hs_f", "college_m", "college_f")}
     print("public-scale factors (own -> HS-equivalent): "
           + ", ".join(f"{p} {f:.4f}" for p, f in factor.items()))
+    # ★ THE SCALE READERS SEE (2026-11-01: equal time is the default now).
+    #   pool_view.toHs is the public scale whichever way it is set; the old
+    #   one-multiplier number is kept beside it ("rating x1").
+    from pool_view import toHs, equalTimeOn
+    print(f"public scale now: {'EQUAL TIME (track 5K)' if equalTimeOn() else 'one multiplier per pool'}")
+
+    def hsv(rating, pool):
+        try:
+            v = toHs(rating, pool)
+        except Exception:                               # noqa: BLE001
+            v = None
+        return v if v is not None else rating * factor[pool]
 
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '30min'")
@@ -188,10 +200,11 @@ def main():
 
         # ---- A: same runners, HS -> college ----
         mv = movers(seasons)
-        partA = defaultdict(lambda: {"rating": [], "clock": [], "gap": []})
+        partA = defaultdict(lambda: {"rating": [], "clock": [], "gap": [], "x1": []})
         for _pid, hp, hr, cp, cr in mv:
             g = hp[-1]
-            r_hs, r_col = hr * factor[hp], cr * factor[cp]
+            r_hs, r_col = hsv(hr, hp), hsv(cr, cp)
+            x1 = logPct(cr * factor[cp], hr * factor[hp])
             c_hs, c_col = track(hr, hp, 5000.0), track(cr, cp, 5000.0)
             if not (c_hs and c_col):
                 continue
@@ -201,10 +214,11 @@ def main():
                 partA[k]["rating"].append(dr)
                 partA[k]["clock"].append(dc)
                 partA[k]["gap"].append(dc - dr)
+                partA[k]["x1"].append(x1)
         print(f"\n== A. Same runners, last HS season -> first college season ({len(mv):,} runners)")
         print("   change in the public-scale rating vs change in the track-5K clock, % "
               "(+ = faster in college)")
-        print(f"   {'':<8}{'runners':>9}{'rating':>10}{'clock':>10}{'gap':>10}{'gap sd':>9}")
+        print(f"   {'':<8}{'runners':>9}{'rating':>10}{'clock':>10}{'gap':>10}{'gap sd':>9}{'rating x1':>11}")
         for k in ("f", "m", "all"):
             d = partA.get(k)
             if not d or not d["gap"]:
@@ -212,7 +226,7 @@ def main():
             print(f"   {('women' if k == 'f' else 'men' if k == 'm' else 'all'):<8}"
                   f"{len(d['gap']):>9,}{statistics.median(d['rating']):>+9.2f}%"
                   f"{statistics.median(d['clock']):>+9.2f}%{statistics.median(d['gap']):>+9.2f}%"
-                  f"{robustSd(d['gap']):>8.2f}%")
+                  f"{robustSd(d['gap']):>8.2f}%{statistics.median(d['x1']):>+10.2f}%")
 
         # ---- B: each pool's clock against the next spring's track ----
         rnd = random.Random(7)
@@ -267,7 +281,7 @@ def main():
         #   Riegel's 1.06, which over 1-7% of distance moves a time by well
         #   under the effects measured here.
         last_hs = {pid: max(y for p, y, _r in seasons[pid] if level(p) == "hs") for pid, *_x in mv}
-        rated_change = {pid: logPct(cr * factor[cp], hr * factor[hp]) for pid, hp, hr, cp, cr in mv}
+        rated_change = {pid: logPct(hsv(cr, cp), hsv(hr, hp)) for pid, hp, hr, cp, cr in mv}
         sex = {pid: hp[-1] for pid, hp, *_x in mv}
         ids = list(last_hs)
         springs = defaultdict(lambda: defaultdict(list))   # pid -> year -> [(ev, sec)]
