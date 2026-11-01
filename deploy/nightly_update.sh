@@ -292,7 +292,12 @@ if [ "$PEOPLE_OK" -eq 0 ]; then
          "boards stay up. XCP_IGNORE_PEOPLE_FAIL=1 to price anyway." | tee -a "$SUMMARY"
   fi
 fi
+# ★ 05b (2026-11-01, Sagebrush 2021): rows normalised before their gender
+#   was known keep the wrong side of a combined race's distance; 05b
+#   re-normalises the races where a few rows sit apart from their group and
+#   clears those ratings for 09b to price. Never blocks the boards.
 if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --apply --new-only \
+   && { step 05b_stragglers "$PY" -u scripts/fix_stragglers.py --apply || true; } \
    && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue \
    && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 

@@ -38,12 +38,15 @@ GAP = 0.04          # a factor this far (4%) off its group's median is a straggl
 
 _ROWS = """
     SELECT r.result_id, r.source, r.meet_id, r.div_id, r.person_id,
-           COALESCE(a.first_name || ' ' || a.last_name, '') AS name,
+           COALESCE(a.name, '') AS name,
            pg.gender, split_part(COALESCE(r.rating_pool, ''), '|', 1) AS pool,
            r.time_seconds, r.normalized_time, r.speed_rating
     FROM   results r
     LEFT   JOIN person_gender pg ON pg.person_id = r.person_id
-    LEFT   JOIN athletes a ON a.athlete_id = COALESCE(r.person_id, r.athlete_id)
+    LEFT   JOIN LATERAL (SELECT concat_ws(' ', a.first_name, a.last_name) AS name
+                         FROM athletes a
+                         WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
+                         LIMIT 1) a ON TRUE
     WHERE  {where}
       AND  r.time_seconds > 0 AND r.normalized_time > 0
 """
@@ -55,7 +58,8 @@ def stragglers(rows, gap=GAP):
     Pure."""
     groups = defaultdict(list)
     for key, pool, factor, row in rows:
-        groups[(key, pool)].append((factor, row))
+        if pool:                     # a row no pool rated is nobody's straggler
+            groups[(key, pool)].append((factor, row))
     out = []
     for _k, g in groups.items():
         if len(g) < 3:

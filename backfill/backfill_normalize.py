@@ -1464,13 +1464,13 @@ def _streamSQL(cfg, age_band=False, rating_pool=False):
     #   --write-mode update: the staging set is a sliver of the table.
     only = (f"\n        JOIN person_gender_changed pgc ON pgc.person_id = r.person_id"
             if _ONLY_CHANGED["on"] else "")
+    if _ONLY_MEETS["pairs"]:
+        vals = ", ".join(f"('{src}', {int(m)})" for src, m in _ONLY_MEETS["pairs"])
+        only += (f"\n        JOIN (VALUES {vals}) om(src, mid)"
+                 f"\n          ON om.src = r.source AND om.mid = r.meet_id")
     if _NEW_ONLY["on"]:
         only += (f"\n        WHERE r.normalized_time IS NULL"
                  f"\n          AND r.date >= '{_NEW_ONLY['since']}'")
-    if _ONLY_MEETS["pairs"]:
-        cond = " OR ".join(f"(r.source = '{src}' AND r.meet_id = {int(m)})"
-                           for src, m in _ONLY_MEETS["pairs"])
-        only += ("\n          AND " if "WHERE" in only else "\n        WHERE ") + f"({cond})"
     # ! THE RATED POOL ONLY WHERE THE COLUMN EXISTS -- the go-live adds it,
     #   and a database that has never packed has none. Literal NULL keeps
     #   the column shape either way, the same trick as event_id above.
@@ -4056,6 +4056,8 @@ def main():
     ap.add_argument("--meet", action="append", default=[],
                     help="only this race, SRC:MEET_ID (e.g. tfrrs:18170; "
                          "repeatable); implies --write-mode update")
+    ap.add_argument("--meets-file",
+                    help="like --meet, one SRC:MEET_ID per line")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after N rows PER SPORT (0 = whole table). Use a "
                          "small value to sanity-check the `skipped` count in "
@@ -4081,6 +4083,9 @@ def main():
     if args.only_changed:
         _ONLY_CHANGED["on"] = True
         args.write_mode = "update"
+    if args.meets_file:
+        with open(args.meets_file, encoding="utf-8") as _f:
+            args.meet += [ln.strip() for ln in _f if ln.strip()]
     if args.meet:
         import re as _re
         for m in args.meet:
@@ -4089,7 +4094,8 @@ def main():
                 ap.error(f"--meet {m!r}: want SRC:MEET_ID, e.g. tfrrs:18170")
             _ONLY_MEETS["pairs"].append((mm.group(1), int(mm.group(2))))
         args.write_mode = "update"
-        print(f"  --meet: only {_ONLY_MEETS['pairs']}")
+        print(f"  --meet: only {len(_ONLY_MEETS['pairs'])} races "
+              f"{_ONLY_MEETS['pairs'][:5]}{' ...' if len(_ONLY_MEETS['pairs']) > 5 else ''}")
     if args.new_only:
         _NEW_ONLY.update(on=True, since=newOnlySince())
         args.write_mode = "update"
@@ -4103,9 +4109,9 @@ def main():
           f" [{_nd.DISTANCE_BY_SOURCE}]"
           + (f", per-pool residual {'ON' if _nd.residualMode() else 'OFF'}"
              f" [{_nd.DISTANCE_RESIDUAL_SOURCE}]" if _nd.abilityMode() else ""))
-    why = distanceModeGuard(sports, args.apply,
-                            args.only_changed or args.new_only or bool(args.meet),
-                            args.limit)
+    why = distanceModeGuard(sports, args.apply, args.only_changed or args.new_only,
+                            args.limit) if not args.meet else \
+        distanceModeGuard(sports, args.apply, True, args.limit)
     if why:
         print(f"  REFUSING: {why}")
         raise SystemExit(2)
@@ -4116,10 +4122,10 @@ def main():
             print()
         totals[sport] = _runOneSport(sport, args.apply, args.limit,
                                      args.profile, args.write_mode)
-        if (args.apply and not args.limit and not args.only_changed and not args.new_only
-                and not args.meet):
-            recordAppliedWeather(sport)
-            recordAppliedDistance(sport)
+        if args.apply and not args.limit and not args.only_changed and not args.new_only:
+            if not args.meet:
+                recordAppliedWeather(sport)
+                recordAppliedDistance(sport)
 
     if len(sports) > 1:
         print("\n" + "=" * 70)
