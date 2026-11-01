@@ -211,7 +211,8 @@ if [ "$SCRAPE" -eq 1 ]; then
   #   queued at priority 1 so the scrape takes them first. A few requests;
   #   XCP_NIGHTLY_TFRRS_LATEST=0 skips.
   if [ "${XCP_NIGHTLY_TFRRS_LATEST:-1}" != "0" ]; then
-    step 01_tfrrs_latest "$PY" -u -m sources.tfrrs_hs latest --pages 3 --since-days 60 \
+    # 6 pages (168 meets): an October weekend posts more than 3 pages' worth
+    step 01_tfrrs_latest "$PY" -u -m sources.tfrrs_hs latest --pages "${XCP_NIGHTLY_TFRRS_LATEST_PAGES:-6}" --since-days 60 \
       ${TFRRS_SPORT:+--sport "$TFRRS_SPORT"} --out "$LOGDIR/tfrrs_latest_index.csv"
   fi
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &

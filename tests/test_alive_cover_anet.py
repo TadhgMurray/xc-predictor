@@ -31,3 +31,11 @@ def test_scrape_local_runs_cover_after_land():
     sh = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "deploy", "scrape_local.sh"), encoding="utf-8").read()
     assert sh.index("athleticlive land") < sh.index("athleticlive cover")
+
+
+def test_landing_waits_for_the_meets_last_day():
+    import inspect
+    from sources import athleticlive_xc
+    assert "COALESCE(am.date_end, am.meet_date) < %s" in inspect.getsource(athleticlive._candidates)
+    assert "COALESCE(am.date_end, am.meet_date) < %s" in inspect.getsource(athleticlive_xc.candidates)
+    assert "still being posted" in inspect.getsource(athleticlive.landForScrape)

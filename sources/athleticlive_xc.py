@@ -123,7 +123,7 @@ def candidates(cur, limit, meets=None):
     cur.execute("""SELECT DISTINCT u.anet_id, am.meet_date
                    FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
                    WHERE am.sport = 'XC' AND am.landed_at IS NULL
-                     AND am.meet_date < %s AND am.state = ANY(%s)
+                     AND COALESCE(am.date_end, am.meet_date) < %s AND am.state = ANY(%s)
                    ORDER BY am.meet_date DESC LIMIT %s""",
                 (datetime.date.today().isoformat(), list(A.US_STATES), limit))
     return [r[0] for r in cur.fetchall()]

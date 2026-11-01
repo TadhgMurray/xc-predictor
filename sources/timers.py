@@ -352,6 +352,13 @@ def cmdAll(a):
         for src, got, note in results:
             ok = 0
             for u, lm, why in got:
+                if lm is not None and lm.races and lm.date and lm.date >= _dt.date.today().isoformat():
+                    # ★ NOT ON ITS OWN DAY (2026-11-01): promoted is final, so a
+                    #   meet still being posted would stay short; it is not
+                    #   landed, so tomorrow's run finds it again
+                    tally["posted today: waits a day"] += 1
+                    print(f"  … {src.slug}: {land.summary(lm)} -- dated today, lands tomorrow")
+                    continue
                 if lm is None or not lm.races:
                     tally["not parsed"] += 1
                     print(f"  ✗ {src.slug}: {u} -- {why if lm is None else 'no individual races'}")

@@ -1370,7 +1370,7 @@ def _noteEmpty(meet_id, sport, meet_info):
     EMPTY_FACTS[(meet_id, sport)] = (date, None if hr is None else bool(hr))
 
 
-def _localTwin(meet_id, sport, meet_info, label):
+def _localTwin(meet_id, sport, meet_info, label, n_divs=None):
     """The timer meet standing in for this athletic.net meet, or None
     (sources/anet_twins.py: same date, state and name as a promoted timer
     meet). Anything going wrong means athletic.net as before."""
@@ -1379,7 +1379,7 @@ def _localTwin(meet_id, sport, meet_info, label):
         if _root not in sys.path:
             sys.path.insert(0, _root)
         from sources import anet_twins
-        ext = anet_twins.skipFor(meet_id, sport, meet_info)
+        ext = anet_twins.skipFor(meet_id, sport, meet_info, n_divs)
     except Exception as e:                                  # noqa: BLE001
         print(f"{label} [!] local-twin check failed for meet {meet_id}: {e}")
         return None
@@ -1418,7 +1418,7 @@ async def scrapeMeetBySport(page, meet_id: int, sport: str,
             return 0, False
         # ★ A TIMER'S OWN SITE GAVE US THIS MEET (owner, 2026-11-01): no
         #   per-division calls
-        if _localTwin(meet_id, "XC", meet_info, label) is not None:
+        if _localTwin(meet_id, "XC", meet_info, label, len(divisions or [])) is not None:
             return 0, True
         
         # ---- Per division: the only way athletic.net answers now ----------- #

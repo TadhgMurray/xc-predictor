@@ -54,3 +54,16 @@ def test_launcher_skips_division_calls_for_a_twin():
     src = open(os.path.join(ROOT, "scripts", "scrape_results.py"), encoding="utf-8").read()
     assert src.count('_localTwin(meet_id, "XC"') == 1 and src.count('_localTwin(meet_id, "TF"') == 1
     assert src.index('_localTwin(meet_id, "XC"') < src.index("_scrapeXCByDivision(page, meet_id, meet_info, divisions")
+
+
+def test_timer_copy_with_fewer_races_than_anet_divisions_is_not_enough():
+    cands = [(11, "Wayne Cross Country Invite", "2026-09-12", "NY", 2)]
+    assert T.match("Wayne XC Invitational", "2026-09-12", "NY", cands, n_divs=2) == 11
+    assert T.match("Wayne XC Invitational", "2026-09-12", "NY", cands, n_divs=6) is None
+    assert T.match("Wayne XC Invitational", "2026-09-12", "NY", cands) == 11
+
+
+def test_track_is_never_skipped():
+    src = open(os.path.join(ROOT, "sources", "anet_twins.py"), encoding="utf-8").read()
+    assert 'if date and sport == "XC" else None' in src
+    assert "WHERE s.sport = 'XC'" in src

@@ -19,6 +19,11 @@
 #   Every match is written to anet_local_twin (meet_id, sport, ext_meet_id)
 #   and queue_meets leaves those ids out of its re-ask passes.
 #
+# ! CROSS COUNTRY ONLY, AND ONLY A TIMER COPY WITH AT LEAST AS MANY RACES AS
+#   ATHLETIC.NET HAS DIVISIONS (2026-11-01). A timer that posted only the
+#   varsity races would otherwise cost athletic.net's JV and middle school
+#   ones for good. Track stays athletic.net's: timers' files leave out field
+#   events and relays.
 # ! THE NAME TEST IS DELIBERATELY STRICT: the same date, the same state when
 #   both name one, and the names' distinctive words agreeing (sameName).
 #   A false match loses athletic.net's copy (the timer's is kept); a missed
@@ -38,9 +43,11 @@ CREATE TABLE IF NOT EXISTS anet_meet_seen (
     name       TEXT,
     meet_date  DATE,
     state      TEXT,
+    n_divs     INTEGER,
     seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (meet_id, sport)
 );
+ALTER TABLE anet_meet_seen ADD COLUMN IF NOT EXISTS n_divs INTEGER;
 CREATE INDEX IF NOT EXISTS anet_meet_seen_date ON anet_meet_seen (meet_date);
 CREATE TABLE IF NOT EXISTS anet_local_twin (
     meet_id     BIGINT NOT NULL,
@@ -78,14 +85,20 @@ def _iso(d):
     return str(d)[:10] if d else None
 
 
-def match(name, date, state, candidates):
-    """The one candidate (ext_meet_id, name, date, state) that is this meet,
-    or None (none, or more than one -- ambiguous is no). Pure."""
+def match(name, date, state, candidates, n_divs=None):
+    """The one candidate (ext_meet_id, name, date, state[, n_races]) that is
+    this meet, or None (none, or more than one -- ambiguous is no). With
+    n_divs, a candidate with fewer races than that is not enough. Pure."""
     hits = [c for c in candidates
             if _iso(c[2]) == _iso(date)
             and (not state or not c[3] or c[3].upper() == state.upper())
             and sameName(name, c[1])]
-    return hits[0][0] if len(hits) == 1 else None
+    if len(hits) != 1:
+        return None
+    hit = hits[0]
+    if n_divs and len(hit) > 4 and (hit[4] or 0) < n_divs:
+        return None
+    return hit[0]
 
 
 def ensureTables(cur):
@@ -94,9 +107,10 @@ def ensureTables(cur):
 
 def _timerMeets(cur, date, sport):
     """Promoted timer meets on that day carrying a race of that sport."""
-    cur.execute("""SELECT DISTINCT m.ext_meet_id, m.meet_name, m.meet_date, m.state
+    cur.execute("""SELECT m.ext_meet_id, m.meet_name, m.meet_date, m.state, count(*)
                    FROM meets_ext m JOIN races_ext r USING (ext_meet_id)
-                   WHERE m.status = 'promoted' AND m.meet_date = %s AND r.sport = %s""",
+                   WHERE m.status = 'promoted' AND m.meet_date = %s AND r.sport = %s
+                   GROUP BY 1, 2, 3, 4""",
                 (_iso(date), sport))
     return cur.fetchall()
 
@@ -111,7 +125,7 @@ def _close(cur, meet_id, sport, ext, how):
                    WHERE meet_queue.scraped IN (0, 2, 4)""", (meet_id, sport))
 
 
-def skipFor(meet_id, sport, meet_info):
+def skipFor(meet_id, sport, meet_info, n_divs=None):
     """Called by the launcher right after GetMeetData. Keeps what the meet
     info said, and -> the timer meet's ext_meet_id when a promoted timer
     meet is this meet (skip athletic.net's results calls), else None.
@@ -126,12 +140,14 @@ def skipFor(meet_id, sport, meet_info):
         with getConn() as conn:
             with conn.cursor() as cur:
                 ensureTables(cur)
-                cur.execute("""INSERT INTO anet_meet_seen (meet_id, sport, name, meet_date, state)
-                               VALUES (%s, %s, %s, %s, %s)
+                cur.execute("""INSERT INTO anet_meet_seen (meet_id, sport, name, meet_date, state, n_divs)
+                               VALUES (%s, %s, %s, %s, %s, %s)
                                ON CONFLICT (meet_id, sport) DO UPDATE SET name = EXCLUDED.name,
                                  meet_date = EXCLUDED.meet_date, state = EXCLUDED.state,
-                                 seen_at = now()""", (meet_id, sport, name, date, state))
-                ext = match(name, date, state, _timerMeets(cur, date, sport)) if date else None
+                                 n_divs = EXCLUDED.n_divs, seen_at = now()""",
+                            (meet_id, sport, name, date, state, n_divs))
+                ext = (match(name, date, state, _timerMeets(cur, date, sport), n_divs)
+                       if date and sport == "XC" else None)
                 if ext is not None:
                     cur.execute("""INSERT INTO anet_local_twin (meet_id, sport, ext_meet_id, how)
                                    VALUES (%s, %s, %s, 'meet info') ON CONFLICT DO NOTHING""",
@@ -147,20 +163,20 @@ def cover(cur, days=21):
     """Close the athletic.net queue rows of meets we have already seen whose
     timer copy is promoted (no request). -> [(meet_id, sport, ext)]."""
     ensureTables(cur)
-    cur.execute("""SELECT s.meet_id, s.sport, s.name, s.meet_date, s.state
+    cur.execute("""SELECT s.meet_id, s.sport, s.name, s.meet_date, s.state, s.n_divs
                    FROM anet_meet_seen s
-                   WHERE s.meet_date >= current_date - %s
+                   WHERE s.sport = 'XC' AND s.meet_date >= current_date - %s
                      AND NOT EXISTS (SELECT 1 FROM anet_local_twin t
                                      WHERE t.meet_id = s.meet_id AND t.sport = s.sport)""",
                 (days,))
     seen = cur.fetchall()
     out = []
-    for meet_id, sport, name, date, state in seen:
+    for meet_id, sport, name, date, state, n_divs in seen:
         res = "results" if sport == "XC" else "results_tf"
         cur.execute(f"SELECT 1 FROM {res} WHERE meet_id = %s AND source = 'anet' LIMIT 1", (meet_id,))
         if cur.fetchone():
             continue                       # athletic.net's copy is in: dedup's business
-        ext = match(name, date, state, _timerMeets(cur, date, sport))
+        ext = match(name, date, state, _timerMeets(cur, date, sport), n_divs)
         if ext is not None:
             _close(cur, meet_id, sport, ext, "seen before")
             out.append((meet_id, sport, ext))

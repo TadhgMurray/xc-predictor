@@ -1057,6 +1057,9 @@ async def landForScrape(meet_id, meet_info, events_dict, event_divs, label="[ali
             return None                  # no alive_meets table yet: anet as before
         if not alive:
             return None
+        end = str(alive.get("date_end") or alive.get("meet_date") or "")[:10]
+        if end and end >= datetime.date.today().isoformat():
+            return None                  # still being posted: athletic.net as before
         if alive["landed_at"] is not None and (alive["landed_n"] or 0) > 0:
             return alive["landed_n"], []         # landed already: never twice
         if anetHasResults(cur, meet_id):
@@ -1170,13 +1173,17 @@ def cmdDiscover(a):
 US_STATES = tuple(sorted(set(_STATE_ABBR.values())))
 
 
+# ★ ONLY AFTER THE MEET'S LAST DAY (2026-11-01). A meet lands once
+#   (landed_at), and athleticlive cover then closes athletic.net's copy: a
+#   meet landed while still being posted -- the same day, or day one of two
+#   -- would stay short for good.
 def _candidates(cur, a):
     if a.meet:
         return [(m,) for m in a.meet]
     cur.execute("""SELECT DISTINCT u.anet_id, am.meet_date
                    FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
                    WHERE am.sport = 'TF' AND am.landed_at IS NULL
-                     AND am.meet_date <= %s AND am.state = ANY(%s)
+                     AND COALESCE(am.date_end, am.meet_date) < %s AND am.state = ANY(%s)
                    ORDER BY am.meet_date DESC LIMIT %s""",
                 (datetime.date.today().isoformat(), list(US_STATES), a.limit))
     return [(r[0],) for r in cur.fetchall()]
