@@ -404,6 +404,64 @@ def emptyRecent(cur, sport, since, source="anet"):
 
 UNDATED_SPAN = int(os.environ.get("SEED_UNDATED_SPAN", "30000"))
 
+# ★ "NO MEET" AMONG REAL MEETS IS USUALLY A MEET THAT WAS HIDDEN (owner,
+#   2026-11-01, the Spartan Moonlight Showcase, anet XC 274532: state 4, and
+#   it had 1,513 results). A feed hands out a sport's meet ids in order, so
+#   an id answered "no meet" while the ids around it are real meets is most
+#   often one that was a draft, or not yet public, when we asked -- and once
+#   the watermark passed it nothing ever asked again (seedForward re-asks
+#   state 4 only inside the block it is walking).
+#   This re-asks exactly those: state 4, a neighbour within HIDDEN_NEAR ids
+#   dated in the last HIDDEN_DAYS (so the meet is from now, not years ago),
+#   not asked in HIDDEN_REST_DAYS, newest first, at most HIDDEN_CAP a night.
+#   A deleted meet is asked once per rest and stays 4. --deep /
+#   ANET_DEEP_RECHECK=1 looks back HIDDEN_DEEP_DAYS with a bigger cap.
+HIDDEN_NEAR = int(os.environ.get("SEED_HIDDEN_NEAR", "5"))
+HIDDEN_DAYS = int(os.environ.get("SEED_HIDDEN_DAYS", "30"))
+HIDDEN_DEEP_DAYS = int(os.environ.get("SEED_HIDDEN_DEEP_DAYS", "120"))
+HIDDEN_REST_DAYS = int(os.environ.get("SEED_HIDDEN_REST_DAYS", "7"))
+HIDDEN_CAP = int(os.environ.get("SEED_HIDDEN_CAP", "100"))
+HIDDEN_DEEP_CAP = int(os.environ.get("SEED_HIDDEN_DEEP_CAP", "2000"))
+
+
+def hiddenMeets(cur, sport, top, source="anet", days=HIDDEN_DAYS, cap=HIDDEN_CAP,
+                span=UNDATED_SPAN, near=HIDDEN_NEAR, rest_days=HIDDEN_REST_DAYS):
+    """State-4 ids below the watermark sitting among recently dated meets."""
+    import datetime as _dt
+    t = _t(source, sport)
+    today = _dt.date.today()
+    since = (today - _dt.timedelta(days=days)).isoformat()
+    lo = max(0, top - span)
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = 'meet_queue' AND column_name = 'empty_date'""")
+    queue_dates = (f"""UNION ALL
+            SELECT meet_id, empty_date::text AS dt FROM meet_queue
+            WHERE source = %(source)s AND sport = %(sport)s AND empty_date IS NOT NULL
+              AND meet_id BETWEEN %(lo)s - %(near)s AND %(top)s + %(near)s"""
+                   if cur.fetchone() else "")
+    cur.execute(f"""
+        WITH dated AS (
+            SELECT d.meet_id, d.{t['date_col']}::text AS dt
+            FROM   {t['dates']} d
+            WHERE  d.meet_id BETWEEN %(lo)s - %(near)s AND %(top)s + %(near)s
+                   {_clause(t['dates_where'], 'd')}
+            {queue_dates}
+        )
+        SELECT q.meet_id
+        FROM   meet_queue q
+        WHERE  q.source = %(source)s AND q.sport = %(sport)s AND q.scraped = 4
+          AND  q.meet_id BETWEEN %(lo)s AND %(top)s
+          AND  (q.requeued_at IS NULL OR q.requeued_at < now() - %(rest)s * interval '1 day')
+          AND  EXISTS (SELECT 1 FROM dated x
+                       WHERE x.meet_id BETWEEN q.meet_id - %(near)s AND q.meet_id + %(near)s
+                         AND x.meet_id <> q.meet_id
+                         AND left(x.dt, 10) BETWEEN %(since)s AND %(today)s)
+        ORDER  BY q.meet_id DESC
+        LIMIT  %(cap)s
+    """, {"source": source, "sport": sport, "lo": lo, "top": top, "near": near,
+          "rest": rest_days, "since": since, "today": today.isoformat(), "cap": cap})
+    return [r[0] for r in cur.fetchall()]
+
 
 def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
     """Meets we finished with 0 results, whose row has NO date, within
@@ -918,7 +976,20 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         say(f"  [{tag}] dated since {since} with 0 results: {len(dated):,}")
         say(f"  [{tag}] scheduled above the watermark, worth asking again: "
             f"{len(sched_retry):,}")
-        todo = sorted(set(dated) | set(sched_retry))
+        # ids answered "no meet" while the meets around them are this
+        # season's (hiddenMeets above); athletic.net only unless asked
+        hidden = []
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name = 'meet_queue' AND column_name = 'requeued_at'""")
+        has_rq = cur.fetchone() is not None
+        if has_rq and (source == "anet" or os.environ.get("SEED_HIDDEN_ALL_FEEDS") == "1"):
+            hidden = hiddenMeets(cur, sport, top, source,
+                                 days=HIDDEN_DEEP_DAYS if deep else HIDDEN_DAYS,
+                                 cap=HIDDEN_DEEP_CAP if deep else HIDDEN_CAP)
+        out["hidden"] = len(hidden)
+        say(f"  [{tag}] answered 'no meet' among this season's meets, worth asking again: "
+            f"{len(hidden):,}")
+        todo = sorted(set(dated) | set(sched_retry) | set(hidden))
         if source == "anet" and todo:
             # a timer's own copy stands in for these (sources/anet_twins.py)
             _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
