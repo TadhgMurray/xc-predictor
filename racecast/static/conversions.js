@@ -181,11 +181,18 @@
         input.addEventListener('input', function () {
             paint(input.value.trim().toLowerCase());
         });
-        // Focus with an empty box shows the whole list, so the field reads as
-        // a dropdown rather than a search you have to guess at.
-        input.addEventListener('focus', function () {
-            if (!input.value.trim()) paint('');
-        });
+        // ★ FOCUS SHOWS THE WHOLE LIST, FILLED OR NOT (owner, 2026-11-01: "on
+        //   mobile you can't switch to a different track distance after
+        //   choosing an xc course"). Picking a course fills this box with its
+        //   distance, and the list only opened on an EMPTY box -- on a phone,
+        //   where clearing a field is fiddly, the other distances were out of
+        //   reach. Typing still filters; a tap on the focused box reopens it.
+        function showAll() {
+            paint('');
+            if (input.select) { try { input.select(); } catch (e) { /* not selectable */ } }
+        }
+        input.addEventListener('focus', showAll);
+        input.addEventListener('click', function () { if (!drop.innerHTML) showAll(); });
         input.addEventListener('blur', function () {
             setTimeout(function () { drop.innerHTML = ''; }, 150);
         });
@@ -391,10 +398,44 @@
             var din = document.getElementById('in-distance');
             if (din && !din.value && dist) din.value = dist;
             document.getElementById('in-course').value = chosenInCourse.course;
-            document.getElementById('in-course-chosen').textContent =
-                'On: ' + chosenInCourse.course;
+            paintChosenCourse();
         }
     );
+
+    /* ★ A CHOSEN COURSE CAN BE TAKEN OFF AGAIN (owner, 2026-11-01: "when you
+         add a course you cannot unadd it unless you add a different one").
+         Emptying the box left the old course chosen and sent with every
+         conversion; now changing or clearing the text drops it, and the
+         "On:" line carries a remove button. */
+    function clearChosenCourse() {
+        chosenInCourse.course = null;
+        chosenInCourse.difficulty = 0;
+        chosenInCourse.canonical_id = null;
+        paintChosenCourse();
+    }
+    function paintChosenCourse() {
+        var box = document.getElementById('in-course-chosen');
+        if (!box) return;
+        if (!chosenInCourse.course) { box.innerHTML = ''; return; }
+        box.innerHTML = 'On: ' + esc(chosenInCourse.course) +
+            ' <button type="button" class="chosen-clear" aria-label="Remove course">&times;</button>';
+        box.querySelector('.chosen-clear').addEventListener('click', function () {
+            var inp = document.getElementById('in-course');
+            if (inp) inp.value = '';
+            clearChosenCourse();
+            convert();
+        });
+    }
+    (function () {
+        var inp = document.getElementById('in-course');
+        if (!inp) return;
+        inp.addEventListener('input', function () {
+            if (chosenInCourse.course && inp.value.trim() !== chosenInCourse.course) {
+                clearChosenCourse();
+                if (!inp.value.trim()) convert();
+            }
+        });
+    })();
 
     function hsMode() {
         return Boolean(window.rcScale && window.rcScale.mode === 'hs');

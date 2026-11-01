@@ -787,6 +787,9 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 
 /* the picked-athlete / picked-course confirmation line */
 .chosen { color: #2a7d46; font-size: 0.8rem; min-height: 1em; }
+.chosen-clear { border: 0; background: none; color: inherit; font-size: 1.1em; line-height: 1;
+                padding: 2px 8px; margin-left: 2px; cursor: pointer; border-radius: 4px; }
+.chosen-clear:hover, .chosen-clear:focus-visible { background: rgba(0,0,0,0.08); }
 
 /* ---- search dropdowns (all of them share .conv-drop) ---- */
 .conv-drop {
