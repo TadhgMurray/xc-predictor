@@ -998,6 +998,41 @@ def write(conn, meet_id, p, label="[alive]"):
     return n
 
 
+# ★ ATHLETIC.NET NEVER ASKS FOR WHAT ATHLETICLIVE LANDED (owner,
+#   2026-11-01: "it needs to skip everything for athletic live ... without
+#   extra requests"). Every meet landed here carries its athletic.net id
+#   (alive_meets.anet_ids), so the athletic.net queue row for it is written
+#   done (scraped 1) before the anet launcher claims anything: no
+#   GetMeetData, no per-division calls. A row not queued yet is inserted
+#   done, so the forward walk (ON CONFLICT DO NOTHING) never queues it.
+#   Rows in flight (3) are left alone; failed ones (2) are closed too.
+COVER_SQL = """
+INSERT INTO meet_queue (meet_id, sport, source, scraped)
+SELECT DISTINCT u.anet_id, am.sport, 'anet', 1
+FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
+WHERE am.landed_n > 0 AND am.sport = ANY(%s)
+ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 1
+WHERE meet_queue.scraped IN (0, 2, 4)
+"""
+
+
+def coverAnetQueue(cur, sports=("TF", "XC")):
+    """Close the athletic.net queue rows of every meet landed from here.
+    -> rows written."""
+    cur.execute(COVER_SQL, (list(sports),))
+    return cur.rowcount
+
+
+def cmdCover(a):
+    with _conn() as conn:
+        cur = conn.cursor()
+        initTables(cur)
+        n = coverAnetQueue(cur)
+        conn.commit()
+    print(f"[alive] {n:,} athletic.net queue rows closed: AthleticLIVE has those meets")
+    return 0
+
+
 def noteLanded(cur, alive_id, n, note):
     cur.execute("""UPDATE alive_meets SET landed_at = now(), landed_n = %s, landed_note = %s
                    WHERE alive_id = %s""", (n, note, alive_id))
@@ -1543,11 +1578,13 @@ def main(argv=None):
     ld.add_argument("--meet", type=int, action="append", help="this athletic.net meet id")
     ld.add_argument("--write", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("cover", help="close athletic.net queue rows for meets landed from here")
     e = sub.add_parser("events")
     e.add_argument("--show", type=int, default=40)
     a = ap.parse_args(argv)
     return {"init": cmdInit, "discover": cmdDiscover, "check": cmdCheck,
-            "land": cmdLand, "status": cmdStatus, "events": cmdEvents}[a.cmd](a)
+            "land": cmdLand, "status": cmdStatus, "events": cmdEvents,
+            "cover": cmdCover}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,10 @@ if [ "${ALIVE:-1}" != "0" ]; then
   "$PY" -u -m sources.athleticlive discover || rc=1
   echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: land (limit ${ALIVE_LIMIT:-200})"
   "$PY" -u -m sources.athleticlive land --limit "${ALIVE_LIMIT:-200}" $WRITE || rc=1
+  if [ "$DRY" -eq 0 ]; then
+    # athletic.net then never asks for a meet AthleticLIVE already gave us
+    "$PY" -u -m sources.athleticlive cover || rc=1
+  fi
 fi
 if [ "${TIMERS:-1}" != "0" ]; then
   echo "[local] $(date -u +%H:%M:%S) timers: discover -> fetch -> land -> dedup -> promote"
