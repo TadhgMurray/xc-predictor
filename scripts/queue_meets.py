@@ -128,10 +128,21 @@ def _meetExistsSql(source, sport, outer="q", inner="_m"):
 
 # ------------------------------------------------------------------ frontiers
 
+# ★ ATHLETIC.NET'S OWN ROWS ONLY (owner, 2026-11-01: "what if we scraped a
+#   ton forward that missed some on anet?"). AthleticLIVE lands its meets
+#   under their athletic.net ids, source 'anet', result_id RESULT_BASE and up
+#   (sources/athleticlive.py). Counted here, one AthleticLIVE meet with a
+#   high id would lift the watermark past every athletic.net meet between,
+#   and the forward walk would start above them and never ask.
+ALIVE_RESULT_BASE = 3_000_000_000_000
+
+
 def watermark(cur, sport, source="anet"):
-    """The highest meet_id in this feed and sport that produced results."""
+    """The highest meet_id in this feed and sport that produced results
+    scraped from the feed itself."""
+    own = f" AND result_id < {ALIVE_RESULT_BASE}" if source == "anet" else ""
     cur.execute(f"SELECT max(meet_id) FROM {_t(source, sport)['results']} "
-                f"WHERE source = %s", (source,))
+                f"WHERE source = %s{own}", (source,))
     return cur.fetchone()[0]
 
 
@@ -908,6 +919,16 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         say(f"  [{tag}] scheduled above the watermark, worth asking again: "
             f"{len(sched_retry):,}")
         todo = sorted(set(dated) | set(sched_retry))
+        if source == "anet" and todo:
+            # a timer's own copy stands in for these (sources/anet_twins.py)
+            _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+            from sources import anet_twins
+            twins = anet_twins.twinIds(cur, sport)
+            if twins:
+                out["local_twins"] = len(set(todo) & twins)
+                todo = [m for m in todo if m not in twins]
         if write and todo:
             out["requeued"] = requeue(cur, sport, todo, source)
             say(f"  [{tag}]   {out['requeued']:,} reset to scraped=0")

@@ -47,6 +47,8 @@ if [ "${TIMERS:-1}" != "0" ]; then
   if [ "$DRY" -eq 0 ]; then
     echo "[local] $(date -u +%H:%M:%S) timers: link promoted rows to people"
     "$PY" -u scripts/link_uploads.py --source timer --apply || rc=1
+    echo "[local] $(date -u +%H:%M:%S) timers: close athletic.net meets a timer already gave us"
+    "$PY" -u -m sources.anet_twins || rc=1
   fi
 fi
 echo "[local] $(date -u +%H:%M:%S) done (rc $rc). Rate them: bash deploy/nightly_update.sh --no-scrape --no-publish"

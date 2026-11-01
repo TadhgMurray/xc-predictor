@@ -653,9 +653,6 @@ async def _launchBrowser(playwright):
 # Output: A Playwright browser context.
 async def _buildContext(browser, proxy_index: int):
 
-    # Each restart gets a slightly randomized Chrome version so the
-    # user agent string doesn't look like a bot cycling identically.
-    chrome_version = random.randint(125, 128)
 
     # Pick proxy for this restart — cycles through the list using modulo
     # so it wraps around when it reaches the end.
@@ -664,7 +661,9 @@ async def _buildContext(browser, proxy_index: int):
 
     # Returns the necessary browser context.
     return await browser.new_context(
-        user_agent = f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version}.0.0.0 Safari/537.36",
+        # ★ THE BROWSER'S OWN USER AGENT (2026-11-01): the made-up Chrome
+        #   125-128 string disagreed with the real Chrome underneath, which is
+        #   what Cloudflare checks; the real one is already a plain Chrome UA.
         viewport = {"width": random.randint(1280, 1440), "height": random.randint(768, 900)},
         java_script_enabled = True,
         # Proxies disabled — Mullvad handles IP rotation.
