@@ -39,6 +39,8 @@ if [ "${ALIVE:-1}" != "0" ]; then
   "$PY" -u -m sources.athleticlive land --limit "${ALIVE_LIMIT:-200}" $WRITE || rc=1
   echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: cross country (limit ${ALIVE_XC_LIMIT:-100})"
   "$PY" -u -m sources.athleticlive_xc land --limit "${ALIVE_XC_LIMIT:-100}" $WRITE || rc=1
+  # meets passed as "athletic.net has it" before the copies were counted
+  "$PY" -u -m sources.athleticlive_xc recheck --days 60 $WRITE || rc=1
   if [ "$DRY" -eq 0 ]; then
     # athletic.net then never asks for a meet AthleticLIVE already gave us
     "$PY" -u -m sources.athleticlive cover || rc=1

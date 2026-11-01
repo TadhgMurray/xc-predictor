@@ -137,6 +137,63 @@ def save(meet_id, p, label="[alive xc]"):
     return _saveXCMeet(meet_id, label, meets, [], results)
 
 
+# ★ "ATHLETIC.NET HAS IT" IS A COUNT, NOT A YES (owner, 2026-11-01: Mt. SAC's
+#   3-mile invitational missing for Flo Adamski "and other athletes").
+#   athletic.net posts a big meet race by race; a scrape that came while it
+#   was half up left it half in, the meet was marked done, and this lander
+#   stood down because SOME athletic.net rows existed. Now the two copies are
+#   counted: athletic.net short of AthleticLIVE by more than ANET_SHORT (and
+#   by SHORT_MIN runners) puts the meet back in athletic.net's queue at the
+#   front -- athletic.net's own copy is complete by then, and its divisions
+#   are the ones every other page keys on.
+ANET_SHORT = 0.90
+SHORT_MIN = 10
+
+
+def anetCount(cur, meet_id):
+    """athletic.net's own XC result rows for this meet."""
+    cur.execute("""SELECT count(*) FROM results WHERE meet_id = %s AND source = 'anet'
+                     AND result_id > 0 AND result_id < %s""", (meet_id, A.RESULT_BASE))
+    return int(cur.fetchone()[0])
+
+
+def aliveCount(events, blobs):
+    """AthleticLIVE's timed individual results across the meet's races."""
+    n = 0
+    for ev in events:
+        doc = blobs.get(ev["id"])
+        if isinstance(doc, dict):
+            rows, _a, _s = A.resultRows(doc, ev)
+            n += sum(1 for r in rows if r.get("SortInt"))
+    return n
+
+
+def anetShort(anet_n, alive_n):
+    """Is athletic.net's copy short of AthleticLIVE's? Pure."""
+    return alive_n - anet_n >= SHORT_MIN and anet_n < ANET_SHORT * alive_n
+
+
+def requeueAnet(cur, meet_id):
+    cur.execute("""INSERT INTO meet_queue (meet_id, sport, source, scraped, priority)
+                   VALUES (%s, 'XC', 'anet', 0, 1)
+                   ON CONFLICT (meet_id, sport, source)
+                   DO UPDATE SET scraped = 0, priority = 1""", (meet_id,))
+
+
+def checkAnetCopy(cur, fetcher, meet_id, alive, write):
+    """athletic.net has rows for this meet: are they all of it? -> note."""
+    anet_n = anetCount(cur, meet_id)
+    events, blobs, note = A._run(fetchXC(fetcher, alive["alive_id"], alive["meet_date"]))
+    alive_n = aliveCount(events, blobs) if events else 0
+    if events and anetShort(anet_n, alive_n):
+        print(f"  meet {meet_id} ({str(alive['name'])[:40]}): athletic.net has {anet_n} of "
+              f"AthleticLIVE's {alive_n} -- back in athletic.net's queue")
+        if write:
+            requeueAnet(cur, meet_id)
+        return f"anet short {anet_n}/{alive_n}; requeued"
+    return "anet has it; counted"
+
+
 def anetHasXC(cur, meet_id):
     """athletic.net's own XC rows for this meet are already in."""
     cur.execute("""SELECT 1 FROM results WHERE meet_id = %s AND source = 'anet'
@@ -185,9 +242,11 @@ def cmdLand(a):
                 total["not on AthleticLIVE"] += 1
                 continue
             if anetHasXC(cur, meet_id):
-                total["athletic.net already has it"] += 1
+                why = checkAnetCopy(cur, fetcher, meet_id, alive, a.write)
+                total["athletic.net short: requeued" if why.startswith("anet short")
+                      else "athletic.net already has it"] += 1
                 if a.write:
-                    A.noteLanded(cur, alive["alive_id"], 0, "anet has it")
+                    A.noteLanded(cur, alive["alive_id"], 0, why)
                     conn.commit()
                 continue
             events, blobs, note = A._run(fetchXC(fetcher, alive["alive_id"], alive["meet_date"]))
@@ -266,6 +325,34 @@ def cmdDedupe(a):
     return 0
 
 
+def cmdRecheck(a):
+    """Meets this lander stood down for ("anet has it") in the last
+    --days: count both copies again (the check above, for the meets passed
+    before it existed)."""
+    fetcher = A.makeFetcher()
+    total = Counter()
+    with A._conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT DISTINCT u.anet_id, am.alive_id
+                       FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
+                       WHERE am.sport = 'XC' AND am.landed_note = 'anet has it'
+                         AND am.meet_date >= %s
+                       ORDER BY 1 DESC""",
+                    ((datetime.date.today() - datetime.timedelta(days=a.days)).isoformat(),))
+        for meet_id, _alive_id in cur.fetchall():
+            alive = A.aliveFor(cur, meet_id, sport="XC")
+            if not alive:
+                continue
+            why = checkAnetCopy(cur, fetcher, meet_id, alive, a.write)
+            total["requeued" if why.startswith("anet short") else "complete"] += 1
+            if a.write:
+                A.noteLanded(cur, alive["alive_id"], 0, why)     # counted: not asked again
+                conn.commit()
+    print(f"[alive xc] recheck: {dict(total)}  fetches {fetcher.stats}"
+          + ("" if a.write else "  (dry run: --write requeues them)"))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="AthleticLIVE cross country -> meets / results")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -273,10 +360,13 @@ def main(argv=None):
     ld.add_argument("--limit", type=int, default=100)
     ld.add_argument("--meet", type=int, action="append", help="this athletic.net meet id")
     ld.add_argument("--write", action="store_true")
+    rc = sub.add_parser("recheck", help="count athletic.net's copy of meets passed as 'anet has it'")
+    rc.add_argument("--days", type=int, default=60)
+    rc.add_argument("--write", action="store_true")
     dd = sub.add_parser("dedupe", help="drop combined lists already landed")
     dd.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
-    return {"land": cmdLand, "dedupe": cmdDedupe}[a.cmd](a)
+    return {"land": cmdLand, "dedupe": cmdDedupe, "recheck": cmdRecheck}[a.cmd](a)
 
 
 if __name__ == "__main__":

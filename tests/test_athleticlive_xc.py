@@ -76,3 +76,13 @@ def test_plan_skips_the_combined_list():
     p = X.plan(276933, ALIVE, [evs[0], comb], {2906134: doc, 999: doc})
     assert len(p["meets_to_save"]) == 1 and len(p["results_to_save"]) == 6
     assert p["skipped"]["combined list (its runners are in the other races)"] == 1
+
+
+def test_athletic_net_short_of_athleticlive_is_requeued():
+    """2026-11-01, Mt. SAC: athletic.net half posted when scraped."""
+    assert X.anetShort(1200, 2600)
+    assert not X.anetShort(2550, 2600)          # within 10%
+    assert not X.anetShort(0, 5)                # too few to say
+    evs = X.xcEvents(_load("summary_76201.json"))
+    n = X.aliveCount(evs[:1], {2906134: _load("event_2906134.json")})
+    assert n == 6
