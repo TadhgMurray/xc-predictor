@@ -1405,8 +1405,24 @@ XC_TRACK_M = {"hs": 5000.0, "college": 5000.0, "ms": 3200.0}
 #     little slow -- the +1.6% made them 14:53-15:01. So below the
 #     measured-slow range nothing moves, and women -- right at the top once
 #     the flat +2.6% is gone -- carry no correction.
+# ★★ RE-CALIBRATED ON THE STOPWATCH (owner, 2026-11-01: "fix. if calibration
+#    needed"; scripts/diag_hs_to_college.py part E). With the public scale
+#    equal time on this column, the column IS the HS -> college story, and it
+#    said +1.9% faster in college where the same runners' own 3200 -> 3000
+#    said +0.9%: the college column read ~1-1.6% fast through the body of
+#    both pools (~700-900 runners a band, five bands up to the top fifth of
+#    college freshmen). Against the next spring's 5000 it read ~2% fast;
+#    the stopwatch, the smaller one, is the one taken. Above the measured
+#    bands the points run to the 2026-10-31 top-15 checks (men 2% slow ->
+#    -0.020 at 125.5; women right -> 0 at 133.5), so the elite column the
+#    owner fixed then stays where it was.
+#    ! THIS LIFTS "NEVER SLOWER" BELOW THE TOP: it rested on 11-15 runners a
+#      level; these are thousands.
 XC_TRACK_CAL = {
-    "college_m": ((113.4, 0.0), (119.0, -0.009), (125.5, -0.020)),
+    "college_f": ((97.0, 0.0135), (103.6, 0.0124), (107.8, 0.0117), (111.9, 0.0158),
+                  (117.3, 0.0143), (133.5, 0.0)),
+    "college_m": ((96.7, 0.0096), (101.9, 0.0082), (105.2, 0.0099), (108.2, 0.0136),
+                  (112.1, 0.0157), (125.5, -0.020)),
 }
 
 

@@ -17,13 +17,16 @@ import conversions as C                                          # noqa: E402
 
 
 def test_the_correction_moves_with_the_rating():
+    """2026-11-01: slower through the body of both college pools (the
+    stopwatch, diag_hs_to_college part E), the 2026-10-31 top kept."""
     assert C.xcTrackCal("college_m", 125.5) == -0.020          # the top: faster
     assert C.xcTrackCal("college_m", 140.0) == -0.020          # held beyond the end
-    assert C.xcTrackCal("college_m", 100.0) == 0.0             # never slower
-    assert C.xcTrackCal("college_m", 113.0) == 0.0
-    assert abs(C.xcTrackCal("college_m", 116.2) - (-0.0045)) < 1e-9   # between points
-    assert all(c <= 0 for pts in C.XC_TRACK_CAL.values() for _r, c in pts)
-    assert C.xcTrackCal("hs_m", 140.0) == 0.0 and C.xcTrackCal("college_f", 133.0) == 0.0
+    assert C.xcTrackCal("college_m", 101.9) == 0.0082          # the body: slower
+    assert C.xcTrackCal("college_m", 80.0) == 0.0096           # held below the start
+    assert abs(C.xcTrackCal("college_m", 118.8) - (0.0157 - 0.0357 / 2)) < 1e-9   # between
+    assert C.xcTrackCal("college_f", 133.5) == 0.0 and C.xcTrackCal("college_f", 145.0) == 0.0
+    assert C.xcTrackCal("college_f", 107.8) == 0.0117
+    assert C.xcTrackCal("hs_m", 140.0) == 0.0 and C.xcTrackCal("hs_f", 100.0) == 0.0
 
 
 def test_only_college_xc_moves(monkeypatch):
