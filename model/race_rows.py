@@ -60,6 +60,7 @@ for sub in ("racecast", "scripts", "engine", "model"):
 
 MIN_FIELD = 8            # rated runners a race needs to say anything about order
 SEASON_START_MONTH = 8   # season_year.ACADEMIC_START_MONTH
+SEASON_START_DAY = 15    # season_year.ACADEMIC_START_DAY
 _LEVEL = {"elem": 0.0, "ms": 1.0, "hs": 2.0, "college": 3.0, "pro": 4.0}
 _GRADE = {"FR": 13.0, "SO": 14.0, "JR": 15.0, "SR": 16.0}
 
@@ -166,7 +167,7 @@ def meetType(name):
 
 def seasonOf(d):
     """The academic year a date (date) falls in."""
-    return d.year if d.month >= SEASON_START_MONTH else d.year - 1
+    return d.year if (d.month, d.day) >= (SEASON_START_MONTH, SEASON_START_DAY) else d.year - 1
 
 
 def gradeNum(g):
@@ -348,7 +349,7 @@ def raceFeatures(runners, race):
     for i, r in enumerate(runners):
         teams.setdefault(r.get("school") or f"_none{i}", []).append(i)
     day = race["day"]
-    week = (day - datetime.date(seasonOf(day), SEASON_START_MONTH, 1)).days / 7.0
+    week = (day - datetime.date(seasonOf(day), SEASON_START_MONTH, SEASON_START_DAY)).days / 7.0
     mt = 5.0 if race.get("is_champ") and meetType(race.get("meet_name")) < 4 else \
         meetType(race.get("meet_name"))
     for i, r in enumerate(runners):

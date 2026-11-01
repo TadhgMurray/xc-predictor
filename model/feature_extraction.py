@@ -584,7 +584,7 @@ _XC_SQL = f"""
               AND asl_s.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
               --   while athlete_season_level moved to the August seam; a
               --   mismatched seam mis-joins every July race silently.
-              CASE WHEN substring(r.date, 6, 2) >= '08'
+              CASE WHEN substring(r.date, 6, 5) >= '08-15'
                                   THEN substring(r.date, 1, 4)::int
                                   ELSE substring(r.date, 1, 4)::int - 1 END
         LEFT JOIN athlete_season_level asl_a
@@ -593,7 +593,7 @@ _XC_SQL = f"""
               AND asl_a.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
               --   while athlete_season_level moved to the August seam; a
               --   mismatched seam mis-joins every July race silently.
-              CASE WHEN substring(r.date, 6, 2) >= '08'
+              CASE WHEN substring(r.date, 6, 5) >= '08-15'
                                   THEN substring(r.date, 1, 4)::int
                                   ELSE substring(r.date, 1, 4)::int - 1 END
         -- * ONE JOIN, BOTH FACTS. grade_fix carries the resolved grade or
@@ -1094,7 +1094,7 @@ _TF_SQL = f"""
                   AND asl_s.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
               --   while athlete_season_level moved to the August seam; a
               --   mismatched seam mis-joins every July race silently.
-              CASE WHEN substring(r.date, 6, 2) >= '08'
+              CASE WHEN substring(r.date, 6, 5) >= '08-15'
                                       THEN substring(r.date, 1, 4)::int
                                       ELSE substring(r.date, 1, 4)::int - 1 END
             LEFT JOIN athlete_season_level asl_a
@@ -1103,7 +1103,7 @@ _TF_SQL = f"""
                   AND asl_a.ay = -- ! '08', matching season_year.ACADEMIC_START_MONTH. This was '07'
               --   while athlete_season_level moved to the August seam; a
               --   mismatched seam mis-joins every July race silently.
-              CASE WHEN substring(r.date, 6, 2) >= '08'
+              CASE WHEN substring(r.date, 6, 5) >= '08-15'
                                       THEN substring(r.date, 1, 4)::int
                                       ELSE substring(r.date, 1, 4)::int - 1 END
             -- * ONE JOIN, BOTH FACTS. grade_fix carries the resolved grade or

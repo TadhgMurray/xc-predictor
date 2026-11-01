@@ -113,7 +113,7 @@ def otherSeasons(rde, gap=2):
     days. Pure."""
     by = {}
     for (cid, dm, day), (ce, _de) in rde.items():
-        yr = day.year if day.month >= 8 else day.year - 1
+        yr = day.year if (day.month, day.day) >= (8, 15) else day.year - 1
         by.setdefault((cid, dm), {}).setdefault(yr, []).append(ce)
     out = {}
     for key, seasons in by.items():
@@ -171,7 +171,7 @@ def load(cur, since, sample, pool, say=print, extra=False, names=None,
             if names is not None:
                 row = row + (md,)
             if loso is not None:
-                season = day.year if day.month >= 8 else day.year - 1
+                season = day.year if (day.month, day.day) >= (8, 15) else day.year - 1
                 loso.append(other.get((c[0], c[1], season)))
             out.append(row + (c[0], md) if extra else row)
     return out

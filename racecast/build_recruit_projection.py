@@ -222,11 +222,11 @@ def seasonAsOf(year, current, today=None):
       a year after that, which is the freshman college season -- the same
       question the current season is asked.
     """
-    from season_year import ACADEMIC_START_MONTH
+    from season_year import seasonStart
     today = today or dt.date.today()
     if current is None or year >= current:
         return today
-    return min(today, dt.date(year + 1, ACADEMIC_START_MONTH, 1))
+    return min(today, seasonStart(year + 1))
 
 
 def seasonsFor(current, since=SINCE_YEAR, only=None):

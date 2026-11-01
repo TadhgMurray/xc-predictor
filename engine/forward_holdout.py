@@ -83,7 +83,7 @@ whole later season, and score it the way the boards are read.
 
 import numpy as np
 
-from season_year import ACADEMIC_START_MONTH
+from season_year import ACADEMIC_START_MONTH, ACADEMIC_START_DAY
 
 # the season tie's clock (run_joint.seasonTiePairs divides by the same)
 DAYS_PER_YEAR = 365.25
@@ -126,15 +126,15 @@ def seasonOf(dates):
     """The academic season (season_year) of datetime64[D] dates."""
     d = np.asarray(dates, dtype="datetime64[D]")
     year = d.astype("datetime64[Y]").astype(np.int64) + 1970
-    month = d.astype("datetime64[M]").astype(np.int64) % 12 + 1
-    return year - (month < ACADEMIC_START_MONTH).astype(np.int64)
+    start = seasonStart(year)                       # this calendar year's season opener
+    return year - (d < start).astype(np.int64)
 
 
 def seasonStart(season):
     """The first day of an academic season, as datetime64[D]."""
     s = np.asarray(season, dtype=np.int64)
     return ((s - 1970) * 12 + (ACADEMIC_START_MONTH - 1)).astype("datetime64[M]") \
-        .astype("datetime64[D]")
+        .astype("datetime64[D]") + np.timedelta64(ACADEMIC_START_DAY - 1, "D")
 
 
 def rowDates(cols):

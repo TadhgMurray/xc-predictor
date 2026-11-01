@@ -128,7 +128,7 @@ KITCHEN_T = _tables(KITCHEN,
                     gf={2024: ("12", None), 2025: ("FR", None)},
                     asl={2024: {"ALL": "hs", "TF": "college", "XC": "hs"},
                          2025: "college"},
-                    first_date=date(2025, 8, 1))
+                    first_date=date(2025, 8, 15))
 
 
 def test_salcidos_july_row_is_his_senior_season_on_both_paths():
@@ -173,7 +173,7 @@ def test_kitchens_unattached_rows_are_screened_at_the_race_ceiling_too():
     '12' for the season screens it; the raw grade alone would not."""
     kw = dict(gender="M", source="anet", school="Unattached", sport="TF",
               no_team=True, race_top_level="college", season=2024,
-              college_first=date(2025, 8, 1))
+              college_first=date(2025, 8, 15))
     assert pr.resolvePool("12", grade_untrusted=True, fixed_grade="12",
                           **kw) == "hs_m|TF"
     # after his first collegiate season the same ceiling stands

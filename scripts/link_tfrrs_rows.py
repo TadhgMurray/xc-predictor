@@ -171,7 +171,7 @@ def fanout(cur, apply):
 def mint(cur, apply, seasons):
     sk = _skips(cur)
     today = datetime.date.today()
-    ay = today.year if today.month >= 8 else today.year - 1
+    ay = today.year if (today.month, today.day) >= (8, 15) else today.year - 1
     since = f"{ay - seasons + 1}-08-01"
     cur.execute("DROP TABLE IF EXISTS tl_new")
     _step(cur, f"tfrrs ids with no person anywhere, first seen since {since}", f"""

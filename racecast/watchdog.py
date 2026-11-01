@@ -1265,7 +1265,7 @@ def runMeets(races):
 
 def currentYear(today=None):
     today = today or datetime.date.today()
-    return today.year if today.month >= 8 else today.year - 1
+    return today.year if (today.month, today.day) >= (8, 15) else today.year - 1
 
 
 def boardTop(cur, sport, pool, year, n=BOARD_TOP):

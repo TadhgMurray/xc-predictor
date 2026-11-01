@@ -1261,7 +1261,7 @@ def _inSeason(today=None):
     today = today or _dt.date.today()
     if today.month in (8, 9, 10, 11):
         return "XC", today.year
-    return "TF", today.year if today.month >= 8 else today.year - 1
+    return "TF", today.year if (today.month, today.day) >= (8, 15) else today.year - 1
 
 
 _MONTHS = ("January", "February", "March", "April", "May", "June", "July",

@@ -333,10 +333,9 @@ def summarize(races):
 
 def _seasonBounds(day):
     """The academic season holding `day` (from 1 August, season_year's clock)."""
-    from season_year import ACADEMIC_START_MONTH
-    y = day.year if day.month >= ACADEMIC_START_MONTH else day.year - 1
-    return (datetime.date(y, ACADEMIC_START_MONTH, 1),
-            datetime.date(y + 1, ACADEMIC_START_MONTH, 1))
+    from season_year import academicYear, seasonStart
+    y = academicYear(day)
+    return (seasonStart(y), seasonStart(y + 1))
 
 
 def scoreRace(cur, P, race, with_model=False, val_only=False, min_matched=MIN_MATCHED):

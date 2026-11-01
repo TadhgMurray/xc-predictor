@@ -64,7 +64,7 @@ def test_race_entrants_come_off_the_results(monkeypatch):
     assert ids == [1, 2]                    # the girl and the ms boy filtered
     assert got["Campolindo"][0]["rating"] == 118.4
     assert got["Campolindo"][1]["rating"] is None
-    assert cur.params["lo"] == "2026-08-01" and cur.params["hi"] == "2027-08-01"
+    assert cur.params["lo"] == "2026-08-15" and cur.params["hi"] == "2027-08-15"
     assert "FROM   results r" in cur.sql and "< 19999" in cur.sql
 
 

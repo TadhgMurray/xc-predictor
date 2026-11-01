@@ -90,7 +90,7 @@ def main():
             SELECT r.normalized_time IS NOT NULL, s.pool, count(*)
             FROM   results r
             LEFT   JOIN athlete_season s ON s.person_id = r.person_id AND s.sport = 'XC'
-                   AND s.year = CASE WHEN substr(r.date, 6, 2) >= '08'
+                   AND s.year = CASE WHEN substr(r.date, 6, 5) >= '08-15'
                                      THEN substr(r.date, 1, 4)::int
                                      ELSE substr(r.date, 1, 4)::int - 1 END
             WHERE  r.meet_id = %s AND r.div_id = %s

@@ -4801,10 +4801,10 @@ def _tfEventSquads(cur, squads, target_m, season_year):
                   if r.get("person_id") is not None})
     if not ids or not target_m or season_year is None:
         return squads, {}
-    from season_year import ACADEMIC_START_MONTH as _m
-    this_lo = f"{int(season_year):04d}-{_m:02d}-01"
-    lo = f"{int(season_year) - 1:04d}-{_m:02d}-01"
-    hi = f"{int(season_year) + 1:04d}-{_m:02d}-01"
+    from season_year import SEASON_START_MMDD as _md
+    this_lo = f"{int(season_year):04d}-{_md}"
+    lo = f"{int(season_year) - 1:04d}-{_md}"
+    hi = f"{int(season_year) + 1:04d}-{_md}"
     cur.execute("""
         SELECT r.person_id AS pid, r.date, r.speed_rating,
                split_part(r.rating_pool, '|', 1) AS pool,
@@ -5348,9 +5348,9 @@ def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
     schools = [x for x in schools if x]
     if not schools or year is None:
         return {}
-    from season_year import ACADEMIC_START_MONTH as _m
-    lo = f"{int(year):04d}-{_m:02d}-01"
-    hi = f"{int(year) + 1:04d}-{_m:02d}-01"
+    from season_year import SEASON_START_MMDD as _md
+    lo = f"{int(year):04d}-{_md}"
+    hi = f"{int(year) + 1:04d}-{_md}"
     table = "results" if sport == "XC" else "results_tf"
     running = ("" if sport == "XC" else
                "AND COALESCE(r.is_field, 0) = 0 AND COALESCE(r.is_relay, 0) = 0")

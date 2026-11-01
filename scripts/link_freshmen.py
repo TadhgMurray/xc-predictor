@@ -78,7 +78,7 @@ SENIOR = ("12", "12th", "sr", "sr.", "senior")
 
 def academicYear(d=None):
     d = d or datetime.date.today()
-    return d.year if d.month >= 8 else d.year - 1
+    return d.year if (d.month, d.day) >= (8, 15) else d.year - 1
 
 
 def normName(name):
@@ -188,7 +188,7 @@ def freshmen(cur, years):
         cur.execute(f"DELETE FROM lf_t WHERE person_id IN ({detachedPersonsSql()})")
     cur.execute("CREATE INDEX ON lf_t (person_id)")
     cur.execute("ALTER TABLE lf_t ADD COLUMN y int")
-    cur.execute("""UPDATE lf_t SET y = CASE WHEN substring(first, 6, 2) >= '08'
+    cur.execute("""UPDATE lf_t SET y = CASE WHEN substring(first, 6, 5) >= '08-15'
                    THEN substring(first, 1, 4)::int
                    ELSE substring(first, 1, 4)::int - 1 END""")
     # a stranger: nothing earlier than that season and nothing on anet
@@ -258,7 +258,7 @@ def seniors(cur, years):
     _step(cur, "anet senior rows in the seasons before (a scan of both tables)", """
         CREATE TEMP TABLE lf_a AS
         SELECT person_id,
-               CASE WHEN substring(max(date), 6, 2) >= '08'
+               CASE WHEN substring(max(date), 6, 5) >= '08-15'
                     THEN substring(max(date), 1, 4)::int + 1
                     ELSE substring(max(date), 1, 4)::int END      AS y,
                mode() WITHIN GROUP (ORDER BY school)              AS school

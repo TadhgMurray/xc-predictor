@@ -215,7 +215,7 @@ def collegeClassYear(date, grade):
     m = _COLLEGE_ELIG.match(str(grade or "").strip())
     if d is None or not m:
         return None
-    ay_end = d.year + 1 if d.month >= 8 else d.year
+    ay_end = d.year + 1 if (d.month, d.day) >= (8, 15) else d.year
     return ay_end - int(m.group(2))
 
 
@@ -236,7 +236,7 @@ def _season(date):
     d = _day(date)
     if d is None:
         return None
-    return d.year if d.month >= 8 else d.year - 1
+    return d.year if (d.month, d.day) >= (8, 15) else d.year - 1
 
 
 def _eraRows(m, key_schools):

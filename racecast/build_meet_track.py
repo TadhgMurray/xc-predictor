@@ -195,9 +195,9 @@ def upsert(conn, row):
 def seasonStart(today=None):
     """'YYYY-MM-DD': the first day of the current season (season_year's
     academic year, opening in ACADEMIC_START_MONTH)."""
-    from season_year import academicYear, ACADEMIC_START_MONTH
+    from season_year import academicYear, seasonStart
     today = today or datetime.date.today()
-    return datetime.date(academicYear(today), ACADEMIC_START_MONTH, 1).isoformat()
+    return seasonStart(academicYear(today)).isoformat()
 
 
 def targets(cur, args):

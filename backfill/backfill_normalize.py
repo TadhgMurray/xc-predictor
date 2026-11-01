@@ -3994,7 +3994,7 @@ def newOnlySince(today=None):
     """The first day of LAST season (August 1st): --new-only's bound."""
     from datetime import date as _date
     today = today or _date.today()
-    season = today.year if today.month >= 8 else today.year - 1
+    season = today.year if (today.month, today.day) >= (8, 15) else today.year - 1
     return f"{season - 1}-08-01"
 
 

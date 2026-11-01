@@ -32,7 +32,7 @@ _STEP_LINE = re.compile(
 
 def academicYear(today=None):
     today = today or datetime.date.today()
-    return today.year if today.month >= 8 else today.year - 1
+    return today.year if (today.month, today.day) >= (8, 15) else today.year - 1
 
 
 # ---- the pipeline, from its logs ---------------------------------------

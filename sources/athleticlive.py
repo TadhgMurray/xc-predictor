@@ -1177,6 +1177,13 @@ US_STATES = tuple(sorted(set(_STATE_ABBR.values())))
 #   (landed_at), and athleticlive cover then closes athletic.net's copy: a
 #   meet landed while still being posted -- the same day, or day one of two
 #   -- would stay short for good.
+# ★ NOT PEOPLE RUNNING (owner's run, 2026-11-01: "Fowlerville Harness Racing",
+#   "Oceana County Fair Harness Racing" -- county-fair horse racing timed on
+#   AthleticLIVE). Every one was held for want of athletic.net ids, at the
+#   cost of fetching all its events; skipped by name now.
+NOT_RUNNING = r"\m(harness|horse|equestrian|rodeo|greyhound|pony|trotting|pacing races)\M"
+
+
 def _candidates(cur, a):
     if a.meet:
         return [(m,) for m in a.meet]
@@ -1184,8 +1191,9 @@ def _candidates(cur, a):
                    FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
                    WHERE am.sport = 'TF' AND am.landed_at IS NULL
                      AND COALESCE(am.date_end, am.meet_date) < %s AND am.state = ANY(%s)
+                     AND COALESCE(am.name, '') !~* %s
                    ORDER BY am.meet_date DESC LIMIT %s""",
-                (datetime.date.today().isoformat(), list(US_STATES), a.limit))
+                (datetime.date.today().isoformat(), list(US_STATES), NOT_RUNNING, a.limit))
     return [(r[0],) for r in cur.fetchall()]
 
 

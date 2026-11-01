@@ -141,7 +141,7 @@ def test_the_day_moves_by_whole_years_and_the_guards():
     r = MD.finish(dict(k=1, first="2026-03-01", last="2026-03-01", held=None),
                   "2026-09-29")
     assert "future" in r["held"]
-    r = MD.finish(dict(k=-1, first="2024-07-30", last="2024-08-02", held=None),
+    r = MD.finish(dict(k=-1, first="2024-08-12", last="2024-08-16", held=None),
                   "2026-09-29")
     assert "two seasons" in r["held"]
 

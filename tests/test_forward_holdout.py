@@ -156,36 +156,36 @@ def test_the_windows_come_from_the_pack():
     w = fh.defaultWindows(dates)
     assert w["current"] == 2026
     assert w["sealed"][2] == 2025 and w["validation"][2] == 2024
-    assert w["validation"][0] == np.datetime64("2024-08-01")
-    assert w["validation"][1] == np.datetime64("2025-08-01")
-    assert w["sealed"][1] == np.datetime64("2026-08-01")
-    assert fh.resolveWindow(w) == (np.datetime64("2024-08-01"),
-                                   np.datetime64("2025-08-01"))
+    assert w["validation"][0] == np.datetime64("2024-08-15")
+    assert w["validation"][1] == np.datetime64("2025-08-15")
+    assert w["sealed"][1] == np.datetime64("2026-08-15")
+    assert fh.resolveWindow(w) == (np.datetime64("2024-08-15"),
+                                   np.datetime64("2025-08-15"))
 
 
 def test_the_sealed_window_is_refused_without_sealed():
     cols = _pack(n_person=40)
     dates, _p, _a = fh.rowDates(cols)
     w = fh.defaultWindows(dates)
-    for frm, until in (("2025-08-01", None), ("2024-08-01", "2026-01-01"),
+    for frm, until in (("2025-08-15", None), ("2024-08-15", "2026-01-01"),
                        ("2025-10-01", "2026-03-01")):
         with pytest.raises(SystemExit, match="SEALED"):
             fh.resolveWindow(w, frm, until)
     # a custom window wholly before the sealed season is fine, and a bare
     # --holdout-from runs up to the sealed season, never into it
-    assert fh.resolveWindow(w, "2023-08-01")[1] == np.datetime64("2025-08-01")
-    assert fh.resolveWindow(w, sealed=True) == (np.datetime64("2025-08-01"),
-                                                np.datetime64("2026-08-01"))
+    assert fh.resolveWindow(w, "2023-08-15")[1] == np.datetime64("2025-08-15")
+    assert fh.resolveWindow(w, sealed=True) == (np.datetime64("2025-08-15"),
+                                                np.datetime64("2026-08-15"))
     lines = fh.windowLines(w, *fh.resolveWindow(w, sealed=True), sealed=True)
     assert any("SEALED TEST SEASON 2025 IS BEING SCORED" in ln for ln in lines)
 
 
 def test_forward_split_masks():
-    d = np.array(["2024-07-31", "2024-08-01", "2025-07-31", "2025-08-01",
+    d = np.array(["2024-07-31", "2024-08-15", "2025-07-31", "2025-08-15",
                   "2026-01-01"], dtype="datetime64[D]")
     keep = np.array([True, True, True, True, False])
-    tr, te, ex = fh.forwardSplit(d, keep, np.datetime64("2024-08-01"),
-                                 np.datetime64("2025-08-01"))
+    tr, te, ex = fh.forwardSplit(d, keep, np.datetime64("2024-08-15"),
+                                 np.datetime64("2025-08-15"))
     assert tr.tolist() == [True, False, False, False, False]
     assert te.tolist() == [False, True, True, False, False]
     assert ex.tolist() == [False, False, False, True, False]
@@ -200,7 +200,7 @@ def test_no_post_cutoff_row_reaches_the_fit(monkeypatch, tmp_path):
     dump = str(tmp_path / "fwd.npz")
     log, seen = _holdout(cols, dump=dump, monkeypatch=monkeypatch)
     dates, _p, _a = fh.rowDates(cols)
-    cut, until = np.datetime64("2024-08-01"), np.datetime64("2025-08-01")
+    cut, until = np.datetime64("2024-08-15"), np.datetime64("2025-08-15")
     keep_tr, keep_te = seen[0], seen[1]
     assert keep_tr.any() and keep_te.any()
     assert dates[keep_tr].max() < cut, "a row on or after the cutoff was fitted"
@@ -215,7 +215,7 @@ def test_no_post_cutoff_row_reaches_the_fit(monkeypatch, tmp_path):
         rows = z["row"]
         assert str(z["kind"][0]) == "forward"
         assert not bool(z["sealed"][0])
-        assert list(z["window"]) == ["2024-08-01", "2025-08-01"]
+        assert list(z["window"]) == ["2024-08-15", "2025-08-15"]
         assert {"race", "group", "sport", "train_races", "status",
                 "cell_seen"} <= set(z.files)
         cov, status = z["covered"], z["status"]
@@ -233,13 +233,13 @@ def test_no_post_cutoff_row_reaches_the_fit(monkeypatch, tmp_path):
 def test_the_sealed_run_is_refused_then_loud(monkeypatch):
     cols = _pack(n_person=120)
     with pytest.raises(SystemExit, match="SEALED"):
-        _holdout(cols, "--holdout-from", "2025-08-01", monkeypatch=monkeypatch)
+        _holdout(cols, "--holdout-from", "2025-08-15", monkeypatch=monkeypatch)
     log, seen = _holdout(cols, "--sealed", monkeypatch=monkeypatch)
     assert "SEALED TEST SEASON 2025 IS BEING SCORED" in log
     dates, _p, _a = fh.rowDates(cols)
-    assert dates[seen[0]].max() < np.datetime64("2025-08-01")
-    assert dates[seen[1]].min() >= np.datetime64("2025-08-01")
-    assert dates[seen[1]].max() < np.datetime64("2026-08-01")
+    assert dates[seen[0]].max() < np.datetime64("2025-08-15")
+    assert dates[seen[1]].min() >= np.datetime64("2025-08-15")
+    assert dates[seen[1]].max() < np.datetime64("2026-08-15")
 
 
 def test_noiseless_world_orders_every_race(monkeypatch, tmp_path):

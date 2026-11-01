@@ -162,7 +162,7 @@ OWN_RECENT = 8
 
 def _seasonOfOrdinal(d):
     dd = datetime.date.fromordinal(int(d))
-    return dd.year if dd.month >= 8 else dd.year - 1
+    return dd.year if (dd.month, dd.day) >= (8, 15) else dd.year - 1
 
 
 def ownNew():

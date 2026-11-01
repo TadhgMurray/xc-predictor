@@ -468,8 +468,8 @@ def test_pipeline_step_is_optional_and_after_breakouts():
 # ---------------------------------------------------------------- team calendars
 
 def test_season_end_is_the_day_before_the_next_season():
-    assert TM.seasonEnd(datetime.date(2026, 10, 10)) == datetime.date(2027, 7, 31)
-    assert TM.seasonEnd(datetime.date(2027, 3, 1)) == datetime.date(2027, 7, 31)
+    assert TM.seasonEnd(datetime.date(2026, 10, 10)) == datetime.date(2027, 8, 14)
+    assert TM.seasonEnd(datetime.date(2027, 3, 1)) == datetime.date(2027, 8, 14)
 
 
 def test_a_likely_meet_is_one_whose_picked_edition_the_team_ran():

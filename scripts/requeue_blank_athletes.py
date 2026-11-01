@@ -50,7 +50,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 from database import getConn                                  # noqa: E402
 
-SEASON = ("CASE WHEN substring(r.date, 6, 2) >= '08' THEN substring(r.date, 1, 4)::int"
+SEASON = ("CASE WHEN substring(r.date, 6, 5) >= '08-15' THEN substring(r.date, 1, 4)::int"
           " ELSE substring(r.date, 1, 4)::int - 1 END")
 
 

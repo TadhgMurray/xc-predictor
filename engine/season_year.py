@@ -62,17 +62,29 @@ from datetime import date, datetime
 from functools import lru_cache
 
 
-# First month of a new season. 8 = August. Everything in this module is
-# derived from this one constant, including the SQL form, so moving the seam
-# is a single edit and no consumer can be left behind.
+# First day of a new season: August 15. Everything in this module is derived
+# from these constants, including the SQL form, so moving the seam is a single
+# edit and no consumer can be left behind.
+# ★ THE 15TH, NOT THE 1ST (owner, 2026-11-01, Cael Grotenhuis: an NAU runner's
+#   Aug 1 IFAM Oordegem 5000 and Aug 8 Guardian Mile filed in the season
+#   ahead, so a summer that closed his 2026 track season headed his page as
+#   "2027 Track", a college senior ranked #1). The summer circuit runs into
+#   early August; cross country opens in the second half of it.
 ACADEMIC_START_MONTH = 8
+ACADEMIC_START_DAY = 15
+SEASON_START_MMDD = f"{ACADEMIC_START_MONTH:02d}-{ACADEMIC_START_DAY:02d}"   # '08-15'
+
+
+def seasonStart(year):
+    """The first day of the season named `year`."""
+    return date(int(year), ACADEMIC_START_MONTH, ACADEMIC_START_DAY)
 
 
 # ------------------------------------------------------------------ #
 #  1. THE RULE                                                        #
 # ------------------------------------------------------------------ #
 
-def seasonShift(sport, month):
+def seasonShift(sport, month, day=1):
     """0 or -1: how many years to move a race in this month.
 
     ⚠ `sport` IS ACCEPTED AND IGNORED, DELIBERATELY. Every caller in the
@@ -81,7 +93,7 @@ def seasonShift(sport, month):
       produced the two-clock bug. If you find yourself wanting to branch on
       sport here, that is the thing this rewrite removed. Don't.
     """
-    return 0 if month >= ACADEMIC_START_MONTH else -1
+    return 0 if (month, day or 1) >= (ACADEMIC_START_MONTH, ACADEMIC_START_DAY) else -1
 
 
 def rollsOver(sport, month):
@@ -110,7 +122,7 @@ def seasonYearFor(sport, d, ledger=None):
     """
     assert isinstance(d, (date, datetime)), \
         f"seasonYearFor needs a date, got {type(d)}"
-    return _resolve(sport, d.year, d.month, ledger)
+    return _resolve(sport, d.year, d.month, ledger, d.day)
 
 
 # ! ONE ANSWER PER (sport, date), AND build_ranking_results ASKS IT
@@ -125,7 +137,8 @@ def seasonYearFromIso(sport, date_text, ledger=None):
     object per row would be pure overhead for a value we only need two integers
     from.
     """
-    return _resolve(sport, int(date_text[:4]), int(date_text[5:7]), ledger)
+    day = int(date_text[8:10]) if len(date_text) >= 10 and date_text[8:10].isdigit() else 1
+    return _resolve(sport, int(date_text[:4]), int(date_text[5:7]), ledger, day)
 
 
 def academicYear(d):
@@ -139,9 +152,9 @@ def academicYear(d):
     return seasonYearFor(None, d)
 
 
-def _resolve(sport, year, month, ledger):
+def _resolve(sport, year, month, ledger, day=1):
     """Shared tail of every wrapper: apply the rule, record it, return."""
-    shift = seasonShift(sport, month)
+    shift = seasonShift(sport, month, day)
     if ledger is not None:
         ledger.record(sport, month, shift)
     return year + shift
@@ -215,8 +228,8 @@ def seasonYearSql(sport, date_col="date"):
     make `yr == season_year` silently false everywhere.
     """
     year = f"substring({date_col}, 1, 4)"
-    month = f"substring({date_col}, 6, 2)"
-    return (f"(CASE WHEN {month} >= '{ACADEMIC_START_MONTH:02d}' "
+    mmdd = f"substring({date_col}, 6, 5)"
+    return (f"(CASE WHEN {mmdd} >= '{SEASON_START_MMDD}' "
             f"THEN {year} ELSE ({year}::int - 1)::text END)")
 
 
@@ -227,8 +240,8 @@ def seasonYearSqlInt(sport=None, date_col="date"):
     joining on them needs this rather than casting the text form at every site
     and getting it subtly wrong at one of them.
     """
-    return (f"(CASE WHEN substring({date_col}, 6, 2) >= "
-            f"'{ACADEMIC_START_MONTH:02d}' "
+    return (f"(CASE WHEN substring({date_col}, 6, 5) >= "
+            f"'{SEASON_START_MMDD}' "
             f"THEN substring({date_col}, 1, 4)::int "
             f"ELSE substring({date_col}, 1, 4)::int - 1 END)")
 

@@ -45,13 +45,13 @@ _ROWS = """
     FROM   results r
     LEFT   JOIN pair_athlete_season pas
            ON pas.person_id::bigint = r.person_id
-          AND pas.season = (CASE WHEN substring(r.date, 6, 2) >= '08'
+          AND pas.season = (CASE WHEN substring(r.date, 6, 5) >= '08-15'
                                  THEN substring(r.date, 1, 4)::int
                                  ELSE substring(r.date, 1, 4)::int - 1 END)
     LEFT   JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
     LEFT   JOIN grade_fix gf
            ON gf.person_id = r.person_id
-          AND gf.season = (CASE WHEN substring(r.date, 6, 2) >= '08'
+          AND gf.season = (CASE WHEN substring(r.date, 6, 5) >= '08-15'
                                 THEN substring(r.date, 1, 4)::int
                                 ELSE substring(r.date, 1, 4)::int - 1 END)
     WHERE  {where}
@@ -118,7 +118,7 @@ def explain(cur, r):
      pool, ability, rat_season, races, cid, stored, fg, fl, meth) = r
 
     season = int(str(date)[:4])
-    if str(date)[5:7] >= "08":
+    if str(date)[5:10] >= "08-15":
         acad = season
     else:
         acad = season - 1

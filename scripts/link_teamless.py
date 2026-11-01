@@ -284,7 +284,7 @@ def classYear(date, grade):
     d, g = _day(date), _numGrade(grade)
     if d is None or g is None or not 1 <= g <= 12:
         return None
-    ay_end = d.year + 1 if d.month >= 8 else d.year
+    ay_end = d.year + 1 if (d.month, d.day) >= (8, 15) else d.year
     return ay_end + (12 - g)
 
 
@@ -438,7 +438,7 @@ def _hasTable(cur, name):
 
 def sinceFor(seasons, today=None):
     today = today or datetime.date.today()
-    ay = today.year if today.month >= 8 else today.year - 1
+    ay = today.year if (today.month, today.day) >= (8, 15) else today.year - 1
     return f"{ay - seasons + 1}-08-01"
 
 

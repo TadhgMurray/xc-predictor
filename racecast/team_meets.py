@@ -57,8 +57,8 @@ def seasonEnd(today):
     """The last day of the academic year `today` is in: the day before the
     next season opens (season_year.ACADEMIC_START_MONTH, the month every
     stored season year turns over on)."""
-    from season_year import ACADEMIC_START_MONTH, academicYear
-    nxt = datetime.date(academicYear(today) + 1, ACADEMIC_START_MONTH, 1)
+    from season_year import academicYear, seasonStart
+    nxt = seasonStart(academicYear(today) + 1)
     return nxt - datetime.timedelta(days=1)
 
 
