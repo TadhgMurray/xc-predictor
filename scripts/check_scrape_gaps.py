@@ -51,15 +51,21 @@ def main():
                                    WHERE NOT EXISTS (SELECT 1 FROM meet_queue q WHERE q.meet_id = g
                                                      AND q.sport = %s AND q.source = %s)""",
                            (max(1, top - SPAN), top, sport, source))
+                # ! TFRRS ids skip numbers (the 758 hole ids deleted on
+                #   2026-10-31 show here), and its "latest" step queues
+                #   new meets from TFRRS's own list -- only anet's dense ids
+                #   are a gap by count alone
                 print(f"   {source}/{sport}: watermark {top:,}; never queued {n:,}"
-                      + ("   <-- look" if isinstance(n, int) and n > 50 else ""))
+                      + (("   <-- look" if source == "anet" else "   (TFRRS ids skip numbers: fine)")
+                         if isinstance(n, int) and n > 50 else ""))
 
         print("2. athletic.net watermark: own rows vs with AthleticLIVE's")
         for sport, table in (("XC", "results"), ("TF", "results_tf")):
             for own, allm in _q(cur, f"""SELECT max(meet_id) FILTER (WHERE result_id < 3000000000000),
                                                max(meet_id) FROM {table} WHERE source = 'anet'"""):
                 print(f"   {sport}: own {own}, with AthleticLIVE {allm}"
-                      + ("   <-- AthleticLIVE is ahead" if own and allm and allm > own else ""))
+                      + ("   (AthleticLIVE ahead; the walk uses own rows: fine)"
+                         if own and allm and allm > own else ""))
 
         print("3. AthleticLIVE meets landed on or before their last day")
         for row in _q(cur, """SELECT sport, count(*) FROM alive_meets
@@ -72,7 +78,8 @@ def main():
                               WHERE status = 'promoted' AND promoted_at::date <= meet_date::date"""):
             print(f"   {row}")
 
-        print("5. queue: in flight (3) and failed (2), per feed")
+        print("5. queue: in flight (3) and failed (2), per feed "
+              "(in flight resets when that scraper next starts)")
         for row in _q(cur, """SELECT source, sport, count(*) FILTER (WHERE scraped = 3) AS in_flight,
                                      count(*) FILTER (WHERE scraped = 2) AS failed
                               FROM meet_queue GROUP BY 1, 2 ORDER BY 1, 2"""):

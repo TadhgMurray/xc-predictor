@@ -31,8 +31,10 @@ ExecStart=/bin/bash $ROOT/deploy/nightly_update.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
-# the scrape's own bound is 3 h; this is the backstop for everything after
-TimeoutStartSec=6h
+# the scrape's own bound is 3 h and pricing + boards take ~4 h after it;
+# 6 h killed the 2026-10-31 night in the middle of the rankings build
+# (boards not rebuilt). This is only the backstop for a hung step.
+TimeoutStartSec=12h
 UNIT
 cat > /etc/systemd/system/xcp-nightly.timer <<UNIT
 [Unit]
