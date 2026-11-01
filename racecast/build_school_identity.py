@@ -26,6 +26,7 @@ import sys
 import time
 
 import psycopg2.errors           # LockNotAvailable / DeadlockDetected
+import psycopg2.extras
 
 sys.path.insert(0, "scripts")
 
@@ -1388,7 +1389,61 @@ def main():
         cur.execute("ANALYZE school_identity")
         conn.commit()
 
+        buildCollegePersonState(conn)
+
     print(f"done in {(time.time() - t0) / 60:.1f} min")
+
+
+# ★ A SHARED COLLEGE NAME IS DECIDED BY ITS RUNNERS (owner, 2026-11-01:
+#   "if the runners of that state's team run there it will be that team.
+#   It should always be runner count"). Wesleyan is a university in CT and
+#   a college in GA; at the NESCAC meet in Maine the name's biggest cluster
+#   of athletes -- every Wesleyan, a Georgia HIGH SCHOOL's included -- said
+#   GA. Now each college runner of a name the directory places in several
+#   states is that candidate state's runner when most of their college
+#   races in any candidate state were there (a Wesleyan CT runner races at
+#   home in CT), and a race of theirs anywhere is that team's. The college
+#   runner count per candidate decides for a row with no runner to ask.
+#   school_identity.teamState reads it (person_id) and loadLabels loads it.
+def buildCollegePersonState(conn):
+    try:
+        from build_college_directory import loadDirectory, candidateStates
+    except ImportError:
+        return
+    from dbfast import swapTable
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.college_directory')")
+        if cur.fetchone()[0] is None:
+            return
+        directory = loadDirectory(cur, "state")
+        cur.execute("""SELECT DISTINCT school FROM athlete_season
+                       WHERE (starts_with(pool, 'college') OR starts_with(pool, 'pro'))
+                         AND COALESCE(TRIM(school), '') <> ''""")
+        cand = [(sc, st) for (sc,) in cur.fetchall()
+                for cs in [candidateStates(directory, sc)] if len(cs) > 1 for st in cs]
+        cur.execute("DROP TABLE IF EXISTS si_cand")
+        cur.execute("CREATE TEMP TABLE si_cand (school text, state text)")
+        if cand:
+            psycopg2.extras.execute_values(cur, "INSERT INTO si_cand VALUES %s", cand)
+        cur.execute("DROP TABLE IF EXISTS college_person_state_new")
+        cur.execute("""
+            CREATE TABLE college_person_state_new AS
+            WITH r AS (
+                SELECT rr.school, rr.person_id, rr.state, count(*) AS n
+                FROM   ranking_results rr
+                JOIN   si_cand c ON c.school = rr.school AND c.state = rr.state
+                WHERE  rr.person_id IS NOT NULL
+                  AND  (starts_with(rr.pool, 'college') OR starts_with(rr.pool, 'pro'))
+                GROUP  BY 1, 2, 3
+            )
+            SELECT DISTINCT ON (school, person_id) school, person_id, state
+            FROM   r ORDER BY school, person_id, n DESC, state
+        """)
+        cur.execute("SELECT count(*), count(DISTINCT school) FROM college_person_state_new")
+        n, ns = cur.fetchone()
+        conn.commit()
+    swapTable(conn, "college_person_state")
+    print(f"  college_person_state: {n:,} runners of {ns:,} shared college names", flush=True)
 
 
 if __name__ == "__main__":

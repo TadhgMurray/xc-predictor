@@ -36,6 +36,8 @@ def _labels():
         "Wesleyan": {"GA": 0.8, "CT": 0.2},
     }
     si._LABELS["college"] = DIRECTORY
+    si._LABELS["college_person"] = {}
+    si._LABELS["college_size"] = {}
     bcd._ANSWERS.clear()
 
 
@@ -69,14 +71,19 @@ def test_known_college_still_directory():
     assert si.teamState("Amherst", "college_m", "WI") == "MA"
 
 
-def test_away_meet_goes_to_the_candidate_in_its_region():
+def test_shared_name_goes_by_its_runners():
     """2026-11-01: Wesleyan (CT) at the NESCAC championship in Maine filed
-    as Wesleyan GA -- a Georgia high school called Wesleyan out-counts the
-    university."""
+    as Wesleyan GA -- the name's clusters count a Georgia high school.
+    The runners decide: each runner's own team, else the bigger college
+    team."""
     _labels()
-    assert si.teamState("Wesleyan", "college_m", "ME") == "CT"
-    assert si.teamState("Wesleyan", "college_f", "NY") == "CT"
-    assert si.teamState("Wesleyan", "college_f", "AL") == "GA"
-    assert si.teamState("Wesleyan", "college_m", "CT") == "CT"
-    # no region to go on: the clusters, as before
-    assert si.teamState("Wesleyan", "college_m", None) == "GA"
+    si._LABELS["college_person"] = {("Wesleyan", 1): "CT", ("Wesleyan", 2): "GA"}
+    si._LABELS["college_size"] = {"Wesleyan": {"CT": 40, "GA": 9}}
+    assert si.teamState("Wesleyan", "college_m", "ME", 1) == "CT"
+    assert si.teamState("Wesleyan", "college_f", "AL", 1) == "CT"     # his team, wherever
+    assert si.teamState("Wesleyan", "college_f", "ME", 2) == "GA"     # hers, wherever
+    assert si.teamState("Wesleyan", "college_m", "ME") == "CT"        # no runner: the bigger team
+    assert si.teamState("Wesleyan", "college_m", "GA") == "GA"        # at home, unknown runner
+    # no college runners on file: the clusters, as before
+    si._LABELS["college_size"] = {}
+    assert si.teamState("Wesleyan", "college_m", "ME") == "GA"

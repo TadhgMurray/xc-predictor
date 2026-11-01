@@ -296,7 +296,7 @@ def resolvedStates(rows, stats):
     from school_identity import teamState
     for row in rows:
         was = row.get("state")
-        now = teamState(row.get("school"), row.get("pool"), was)
+        now = teamState(row.get("school"), row.get("pool"), was, row.get("person_id"))
         if now != was:
             stats["restated"] += 1
             row["state"] = now

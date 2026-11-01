@@ -852,7 +852,7 @@ def raceReturning(cur, f):
     loadLabels(getConn)
     field = []
     for r in rows:
-        r["state"] = teamState(r.get("school"), r.get("pool"), r.get("state"))
+        r["state"] = teamState(r.get("school"), r.get("pool"), r.get("state"), r.get("person_id"))
         field.append(r)
 
     # a state board, or the national one narrowed to some states

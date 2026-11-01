@@ -83,6 +83,17 @@ def loadLabels(conn_factory, force=False):
                 #   pure SQL builder with no cursor, and a clause naming a
                 #   table that is not there is an error on every page.
                 _LABELS["athlete_state"] = _tableExists(cur, "school_athlete_state")
+                # the runners of the college names two states share
+                # (build_school_identity.buildCollegePersonState)
+                if _tableExists(cur, "college_person_state"):
+                    cur.execute("SELECT school, person_id, state FROM college_person_state")
+                    person, size = {}, {}
+                    for sc, pid, st in cur.fetchall():
+                        person[(sc, pid)] = st
+                        size.setdefault(sc, {})
+                        size[sc][st] = size[sc].get(st, 0) + 1
+                    _LABELS["college_person"] = person
+                    _LABELS["college_size"] = size
     except Exception:                    # noqa: BLE001 -- labels are optional
         pass
     _LABELS["loaded"] = True
@@ -240,15 +251,7 @@ def schoolLabelIn(school, state, trusted=False):
     return withState(school, st)
 
 
-CENSUS_REGION = {st: reg for reg, sts in (
-    ("NE", "CT ME MA NH RI VT NJ NY PA"),
-    ("MW", "IL IN MI OH WI IA KS MN MO NE ND SD"),
-    ("S", "DE DC FL GA MD NC SC VA WV AL KY MS TN AR LA OK TX"),
-    ("W", "AZ CO ID MT NV NM UT WY AK CA HI OR WA"),
-) for st in sts.split()}
-
-
-def _collegeState(school, state=None):
+def _collegeState(school, state=None, person_id=None):
     """The directory's state for a college name, or None when it does not
     know the name.
 
@@ -274,24 +277,27 @@ def _collegeState(school, state=None):
     cands = candidateStates(college, school)
     if not cands:
         return None
+    # ★ THE RUNNERS DECIDE (owner, 2026-11-01: "it should always be runner
+    #   count"). A runner of this name's team in one candidate state is
+    #   that team's wherever they race (build_school_identity.
+    #   buildCollegePersonState); with no runner to ask, the candidate with
+    #   more college runners. The name's clusters count every athlete of the
+    #   name -- a Georgia high school called Wesleyan out-counts the CT
+    #   university -- so they decide only when neither is known.
+    if person_id is not None:
+        own = (_LABELS.get("college_person") or {}).get((school, person_id))
+        if own in cands:
+            return own
     if state in cands:
         return state
-    # ★ AN AWAY MEET IS USUALLY IN THE TEAM'S OWN PART OF THE COUNTRY
-    #   (owner, 2026-11-01: Wesleyan (CT) at the NESCAC championship in
-    #   Maine filed as Wesleyan GA, tagged NESCAC). The name's biggest
-    #   cluster counts every athlete of that name -- a Georgia high school
-    #   called Wesleyan out-counts the university -- so a candidate in the
-    #   meet's census region goes first, and the clusters only break what
-    #   the region cannot (Georgetown DC and KY are both South).
-    region = CENSUS_REGION.get((state or "").upper())
-    near = [c for c in cands if region and CENSUS_REGION.get(c) == region]
-    if near:
-        cands = near
+    size = (_LABELS.get("college_size") or {}).get(school) or {}
+    if any(size.get(c) for c in cands):
+        return max(cands, key=lambda c: (size.get(c, 0), -cands.index(c)))
     clusters = (_LABELS.get("clusters") or {}).get(school) or {}
     return max(cands, key=lambda c: (clusters.get(c, 0.0), -cands.index(c)))
 
 
-def teamState(school, pool=None, state=None):
+def teamState(school, pool=None, state=None, person_id=None):
     """The state a school BELONGS to, given a row that happened in `state`.
 
     ★ THE ANSWER TO "WHICH TEAM IS THIS", NOT "WHERE DID THEY RACE".
@@ -327,7 +333,7 @@ def teamState(school, pool=None, state=None):
     p = (pool or "").lower()
     college = p.startswith("college") or p.startswith("pro")
     if college:
-        st = _collegeState(school, state)
+        st = _collegeState(school, state, person_id)
         if st:
             return st
     if state:
