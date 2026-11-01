@@ -10,6 +10,7 @@ READ-ONLY. One line per step: done / NOT DONE, and what it looked at.
   3. 758 TFRRS hole ids    none of the ids the DELETE named are still queued
   4. Mt. SAC rain course   meet 273894's course_name says "rain course"
   5. site restarted        xc-predictor started after the recruiting rebuild
+  6. home = boards         the home page's stored rankings match the live boards
   (diag_venue_days only prints; there is nothing for it to have changed)
 """
 import datetime
@@ -79,6 +80,19 @@ def main():
         sac = _one(cur, "SELECT string_agg(DISTINCT course_name, ' | ') FROM meets WHERE meet_id = 273894")
         _say(bool(sac and sac[0] and "rain" in sac[0].lower()), "Mt. SAC rain course",
              f"meet 273894 course_name {sac[0]!r}" if sac else "meet 273894 not found")
+        # ★ THE HOME PAGE'S RANKINGS ARE A STORED SNAPSHOT (homepage_panels,
+        #   racecast/panels.py) of the board the rankings pages read live
+        #   (athlete_season); after a ratings rebuild without the panels
+        #   step the two disagree (owner, 2026-11-01)
+        diff = _one(cur, """SELECT count(*), count(*) FILTER (WHERE s.mean_rating IS NULL
+                                    OR abs(s.mean_rating - p.rating) > 0.05)
+                            FROM homepage_panels p
+                            LEFT JOIN athlete_season s ON s.person_id = p.person_id AND s.sport = p.sport
+                                 AND s.pool = p.pool AND s.year::text = p.season_year
+                            WHERE p.board = 'athlete' AND p.scope = 'season' AND p.visible""")
+        _say(bool(diff and diff[0] not in (None, "error") and diff[1] == 0), "home = boards",
+             f"{diff[1]:,} of {diff[0]:,} home-page athlete rows differ from the boards"
+             if diff and diff[0] != "error" else f"{diff}")
         conn.rollback()
 
     started = _serviceStart()
