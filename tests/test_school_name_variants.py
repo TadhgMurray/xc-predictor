@@ -468,12 +468,46 @@ class SecondDryRun(unittest.TestCase):
             names = {canon} | {v[0] for v in variants}
             self.assertFalse({"Concordia (Neb.)", "Concordia (Wis.)"} <= names, g)
 
-    def test_state_is_another_university(self):
-        r = {"Arkansas": set(range(1, 800)), "Arkansas State": set(range(1, 800))}
+    def test_state_is_another_university_unless_the_runners_say_one(self):
+        r = {"Arkansas": set(range(1, 800)), "Arkansas State": set(range(795, 1555))}
         lv = {k: "college" for k in r}
         key = {k: ("University of Arkansas", "AR") for k in r}
         merged, refused, _g = self._run(r, {}, lv, key=key)
         self.assertEqual(merged, [])
+        # third look: "Cortland St." / "SUNY Cortland" share 801 of 849
+        r = {"Cortland St.": set(range(1, 850)), "SUNY Cortland": set(range(49, 1470))}
+        key = {k: ("SUNY Cortland", "NY") for k in r}
+        merged, refused, _g = self._run(r, {}, {k: "college" for k in r}, key=key)
+        self.assertEqual(len(merged), 1, refused)
+
+    def test_a_name_several_colleges_share_needs_nearly_all(self):
+        """Concordia University: 78 of its 148 runners are Nebraska's."""
+        r = {"Concordia (Neb.)": set(range(1, 300)),
+             "Concordia University": set(range(222, 370))}
+        lv = {k: "college" for k in r}
+        pairs = M.candidatesAll(r.keys(), level_of=lv)
+        merged, refused = M.judge(pairs, r, {}, level_of=lv, generic={"Concordia University"})
+        self.assertEqual(merged, [])
+        self.assertIn("several colleges share", refused[0][7])
+
+    def test_a_named_college_picks_a_school_name_that_holds_college_runners(self):
+        """Wesleyan: one Georgia high school on athletic.net, plus the CT
+        university's runners from tfrrs."""
+        r = {"Wesleyan": set(range(1, 1760)), "Wesleyan (Conn.)": set(range(1, 714))}
+        st = {"Wesleyan": {"GA"}}
+        lv = {"Wesleyan": "hs", "Wesleyan (Conn.)": "college"}
+        mix = {"Wesleyan": {"hs": 0.7, "college": 0.3}, "Wesleyan (Conn.)": {"college": 1.0}}
+        merged, refused, g = self._run(r, st, lv, mix)
+        self.assertEqual(len(merged), 1, refused)
+        self.assertEqual(g[0][0], "Wesleyan")
+
+    def test_a_few_middle_school_rows_do_not_make_the_canonical(self):
+        r = {"Abingdon": set(range(1, 1036)), "Abingdon High School": set(range(1, 30))}
+        st = {"Abingdon": {"VA"}, "Abingdon High School": {"VA"}}
+        lv = {k: "hs" for k in r}
+        mix = {"Abingdon": {"hs": 1.0}, "Abingdon High School": {"hs": 0.9, "ms": 0.1}}
+        _m, _r, g = self._run(r, st, lv, mix)
+        self.assertEqual(g[0][0], "Abingdon")
 
     def test_college_and_university_are_two_schools(self):
         r = {"Antelope Valley College": set(range(1, 400)),

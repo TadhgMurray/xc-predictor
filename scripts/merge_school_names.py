@@ -101,6 +101,11 @@ LEVEL_MIN_FRACTION = 0.20
 # a level a spelling races at for at least this share of its races counts as
 # one of its levels (Trinity: high schools and colleges)
 MIX_SHARE = 0.05
+# a college spelling may fold into a school name that holds this share of
+# college races (Roosevelt: thousands of high schoolers and one university)
+COLLEGE_MIX = 0.02
+# a name several colleges share folds into one of them only on this share
+GENERIC_FRACTION = 0.80
 _LVL_NAMES = {"college", "university", "high", "middle", "junior", "senior", "community"}
 
 DDL = """
@@ -310,6 +315,19 @@ def collegeKeys(cur, names, level_of):
     return out
 
 
+def genericColleges(cur, names, level_of):
+    """The college-level spellings the directory says several colleges
+    wear, with no state written to pick one ("Concordia University")."""
+    try:
+        from build_college_directory import loadDirectory, candidateStates
+    except ImportError:
+        return set()
+    directory = loadDirectory(cur, "state")
+    return {n for n in names
+            if level_of.get(n) == "college" and not statedState(n)
+            and len(candidateStates(directory, n)) > 1}
+
+
 _REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3}
 
 
@@ -354,7 +372,7 @@ def judge(pairs, rosters_by_name, states_by_name,
           min_shared=MIN_SHARED, min_fraction=MIN_FRACTION,
           prefix_min_shared=PREFIX_MIN_SHARED,
           prefix_min_fraction=PREFIX_MIN_FRACTION, level_of=None,
-          level_mix=None):
+          level_mix=None, generic=None):
     """(merged, refused) -- the whole decision, and it is pure so it is
     testable. Each entry is
     (a, b, relation, n_a, n_b, n_shared, fraction, why)."""
@@ -380,23 +398,38 @@ def judge(pairs, rosters_by_name, states_by_name,
         #   one of its levels -- "Trinity (Conn.)" into "Trinity" -- because
         #   the boards keep the levels apart by pool. The wider one is then
         #   the canonical (groups).
-        def holds(name, lvl):
-            return (mix.get(name) or {}).get(lvl, 0.0) >= MIX_SHARE
+        def holds(name, lvl, share=MIX_SHARE):
+            return (mix.get(name) or {}).get(lvl, 0.0) >= share
         level_ok = (not la or not lb or la == lb
                     or (rel == "same" and not (da or db))       # decoration, as always
-                    or (rel in ("same", "college") and (holds(b, la) or holds(a, lb))))
+                    or (rel in ("same", "college")
+                        and (holds(b, la, COLLEGE_MIX if la == "college" else MIX_SHARE)
+                             or holds(a, lb, COLLEGE_MIX if lb == "college" else MIX_SHARE))))
         # ★ A SPELLING THAT WRITES ITS STATE PICKS ONE OF A WIDE NAME'S
         #   COLLEGES: "Trinity (Conn.)" folds into "Trinity", which the
         #   boards split by state for a college by its runners
         #   (school_identity.teamState, college_person_state). College only:
         #   a high school has no such split, so "Glendale (CA)" still stays
         #   out of "Glendale" unless it is a college.
-        coll_a = la == "college" or holds(a, "college")
-        coll_b = lb == "college" or holds(b, "college")
-        picks = bool((len(sa) > 1 and (db or rel == "college") and (lb == "college") and coll_a
-                      and sb <= ({db} if db else sb))
-                     or (len(sb) > 1 and (da or rel == "college") and (la == "college") and coll_b
-                         and sa <= ({da} if da else sa)))
+        #   (2026-11-01, third look: "Wesleyan" is one Georgia high school
+        #   on athletic.net plus the CT university's runners from tfrrs --
+        #   not two anet states, but it holds college runners; that is
+        #   enough for a named college spelling to pick it.)
+        coll_a = la == "college" or holds(a, "college", COLLEGE_MIX)
+        coll_b = lb == "college" or holds(b, "college", COLLEGE_MIX)
+
+        def picksInto(x, sx, y_lvl, y_stated, sy):
+            return bool(y_lvl == "college" and (y_stated or rel == "college")
+                        and (len(sx) > 1 or holds(x, "college", COLLEGE_MIX))
+                        and sy <= ({y_stated} if y_stated else sy))
+        picks = picksInto(a, sa, lb, db, sb) or picksInto(b, sb, la, da, sa)
+        # ★ A NAME SEVERAL COLLEGES SHARE ("Concordia University": Nebraska,
+        #   Wisconsin, Irvine, Portland ...) folds into one of them only when
+        #   nearly all of its runners are that one's.
+        g_frac = None
+        if generic and (a in generic) != (b in generic):
+            g = a if a in generic else b
+            g_frac = shared / max(1, len(rosters_by_name.get(g) or ()))
         wa, wb = set(nameWords(a)), set(nameWords(b))
         if da and db and da != db:
             row[7] = f"they name different states ({da} vs {db})"
@@ -410,11 +443,15 @@ def judge(pairs, rosters_by_name, states_by_name,
         elif rel == "level" and not (la and lb):
             row[7] = "level words differ and a level is unknown"
             refused.append(tuple(row))
-        elif rel == "level" and (wa & _LVL_NAMES) and (wb & _LVL_NAMES) and \
-                (wa & _LVL_NAMES) != (wb & _LVL_NAMES):
+        elif rel == "level" and (({"college"} <= wa and "university" in wb and "college" not in wb)
+                                 or ({"college"} <= wb and "university" in wa and "college" not in wa)):
             # "Antelope Valley College" / "University of Antelope Valley",
             # "Boston College" / "Boston University": two institutions
-            row[7] = "two different level words (college vs university)"
+            row[7] = "college vs university: two institutions"
+            refused.append(tuple(row))
+        elif g_frac is not None and g_frac < GENERIC_FRACTION:
+            row[7] = (f"a name several colleges share; only {g_frac:.0%} of its runners "
+                      f"are this one's")
             refused.append(tuple(row))
         elif rel == "level" and la != "college" and ((wa | wb) & {"college", "university"}):
             # "Boston College High" into "Boston College": a high school
@@ -429,10 +466,13 @@ def judge(pairs, rosters_by_name, states_by_name,
         elif rel == "college" and not (coll_a and coll_b):
             row[7] = "the directory's match, but not both college-level"
             refused.append(tuple(row))
-        elif rel == "college" and (("state" in wa) != ("state" in wb)):
-            # the directory reads past "State" ("Arkansas" / "Arkansas
-            # State"); a name that says State is another university
-            row[7] = "one says State, the other does not"
+        elif rel == "college" and (("state" in wa) != ("state" in wb)) and not (
+                shared >= 20 and frac >= 0.5):
+            # the directory reads past "State": "Arkansas" / "Arkansas
+            # State" and "Portland" / "Portland State" are two universities,
+            # "Cortland St." / "SUNY Cortland" and "Truman" / "Truman State"
+            # one -- and the runners say which (one shares nearly everyone)
+            row[7] = "one says State, the other does not, and they share too few"
             refused.append(tuple(row))
         # THE STATE VETO. A string whose anet teams sit in several states is
         #   a name many schools wear; it is never one team, whoever it shares
@@ -503,9 +543,15 @@ def groups(merged, rosters_by_name, states_by_name=None, level_mix=None):
     for name in {x for r in merged for x in r[:2]}:
         members.setdefault(find(name), set()).add(name)
 
+    # ! WIDE IS SEVERAL STATES, OR A SCHOOL NAME THAT ALSO HOLDS COLLEGE
+    #   RUNNERS -- not a high school with a few middle-school rows
+    #   (2026-11-01: "Abingdon High School" was made the canonical over
+    #   "Abingdon" with 1,035 runners for that).
     def wide(n):
+        mix = level_mix.get(n) or {}
         return (len(states_by_name.get(n) or ()) > 1
-                or sum(1 for v in (level_mix.get(n) or {}).values() if v >= MIX_SHARE) > 1)
+                or (mix.get("college", 0) >= COLLEGE_MIX
+                    and mix.get("hs", 0) + mix.get("ms", 0) >= MIX_SHARE))
 
     out = []
     for root, names in sorted(members.items()):
@@ -570,6 +616,8 @@ def main():
         print(f"  {len(level_of):,} spellings with a known level (college / hs / ms)")
         college_key = collegeKeys(cur, by_name.keys(), level_of)
         print(f"  {len(college_key):,} college spellings the directory places")
+        generic = genericColleges(cur, by_name.keys(), level_of)
+        print(f"  {len(generic):,} college spellings several colleges share")
         pairs = candidatesAll(by_name.keys(), want_prefix=a.prefix,
                               level_of=level_of, college_key=college_key)
         kinds = {}
@@ -582,7 +630,7 @@ def main():
         merged, refused = judge(pairs, by_name, by_state,
                                 min_shared=a.min_shared,
                                 min_fraction=a.min_fraction, level_of=level_of,
-                                level_mix=level_mix)
+                                level_mix=level_mix, generic=generic)
         grouped = groups(merged, by_name, by_state, level_mix)
         n_variants = sum(len(v) for _c, v in grouped)
         print(f"  {len(merged):,} pairs agree -> {len(grouped):,} groups, "
