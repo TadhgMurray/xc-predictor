@@ -90,9 +90,11 @@ def main():
                             LEFT JOIN athlete_season s ON s.person_id = p.person_id AND s.sport = p.sport
                                  AND s.pool = p.pool AND s.year::text = p.season_year
                             WHERE p.board = 'athlete' AND p.scope = 'season' AND p.visible""")
+        built = _one(cur, "SELECT value FROM homepage_meta WHERE key = 'built_at'")
         _say(bool(diff and diff[0] not in (None, "error") and diff[1] == 0), "home = boards",
-             f"{diff[1]:,} of {diff[0]:,} home-page athlete rows differ from the boards"
-             if diff and diff[0] != "error" else f"{diff}")
+             (f"{diff[1]:,} of {diff[0]:,} home-page athlete rows differ from the boards"
+              if diff and diff[0] != "error" else f"{diff}")
+             + f"; home page built {built[0] if built else None}")
         conn.rollback()
 
     started = _serviceStart()

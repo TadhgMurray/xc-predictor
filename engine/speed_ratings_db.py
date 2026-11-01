@@ -830,7 +830,18 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
                --   it was always in meets_tf_meta, never joined), so a
                --   nameless-id row keeps its id and a nameless row gets a
                --   name-and-place key instead of nothing.
-               CASE WHEN m.location_id IS NOT NULL
+               -- ★ A PLACEHOLDER LOCATION IS NO VENUE (owner, 2026-11-01:
+               --   "this outdoor meet got a difficulty??" -- Smiles of Miles
+               --   at anet location 57599, "Unknown, TBD", +0.6%). athletic.net
+               --   files meets with no venue under shared placeholder
+               --   locations; keyed by id, every such meet in the country
+               --   voted on one "track". The XC query's own placeholder list
+               --   decides, on the venue's name before any city.
+               CASE WHEN COALESCE(btrim(m.venue_name), '') <> ''
+                     AND lower(btrim(split_part(m.venue_name, ',', 1)))
+                         IN ({_placeholderSql()})
+                         THEN NULL
+                    WHEN m.location_id IS NOT NULL
                          THEN 'loc:' || m.location_id::text ||
                               CASE WHEN COALESCE(m.is_indoor, 0) = 1
                                    THEN ':in' ELSE ':out' END

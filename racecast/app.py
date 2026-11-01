@@ -1252,6 +1252,18 @@ def home():
 
 
 
+def _inSeason(today=None):
+    """(sport, STORED season year) of the sport in season now: cross country
+    Aug-Nov, track otherwise. Stored years are the academic year a season
+    opens in (engine/season_year.py, August seam); track is only DISPLAYED
+    as year + 1, so December 2026 track is stored 2026 and shown "2027"."""
+    import datetime as _dt
+    today = today or _dt.date.today()
+    if today.month in (8, 9, 10, 11):
+        return "XC", today.year
+    return "TF", today.year if today.month >= 8 else today.year - 1
+
+
 _MONTHS = ("January", "February", "March", "April", "May", "June", "July",
            "August", "September", "October", "November", "December")
 
@@ -2037,12 +2049,21 @@ def athlete(person_id):
                     --   because his 2026 college XC had two races so far).
                     --   The boards hold the season in progress to no floor
                     --   (season_floor.OPEN_FROM); neither does the header.
+                    -- ★ THE SPORT IN SEASON FIRST (owner, 2026-11-01: "we are
+                    --   deep in xc season and this guy is running xc, but did
+                    --   a midseason track race, and is getting put in the
+                    --   track rankings"). A fall track race opens the next
+                    --   academic year's track season (2027), the open-season
+                    --   rule above let it count, and its later last_race won.
+                    --   The current season of the sport in season heads the
+                    --   page whenever the athlete has one.
                     ORDER  BY (mean_rating IS NOT NULL) DESC,
+                              (sport = %s AND year = %s) DESC,
                               (n_races >= 3 OR year >= %s) DESC,
                               last_race DESC NULLS LAST, year DESC,
                               n_races DESC
                     LIMIT  1
-                """, (person_id, int(_season_floor.OPEN_FROM)))
+                """, (person_id, *_inSeason(), int(_season_floor.OPEN_FROM)))
                 season_rating = cur.fetchone()
             except psycopg2.errors.UndefinedTable:
                 # A database that has never run build_ranking_results.
