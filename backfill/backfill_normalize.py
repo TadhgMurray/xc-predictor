@@ -1422,6 +1422,10 @@ _ONLY_CHANGED = {"on": False}
 #   bound keeps the long tail of deliberately-NULL history out of a
 #   nightly pass. The full pipeline still rewrites everything.
 _NEW_ONLY = {"on": False, "since": None}
+# ★ --meet SRC:ID (2026-11-01, Sagebrush 2021: four women of a combined 7K/6K
+#   race normalised before their gender was known kept the 7000). Re-normalise
+#   just the named races, on today's genders and pins; update write mode.
+_ONLY_MEETS = {"pairs": []}
 
 
 def _streamSQL(cfg, age_band=False, rating_pool=False):
@@ -1463,6 +1467,10 @@ def _streamSQL(cfg, age_band=False, rating_pool=False):
     if _NEW_ONLY["on"]:
         only += (f"\n        WHERE r.normalized_time IS NULL"
                  f"\n          AND r.date >= '{_NEW_ONLY['since']}'")
+    if _ONLY_MEETS["pairs"]:
+        cond = " OR ".join(f"(r.source = '{src}' AND r.meet_id = {int(m)})"
+                           for src, m in _ONLY_MEETS["pairs"])
+        only += ("\n          AND " if "WHERE" in only else "\n        WHERE ") + f"({cond})"
     # ! THE RATED POOL ONLY WHERE THE COLUMN EXISTS -- the go-live adds it,
     #   and a database that has never packed has none. Literal NULL keeps
     #   the column shape either way, the same trick as event_id above.
@@ -4045,6 +4053,9 @@ def main():
                     help="only rows with no normalized_time yet, from last "
                          "season on (the nightly light update); implies "
                          "--write-mode update")
+    ap.add_argument("--meet", action="append", default=[],
+                    help="only this race, SRC:MEET_ID (e.g. tfrrs:18170; "
+                         "repeatable); implies --write-mode update")
     ap.add_argument("--limit", type=int, default=0,
                     help="stop after N rows PER SPORT (0 = whole table). Use a "
                          "small value to sanity-check the `skipped` count in "
@@ -4070,6 +4081,15 @@ def main():
     if args.only_changed:
         _ONLY_CHANGED["on"] = True
         args.write_mode = "update"
+    if args.meet:
+        import re as _re
+        for m in args.meet:
+            mm = _re.fullmatch(r"([a-z_]+):(\d+)", m.strip())
+            if not mm:
+                ap.error(f"--meet {m!r}: want SRC:MEET_ID, e.g. tfrrs:18170")
+            _ONLY_MEETS["pairs"].append((mm.group(1), int(mm.group(2))))
+        args.write_mode = "update"
+        print(f"  --meet: only {_ONLY_MEETS['pairs']}")
     if args.new_only:
         _NEW_ONLY.update(on=True, since=newOnlySince())
         args.write_mode = "update"
@@ -4083,7 +4103,8 @@ def main():
           f" [{_nd.DISTANCE_BY_SOURCE}]"
           + (f", per-pool residual {'ON' if _nd.residualMode() else 'OFF'}"
              f" [{_nd.DISTANCE_RESIDUAL_SOURCE}]" if _nd.abilityMode() else ""))
-    why = distanceModeGuard(sports, args.apply, args.only_changed or args.new_only,
+    why = distanceModeGuard(sports, args.apply,
+                            args.only_changed or args.new_only or bool(args.meet),
                             args.limit)
     if why:
         print(f"  REFUSING: {why}")
@@ -4095,7 +4116,8 @@ def main():
             print()
         totals[sport] = _runOneSport(sport, args.apply, args.limit,
                                      args.profile, args.write_mode)
-        if args.apply and not args.limit and not args.only_changed and not args.new_only:
+        if (args.apply and not args.limit and not args.only_changed and not args.new_only
+                and not args.meet):
             recordAppliedWeather(sport)
             recordAppliedDistance(sport)
 
