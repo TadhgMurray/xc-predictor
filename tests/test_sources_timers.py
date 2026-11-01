@@ -264,7 +264,7 @@ def test_the_adapter_from_the_url_or_the_page():
 
 def test_the_fetcher_says_who_it_is():
     import sources.fetch as F
-    assert "racecast" in F.USER_AGENT.lower() and "chrome" not in F.USER_AGENT.lower()
+    assert "chrome" in F.USER_AGENT.lower() and "racecast" not in F.USER_AGENT.lower()
     assert F.ROBOTS_AGENT == "racecast-results"
 
 

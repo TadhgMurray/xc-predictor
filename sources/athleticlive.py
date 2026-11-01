@@ -37,7 +37,7 @@
 #        `a.ani` (athletic.net athlete id), grade, team (`t.ani`, anet team id)
 # ! NOT api.athletic.live: it answers 401, and a 401 is a no. Not
 #   live.athletic.net either (its robots.txt closes /meets/*/athletes and /live).
-# ! AN HONEST USER AGENT (sources.fetch.USER_AGENT), one request at a time
+# ! sources.fetch.USER_AGENT (a plain Chrome string), one request at a time
 #   per host, INTERVAL seconds apart. These are a CDN and Firebase, not a
 #   timer's own server, so the gap is 1 s rather than the timers' 10.
 #

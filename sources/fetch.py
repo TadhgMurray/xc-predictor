@@ -46,13 +46,15 @@ from dataclasses import dataclass
 
 import requests
 
-# ★ OUR OWN NAME, WITH A WAY TO REACH US (owner, 2026-10-25: "never disguise
-#   the fetcher's identity"; it identifies itself as racecast-results). This
-#   was the athletic.net scrapers' Chrome string until then. A timer who
-#   wants us slower or gone can see who we are and say so; robots.txt is
-#   read for the same name. XCP_SOURCE_UA overrides it -- keep "racecast" in
-#   whatever it says.
-USER_AGENT = os.environ.get("XCP_SOURCE_UA", "racecast-results/1.0 (+https://racecast.co/about)")
+# ★ A PLAIN CHROME USER AGENT (owner, 2026-11-01: "keep all the previous
+#   privacy settings ... make sure the local and tfrrs ones are the same
+#   way" -- the timers asked said it was fine). The same string the
+#   athletic.net launcher sent before 2026-10-25; XCP_SOURCE_UA overrides it.
+#   The pace (one request per host, 10 s apart) and robots.txt are unchanged.
+USER_AGENT = os.environ.get(
+    "XCP_SOURCE_UA",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/141.0.0.0 Safari/537.36")
 # ! ROBOTS.TXT IS STILL READ FOR OUR OWN NAME: rules a site writes for
 #   "racecast" or for every crawler ("*") both apply.
 ROBOTS_AGENT = "racecast-results"

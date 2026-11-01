@@ -16,6 +16,18 @@ from playwright.sync_api import sync_playwright
 import asyncio
 from playwright.async_api import async_playwright
 from vpn_rotation import VPNRotator
+import random
+
+# ★ THE ATHLETIC.NET LAUNCHER'S SETTINGS (owner, 2026-11-01: "make sure the
+#   local and tfrrs ones are the same way"): a window size that varies a
+#   little per page, and navigator.webdriver hidden. The user agent stays the
+#   real Chrome's own (already a plain Chrome string): a made-up version
+#   that disagrees with the browser is what Cloudflare checks for.
+WEBDRIVER_MASK = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+
+
+def _viewport():
+    return {"width": random.randint(1280, 1440), "height": random.randint(768, 900)}
 
 # _resetStaleClaims
 # Purpose: Flip any meets left at scraped=3 (in-progress) from a prior crashed run
@@ -72,7 +84,8 @@ def _openPage():
     #   `playwright install`, and fingerprinted by Cloudflare on one that did.
     browser = pw.chromium.launch(headless=False,
                                  executable_path=chromePath())
-    page = browser.new_page()
+    page = browser.new_context(viewport=_viewport()).new_page()
+    page.add_init_script(WEBDRIVER_MASK)
     return {"pw": pw, "browser": browser, "page": page}
 
 
@@ -224,10 +237,13 @@ async def main():
         browser = await pw.chromium.launch(headless=False,
                                            executable_path=chromePath())
 
-        # make_page is now ASYNC (browser.new_page() is awaitable in the async
+        # make_page is now ASYNC (new_context/new_page are awaitable in the async
         # API). runDrain awaits it once per session.
         async def make_page():
-            return await browser.new_page()
+            ctx = await browser.new_context(viewport=_viewport())
+            page = await ctx.new_page()
+            await page.add_init_script(WEBDRIVER_MASK)
+            return page
 
         await runDrain(make_page, _urlFor, rotator)
 
