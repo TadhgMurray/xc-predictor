@@ -106,6 +106,9 @@ MIX_SHARE = 0.05
 COLLEGE_MIX = 0.02
 # a name several colleges share folds into one of them only on this share
 GENERIC_FRACTION = 0.80
+# a named college folds into a plain name only when this share of its own
+# runners also wear the plain name (Trinity (Conn.): 41%)
+PICK_SHARE = 0.35
 _LVL_NAMES = {"college", "university", "high", "middle", "junior", "senior", "community"}
 
 DDL = """
@@ -331,6 +334,46 @@ def genericColleges(cur, names, level_of):
 _REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3}
 
 
+_STATE_WORDS = {"alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+                "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+                "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+                "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+                "missouri", "montana", "nebraska", "nevada", "ohio", "oklahoma", "oregon",
+                "pennsylvania", "tennessee", "texas", "utah", "vermont", "virginia",
+                "washington", "wisconsin", "wyoming"}
+
+
+def _levelClass(words):
+    """The school level a name's own words say, or None: 'middle' (middle
+    school, junior high), 'high', 'elementary'. Pure."""
+    if "middle" in words or ("junior" in words and "high" in words):
+        return "middle"
+    if "elementary" in words:
+        return "elementary"
+    if "high" in words:
+        return "high"
+    return None
+
+
+def _qualifier(name):
+    """A bracketed qualifier that is not a state ('Bklyn', 'Long Island'),
+    lowercased, or None. Pure."""
+    import re as _re
+    m = _re.search(r"\(([^)]*)\)\s*$", name or "")
+    if not m or statedState(name):
+        return None
+    return " ".join(_re.findall(r"[a-z0-9]+", m.group(1).lower())) or None
+
+
+def _stateCollege(a, b):
+    """One is a bare state name, the other that state + College. Pure."""
+    for x, y in ((a, b), (b, a)):
+        wx, wy = nameWords(x), nameWords(y)
+        if len(wx) == 1 and wx[0] in _STATE_WORDS and "college" in wy and "university" not in wy:
+            return True
+    return False
+
+
 def candidatesAll(names, want_prefix=False, level_of=None, college_key=None):
     """candidates() plus the 'level' and 'college' pairs, one relation per
     pair (the strongest). Pure."""
@@ -418,11 +461,18 @@ def judge(pairs, rosters_by_name, states_by_name,
         coll_a = la == "college" or holds(a, "college", COLLEGE_MIX)
         coll_b = lb == "college" or holds(b, "college", COLLEGE_MIX)
 
-        def picksInto(x, sx, y_lvl, y_stated, sy):
+        # ! AND MOST OF THE NAMED COLLEGE'S OWN RUNNERS ALSO WEAR THE PLAIN
+        #   NAME (2026-11-01, fifth look: "St. Joseph's (Pa.)", 553 runners,
+        #   27 of them under "St. Joseph's") -- else the plain name is not
+        #   how that college is spelled, and a clean spelling would be lost
+        #   to an ambiguous one.
+        def picksInto(x, sx, y, y_lvl, y_stated, sy):
+            ny = len(rosters_by_name.get(y) or ()) or 1
             return bool(y_lvl == "college" and (y_stated or rel == "college")
                         and (len(sx) > 1 or holds(x, "college", COLLEGE_MIX))
-                        and sy <= ({y_stated} if y_stated else sy))
-        picks = picksInto(a, sa, lb, db, sb) or picksInto(b, sb, la, da, sa)
+                        and sy <= ({y_stated} if y_stated else sy)
+                        and shared / ny >= PICK_SHARE)
+        picks = picksInto(a, sa, b, lb, db, sb) or picksInto(b, sb, a, la, da, sa)
         # ★ A NAME SEVERAL COLLEGES SHARE ("Concordia University": Nebraska,
         #   Wisconsin, Irvine, Portland ...) folds into one of them only when
         #   nearly all of its runners are that one's.
@@ -438,10 +488,16 @@ def judge(pairs, rosters_by_name, states_by_name,
         #   name the named spelling folds INTO (picks).
         #   College only: a high school pair has the anet-state vetoes above,
         #   and its unnamed spelling is usually the main team ("La Jolla").
-        if g_frac is None and bool(da) != bool(db) and not picks and "college" in (la, lb):
+        #   A school pair too, when the unnamed one carries no athletic.net
+        #   state to check it by ("Archbishop Carroll" into "... (DC)" on 105
+        #   of 200).
+        if g_frac is None and bool(da) != bool(db) and not picks:
             u = b if da else a
-            g_frac = shared / max(1, len(rosters_by_name.get(u) or ()))
+            if "college" in (la, lb) or not (states_by_name.get(u)):
+                g_frac = shared / max(1, len(rosters_by_name.get(u) or ()))
         wa, wb = set(nameWords(a)), set(nameWords(b))
+        qa, qb = _qualifier(a), _qualifier(b)
+        ca, cb = _levelClass(wa), _levelClass(wb)
         if da and db and da != db:
             row[7] = f"they name different states ({da} vs {db})"
             refused.append(tuple(row))
@@ -450,6 +506,20 @@ def judge(pairs, rosters_by_name, states_by_name,
             refused.append(tuple(row))
         elif not level_ok:
             row[7] = f"different levels ({la} vs {lb})"
+            refused.append(tuple(row))
+        elif ca and cb and ca != cb:
+            # "Pearl MS" / "Pearl High School", "Scottsboro ms" / "Scottsboro
+            # HS": the names say two schools, whatever the rows say
+            row[7] = f"the names say two levels ({ca} vs {cb})"
+            refused.append(tuple(row))
+        elif qa and qb and qa != qb and not (da and db):
+            # "St. Joseph's (Bklyn)" / "St. Joseph's (Long Island)": two
+            # campuses, two teams
+            row[7] = f"two different qualifiers ({qa} vs {qb})"
+            refused.append(tuple(row))
+        elif rel == "college" and _stateCollege(a, b):
+            # "Louisiana" (the flagship) / "Louisiana College" (Pineville)
+            row[7] = "a state's university and a college named for the state"
             refused.append(tuple(row))
         elif rel == "level" and not (la and lb):
             row[7] = "level words differ and a level is unknown"

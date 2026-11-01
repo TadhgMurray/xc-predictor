@@ -251,7 +251,9 @@ class Grouping(unittest.TestCase):
         rosters = {"La Jolla": set(range(1, 41)),
                    "La Jolla (CA)": set(range(1, 31)),
                    "La Jolla-CA": set(range(1, 21))}
-        merged, _ = M.judge(M.candidates(rosters.keys()), rosters, {})
+        # (2026-11-01: an unnamed school spelling with no athletic.net state
+        #  needs 80% of its runners; La Jolla's anet team is in CA)
+        merged, _ = M.judge(M.candidates(rosters.keys()), rosters, {"La Jolla": {"CA"}})
         grouped = M.groups(merged, rosters)
         self.assertEqual(len(grouped), 1)
         canon, variants = grouped[0]
@@ -272,7 +274,9 @@ class Grouping(unittest.TestCase):
         rosters = {"La Jolla": set(range(1, 41)),
                    "La Jolla (CA)": set(range(1, 31)),
                    "La Jolla-CA": set(range(1, 21))}
-        merged, _ = M.judge(M.candidates(rosters.keys()), rosters, {})
+        # (2026-11-01: an unnamed school spelling with no athletic.net state
+        #  needs 80% of its runners; La Jolla's anet team is in CA)
+        merged, _ = M.judge(M.candidates(rosters.keys()), rosters, {"La Jolla": {"CA"}})
         grouped = M.groups(merged, rosters)
         canons = {c for c, _ in grouped}
         variants = {v[0] for _c, vs in grouped for v in vs}
@@ -559,3 +563,31 @@ class FourthLook(unittest.TestCase):
         merged, _r = M.judge(M.candidatesAll(r.keys(), level_of=lv), r, st, level_of=lv, level_mix=mix)
         g = M.groups(merged, r, st, mix)
         self.assertEqual(g[0][0], "Ammons MS")
+
+
+class FifthLook(unittest.TestCase):
+    """2026-11-01, the owner's full dry run."""
+
+    def _m(self, r, lv, st=None, mix=None, key=None):
+        p = M.candidatesAll(r.keys(), level_of=lv, college_key=key or {})
+        return M.judge(p, r, st or {}, level_of=lv, level_mix=mix)[0]
+
+    def test_names_that_say_two_levels(self):
+        r = {"Pearl MS": set(range(1, 92)), "Pearl High School": set(range(31, 91))}
+        self.assertEqual(self._m(r, {k: "ms" for k in r}, {k: {"MS"} for k in r}), [])
+
+    def test_two_campuses(self):
+        r = {"St. Joseph's (Long Island)": set(range(1, 231)), "St. Joseph's (Bklyn)": set(range(223, 290))}
+        key = {k: ("St. Joseph's University", "NY") for k in r}
+        self.assertEqual(self._m(r, {k: "college" for k in r}, key=key), [])
+
+    def test_a_state_and_its_namesake_college(self):
+        r = {"Louisiana": set(range(1, 19)), "Louisiana College": set(range(1, 118))}
+        key = {k: ("x", "LA") for k in r}
+        self.assertEqual(self._m(r, {k: "college" for k in r}, key=key), [])
+
+    def test_a_named_college_mostly_spelled_otherwise_stays(self):
+        r = {"St. Joseph's": set(range(1, 31)), "St. Joseph's (Pa.)": set(range(4, 557))}
+        lv = {"St. Joseph's": "hs", "St. Joseph's (Pa.)": "college"}
+        mix = {"St. Joseph's": {"hs": 0.8, "college": 0.2}, "St. Joseph's (Pa.)": {"college": 1.0}}
+        self.assertEqual(self._m(r, lv, {"St. Joseph's": {"PA", "IN", "NY"}}, mix), [])
