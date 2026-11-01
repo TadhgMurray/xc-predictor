@@ -171,7 +171,9 @@ def test_fk_th_is_the_js_header():
 PAGES = ("race.html", "race_tf.html", "compiled.html", "compiled_tf.html", "meet_tf.html",
          "course.html", "venue_tf.html", "school.html", "school_prs.html", "embed_school.html",
          "athlete.html", "compare.html", "breakouts.html", "landing.html", "what_it_takes.html",
-         "projections.html", "recruit.html", "recruiting_school.html", "my_page.html")
+         "projections.html", "recruit.html", "my_page.html")
+    # recruiting_school.html left this list on 2026-11-01: its times are the
+    # sport's own events (5K XC, 800 / 1600 / 3200), with the rating beside
 
 
 def test_every_page_with_a_5k_compiles_and_uses_it():

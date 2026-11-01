@@ -4,7 +4,9 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const root = $("recruiting");
-  const state = { gender: "m", sport: "XC", view: "recruits" };
+  const state = { gender: "m", sport: "XC", view: viewOf(), page: 0, last: null };
+  const PER_PAGE = 25;
+  function viewOf() { return location.hash === "#transfers" ? "transfers" : "recruits"; }
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -83,10 +85,10 @@
     q.set("gender", state.gender);
     q.set("sport", state.sport);
     const pairs = [["division", $("r-division").value], ["state", $("r-state").value],
-                   ["q", $("r-q").value], ["min_n", $("r-minn").value]];
+                   ["q", $("r-q").value]];
     for (const [k, v] of pairs) if (String(v || "").trim()) q.set(k, String(v).trim());
     q.set("sort", $("r-sort").value);
-    if (state.view === "transfers") q.set("view", "transfers");
+    if (state.sport === "TF") q.set("ev", $("r-ev").value);
     for (const [k, v] of subjectPairs()) q.set(k, v);
     return q;
   }
@@ -95,11 +97,10 @@
     const p = new URLSearchParams(location.search);
     if (p.get("gender") === "m" || p.get("gender") === "f") { state.gender = p.get("gender"); $("r-tgender").value = p.get("gender"); }
     if (p.get("sport") === "XC" || p.get("sport") === "TF") state.sport = p.get("sport");
-    if (p.get("view") === "transfers") state.view = "transfers";
+    if (p.get("ev") && ["800", "1600", "3200"].includes(p.get("ev"))) $("r-ev").value = p.get("ev");
     $("r-division").value = (p.get("division") || "").split(",")[0];
     $("r-state").value = (p.get("state") || "").split(",")[0];
     $("r-q").value = p.get("q") || "";
-    if (p.get("min_n")) $("r-minn").value = p.get("min_n");
     if (p.get("sort")) $("r-sort").value = p.get("sort");
     if (p.get("athlete")) $("r-athlete").value = p.get("athlete");
     if (p.get("event")) $("r-event").value = p.get("event");
@@ -225,49 +226,64 @@
       + ` aria-label="Track equivalent: the time on a track this rating is worth">i</a></th>`;
   }
 
-  function schoolRow(r, withTier) {
-    const t = r.times || {}, med = t.median || {};
-    return `<tr>
-      <td class="rc-school">${crestMark(r.crest)}<a href="${schoolHref(r)}">${esc(r.label || r.school)}</a></td>
-      <td class="rc-dim">${esc(r.division || "")}</td>
-      <td class="rc-dim">${esc(r.conference || "")}</td>
-      <td class="num">${r.n}</td>
-      <td class="num rc-dim">${(r.t_in || r.t_out) ? `<a href="${schoolHref(r)}#transfers" title="this college's transfers in and out">${r.t_in || 0} / ${r.t_out || 0}</a>` : "0 / 0"}</td>
-      <td class="num rc-dim">${num(r.min)}</td>
-      <td class="num rc-strong">${num(r.median)}</td>
-      <td class="num rc-dim">${num(r.max)}</td>
-      <td class="fk">${r.median_5k ? esc(r.median_5k) + (r.median_5k_dist && r.median_5k_dist !== "5K" ? ` <span class="fk-d">${esc(r.median_5k_dist)}</span>` : "") : '<span class="fk-none">-</span>'}</td>
-      <td class="num">${fmtTime(med["3200"]) || " - "}</td>
-      ${withTier ? tierCell(r.tier) : ""}
+  /* ★ THE BOARD, REDESIGNED (owner, 2026-11-01): one row per college --
+     its typical recruit as a time with the rating beside it, a bar over
+     every recruit fastest to slowest with the typical recruit ticked and
+     the reader marked, the recruit count, and the reader's band. */
+  const EV_LABEL = { "5k": "5K XC", "800": "800m", "1600": "1600m", "3200": "3200m" };
+  function evKey() { return state.sport === "XC" ? "5k" : $("r-ev").value; }
+  function fitTag(t) {
+    if (!t) return "";
+    return `<span class="rc-fit rc-fit-${t.key}" title="${esc(t.blurb)}">${esc(t.label)}</span>`;
+  }
+  function boardRow(r, ev, ax, you) {
+    const t = r.times || {}, tm = (k) => fmtTime((t[k] || {})[ev]);
+    const x = (v) => (((ax.hi - v) / (ax.hi - ax.lo)) * 100).toFixed(1);
+    const sub = [r.division, r.conference].filter(Boolean).map(esc).join(" · ");
+    const bar = (r.max != null && r.min != null) ? `
+      <div class="rc-rb"><i style="left:${x(r.max)}%;width:${(x(r.min) - x(r.max)).toFixed(1)}%"></i>
+        <b style="left:${x(r.median)}%"></b>${you != null ? `<u style="left:${x(you)}%"></u>` : ""}</div>
+      <div class="rc-rbe"><span style="left:${x(r.max)}%">${tm("max")}</span><span style="left:${x(r.min)}%">${tm("min")}</span></div>` : "";
+    return `<tr class="rc-br">
+      <td class="rc-school">${crestMark(r.crest)}<a href="${schoolHref(r)}">${esc(r.label || r.school)}</a>${sub ? `<span class="rc-bsub">${sub}</span>` : ""}</td>
+      <td class="num rc-btyp"><b>${tm("median") || num(r.median)}</b><span class="rc-brt">${num(r.median)}</span></td>
+      <td class="rc-bbar">${bar}</td>
+      <td class="num rc-bn">${r.n}</td>
+      ${you != null ? `<td class="rc-bfit">${fitTag(r.tier)}</td>` : ""}
     </tr>`;
   }
 
-  function tableHead(withTier) {
-    return `<thead><tr><th>School</th><th>Division</th><th>Conference</th><th class="num" title="recruits in the classes counted">Recruits</th>
-      <th class="num" title="transfers in from other colleges / out to other colleges, same classes">Transfers in / out</th>
-      <th class="num" title="the slowest recruit's rating: the walk-on line">Slowest</th>
-      <th class="num" title="the median recruit's rating">Typical</th>
-      <th class="num" title="the fastest recruit's rating">Fastest</th>
-      ${fkTh("5K")}
-      <th class="num" title="the typical recruit's rating as a 3200 on a typical track">3200</th>${withTier ? "<th>You</th>" : ""}</tr></thead>`;
-  }
-
-  function renderSuggestions(d) {
-    const sec = $("r-suggest"), out = $("r-suggest-out");
-    const groups = d.suggestions || [];
-    if (d.rating == null) { sec.hidden = true; out.innerHTML = ""; return; }
-    sec.hidden = false;
-    if (!groups.length) {
-      out.innerHTML = `<p class="meta">Nothing in these filters lands in a recruit or walk-on band for this rating. Widen the filters, or read the gap to each school in the table.</p>`;
-      return;
-    }
-    out.innerHTML = groups.map((g) => `
-      <div class="rc-band rc-band-${g.key}">
-        <div class="rc-band-head"><span class="r-pill r-pill-${g.key}">${esc(g.label)}</span>
-          <span class="rc-band-blurb">${esc(g.blurb)}</span>
-          <span class="rc-band-n">${g.total} school${g.total === 1 ? "" : "s"}${g.total > g.schools.length ? ", fastest " + g.schools.length + " shown" : ""}</span></div>
-        <div class="r-scroll"><table class="rk rc-tbl rc-sugg">${tableHead(false)}<tbody>${g.schools.map((r) => schoolRow(r, false)).join("")}</tbody></table></div>
-      </div>`).join("");
+  function paintBoard() {
+    const d = state.last;
+    if (!d) return;
+    const rows = d.rows || [];
+    const ev = evKey(), you = d.rating;
+    const pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+    state.page = Math.min(state.page, pages - 1);
+    const shown = rows.slice(state.page * PER_PAGE, (state.page + 1) * PER_PAGE);
+    // one axis for the page: every bar, and the reader, on the same scale
+    const vals = [];
+    for (const r of shown) { if (r.max != null) vals.push(r.max); if (r.min != null) vals.push(r.min); }
+    if (you != null) vals.push(you);
+    const ax = { lo: Math.min(...vals) - 1, hi: Math.max(...vals) + 1 };
+    const who = `${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track"}`;
+    const what = $("r-division").value ? esc($("r-division").value) + " " : "";
+    const order = ($("r-sort").value === "closest" && you != null) ? `, closest to your ${esc(d.subject && d.subject.time ? d.subject.time : you.toFixed(1))} first`
+      : "";
+    const pager = pages > 1 ? `<div class="rc-pager"><span class="meta">${state.page * PER_PAGE + 1}–${state.page * PER_PAGE + shown.length} of ${rows.length}</span>
+        <span><button type="button" class="rc-seg-btn" data-page="-1"${state.page ? "" : " disabled"}>← Prev</button>
+        <button type="button" class="rc-seg-btn" data-page="1"${state.page < pages - 1 ? "" : " disabled"}>Next →</button></span></div>` : "";
+    $("r-out").innerHTML = `
+      <p class="meta rc-count"><b>${rows.length} ${what}${who} programs</b>${order}.</p>
+      <div class="rc-legend"><span class="k1"></span>their recruits, fastest → slowest<span class="k2"></span>typical recruit${you != null ? '<span class="k3"></span>you' : ""}</div>
+      <div class="r-scroll"><table class="rk rc-tbl rc-board"><thead><tr><th>College</th><th class="num">Typical recruit</th>
+        <th>Recruits' ${EV_LABEL[ev]} times</th><th class="num">Recruits</th>${you != null ? "<th>You</th>" : ""}</tr></thead>
+        <tbody>${shown.map((r) => boardRow(r, ev, ax, you)).join("")}</tbody></table></div>${pager}`;
+    $("r-out").querySelectorAll("[data-page]").forEach((b) => b.addEventListener("click", () => {
+      state.page += Number(b.dataset.page);
+      paintBoard();
+      $("r-out").scrollIntoView({ block: "start", behavior: "smooth" });
+    }));
   }
 
   function render(d) {
@@ -275,19 +291,16 @@
     $("r-tgender").value = d.gender;
     paintSeg();
     renderSubject(d);
-    renderSuggestions(d);
-    const rows = d.rows || [];
     if (!d.built) {
       $("r-out").innerHTML = `<p class="meta">The recruiting numbers aren't ready yet; check back tomorrow.</p>`;
       return;
     }
-    if (!rows.length) {
-      $("r-out").innerHTML = `<p class="meta">No school matches. Widen the filters.</p>`;
+    if (!(d.rows || []).length) {
+      $("r-out").innerHTML = `<p class="meta">No college matches. Widen the filters.</p>`;
       return;
     }
-    const withTier = d.rating != null;
-    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes. Each recruit's senior high-school season rating; typical is the plain median of the last four classes, and the times are the typical recruit's.</p>
-      <div class="r-scroll"><table class="rk rc-tbl">${tableHead(withTier)}<tbody>${rows.map((r) => schoolRow(r, withTier)).join("")}</tbody></table></div>`;
+    state.last = d;
+    paintBoard();
     const div = $("r-division");
     if (d.divisions && d.divisions.length && div.options.length <= 1) {
       for (const v of d.divisions) { const o = document.createElement("option"); o.value = v; o.textContent = v; div.appendChild(o); }
@@ -332,21 +345,23 @@
     renderSubject(d);
     const rows = (d.rows || []).filter((r) => r.n || r.n_out);
     if (!d.built) {
-      $("r-out").innerHTML = `<p class="meta">The transfer numbers aren't ready yet; they arrive with the next recruiting build.</p>`;
+      $("r-out-t").innerHTML = `<p class="meta">The transfer numbers aren't ready yet; they arrive with the next recruiting build.</p>`;
       return;
     }
     if (!rows.length) {
-      $("r-out").innerHTML = `<p class="meta">No college matches. Widen the filters.</p>`;
+      $("r-out-t").innerHTML = `<p class="meta">No college matches. Widen the filters.</p>`;
       return;
     }
-    $("r-out").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes with transfers. College seasons as HS-equivalent ratings, the scale the rest of the site shows: a transfer's last season before and first season here; the 5K is the typical transfer's.</p>
+    $("r-out-t").innerHTML = `<p class="meta rc-count">${rows.length} of ${d.total} ${d.gender === "m" ? "men's" : "women's"} ${d.sport === "XC" ? "cross country" : "track & field"} programmes with transfers. College seasons as HS-equivalent ratings, the scale the rest of the site shows: a transfer's last season before and first season here; the 5K is the typical transfer's.</p>
       <div class="r-scroll"><table class="rk rc-tbl">${transferHead(d.rating != null)}<tbody>${rows.map((r) => transferRow(r, d.rating != null)).join("")}</tbody></table></div>`;
   }
 
   async function load() {
     const q = query();
-    const minn = $("r-minn") && $("r-minn").closest("label");
-    if (minn) minn.style.display = state.view === "transfers" ? "none" : "";
+    $("r-ev").hidden = state.sport !== "TF" || state.view === "transfers";
+    const closest = $("r-sort").querySelector('option[value="closest"]');
+    if (closest) closest.hidden = state.view === "transfers";
+    if (state.view === "transfers" && $("r-sort").value === "closest") $("r-sort").value = "median";
     // the sort menu speaks the section's noun
     const words = state.view === "transfers"
       ? { median: "Fastest typical transfer", top: "Fastest top transfers", n: "Most transfers in" }
@@ -370,8 +385,9 @@
       const api = state.view === "transfers" ? "/api/recruiting/transfers?" : "/api/recruiting/schools?";
       const res = await fetch(api + q.toString());
       const d = await readJson(res);
-      if (!res.ok || d.error) { status(d.error || res.statusText || `The server had a problem (error ${res.status}).`, true, res.status >= 500 ? load : null); $("r-out").innerHTML = ""; return; }
+      if (!res.ok || d.error) { status(d.error || res.statusText || `The server had a problem (error ${res.status}).`, true, res.status >= 500 ? load : null); $(state.view === "transfers" ? "r-out-t" : "r-out").innerHTML = ""; return; }
       status("", false);
+      state.page = 0;
       if (state.view === "transfers") renderTransfers(d); else render(d);
     } catch (err) {
       status(err.friendly ? err.message : "Could not reach the server. Check your connection and try again.", true, load);
@@ -379,7 +395,6 @@
     }
   }
 
-  $("r-go").addEventListener("click", load);
   $("r-place").addEventListener("click", () => { $("r-athlete").value = ""; load(); });
   document.querySelectorAll(".rc-seg-btn").forEach((b) => b.addEventListener("click", () => {
     state[b.dataset.set] = b.dataset.value;
@@ -387,7 +402,14 @@
     load();
   }));
   for (const id of ["r-division", "r-state", "r-sort"]) $(id).addEventListener("change", load);
-  for (const id of ["r-q", "r-minn", "r-time"]) {
+  // the track event only changes the times shown: no new request
+  $("r-ev").addEventListener("change", () => { paintBoard(); try { history.replaceState(null, "", location.pathname + "?" + query().toString() + location.hash); } catch (e) { /* fine */ } });
+  // Colleges / Transfers are tabs (race-page.js shows the panel); the data follows
+  window.addEventListener("hashchange", () => {
+    const v = viewOf();
+    if (v !== state.view && (location.hash === "#transfers" || location.hash === "#schools" || location.hash === "")) { state.view = v; load(); }
+  });
+  for (const id of ["r-q", "r-time"]) {
     $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") { if (id === "r-time") $("r-athlete").value = ""; load(); } });
   }
 

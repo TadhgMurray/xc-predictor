@@ -12357,6 +12357,8 @@ def api_recruiting_schools():
     rows = [dict(r) for r in R.filterSchools(every, f)]
     rating = R.subjectRating(subject, f["sport"]) if subject else None
     R.placeRows(rows, rating)
+    if f["sort"] == "closest" and rating is not None:
+        rows.sort(key=lambda r: (abs((r.get("median") or 0) - rating), r["school"]))
     # ★ median_5k: the TRACK 5K the typical recruit's HS-scale rating is
     #   worth (owner, 2026-10-10: "5k should be in a track"), the same
     #   reference as every other page's 5K column; it replaces the old
@@ -12477,6 +12479,11 @@ def recruiting_school_page(school_name):
                 rating = R.subjectRating(subject, sport) if subject else None
                 blocks.append({"sport": sport, "summary": summary, "recruits": recruits,
                                "transfers": transfers, "rating": rating,
+                               "you_times": (R.timesFor(rating, gender, R.BOARD_EVENTS)
+                                             if rating is not None else None),
+                               "faster": (R.fasterThan(rating, summary.get("dots"))
+                                          if summary else None),
+                               "events": R.SPORT_EVENTS[sport],
                                "tier": R.tierFor(rating, summary, summary.get("division"))
                                if (rating is not None and summary) else None})
             other = "f" if gender == "m" else "m"
@@ -12485,15 +12492,9 @@ def recruiting_school_page(school_name):
     # ★ THE THRESHOLDS IN THE READER'S OWN EVENTS (owner, 2026-10-05): the
     #   events the athlete has a PR in, or the one they typed; 5K / 1600 /
     #   3200 when nobody is named.
-    events = R.subjectEvents(subject)
-    if events != list(R.THRESHOLD_EVENTS):
-        for b in blocks:
-            s_ = b["summary"]
-            if not s_:
-                continue
-            s_["times"] = {k: R.timesFor(s_.get(k), gender, events)
-                           for k in ("min", "p25", "median", "p75", "max")}
-    event_cols = [(k, R.eventLabel(k)) for k, _d, _s in events]
+    # ! THE PAGE QUOTES EACH SPORT IN ITS OWN EVENTS NOW (2026-11-01
+    #   redesign): 5K for cross country, 800 / 1600 / 3200 for track
+    event_cols = [(k, R.eventLabel(k)) for k, _d, _s in R.BOARD_EVENTS]
     if not blocks and not has_other:
         abort(404)
     for b in blocks:

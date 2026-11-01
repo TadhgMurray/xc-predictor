@@ -53,14 +53,24 @@
         <span class="rc-nowrap"><button type="button" class="share-btn rc-share-link" data-share-title="{{ school ~ ' recruiting on Racecast' }}"
               data-share-url="{{ site_origin ~ '/recruiting/school/' ~ (school|urlencode) ~ '?gender=' ~ gender ~ (('&state=' ~ state) if state else '') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button></span>
       </div>
-      {# each sport's typical (median) recruit, and what that is in the
-         first event column #}
+      {# ★ THE HEADER FACTS (owner, 2026-11-01 redesign): each sport's typical
+         recruit as a time with its rating beside it, how many a year, and
+         how they have done in college so far #}
+      {% set evname = {"5k": "5K XC", "800": "800", "1600": "1600", "3200": "3200"} %}
       {% if blocks %}
       <div class="rc-champs">
-        {% for b in blocks %}{% set s = b.summary %}{% if s and s.median is not none %}
+        {% for b in rec_blocks %}{% set s = b.summary %}{% if s.median is not none %}
+        {% set ek = "5k" if b.sport == "XC" else "1600" %}
         <div><span class="k">Typical {{ sport_words[b.sport]|lower }} recruit</span>
-          <span class="rc-crow"><b class="rc-cn">{{ "%.1f"|format(s.median) }}</b>{% if e1 and s.times.median[e1[0]] %}<i>{{ fmt_time(s.times.median[e1[0]]) }} {{ e1[1] }}</i>{% endif %}</span></div>
+          <span class="rc-crow"><b class="rc-cn">{{ fmt_time(s.times.median[ek]) or ("%.1f"|format(s.median)) }}</b><i>{{ evname[ek] }} · {{ "%.1f"|format(s.median) }}</i></span></div>
         {% endif %}{% endfor %}
+        {% set s0 = (rec_blocks|first).summary if rec_blocks else none %}
+        {% if s0 and s0.per_year %}
+        <div><span class="k">Recruits a year</span><span class="rc-crow"><b class="rc-cn">about {{ s0.per_year|round|int if s0.per_year >= 2 else s0.per_year }}</b><i>{{ sport_words[(rec_blocks|first).sport]|lower }}, with a senior season</i></span></div>
+        {% endif %}
+        {% if s0 and s0.held_of %}
+        <div><span class="k">Held or improved in college</span><span class="rc-crow"><b class="rc-cn">{{ s0.held }} of {{ s0.held_of }}</b><i>first college season vs senior year</i></span></div>
+        {% endif %}
         {% if tr_blocks %}
         <div><span class="k">Transfers</span>
           <span class="rc-crow"><a class="rc-cn" href="#transfers">{{ t_in }} in · {{ t_out }} out</a><i>from and to other colleges</i></span></div>
@@ -102,66 +112,73 @@
   </div>
   {% endif %}
 
+  {# a time per event, the active one shown (the event buttons); a strip
+     position, fastest left #}
+  {% macro tt(times, evs) -%}
+    {%- for k in evs %}<span class="ev ev-{{ k }}">{{ fmt_time((times or {}).get(k)) or "-" }}</span>{% endfor -%}
+  {%- endmacro %}
+  {% macro xp(r, lo, hi) %}{{ "%.1f"|format((hi - r) / (hi - lo) * 100) }}{% endmacro %}
   {% for b in rec_blocks %}
   {% set s = b.summary %}
-  <section class="rc-panel" id="{{ b.sport|lower }}" data-panel="{{ b.sport|lower }}">
+  {% set evs = b.events %}
+  {% set e0 = "5k" if b.sport == "XC" else "1600" %}
+  <section class="rc-panel rec-ev-{{ e0 }}" id="{{ b.sport|lower }}" data-panel="{{ b.sport|lower }}">
   {% if not tabbed %}<h2>{{ sport_words[b.sport] }} recruits</h2>{% endif %}
-  {% if s %}
-  <p class="meta rc-lead">{{ s.n }} recruits with a senior high-school season, classes of {{ s.classes }}{% if s.n_all and s.n_all > s.n %}; {{ s.n_all - s.n }} more are listed below without one and do not count{% endif %}. Ratings{{ rating_i() }} on the high-school scale.</p>
-
-  {% if b.tier %}
-  <p class="r-tier r-tier-{{ b.tier.key }}"><strong>{{ b.tier.label }}</strong>: your {{ "%.1f"|format(b.rating) }} is {{ b.tier.blurb }}{% if b.tier.gap %}; {{ "%.1f"|format(b.tier.gap) }} points to {{ b.tier.next_label|lower }}{% endif %}.</p>
+  {% if s and s.median is not none %}
+  {% if evs|length > 1 %}
+  <div class="rc-seg rec-evseg" role="group" aria-label="Event">
+    {% for k in evs %}<button type="button" class="rc-seg-btn{{ ' is-on' if k == e0 }}" data-ev="{{ k }}">{{ evname[k] }}</button>{% endfor %}
+  </div>
   {% endif %}
 
-  {# the reader's own events when one is named (recruiting.subjectEvents) #}
-  <div class="r-scroll"><table class="recruit-tbl r-dist">
-    <thead><tr><th></th><th class="num">Rating</th>{% for k, lab in event_cols %}<th class="num">{{ lab }}</th>{% endfor %}</tr></thead>
+  {# ★ THE HEADLINE AND THE STRIP: every linked recruit a dot on one line,
+     fastest left, the five marks named under it, the reader marked #}
+  {% set pad = 1.5 %}
+  {% set lo_r = [s.min] + ([b.rating] if b.rating is not none else []) %}
+  {% set hi_r = [s.max] + ([b.rating] if b.rating is not none else []) %}
+  {% set lo = (lo_r|min) - pad %}{% set hi = (hi_r|max) + pad %}
+  <div class="rec-hero">
+    <h2>A typical {{ school }} recruit ran <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> <span class="rec-evword">{% for k in evs %}<span class="ev ev-{{ k }}">for {{ "5K cross country" if k == "5k" else (evname[k] ~ "m") }}</span>{% endfor %}</span> as a senior <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
+    <p class="meta">Senior-year times of the {{ s.n }} recruits we could match, classes of {{ s.classes }}, at a typical {{ "course" if b.sport == "XC" else "track" }}. Each dot is one recruit.</p>
+    <div class="rec-strip">
+      {% for d in s.dots %}<i class="rec-dot" style="left:{{ xp(d, lo, hi) }}%"></i>{% endfor %}
+      {% for key, name in [("max", "Fastest"), ("p75", "Top quarter"), ("median", "Typical"), ("p25", "Most recruits by"), ("min", "Slowest")] %}{% if s[key] is not none %}
+      <div class="rec-tk{{ ' rec-main' if key == 'median' else (' rec-mid' if key in ('p75', 'p25') else '') }}" style="left:{{ xp(s[key], lo, hi) }}%"><span class="rec-tl">{{ name }}</span><span class="rec-tv">{{ tt(s.times[key], evs) }}</span></div>
+      {% endif %}{% endfor %}
+      {% if b.rating is not none %}<div class="rec-you" style="left:{{ xp(b.rating, lo, hi) }}%">You {{ tt(b.you_times, evs) }}</div>{% endif %}
+    </div>
+    {% if b.tier %}
+    <p class="r-tier r-tier-{{ b.tier.key }}"><strong>{{ b.tier.label }}.</strong>
+      At {{ tt(b.you_times, evs) }} you'd be faster than {{ b.faster }}% of {{ school }}{{ "'" if school.endswith('s') else "'s" }} recruits: {{ b.tier.blurb }}{% if b.tier.gap %}; {{ "%.1f"|format(b.tier.gap) }} rating points to {{ b.tier.next_label|lower }}{% endif %}.</p>
+    {% endif %}
+  </div>
+
+  {# ★ RECRUITS BY CLASS (owner, 2026-11-01): the matched ones with their
+     senior time and how college has gone; the unmatched on one line #}
+  <div class="r-scroll"><table class="rk rc-tbl rec-tbl">
+    <thead><tr><th>Recruit</th><th>High school</th><th class="num">Senior year</th><th>In college so far</th></tr></thead>
     <tbody>
-    {% for key, name in [("max", "Fastest recruit"), ("p75", "Top quarter" ~ (" (scholarship range)" if scholarship else "")), ("median", "Typical recruit"), ("p25", "Recruit range starts"), ("min", "Slowest recruit (walk-on range)")] %}
-      <tr>
-        <td>{{ name }}</td>
-        <td class="num">{{ "%.1f"|format(s[key]) if s[key] is not none else " - " }}</td>
-        {% for k, lab in event_cols %}<td class="num">{{ fmt_time(s.times[key][k]) or " - " }}</td>{% endfor %}
+    {% for c in s.by_class %}
+      <tr class="rec-cls"><th colspan="4">Class of {{ c.label }} <span class="rc-dim">· {{ c.linked|length }} recruit{{ "s" if c.linked|length != 1 }}</span></th></tr>
+      {% for r in c.linked %}
+      <tr class="rec-r">
+        <td class="rec-nm"><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
+        <td class="rec-hs">{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% endif %}</td>
+        <td class="num rec-t"><b>{{ tt(r.t_hs, evs) }}</b><span class="rec-rt">{{ "%.1f"|format(r.hs_rating) }}</span></td>
+        <td class="rec-c">{% if r.change is not none %}{% if r.change >= 1.5 %}<span class="rec-up">↑ faster</span>{% elif r.change <= -1.5 %}<span class="rec-dn">↓ slower</span>{% else %}<span class="rec-eq">about the same</span>{% endif %}
+          <span class="rec-rt">{{ tt(r.t_col, evs) }} · {{ "%.1f"|format(r.hs_equiv) }}</span>{% else %}<span class="rc-dim">-</span>{% endif %}</td>
       </tr>
+      {% endfor %}
+      {% if c.unlinked %}
+      <tr class="rec-unl"><td colspan="4">+ {{ c.unlinked|length }} more we couldn't match to high-school results ({% for r in c.unlinked %}<a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a>{{ ", " if not loop.last }}{% endfor %}); not counted in the numbers</td></tr>
+      {% endif %}
     {% endfor %}
     </tbody>
   </table></div>
-  {% set e2 = event_cols[1] if event_cols|length > 1 else none %}
-  {% if e1 and s.times.median[e1[0]] and s.times.p25[e1[0]] and s.times.min[e1[0]] %}
-  <p class="meta">To be a typical {{ school }} recruit you run about <strong>{{ fmt_time(s.times.median[e1[0]]) }}</strong> for {{ e1[1] }}{% if e2 and s.times.median[e2[0]] %} or <strong>{{ fmt_time(s.times.median[e2[0]]) }}</strong> for {{ e2[1] }}{% endif %};
-     the door opens around {{ fmt_time(s.times.p25[e1[0]]) }}{% if e2 and s.times.p25[e2[0]] %} / {{ fmt_time(s.times.p25[e2[0]]) }}{% endif %}, and a walk-on has run at least {{ fmt_time(s.times.min[e1[0]]) }}.</p>
-  {% endif %}
-
-  <div class="r-scroll"><table class="recruit-tbl r-list">
-    <thead><tr><th>Class</th><th>Recruit</th><th>High school</th><th class="num">Recruited at</th>{{ fk_th("5K") }}<th class="num">HS season</th><th class="num">First college season</th><th>Year</th></tr></thead>
-    <tbody>
-    {% for r in b.recruits %}
-      <tr>
-        <td>{{ r.class_label }}</td>
-        <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
-        <td>{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% else %} - {% endif %}</td>
-        {# ★ ONLY A SENIOR SEASON IS A NUMBER (owner, 2026-10-30): a recruit
-           with none linked is listed, and counts for nothing #}
-        {% if r.source == "hs" %}
-        <td class="num"><strong>{{ "%.1f"|format(r.recruit_rating) }}</strong></td>
-        {{ fk(r.recruit_rating, "hs_" ~ gender, b.sport, none, "5K") }}
-        {% else %}
-        <td class="num"><span class="dist-note" title="No senior high-school season is linked to this athlete, so they are listed but not counted">not linked</span></td>
-        <td class="fk"><span class="fk-none">-</span></td>
-        {% endif %}
-        <td class="num">{{ ("%.1f"|format(r.hs_rating)) if r.hs_rating is not none else " - " }}</td>
-        {# the first college season as its HS-equivalent, the number the
-           rest of the site shows a collegian (owner, 2026-10-30) #}
-        <td class="num">{% if r.hs_equiv is not none %}{{ "%.1f"|format(r.hs_equiv) }}{% else %}{{ "%.1f"|format(r.first_rating) }}<span class="dist-note-quiet"> college scale</span>{% endif %}</td>
-        <td>{{ r.grade_label or " - " }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table></div>
+  <p class="meta">Each time is the recruit's season converted to a typical {{ "5K cross country course" if b.sport == "XC" else "track" }}; the grey number beside it is the same season as a rating{{ rating_i() }} on the high-school scale.</p>
   {% else %}
   <p class="meta">No {{ who|lower }}'s {{ sport_words[b.sport]|lower }} recruits on file.</p>
   {% endif %}
-
   </section>
   {% endfor %}
 
@@ -204,8 +221,10 @@
 
   <section class="rc-panel" id="how" data-panel="how">
   {% if not tabbed and blocks %}<h2>How this works</h2>{% endif %}
-  <p class="meta">A recruit is an athlete's first college season. "Recruited at" is their senior high-school season rating in the
-     same sport -- nothing else; a recruit whose senior season is not linked is listed but not counted. A college's numbers are the
+  <p class="meta"><b>Typical</b> is the middle recruit: half ran faster, half slower. <b>Top quarter</b> and <b>most recruits by</b> mark the fastest quarter and the slowest quarter.
+     Every time is a season converted to a typical course or track, so recruits from hilly and flat states compare; the rating beside it is the same season on Racecast's scale.</p>
+  <p class="meta">A recruit is an athlete's first college season. What counts is their last high-school season in the same sport -- the
+     senior season, or the junior one when no senior season is on record; a recruit with neither is listed but not counted. A college's numbers are the
      plain median and quartiles of its recruits over the last four classes. Ratings are on the
      high-school {{ who|lower }}'s scale so they compare with your own; the first college season is shown the same way, as its HS-equivalent rating.</p>
   <p class="meta">A transfer is the first season at a new college after seasons at another, in the same sport. Both ratings are
@@ -216,6 +235,18 @@
   </div>
 </main>
 <script src="{{ static_v('share.js') }}"></script>
+<script>
+/* the event buttons: one time per event is in the page, the panel's class
+   shows the chosen one */
+document.querySelectorAll(".rec-evseg").forEach(function (seg) {
+  var panel = seg.closest(".rc-panel");
+  seg.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-ev]"); if (!b) return;
+    panel.className = panel.className.replace(/\brec-ev-\S+/, "rec-ev-" + b.dataset.ev);
+    seg.querySelectorAll("[data-ev]").forEach(function (x) { x.classList.toggle("is-on", x === b); });
+  });
+});
+</script>
 {% if tabbed %}<script src="{{ static_v('race-page.js') }}"></script>{% endif %}
 {# Save to shortlist (owner, 2026-10-10): drawn after load by follow.js #}
 <script src="{{ static_v('follow.js') }}" data-shortlist="1" data-school="{{ school }}" data-state="{{ state or '' }}" data-mount=".rc-hd .rc-meta" data-sep=" · "></script>

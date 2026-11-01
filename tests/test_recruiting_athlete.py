@@ -193,7 +193,8 @@ def test_school_table_reads_the_recruit_table_and_stamps_labels():
     assert [r["school"] for r in rows] == ["Stanford", "Tufts"]     # typical recruit, fastest first
     assert rows[1]["min"] == 128.0 and rows[1]["classes"] == "2023 to 2026"   # TF label years
     assert rows[0]["classes"] == "2022"
-    assert set(rows[0]["times"]) == {"p25", "median", "p75"}
+    # all five marks, each in the board's events (5K, 800, 1600, 3200)
+    assert set(rows[0]["times"]) == {"min", "p25", "median", "p75", "max"}
     assert "gender = %(gender)s AND sport = %(sport)s" in cur.sql[-1]
     assert cur.params[-1] == {"gender": "m", "sport": "TF", "min_n": R.MIN_RECRUITS,
                               "half_life": float(R.RECENCY_HALF_LIFE)}
@@ -325,12 +326,15 @@ def test_transfers_both_ways_on_the_college_page():
     assert t["out"] == [] and t["out_summary"]["n"] == 0 and t["in"][0]["gain"] == 6.0
     assert any("t.state = %(state)s" in q for q in cur.sql)
     assert R.schoolTransfers(FakeCur([("to_regclass", [{"to_regclass": None}])]), "W", None, "m", "XC") is None
-    js = read("racecast", "static", "recruiting.js")
-    assert "Transfers in / out" in js and "r.t_in" in js
+    # the board's Transfers tab and the college page's own transfers tab
+    # (2026-11-01 redesign: the in/out column left the board)
+    tpl_b = read("racecast", "templates", "recruiting.html")
+    assert 'data-tab="transfers"' in tpl_b
     tpl = read("racecast", "templates", "recruiting_school.html")
-    assert "b.transfers" in tpl
+    assert "b.transfers" in tpl and 'data-tab="transfers"' in tpl
     # their own tab, linked from the header and the board (owner, 2026-10-29)
     assert 'data-tab="transfers"' in tpl and 'data-panel="transfers"' in tpl
+    js = read("racecast", "static", "recruiting.js")
     assert 'href="#transfers"' in tpl and '#transfers' in js
     # the board's colleges wear their college crest
     assert 'stampCrests(rows, pool="college_" + f["gender"])' in read("racecast", "app.py")
@@ -417,7 +421,8 @@ def test_the_board_has_a_transfers_section_on_the_public_scale(monkeypatch):
     # transfers should use a collegiate rating" -- "it doesn't use hs
     # equivalent rating": college seasons, shown as their HS-equivalents
     tpl = read("racecast", "templates", "recruiting.html")
-    assert 'data-set="view" data-value="recruits"' in tpl and 'data-set="view" data-value="transfers"' in tpl
+    # a tab of its own since the 2026-11-01 redesign; the filters above serve both
+    assert 'data-tab="transfers"' in tpl and 'id="r-out-t"' in tpl
     js = read("racecast", "static", "recruiting.js")
     assert '"/api/recruiting/transfers?"' in js and "function renderTransfers(d)" in js
     app = read("racecast", "app.py")

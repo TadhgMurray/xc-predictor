@@ -556,6 +556,12 @@ EVENTS = {
 }
 # the events every threshold is quoted in
 THRESHOLD_EVENTS = (("5k", 5000.0, "XC"), ("1600", 1600.0, "TF"), ("3200", 3200.0, "TF"))
+# ★ THE BOARD AND SCHOOL PAGE'S EVENTS (owner, 2026-11-01: times first, the
+#   rating beside them; "should add 800m?"): cross country reads as a 5K,
+#   track as an 800, a 1600 or a 3200, the reader's pick
+BOARD_EVENTS = THRESHOLD_EVENTS + (("800", 800.0, "TF"),)
+SPORT_EVENTS = {"XC": ("5k",), "TF": ("800", "1600", "3200")}
+_STATS = ("min", "p25", "median", "p75", "max")
 
 TIERS = {
     # key: (order, label, what it means)
@@ -840,7 +846,7 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
         # trusted: build_recruiting resolved the state (teamState), and the
         #   name's biggest cluster is not a second opinion on it
         r["label"] = schoolLabelIn(r["school"], r.get("state"), trusted=True) if r.get("school") else ""
-        r["times"] = {k: timesFor(r[k], gender) for k in ("p25", "median", "p75")}
+        r["times"] = {k: timesFor(r[k], gender, BOARD_EVENTS) for k in _STATS}
         r["classes"] = (f"{labelYear(r['first_year'], sport)}" if r["first_year"] == r["last_year"]
                         else f"{labelYear(r['first_year'], sport)} to {labelYear(r['last_year'], sport)}")
     rows.sort(key=lambda r: (-(r["median"] or 0), r["school"]))
@@ -851,6 +857,9 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
 
 SCHOOL_SORTS = {
     "median": lambda r: (-(r["median"] or 0), r["school"]),
+    # closest to the reader's rating; the API re-sorts once it knows the
+    # rating, and without one this reads as "median"
+    "closest": lambda r: (-(r["median"] or 0), r["school"]),
     "top":    lambda r: (-(r["p75"] or 0), r["school"]),
     "floor":  lambda r: (-(r["min"] or 0), r["school"]),
     "n":      lambda r: (-r["n"], r["school"]),
@@ -936,7 +945,7 @@ def schoolRecruits(cur, school, state, gender, sport):
     for k in ("min", "p25", "median", "p75", "max"):
         summary[k] = round(float(summary[k]), 1) if summary[k] is not None else None
     summary["label"] = schoolLabelIn(summary["school"], summary.get("state"), trusted=True)
-    summary["times"] = {k: timesFor(summary[k], gender) for k in ("min", "p25", "median", "p75", "max")}
+    summary["times"] = {k: timesFor(summary[k], gender, BOARD_EVENTS) for k in _STATS}
     summary["classes"] = (f"{labelYear(summary['first_year'], sport)}"
                           if summary["first_year"] == summary["last_year"] else
                           f"{labelYear(summary['first_year'], sport)} to {labelYear(summary['last_year'], sport)}")
@@ -956,7 +965,46 @@ def schoolRecruits(cur, school, state, gender, sport):
                          if r.get("hs_school") else "")
         for k in ("first_rating", "hs_equiv", "hs_rating", "recruit_rating"):
             r[k] = round(float(r[k]), 1) if r.get(k) is not None else None
+        # ★ TIMES FIRST (owner, 2026-11-01): the senior season and the
+        #   college so far, each as the sport's events at a typical venue
+        linked = r.get("source") == "hs" and r.get("hs_rating") is not None
+        r["t_hs"] = timesFor(r["hs_rating"], gender, BOARD_EVENTS) if linked else {}
+        r["t_col"] = timesFor(r["hs_equiv"], gender, BOARD_EVENTS) if r.get("hs_equiv") is not None else {}
+        r["change"] = (round(r["hs_equiv"] - r["hs_rating"], 1)
+                       if linked and r.get("hs_equiv") is not None else None)
+    summary.update(collegeFacts(recruits))
     return summary, recruits
+
+
+CHANGE_SAME = 1.5          # rating points either way that read "about the same"
+
+
+def collegeFacts(recruits):
+    """The school page's header facts from its recruits. Pure."""
+    linked = [r for r in recruits if r.get("source") == "hs" and r.get("hs_rating") is not None]
+    years = {r["first_year"] for r in recruits if r.get("first_year") is not None}
+    changed = [r["change"] for r in linked if r.get("change") is not None]
+    by_class = {}
+    for r in recruits:
+        c = by_class.setdefault(r["first_year"], {"linked": [], "unlinked": []})
+        c["linked" if r in linked else "unlinked"].append(r)
+    return {
+        "per_year": round(len(linked) / len(years), 1) if years and linked else None,
+        "held": sum(1 for c in changed if c > -CHANGE_SAME),
+        "held_of": len(changed),
+        "dots": sorted(r["hs_rating"] for r in linked),
+        "by_class": [{"year": y, "label": (v["linked"] + v["unlinked"])[0]["class_label"],
+                      "linked": v["linked"], "unlinked": v["unlinked"]}
+                     for y, v in sorted(by_class.items(), key=lambda kv: -(kv[0] or 0))],
+    }
+
+
+def fasterThan(rating, dots):
+    """The share of a school's linked recruits a rating is faster than, in
+    percent, or None."""
+    if rating is None or not dots:
+        return None
+    return round(100.0 * sum(1 for d in dots if d < float(rating)) / len(dots))
 
 
 def hasRecruits(cur, school, state, gender):
