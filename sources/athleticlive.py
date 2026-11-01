@@ -76,8 +76,8 @@
 #               A race under it waits: on anet's slots for athletic.net, on
 #               our own slots the whole meet does (holdUnknown).
 #
-# ! TRACK ONLY FOR NOW. XC meets are in meet_list (`o` = 'xc') but their
-#   event_summary is empty; where an XC race's results live is still to find.
+# ! TRACK HERE; CROSS COUNTRY IN sources/athleticlive_xc.py (2026-11-01: the
+#   XC races are in event_summary with xc=true, same result documents).
 
 import argparse
 import asyncio

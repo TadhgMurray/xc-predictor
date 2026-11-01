@@ -2,7 +2,8 @@
 # deploy/scrape_local.sh -- every non-athletic.net, non-TFRRS source in one go:
 #
 #   1. AthleticLIVE  (athletic.net's live-results platform, read from its public
-#      JSON; track meets): discover new meet ids, land the settled ones
+#      JSON): discover new meet ids, land track and cross country, close their
+#      athletic.net queue rows
 #   2. every enabled timing company's own site (sources/registry.py --enabled):
 #      read its results index for meet pages, fetch + parse the new ones,
 #      land -> dedup (athletic.net/TFRRS already have it?) -> promote
@@ -36,6 +37,8 @@ if [ "${ALIVE:-1}" != "0" ]; then
   "$PY" -u -m sources.athleticlive discover || rc=1
   echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: land (limit ${ALIVE_LIMIT:-200})"
   "$PY" -u -m sources.athleticlive land --limit "${ALIVE_LIMIT:-200}" $WRITE || rc=1
+  echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: cross country (limit ${ALIVE_XC_LIMIT:-100})"
+  "$PY" -u -m sources.athleticlive_xc land --limit "${ALIVE_XC_LIMIT:-100}" $WRITE || rc=1
   if [ "$DRY" -eq 0 ]; then
     # athletic.net then never asks for a meet AthleticLIVE already gave us
     "$PY" -u -m sources.athleticlive cover || rc=1
