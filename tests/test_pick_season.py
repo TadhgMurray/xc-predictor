@@ -27,9 +27,10 @@ def test_in_season_the_current_season_wins_even_behind_pace():
 
 
 def test_in_season_an_old_newest_season_falls_to_the_old_rule():
-    # the newest season on file is not the one under way (no 2026 rows yet)
+    # the newest season on file is not the one under way (no 2026 rows yet;
+    # Aug 20 is past the Aug 15 seam)
     rows = [("2025", 90_000), ("2024", 1_000_000)]
-    got = P.pickSeason(rows, "XC", dt.date(2026, 8, 3), lambda yr, c: 800_000)
+    got = P.pickSeason(rows, "XC", dt.date(2026, 8, 20), lambda yr, c: 800_000)
     assert got == "2024"
 
 
