@@ -717,11 +717,21 @@ def _load_units(conn):
         for kind in kinds:
             if kind not in have:
                 continue
+            # ★ A COLLEGE UNIT IS ONE ENTRY (owner, 2026-11-01: NESCAC six
+            #   times, once per state its schools are in). Its board is
+            #   nationwide (unitLink), so the state split only repeated it;
+            #   high-school units stay per state, where a league name can
+            #   mean two different leagues.
+            #   One school under two spellings ("Williams", "Williams
+            #   College") is counted once.
+            by_state = "state" if not college else "NULL::text"
             cur.execute(f"""
-                SELECT "{kind}", state, count(DISTINCT school)
+                SELECT "{kind}", {by_state},
+                       count(DISTINCT lower(regexp_replace(school,
+                             '[[:space:]]+(college|university|univ[.]?)$', '', 'i')))
                 FROM   school_unit
                 WHERE  "{kind}" IS NOT NULL AND is_college = %s
-                GROUP  BY "{kind}", state
+                GROUP  BY 1, 2
             """, (college,))
             for unit, state, n in cur.fetchall():
                 label = str(unit)
