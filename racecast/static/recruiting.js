@@ -173,8 +173,12 @@
        the rating is worth at a typical venue, and say so */
     const prs = (s.prs || []).map((p) =>
       `<span class="rc-time-chip rc-pr" title="${esc(p.date)}"><span class="rc-time-lbl">${esc(p.label)}</span>${esc(p.time)}</span>`).join("");
-    const times = (prs ? `<span class="rc-times-lbl">PRs</span>${prs}` : "") +
-      (equiv ? `<span class="rc-times-lbl">${prs ? "rating equivalents" : "equivalent to"}</span>${equiv}` : "");
+    /* ★ REAL PRs ONLY WHEN THERE ARE ANY (owner, 2026-11-01: "it shows that
+       my 3200m PR is 9:06. I have never run 9:06, but I have run 9:01"):
+       the rating's conversions sat beside the PRs and read as PRs. They
+       stay only for a typed time, where they are what the time is worth. */
+    const times = prs ? `<span class="rc-times-lbl">PRs</span>${prs}`
+      : (equiv ? `<span class="rc-times-lbl">equivalent to</span>${equiv}` : "");
     let who, sub;
     if (s.kind === "athlete") {
       qbox.value = s.name;
@@ -183,7 +187,7 @@
       if (s.school_label) bits.push(esc(s.school_label));
       if (s.grad_year) bits.push("class of " + s.grad_year);
       const seasons = Object.keys(s.ratings).map((sp) =>
-        `${s.ratings[sp].toFixed(1)} in ${s.seasons[sp]} ${sp === "XC" ? "XC" : "track"}`).join(", ");
+        `best ${s.ratings[sp].toFixed(1)} in ${s.seasons[sp]} ${sp === "XC" ? "XC" : "track"}`).join(", ");
       sub = bits.join(" · ") + (bits.length ? " · " : "") + seasons;
     } else {
       who = `A ${esc(s.time)} ${esc(s.event_label)}`;

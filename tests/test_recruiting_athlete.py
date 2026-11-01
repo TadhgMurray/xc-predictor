@@ -392,7 +392,8 @@ def test_personal_bests_are_the_athlete_s_own_fastest_per_event():
     assert prs[0]["date"] == "2025-11-08" and prs[0]["seconds"] == 932.4
     assert R.personalBests(FakeCur([]), 7) == []
     assert '"prs": personalBests(cur, int(person_id))' in read("racecast", "recruiting.py")
-    assert "rating equivalents" in read("racecast", "static", "recruiting.js")
+    # since 2026-11-01 the box shows the PRs alone when there are any
+    assert "equivalent to" in read("racecast", "static", "recruiting.js")
 
 
 def test_crests_before_the_school_names():
@@ -478,3 +479,29 @@ def test_senior_or_junior_season_links():
     assert B.hsSeasonFor(2025, 2023)          # no senior season on record: the junior one
     assert not B.hsSeasonFor(2025, 2022)      # sophomore year is not a recruit's number
     assert not B.hsSeasonFor(2025, None)
+
+
+def test_recruits_are_placed_by_their_bests():
+    import build_recruiting as BR
+    rows = [(1, "TF", 3200, 541.1, 140.2), (1, "TF", 3200, 546.0, 139.0),
+            (1, "TF", 1609.3, 250.0, 141.0),            # a mile is not a 1600
+            (1, "TF", 1600, 253.0, 138.5), (1, "XC", 5000, 950, 136.0), (1, "XC", 4800, 900, 138.4)]
+    m = BR.bestMarks(rows)
+    assert m[(1, "TF")] == {"pr_3200": 541.1, "pr_3200_r": 140.2, "pr_1600": 253.0, "pr_1600_r": 138.5}
+    assert m[(1, "XC")] == {"xc_best": 138.4}
+    assert BR.bestRating(dict(sport="TF", hs_rating=135.0, **m[(1, "TF")])) == 140.2
+    assert BR.bestRating(dict(sport="XC", hs_rating=135.0, **m[(1, "XC")])) == 138.4
+    assert BR.bestRating(dict(sport="TF", hs_rating=135.0)) == 135.0
+
+
+def test_track_times_are_the_recruits_prs_as_run():
+    row = {"q_1600": [253.0, 258.0, 262.5, 270.0, 281.0]}
+    t = R.prTimes(row)
+    assert t["max"]["1600"] == 253.0 and t["median"]["1600"] == 262.5 and t["min"]["1600"] == 281.0
+    merged = R._withPrs({"median": {"1600": 999.0, "5k": 900.0}}, t)
+    assert merged["median"] == {"1600": 262.5, "5k": 900.0}
+
+
+def test_the_you_box_shows_real_prs_not_conversions():
+    js = read("racecast", "static", "recruiting.js")
+    assert 'const times = prs ? `<span class="rc-times-lbl">PRs</span>${prs}`' in js

@@ -107,6 +107,17 @@ CREATE TABLE college_recruit_new (
     division       text,
     conference     text,
     region         text,
+    -- ★ THE RECRUIT'S BESTS (owner, 2026-11-01: "might be using season
+    --   rating over PRs? which is not how recruiting works"): high-school
+    --   track PRs as run (seconds) with each PR's rating, and the best
+    --   cross country race's rating
+    pr_800         real,
+    pr_1600        real,
+    pr_3200        real,
+    pr_800_r       real,
+    pr_1600_r      real,
+    pr_3200_r      real,
+    xc_best        real,
     CONSTRAINT college_recruit_new_pkey PRIMARY KEY (person_id, sport)
 );
 DROP TABLE IF EXISTS college_recruit_meta_new;
@@ -536,7 +547,89 @@ _T_COLS = ("person_id", "sport", "gender", "year", "grade", "school", "state", "
 
 _COLS = ("person_id", "sport", "school", "state", "gender", "first_year", "grade",
          "first_rating", "hs_equiv", "n_races", "hs_rating", "hs_year", "hs_school",
-         "hs_state", "recruit_rating", "source", "division", "conference", "region")
+         "hs_state", "recruit_rating", "source", "division", "conference", "region",
+         "pr_800", "pr_1600", "pr_3200", "pr_800_r", "pr_1600_r", "pr_3200_r", "xc_best")
+
+# ★ A RECRUIT IS THEIR BEST, NOT THEIR AVERAGE (owner, 2026-11-01: "for me it
+#   shows that my 3200m PR is 9:06. I have never run 9:06, but I have run
+#   9:01 ... for a 1:53 guy it showed 1:56"). Coaches recruit PRs. Every high
+#   school race up to the recruit's last high-school season is read once
+#   (ranking_results, the boards' own rated rows): the fastest 800, 1600 and
+#   3200 as run, each with its rating, and the best cross country race. The
+#   rating a recruit is placed by is the best of those in the sport -- the
+#   season average stays as hs_rating, for the freshman-gain measure.
+PR_EVENTS = (("800", 800.0, 4.0), ("1600", 1600.0, 4.0), ("3200", 3200.0, 6.0))
+
+
+def bestMarks(rows):
+    """{(person_id, sport): {"pr_800": s, "pr_800_r": r, ..., "xc_best": r}}
+    from (person_id, sport, distance, time_seconds, speed_rating) rows. Pure."""
+    out = {}
+    for pid, sport, dist, secs, rating in rows:
+        if secs is None or secs <= 0:
+            continue
+        b = out.setdefault((pid, sport), {})
+        if sport == "XC":
+            if rating is not None and (b.get("xc_best") is None or rating > b["xc_best"]):
+                b["xc_best"] = float(rating)
+            continue
+        for key, metres, tol in PR_EVENTS:
+            if dist is not None and abs(float(dist) - metres) <= tol:
+                if b.get("pr_" + key) is None or secs < b["pr_" + key]:
+                    b["pr_" + key] = float(secs)
+                    b["pr_" + key + "_r"] = float(rating) if rating is not None else None
+                break
+    return out
+
+
+def bestRating(row):
+    """The rating a linked recruit is placed by: the best race in the sport
+    (XC) or the best-rated PR (track), else the season's."""
+    if row["sport"] == "XC":
+        return row.get("xc_best") or row.get("hs_rating")
+    rs = [row.get(f"pr_{k}_r") for k, _m, _t in PR_EVENTS if row.get(f"pr_{k}_r") is not None]
+    return max(rs) if rs else row.get("hs_rating")
+
+
+def applyBests(cur, rows):
+    """Stamp each linked recruit's PRs and best race, and place them by it.
+    -> how many recruits got a best."""
+    from psycopg2.extras import execute_values
+    want = [(r["person_id"], r["sport"], r["hs_year"]) for r in rows
+            if r.get("source") == "hs" and r.get("hs_year") is not None]
+    for r in rows:
+        for k, _m, _t in PR_EVENTS:
+            r.setdefault(f"pr_{k}", None)
+            r.setdefault(f"pr_{k}_r", None)
+        r.setdefault("xc_best", None)
+    if not want:
+        return 0
+    cur.execute("DROP TABLE IF EXISTS rec_best_t")
+    cur.execute("CREATE TEMP TABLE rec_best_t (person_id bigint, sport text, hs_year int)")
+    execute_values(cur, "INSERT INTO rec_best_t VALUES %s", want, page_size=10000)
+    cur.execute("ANALYZE rec_best_t")
+    cur.execute("""
+        SELECT r.person_id, r.sport, r.distance, r.time_seconds, r.speed_rating
+        FROM   rec_best_t t
+        JOIN   ranking_results r ON r.person_id = t.person_id AND r.sport = t.sport
+        WHERE  r.pool IN ('hs_m', 'hs_f') AND r.year <= t.hs_year
+          AND  r.time_seconds > 0 AND r.speed_rating IS NOT NULL
+          AND  (r.sport = 'XC' OR abs(r.distance - 800) <= 4 OR abs(r.distance - 1600) <= 4
+                OR abs(r.distance - 3200) <= 6)
+    """)
+    got = cur.fetchall()
+    marks = bestMarks([tuple(g.values()) if isinstance(g, dict) else tuple(g) for g in got])
+    n = 0
+    for r in rows:
+        b = marks.get((r["person_id"], r["sport"]))
+        if not b or r.get("source") != "hs":
+            continue
+        r.update(b)
+        best = bestRating(r)
+        if best is not None:
+            r["recruit_rating"] = float(best)
+            n += 1
+    return n
 
 
 def main():
@@ -598,6 +691,10 @@ def main():
         print(f"  recruits kept: {len(rows):,}  dropped: {dropped}")
         linked = sum(1 for r in rows if r["source"] == "hs")
         print(f"  linked to a high-school season: {linked:,} of {len(rows):,}")
+        with conn.cursor() as bcur:
+            n_best = applyBests(bcur, rows)
+        conn.rollback()                  # only a temp table was written
+        print(f"  placed by their PRs / best race: {n_best:,} of {linked:,}")
         for (g, sp), (gain, n) in sorted(gains.items()):
             note = "" if n >= MIN_GAIN_PAIRS else f"  (under {MIN_GAIN_PAIRS} pairs: 0 applied)"
             print(f"  freshman gain {g}/{sp}: {gain:+.2f} over {n:,} pairs{note}")

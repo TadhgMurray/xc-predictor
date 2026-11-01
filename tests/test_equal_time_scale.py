@@ -26,7 +26,7 @@ def fresh(monkeypatch):
 
 
 def test_switch_off_is_the_old_multiplier(monkeypatch):
-    monkeypatch.delenv("XCP_EQUAL_TIME_SCALE", raising=False)
+    monkeypatch.setenv("XCP_EQUAL_TIME_SCALE", "0")
     assert PV.hsMap("college_f") == (1.2, 1.0)
     assert PV.toHs(149.2, "college_f") == pytest.approx(179.04)
     assert PV.fromHs(179.04, "college_f") == pytest.approx(149.2)
@@ -72,3 +72,10 @@ def test_a_map_that_fits_badly_keeps_the_factor(monkeypatch):
     import normalize_distance
     monkeypatch.setattr(normalize_distance, "ratedScalePool", lambda p: p)
     assert PV.hsMap("college_f") == (1.2, 1.0)
+
+
+def test_equal_time_is_the_default(monkeypatch):
+    monkeypatch.delenv("XCP_EQUAL_TIME_SCALE", raising=False)
+    assert PV.equalTimeOn()
+    monkeypatch.setenv("XCP_EQUAL_TIME_SCALE", "0")
+    assert not PV.equalTimeOn()

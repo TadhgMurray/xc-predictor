@@ -139,11 +139,11 @@
   {% set lo = (lo_r|min) - pad %}{% set hi = (hi_r|max) + pad %}
   <div class="rec-hero">
     {% if b.sport == "XC" %}
-    <h2>A typical {{ school }} recruit's senior cross country season was worth <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> for 5K on a track <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
-    <p class="meta">The {{ s.n }} recruits we could match, classes of {{ s.classes }}, each senior season as the track 5K it is worth -- the same 5K their athlete pages show. Each dot is one recruit.</p>
+    <h2>A typical {{ school }} recruit's best cross country race was worth <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> for 5K on a track <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
+    <p class="meta">The {{ s.n }} recruits we could match, classes of {{ s.classes }}, each by their best high-school race, as the track 5K it is worth -- the same 5K their athlete pages show. Each dot is one recruit.</p>
     {% else %}
-    <h2>A typical {{ school }} recruit ran <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> <span class="rec-evword">{% for k in evs %}<span class="ev ev-{{ k }}">for {{ evname[k] }}m</span>{% endfor %}</span> as a senior <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
-    <p class="meta">Senior-year times of the {{ s.n }} recruits we could match, classes of {{ s.classes }}, at a typical track. Each dot is one recruit.</p>
+    <h2>A typical {{ school }} recruit's high-school PR: <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> <span class="rec-evword">{% for k in evs %}<span class="ev ev-{{ k }}">for {{ evname[k] }}m</span>{% endfor %}</span></h2>
+    <p class="meta">The high-school PRs of the {{ s.n }} recruits we could match, classes of {{ s.classes }}, as run. Each dot is one recruit, placed by their best-rated race.</p>
     {% endif %}
     <div class="rec-strip">
       {% for d in s.dots %}<i class="rec-dot" style="left:{{ xp(d, lo, hi) }}%"></i>{% endfor %}
@@ -161,7 +161,7 @@
   {# ★ RECRUITS BY CLASS (owner, 2026-11-01): the matched ones with their
      senior time and how college has gone; the unmatched on one line #}
   <div class="r-scroll"><table class="rk rc-tbl rec-tbl">
-    <thead><tr><th>Recruit</th><th>High school</th><th class="num">Senior year</th><th>In college so far</th></tr></thead>
+    <thead><tr><th>Recruit</th><th>High school</th><th class="num">{{ "Best race" if b.sport == "XC" else "High school PR" }}</th><th>College season vs senior season</th></tr></thead>
     <tbody>
     {% for c in s.by_class %}
       <tr class="rec-cls"><th colspan="4">Class of {{ c.label }} <span class="rc-dim">· {{ c.linked|length }} recruit{{ "s" if c.linked|length != 1 }}</span></th></tr>
@@ -169,7 +169,7 @@
       <tr class="rec-r">
         <td class="rec-nm"><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
         <td class="rec-hs">{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% endif %}</td>
-        <td class="num rec-t"><b>{{ tt(r.t_hs, evs) }}</b><span class="rec-rt">{{ "%.1f"|format(r.hs_rating) }}</span></td>
+        <td class="num rec-t"><b>{{ tt(r.t_hs, evs) }}</b><span class="rec-rt">{% for k in evs %}<span class="ev ev-{{ k }}">{{ ("%.1f"|format(r.r_hs[k])) if (r.r_hs or {}).get(k) is not none else "" }}</span>{% endfor %}</span></td>
         <td class="rec-c">{% if r.change is not none %}{% if r.change >= 1.5 %}<span class="rec-up">↑ faster</span>{% elif r.change <= -1.5 %}<span class="rec-dn">↓ slower</span>{% else %}<span class="rec-eq">about the same</span>{% endif %}
           <span class="rec-rt">{{ tt(r.t_col, evs) }} · {{ "%.1f"|format(r.hs_equiv) }}</span>{% else %}<span class="rc-dim">-</span>{% endif %}</td>
       </tr>
@@ -180,7 +180,7 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="meta">Each time is the recruit's season as {{ "the track 5K it is worth, the 5K their athlete pages show" if b.sport == "XC" else "a time on a typical track" }}; the grey number beside it is the same season as a rating{{ rating_i() }} on the high-school scale.</p>
+  <p class="meta">{% if b.sport == "XC" %}Each recruit's best high-school cross country race, as the track 5K it is worth (the 5K their athlete pages show){% else %}Each recruit's high-school PR in the event, as run; blank where they never ran it{% endif %}. The grey number is the same race as a rating{{ rating_i() }}. The college column compares the first college season with the last high-school season.</p>
   {% else %}
   <p class="meta">No {{ who|lower }}'s {{ sport_words[b.sport]|lower }} recruits on file.</p>
   {% endif %}

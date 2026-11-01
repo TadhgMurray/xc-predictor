@@ -29,6 +29,13 @@ for _p in (_ROOT, os.path.join(_ROOT, "racecast"), os.path.join(_ROOT, "scripts"
 
 import pytest                                                 # noqa: E402
 import app as A                                               # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _multiplier_scale(monkeypatch):
+    # these cards are checked against stubbed per-pool factors: the old
+    # multiplier scale (equal time is the default since 2026-11-01)
+    monkeypatch.setenv("XCP_EQUAL_TIME_SCALE", "0")
 import conversions as cv                                      # noqa: E402
 import pool_view as PV                                        # noqa: E402
 

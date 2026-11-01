@@ -835,9 +835,12 @@ _MAP_CACHE = {}
 _MAP_GRID = tuple(range(40, 202, 4))
 
 
+# ★ ON BY DEFAULT (owner, 2026-11-01: "times should match so the ratings
+#   match"). The one-multiplier scale made an HS 150 a 3:52 1600 and a college
+#   150 a 3:59 mile on /scale. XCP_EQUAL_TIME_SCALE=0 is the old multiplier.
 def equalTimeOn():
     import os
-    return os.environ.get("XCP_EQUAL_TIME_SCALE", "0").strip() == "1"
+    return os.environ.get("XCP_EQUAL_TIME_SCALE", "1").strip() != "0"
 
 
 def _trackSeconds(rating, pool):

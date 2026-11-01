@@ -798,7 +798,7 @@ RECENCY_HALF_LIFE = 1.5
 #   RECENCY_HALF_LIFE stays defined for callers that still pass it.
 _AGG_SQL = """
     WITH src AS (
-        SELECT school, state, division, conference, recruit_rating, source, first_year
+        SELECT school, state, division, conference, recruit_rating, source, first_year{pr_cols}
         FROM   college_recruit
         WHERE  gender = %(gender)s AND sport = %(sport)s {extra}
     )
@@ -815,11 +815,64 @@ _AGG_SQL = """
                 FILTER (WHERE source = 'hs'))::real AS p75,
            (max(recruit_rating) FILTER (WHERE source = 'hs'))::real AS max,
            min(first_year) AS first_year, max(first_year) AS last_year,
-           NULL::real AS recent_share
+           NULL::real AS recent_share{prs}
     FROM   src
     GROUP  BY school, state
     HAVING count(*) FILTER (WHERE source = 'hs') >= %(min_n)s
 """
+# ★ THE TRACK TIMES ARE PRs AS RUN (owner, 2026-11-01): per event, the
+#   quartiles of the recruits' own high-school PRs -- fastest first, so a
+#   time's 0th percentile is the rating board's max
+_PR_EVS = ("800", "1600", "3200")
+_PR_Q = "ARRAY[0, 0.25, 0.5, 0.75, 1]::float8[]"
+_HAS_PRS = {}
+
+
+def _hasPrCols(cur):
+    if "v" not in _HAS_PRS:
+        try:
+            cur.execute("""SELECT 1 FROM information_schema.columns
+                           WHERE table_name = 'college_recruit' AND column_name = 'pr_1600'""")
+            _HAS_PRS["v"] = cur.fetchone() is not None
+        except Exception:                               # noqa: BLE001
+            cur.connection.rollback()
+            return False
+    return _HAS_PRS["v"]
+
+
+def _aggSql(cur, extra):
+    if not _hasPrCols(cur):
+        return _AGG_SQL.format(extra=extra, prs="", pr_cols="")
+    prs = "".join(f""",
+           (percentile_cont({_PR_Q}) WITHIN GROUP (ORDER BY pr_{e})
+                FILTER (WHERE source = 'hs' AND pr_{e} IS NOT NULL)) AS q_{e}""" for e in _PR_EVS)
+    return _AGG_SQL.format(extra=extra, prs=prs,
+                           pr_cols=", " + ", ".join(f"pr_{e}" for e in _PR_EVS))
+
+
+def prTimes(row):
+    """{stat: {event: seconds}} from a row's q_<event> quartile arrays, the
+    rating stats' names mapped onto times (max rating = fastest time). Pure."""
+    out = {k: {} for k in _STATS}
+    for e in _PR_EVS:
+        q = row.get(f"q_{e}")
+        if not q:
+            continue
+        for stat, i in (("max", 0), ("p75", 1), ("median", 2), ("p25", 3), ("min", 4)):
+            out[stat][e] = round(float(q[i]), 2)
+    return out
+
+
+def _withPrs(times, prs):
+    """The conversion times, each track event replaced by the PRs as run
+    wherever recruits ran it."""
+    out = {}
+    for stat in _STATS:
+        out[stat] = dict(times.get(stat) or {})
+        out[stat].update(prs.get(stat) or {})
+    return out
+
+
 _SCHOOLS = {}                    # (gender, sport) -> (at, rows)
 _schools_lock = threading.Lock()
 
@@ -858,7 +911,7 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
     if not _tableExists(cur, "college_recruit"):
         return []
     tc = transferCounts(cur, gender, sport)
-    cur.execute(_AGG_SQL.format(extra=""),
+    cur.execute(_aggSql(cur, ""),
                 {"gender": gender, "sport": sport, "min_n": int(min_n),
                  "half_life": float(RECENCY_HALF_LIFE)})
     rows = _rowsOf(cur)
@@ -870,6 +923,10 @@ def schoolTable(cur, gender, sport, min_n=MIN_RECRUITS):
         #   name's biggest cluster is not a second opinion on it
         r["label"] = schoolLabelIn(r["school"], r.get("state"), trusted=True) if r.get("school") else ""
         r["times"] = {k: timesFor(r[k], gender, BOARD_EVENTS) for k in _STATS}
+        if sport == "TF":
+            r["times"] = _withPrs(r["times"], prTimes(r))
+        for e in _PR_EVS:
+            r.pop(f"q_{e}", None)
         r["classes"] = (f"{labelYear(r['first_year'], sport)}" if r["first_year"] == r["last_year"]
                         else f"{labelYear(r['first_year'], sport)} to {labelYear(r['last_year'], sport)}")
     rows.sort(key=lambda r: (-(r["median"] or 0), r["school"]))
@@ -960,7 +1017,7 @@ def schoolRecruits(cur, school, state, gender, sport):
     if state:
         params["state"] = state
         extra += " AND state = %(state)s"
-    cur.execute(_AGG_SQL.format(extra=extra), params)
+    cur.execute(_aggSql(cur, extra), params)
     agg = _rowsOf(cur)
     if not agg:
         return None, []
@@ -969,13 +1026,19 @@ def schoolRecruits(cur, school, state, gender, sport):
         summary[k] = round(float(summary[k]), 1) if summary[k] is not None else None
     summary["label"] = schoolLabelIn(summary["school"], summary.get("state"), trusted=True)
     summary["times"] = {k: timesFor(summary[k], gender, BOARD_EVENTS) for k in _STATS}
+    if sport == "TF":
+        summary["times"] = _withPrs(summary["times"], prTimes(summary))
+    for e in _PR_EVS:
+        summary.pop(f"q_{e}", None)
+    pr_sel = (", r.pr_800, r.pr_1600, r.pr_3200, r.pr_800_r, r.pr_1600_r, r.pr_3200_r, r.xc_best"
+              if _hasPrCols(cur) else "")
     summary["classes"] = (f"{labelYear(summary['first_year'], sport)}"
                           if summary["first_year"] == summary["last_year"] else
                           f"{labelYear(summary['first_year'], sport)} to {labelYear(summary['last_year'], sport)}")
     cur.execute(f"""
         SELECT r.person_id, r.first_year, r.grade, r.first_rating, r.hs_equiv,
                r.hs_rating, r.hs_year, r.hs_school, r.hs_state, r.recruit_rating,
-               r.source, r.n_races, a.name
+               r.source, r.n_races, a.name{pr_sel}
         FROM   college_recruit r
         {nameLateral('r')}
         WHERE  r.gender = %(gender)s AND r.sport = %(sport)s {extra}
@@ -991,8 +1054,23 @@ def schoolRecruits(cur, school, state, gender, sport):
         # ★ TIMES FIRST (owner, 2026-11-01): the senior season and the
         #   college so far, each as the sport's events at a typical venue
         linked = r.get("source") == "hs" and r.get("hs_rating") is not None
-        r["t_hs"] = timesFor(r["hs_rating"], gender, BOARD_EVENTS) if linked else {}
+        # ★ THE RECRUIT'S BESTS (owner, 2026-11-01): track PRs as run, each
+        #   with its own rating; cross country as its best race's track 5K.
+        #   An event they never ran shows nothing rather than a conversion.
+        if not linked:
+            r["t_hs"], r["r_hs"] = {}, {}
+        elif sport == "TF" and any(r.get(f"pr_{e}") for e in _PR_EVS):
+            r["t_hs"] = {e: r.get(f"pr_{e}") for e in _PR_EVS}
+            r["r_hs"] = {e: (round(float(r[f"pr_{e}_r"]), 1) if r.get(f"pr_{e}_r") is not None else None)
+                         for e in _PR_EVS}
+        else:
+            best = r.get("recruit_rating") or r["hs_rating"]
+            r["t_hs"] = timesFor(best, gender, BOARD_EVENTS)
+            r["r_hs"] = {k: best for k, *_ in BOARD_EVENTS}
         r["t_col"] = timesFor(r["hs_equiv"], gender, BOARD_EVENTS) if r.get("hs_equiv") is not None else {}
+        # how college has gone: season against season (the first college
+        # season and the last high-school one, both on the HS scale) -- a
+        # best against an average would read "slower" for nearly everyone
         r["change"] = (round(r["hs_equiv"] - r["hs_rating"], 1)
                        if linked and r.get("hs_equiv") is not None else None)
     summary.update(collegeFacts(recruits))
@@ -1015,7 +1093,7 @@ def collegeFacts(recruits):
         "per_year": round(len(linked) / len(years), 1) if years and linked else None,
         "held": sum(1 for c in changed if c > -CHANGE_SAME),
         "held_of": len(changed),
-        "dots": sorted(r["hs_rating"] for r in linked),
+        "dots": sorted(r.get("recruit_rating") or r["hs_rating"] for r in linked),
         "by_class": [{"year": y, "label": (v["linked"] + v["unlinked"])[0]["class_label"],
                       "linked": v["linked"], "unlinked": v["unlinked"]}
                      for y, v in sorted(by_class.items(), key=lambda kv: -(kv[0] or 0))],
@@ -1267,6 +1345,7 @@ def _athleteSubject(cur, person_id, level="hs"):
     from school_identity import schoolLabelIn
     cur.execute(f"""
         SELECT s.pool, s.sport, s.year, s.grade, s.school, s.state, s.mean_rating,
+               s.best_rating,
                s.n_races, s.last_race, {gradeNumSql('s')} AS grade_num, a.name
         FROM   athlete_season s
         {nameLateral('s')}
@@ -1280,7 +1359,11 @@ def _athleteSubject(cur, person_id, level="hs"):
     ratings, seasons = {}, {}
     for r in rows:
         if r["sport"] not in ratings:
-            v = float(r["mean_rating"])
+            # ★ PLACED BY THE BEST RACE (owner, 2026-11-01: recruiting goes on
+            #   PRs, not a season average), as the recruits are; a college
+            #   season among transfers keeps its season number
+            v = float(r["best_rating"] if (level != "college" and r.get("best_rating"))
+                      else r["mean_rating"])
             if level == "college":
                 # a college season placed among HS-equivalent numbers is its
                 # own HS-equivalent (pool_view.toHs)
