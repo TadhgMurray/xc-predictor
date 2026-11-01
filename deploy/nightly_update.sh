@@ -183,24 +183,22 @@ if [ "$SCRAPE" -eq 1 ]; then
   #   ~150,000 requests in spring's busiest week. XCP_NIGHTLY_ANET_SPORT=
   #   (empty) scrapes both again; TF scrapes track only.
   export ANET_SPORT="${XCP_NIGHTLY_ANET_SPORT-XC}"
-  export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-150}"
-  export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-2}"
-  export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-300}"
+  # ★ FEWER PROBES (owner, 2026-11-01: "tfrrs seems to probe too long ...
+  #   should probe less meets. Anet and local should do too"): the night of
+  #   10-31 spent ~680 TFRRS requests on ids past the newest meet ("not a
+  #   meet yet - kept"). TFRRS's newest meets now come from its own
+  #   latest-results index (01_tfrrs_latest, priority 1), so its walk is a
+  #   backstop: 50 ids, one empty block stops it. athletic.net: 100-id
+  #   blocks, one empty block stops it (was 150 x 2).
+  export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-100}"
+  export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-1}"
+  export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-50}"
+  export TFRRS_DRY_BLOCKS="${XCP_NIGHTLY_TFRRS_DRY_BLOCKS:-1}"
   # ★ TFRRS CROSS COUNTRY ONLY TOO (owner, 2026-10-30), as athletic.net
   #   above: a track meet is its landing page plus the /m and /f compiled
   #   pages, and Cloudflare challenged those on the manual run.
   #   XCP_NIGHTLY_TFRRS_SPORT= (empty) claims both again.
   export TFRRS_SPORT="${XCP_NIGHTLY_TFRRS_SPORT-XC}"
-  # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
-  #   blocked the old server and agreed only to a small scrape from the
-  #   owner's side computer (ISSUES-RUNNING, 2026-10-12), so the server
-  #   scrapes it only once they have said the server may.
-  if [ "${XCP_NIGHTLY_ANET:-1}" = "0" ]; then
-    echo "  scrape_anet: off (XCP_NIGHTLY_ANET=0)" | tee -a "$SUMMARY"
-  else
-    scrape scrape_anet "$PY" -u scripts/launcher.py &
-    pa=$!
-  fi
   # ★ TFRRS'S HIGH SCHOOL STATE SITES FIRST (2026-10-25): the newest meets
   #   on fl. / indiana.tfrrs.org's lists (3 index pages each, ~6 requests),
   #   kept in tfrrs_hs_meets for 04a pass 2b, and any of the last 30 days
@@ -218,6 +216,29 @@ if [ "$SCRAPE" -eq 1 ]; then
   fi
   scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
   pb=$!
+  # ★ LOCAL SOURCES BEFORE ATHLETIC.NET (owner, 2026-11-01: "we should
+  #   scrape local b4 any anet, as we want to skip any meets on anet we can
+  #   get with a local source"). AthleticLIVE lands its meets under their
+  #   athletic.net ids first, and the anet track scrape's hook
+  #   (athleticlive.landForScrape) then skips the results calls for every
+  #   meet already landed. Timer meets (deploy/scrape_local.sh) go in too;
+  #   dedup keeps the feed's copy when athletic.net posts the same meet.
+  #   TFRRS runs alongside (it does not overlap the local sources).
+  #   XCP_NIGHTLY_LOCAL=0 skips; XCP_NIGHTLY_LOCAL_PER_SOURCE new meets a timer.
+  if [ "${XCP_NIGHTLY_LOCAL:-1}" != "0" ]; then
+    step 01_local timeout "${XCP_NIGHTLY_LOCAL_MIN:-45}m" bash deploy/scrape_local.sh \
+      --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
+  fi
+  # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
+  #   blocked the old server and agreed only to a small scrape from the
+  #   owner's side computer (ISSUES-RUNNING, 2026-10-12), so the server
+  #   scrapes it only once they have said the server may.
+  if [ "${XCP_NIGHTLY_ANET:-1}" = "0" ]; then
+    echo "  scrape_anet: off (XCP_NIGHTLY_ANET=0)" | tee -a "$SUMMARY"
+  else
+    scrape scrape_anet "$PY" -u scripts/launcher.py &
+    pa=$!
+  fi
   [ -n "${pa:-}" ] && wait "$pa"; wait "$pb"
   for nm in scrape_anet scrape_tfrrs; do
     [ -f "$LOGDIR/$nm.failed" ] && FAILED="$FAILED $nm"

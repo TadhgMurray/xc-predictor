@@ -26,6 +26,7 @@
 
 psycopg2-binary          # every module that touches the database
 playwright               # both launchers drive a real Chrome through it
+playwright-stealth       # anet launcher only
 beautifulsoup4           # tfrrs parsers
 lxml                     # the parser bs4 is asked for BY NAME: BeautifulSoup(html, "lxml")
 requests                 # tfrrs fetch tier 1
