@@ -40,7 +40,11 @@
 # ! COMPUTED ONCE PER POOL PER SIX HOURS (ttlcache), like /what-it-takes:
 #   the board's ends are two index-ordered LIMIT 1 reads per sport, the cells
 #   a few hundred pure conversions. Nothing here runs per row of a board.
+import json
 import math
+import os
+import tempfile
+import time
 
 from flask import Blueprint, abort, render_template, request
 
@@ -248,11 +252,52 @@ def _factor(pool):
         return None
 
 
+# ★ ONE BUILD FOR EVERY WORKER (owner, 2026-11-01: "this rating to time page
+#   loads too slow"). ttlcache is per process, so each of gunicorn's eight
+#   workers built every table once (1.5 s a pool, 2.5 s for ?pool=all) before
+#   it was quick. A built table is also written to a small file the other
+#   workers read, for the same six hours.
+CACHE_DIR = os.environ.get("XCP_CACHE_DIR") or os.path.join(tempfile.gettempdir(), "racecast-cache")
+
+
+def _diskPath(pool, step):
+    return os.path.join(CACHE_DIR, f"scale_{pool}_{int(step)}.json")
+
+
+def _diskGet(pool, step, now=None):
+    try:
+        path = _diskPath(pool, step)
+        if (now or time.time()) - os.path.getmtime(path) > _TTL:
+            return None
+        with open(path, encoding="utf-8") as f:
+            val = json.load(f)
+        return val if val.get("rows") else None
+    except (OSError, ValueError):
+        return None
+
+
+def _diskPut(pool, step, val):
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        tmp = _diskPath(pool, step) + f".{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(val, f, default=str)
+        os.replace(tmp, _diskPath(pool, step))
+    except OSError:
+        pass
+
+
 def tableFor(cur, pool, step=STEP):
     """The cached table for one pool and step."""
     def compute():
+        hit = _diskGet(pool, step)
+        if hit is not None:
+            return hit
         ends = boardEnds(cur, pool)
-        return buildTable(pool, ends, _factor(pool), step)
+        val = buildTable(pool, ends, _factor(pool), step)
+        if val["rows"]:
+            _diskPut(pool, step, val)
+        return val
     val, stamp = ttlcache.get(("scale", pool, int(step)), compute, ttl=_TTL,
                               ttl_of=lambda v: _TTL if v["rows"] else 300.0)
     return dict(val, computed_at=stamp)

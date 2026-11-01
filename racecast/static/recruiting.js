@@ -230,7 +230,8 @@
      its typical recruit as a time with the rating beside it, a bar over
      every recruit fastest to slowest with the typical recruit ticked and
      the reader marked, the recruit count, and the reader's band. */
-  const EV_LABEL = { "5k": "5K XC", "800": "800m", "1600": "1600m", "3200": "3200m" };
+  // cross country reads as the track 5K the athlete pages show
+  const EV_LABEL = { "5k": "5K (track)", "800": "800m", "1600": "1600m", "3200": "3200m" };
   function evKey() { return state.sport === "XC" ? "5k" : $("r-ev").value; }
   function fitTag(t) {
     if (!t) return "";

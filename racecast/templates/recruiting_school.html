@@ -56,7 +56,7 @@
       {# ★ THE HEADER FACTS (owner, 2026-11-01 redesign): each sport's typical
          recruit as a time with its rating beside it, how many a year, and
          how they have done in college so far #}
-      {% set evname = {"5k": "5K XC", "800": "800", "1600": "1600", "3200": "3200"} %}
+      {% set evname = {"5k": "5K track", "800": "800", "1600": "1600", "3200": "3200"} %}
       {% if blocks %}
       <div class="rc-champs">
         {% for b in rec_blocks %}{% set s = b.summary %}{% if s.median is not none %}
@@ -138,8 +138,13 @@
   {% set hi_r = [s.max] + ([b.rating] if b.rating is not none else []) %}
   {% set lo = (lo_r|min) - pad %}{% set hi = (hi_r|max) + pad %}
   <div class="rec-hero">
-    <h2>A typical {{ school }} recruit ran <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> <span class="rec-evword">{% for k in evs %}<span class="ev ev-{{ k }}">for {{ "5K cross country" if k == "5k" else (evname[k] ~ "m") }}</span>{% endfor %}</span> as a senior <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
-    <p class="meta">Senior-year times of the {{ s.n }} recruits we could match, classes of {{ s.classes }}, at a typical {{ "course" if b.sport == "XC" else "track" }}. Each dot is one recruit.</p>
+    {% if b.sport == "XC" %}
+    <h2>A typical {{ school }} recruit's senior cross country season was worth <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> for 5K on a track <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
+    <p class="meta">The {{ s.n }} recruits we could match, classes of {{ s.classes }}, each senior season as the track 5K it is worth -- the same 5K their athlete pages show. Each dot is one recruit.</p>
+    {% else %}
+    <h2>A typical {{ school }} recruit ran <span class="rec-hl">{{ tt(s.times.median, evs) }}</span> <span class="rec-evword">{% for k in evs %}<span class="ev ev-{{ k }}">for {{ evname[k] }}m</span>{% endfor %}</span> as a senior <span class="rec-rt">rating {{ "%.1f"|format(s.median) }}</span></h2>
+    <p class="meta">Senior-year times of the {{ s.n }} recruits we could match, classes of {{ s.classes }}, at a typical track. Each dot is one recruit.</p>
+    {% endif %}
     <div class="rec-strip">
       {% for d in s.dots %}<i class="rec-dot" style="left:{{ xp(d, lo, hi) }}%"></i>{% endfor %}
       {% for key, name in [("max", "Fastest"), ("p75", "Top quarter"), ("median", "Typical"), ("p25", "Most recruits by"), ("min", "Slowest")] %}{% if s[key] is not none %}
@@ -175,7 +180,7 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="meta">Each time is the recruit's season converted to a typical {{ "5K cross country course" if b.sport == "XC" else "track" }}; the grey number beside it is the same season as a rating{{ rating_i() }} on the high-school scale.</p>
+  <p class="meta">Each time is the recruit's season as {{ "the track 5K it is worth, the 5K their athlete pages show" if b.sport == "XC" else "a time on a typical track" }}; the grey number beside it is the same season as a rating{{ rating_i() }} on the high-school scale.</p>
   {% else %}
   <p class="meta">No {{ who|lower }}'s {{ sport_words[b.sport]|lower }} recruits on file.</p>
   {% endif %}
@@ -222,7 +227,7 @@
   <section class="rc-panel" id="how" data-panel="how">
   {% if not tabbed and blocks %}<h2>How this works</h2>{% endif %}
   <p class="meta"><b>Typical</b> is the middle recruit: half ran faster, half slower. <b>Top quarter</b> and <b>most recruits by</b> mark the fastest quarter and the slowest quarter.
-     Every time is a season converted to a typical course or track, so recruits from hilly and flat states compare; the rating beside it is the same season on Racecast's scale.</p>
+     Every time is a season converted to a track -- cross country as the track 5K it is worth, the same 5K the athlete pages show -- so recruits from hilly and flat states compare; the rating beside it is the same season on Racecast's scale.</p>
   <p class="meta">A recruit is an athlete's first college season. What counts is their last high-school season in the same sport -- the
      senior season, or the junior one when no senior season is on record; a recruit with neither is listed but not counted. A college's numbers are the
      plain median and quartiles of its recruits over the last four classes. Ratings are on the

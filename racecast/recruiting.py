@@ -559,7 +559,14 @@ THRESHOLD_EVENTS = (("5k", 5000.0, "XC"), ("1600", 1600.0, "TF"), ("3200", 3200.
 # ★ THE BOARD AND SCHOOL PAGE'S EVENTS (owner, 2026-11-01: times first, the
 #   rating beside them; "should add 800m?"): cross country reads as a 5K,
 #   track as an 800, a 1600 or a 3200, the reader's pick
-BOARD_EVENTS = THRESHOLD_EVENTS + (("800", 800.0, "TF"),)
+# ! THE 5K IS THE TRACK 5K THE REST OF THE SITE SHOWS (owner, 2026-11-01:
+#   "the times on the school pages are just not right for the recruiting
+#   ones" -- Taylor Combs' 2025 XC 134.6 read 14:54 on his page and 15:19
+#   here, a typical-course 5K). "T5K" is conversions.ratingClock's own
+#   answer, the athlete header's and the boards' 5K column, so the two
+#   pages cannot disagree.
+BOARD_EVENTS = (("5k", 5000.0, "T5K"), ("1600", 1600.0, "TF"), ("3200", 3200.0, "TF"),
+                ("800", 800.0, "TF"))
 SPORT_EVENTS = {"XC": ("5k",), "TF": ("800", "1600", "3200")}
 _STATS = ("min", "p25", "median", "p75", "max")
 
@@ -717,8 +724,12 @@ def timesFor(rating, gender, events=None, level="hs"):
         return hit
     out = {}
     try:
-        from conversions import _norm_from_rating, normalized_to_time
+        from conversions import _norm_from_rating, normalized_to_time, ratingClock
         for ev, dist, sport in events:
+            if sport == "T5K":
+                c = ratingClock(key[0], key[1], "XC")
+                out[ev] = _clockSecs(c["time"]) if c else None
+                continue
             norm = _norm_from_rating(key[0], key[1], sport=sport)
             t = normalized_to_time(norm, {"distance": dist, "pool": key[1], "sport": sport}) \
                 if norm else None
@@ -730,6 +741,18 @@ def timesFor(rating, gender, events=None, level="hs"):
     with _times_lock:
         _TIMES["map"][key] = out
     return out
+
+
+def _clockSecs(text):
+    """'15:02' / '1:02:03' -> seconds, or None."""
+    try:
+        parts = [float(x) for x in str(text).split(":")]
+    except ValueError:
+        return None
+    secs = 0.0
+    for p in parts:
+        secs = secs * 60 + p
+    return secs or None
 
 
 def ratingFromTime(seconds, event, gender, level="hs"):
