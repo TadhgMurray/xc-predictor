@@ -402,6 +402,63 @@ def emptyRecent(cur, sport, since, source="anet"):
     return [r[0] for r in cur.fetchall()]
 
 
+# ★ HALF A MEET IS NOT A MEET DONE (owner, 2026-11-01: Mt. SAC 2026, anet XC
+#   273894 -- races 1-40 in, 41-87 (all of D1 and D2, the sweeps) empty).
+#   athletic.net posts a two-day meet race by race; the scrape that came
+#   after day one saved 5,309 results and marked it done, and emptyRecent
+#   only re-asks meets with NO results. A recent meet whose divisions are
+#   partly empty is asked again, once a day like the empty ones.
+# ! THE REGISTRATION DIVISIONS DON'T COUNT: a meet carries the plain
+#   "Varsity / JV / Freshman" divisions it was entered under, empty for
+#   good once the timer posts "Race 1 ... Race 87". Only an empty division
+#   numbered at or after the first one with results counts, and it takes
+#   PARTIAL_MIN_EMPTY of them.
+PARTIAL_MIN_EMPTY = 2
+
+
+def partialRecent(cur, sport, since, source="anet"):
+    """Meets DATED in the window with results in some divisions and none in
+    PARTIAL_MIN_EMPTY or more of the later ones. athletic.net only (the
+    division tables are its)."""
+    import datetime as _dt
+    # ! CROSS COUNTRY ONLY: a track meet's (division, event) slots are often
+    #   empty for good (an event nobody entered), and meets_tf carries no
+    #   source column to say whose they are
+    if source != "anet" or sport != "XC":
+        return []
+    t = _t(source, sport)
+    cur.execute("""SELECT count(*) FROM information_schema.columns
+                   WHERE (table_name = %s OR table_name = %s) AND column_name = 'div_id'""",
+                (t["results"], t["meets"]))
+    if cur.fetchone()[0] < 2:
+        return []                     # an old or test schema: nothing to compare
+    rested = _rested(cur)
+    cur.execute(f"""
+        WITH divs AS (
+            SELECT m.meet_id, m.div_id,
+                   EXISTS (SELECT 1 FROM {t['results']} r
+                           WHERE r.meet_id = m.meet_id AND r.div_id = m.div_id
+                             AND r.source = 'anet') AS has_rows
+            FROM   {t['meets']} m
+            JOIN   {t['dates']} d ON d.meet_id = m.meet_id {_clause(t['dates_where'], 'd')}
+            WHERE  m.source = 'anet'
+              AND  d.{t['date_col']} >= %s AND d.{t['date_col']} <= %s
+        ), per AS (
+            SELECT meet_id, min(div_id) FILTER (WHERE has_rows) AS first_full
+            FROM   divs GROUP BY 1
+        )
+        SELECT d.meet_id
+        FROM   divs d JOIN per p USING (meet_id)
+        JOIN   meet_queue q ON q.meet_id = d.meet_id AND q.source = %s AND q.sport = %s
+        WHERE  p.first_full IS NOT NULL AND NOT d.has_rows AND d.div_id >= p.first_full
+          AND  q.scraped IN (1, 2)
+        {rested}
+        GROUP  BY d.meet_id
+        HAVING count(*) >= %s
+    """, (since, _dt.date.today().isoformat(), source, sport, PARTIAL_MIN_EMPTY))
+    return [r[0] for r in cur.fetchall()]
+
+
 UNDATED_SPAN = int(os.environ.get("SEED_UNDATED_SPAN", "30000"))
 
 # ★ "NO MEET" AMONG REAL MEETS IS USUALLY A MEET THAT WAS HIDDEN (owner,
@@ -970,7 +1027,11 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         out["unrecorded"] = len(unrecorded)
         say(f"  [{tag}] done with 0 results and no meet row in the last "
             f"{UNDATED_SPAN:,} ids: {len(unrecorded):,}")
-        dated = sorted(set(dated) | set(undated) | set(unrecorded))
+        partial = partialRecent(cur, sport, since, source) if has_date else []
+        out["partial"] = len(partial)
+        say(f"  [{tag}] dated since {since} and only partly in (empty races after "
+            f"full ones): {len(partial):,}")
+        dated = sorted(set(dated) | set(undated) | set(unrecorded) | set(partial))
         out["dated"] = len(dated)
         out["scheduled_retry"] = len(sched_retry)
         say(f"  [{tag}] dated since {since} with 0 results: {len(dated):,}")

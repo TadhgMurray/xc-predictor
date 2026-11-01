@@ -61,8 +61,8 @@ def conn(monkeypatch):
             CREATE TABLE meet_queue (meet_id bigint, sport text, source text,
                                      scraped int,
                                      PRIMARY KEY (meet_id, sport, source));
-            CREATE TABLE results (meet_id bigint, source text, date text);
-            CREATE TABLE results_tf (meet_id bigint, source text, date text);
+            CREATE TABLE results (meet_id bigint, source text, date text, result_id bigint DEFAULT 1);
+            CREATE TABLE results_tf (meet_id bigint, source text, date text, result_id bigint DEFAULT 1);
             CREATE TABLE meets (div_id bigint, meet_id bigint, source text,
                                 meet_name text, meet_date text, state text);
             CREATE TABLE meets_tf (meet_id bigint, source text, meet_name text);
