@@ -118,62 +118,6 @@ _BROWSER_CLOSE_TIMEOUT_SECONDS = 10
 # against an IP that's still settling, WITHOUT paying for a browser restart.
 _BLOCK_NOOP_BACKOFF_SECONDS = 60
 
-# Static residential proxy list from WebShare.
-# Format: (host, port, username, password)
-# Each session gets assigned a proxy from this list based on its index.
-# On browser restart, cycles to the next proxy in the list.
-PROXIES = [
-    ("45.45.203.194", "8195", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("94.154.170.185", "6107", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("94.154.170.29", "5951", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.155.37", "6568", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("208.66.72.230", "5879", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("107.180.180.204", "5253", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.143.206", "7029", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("72.1.182.103", "5900", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("63.246.132.166", "5484", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.171.112", "7613", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("23.229.21.244", "8466", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.171.59", "7560", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("207.228.6.254", "7986", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("72.1.129.102", "7495", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("168.235.150.7", "5291", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.146.40", "7863", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("69.30.72.204", "5260", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("163.123.201.30", "5815", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("130.180.238.218", "5600", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.146.208", "8031", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("130.180.239.244", "6883", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("163.123.203.234", "8337", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("185.52.136.233", "8932", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.45.203.111", "8112", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.130.159", "6948", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.136.77", "8509", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("9.249.19.212", "7146", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("130.180.239.203", "6842", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.143.209", "7032", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.176.62", "7640", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("130.180.252.187", "8887", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("72.1.152.87", "5979", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("207.228.19.17", "5385", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.131.195", "7307", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("23.229.21.155", "8377", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("63.246.132.149", "5467", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("216.98.252.39", "5769", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("207.228.33.124", "8836", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("72.1.133.182", "7574", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("192.53.141.50", "5438", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("216.98.228.137", "5838", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("69.30.72.140", "5196", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("9.142.31.68", "5226", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("23.229.85.111", "5623", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("207.228.33.24", "8736", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("72.1.178.138", "7032", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("168.158.185.250", "6517", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("216.98.253.243", "6286", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("45.56.130.206", "6995", "jmceylbxstaticresidential", "vqldxl956dvv"),
-    ("207.228.33.55", "8767", "jmceylbxstaticresidential", "vqldxl956dvv"),
-]
 
 # List of 3 dictionaries, one for each sessions. Each has slightly different
 # chrome versions and window sizes to make each session look like a unique
@@ -654,11 +598,6 @@ async def _launchBrowser(playwright):
 async def _buildContext(browser, proxy_index: int):
 
 
-    # Pick proxy for this restart — cycles through the list using modulo
-    # so it wraps around when it reaches the end.
-    proxy = PROXIES[proxy_index % len(PROXIES)]
-    host, port, username, password = proxy
-
     # Returns the necessary browser context.
     return await browser.new_context(
         # ★ THE BROWSER'S OWN USER AGENT (2026-11-01): the made-up Chrome
@@ -666,15 +605,6 @@ async def _buildContext(browser, proxy_index: int):
         #   what Cloudflare checks; the real one is already a plain Chrome UA.
         viewport = {"width": random.randint(1280, 1440), "height": random.randint(768, 900)},
         java_script_enabled = True,
-        # Proxies disabled — Mullvad handles IP rotation.
-        # Each restart uses a different static residential proxy.
-        # proxy_index cycles through the PROXIES list so sessions
-        # spread across different IPs.
-        # proxy={
-        #     "server": f"http://{host}:{port}",
-        #     "username": username,
-        #     "password": password
-        # }
     )
 
 # _blockHeavyResources
