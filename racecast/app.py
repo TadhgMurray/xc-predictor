@@ -7066,6 +7066,35 @@ def get_course_distances(cur, course_name):
     return cur.fetchall()
 
 
+# ★ A MERGED SPELLING'S PAGE IS ITS SCHOOL'S PAGE (2026-11-01). The boards
+#   file every spelling merge_school_names folded under one name
+#   (school_name_alias), but race pages link the feed's own spelling -- and
+#   that page has no rows of its own any more. One table, read every ten
+#   minutes; a spelling it names goes to its school, query string kept.
+_SCHOOL_ALIAS = {"at": 0.0, "map": {}}
+
+
+def _schoolAliasRedirect(school_name, suffix=""):
+    import time as _t
+    from urllib.parse import quote
+    if _t.time() - _SCHOOL_ALIAS["at"] > 600:
+        got = {}
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.school_name_alias')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute("SELECT variant, canonical FROM school_name_alias")
+                    got = dict(cur.fetchall())
+        except Exception:                                        # noqa: BLE001
+            got = _SCHOOL_ALIAS["map"]
+        _SCHOOL_ALIAS.update(at=_t.time(), map=got)
+    canon = _SCHOOL_ALIAS["map"].get(school_name)
+    if not canon or canon == school_name:
+        return None
+    qs = request.query_string.decode("utf-8", "replace")
+    return redirect(f"/school/{quote(canon, safe='/')}{suffix}" + (f"?{qs}" if qs else ""), code=301)
+
+
 @app.route("/school/<path:school_name>")
 def school_page(school_name):
     """One school: its roster for a season, its meets, its best ever.
@@ -7080,6 +7109,10 @@ def school_page(school_name):
                         seasonLabel, storedYear)
     from school_identity import stateChips
     from panels import isTeamName
+
+    moved = _schoolAliasRedirect(school_name)
+    if moved is not None:
+        return moved
 
     # "Unattached" and its kin are not a team and get no page (owner,
     # 2026-09-04): the roster would be every unattached runner in the
@@ -7462,6 +7495,9 @@ def school_prs_page(school_name):
     from school_prs import schoolPrData
     from school_identity import stateChips
 
+    moved = _schoolAliasRedirect(school_name, "/prs")
+    if moved is not None:
+        return moved
     sport = (request.args.get("sport") or "XC").strip().upper()
     if sport not in ("XC", "TF"):
         sport = "XC"
@@ -7580,6 +7616,9 @@ def school_records_page(school_name):
     import record_books as RB
     from school_identity import stateChips
     from panels import isTeamName
+    moved = _schoolAliasRedirect(school_name, "/records")
+    if moved is not None:
+        return moved
     if not isTeamName(school_name):
         abort(404)
     sport = (request.args.get("sport") or "XC").strip().upper()

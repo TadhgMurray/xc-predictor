@@ -63,6 +63,94 @@ _DECORATION = re.compile(
         )\s*$""",
     re.X)
 
+# ★ AND A STATE WRITTEN OUT IN BRACKETS (owner, 2026-11-01: "Trinity" and
+#   "Trinity (Conn.)", "Wesleyan" and "Wesleyan (Conn.)" on the NESCAC list).
+#   tfrrs names colleges AP-style -- (Conn.), (N.Y.), (Ohio), (Calif.) --
+#   which the two-letter shapes above never matched. In brackets only: a
+#   bare "-Ohio" can be a name ("Miami-Ohio" is how some feeds spell it,
+#   and that one is fine as it stands).
+_AP_STATE = {
+    "ala": "AL", "alabama": "AL", "alaska": "AK", "ariz": "AZ", "arizona": "AZ",
+    "ark": "AR", "arkansas": "AR", "calif": "CA", "cal": "CA", "california": "CA",
+    "colo": "CO", "colorado": "CO", "conn": "CT", "connecticut": "CT",
+    "del": "DE", "delaware": "DE", "dc": "DC", "fla": "FL", "florida": "FL",
+    "ga": "GA", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "ill": "IL",
+    "illinois": "IL", "ind": "IN", "indiana": "IN", "iowa": "IA", "kan": "KS",
+    "kans": "KS", "kansas": "KS", "ky": "KY", "kentucky": "KY", "la": "LA",
+    "louisiana": "LA", "maine": "ME", "me": "ME", "md": "MD", "maryland": "MD",
+    "mass": "MA", "massachusetts": "MA", "mich": "MI", "michigan": "MI",
+    "minn": "MN", "minnesota": "MN", "miss": "MS", "mississippi": "MS",
+    "mo": "MO", "missouri": "MO", "mont": "MT", "montana": "MT", "neb": "NE",
+    "nebr": "NE", "nebraska": "NE", "nev": "NV", "nevada": "NV", "nh": "NH",
+    "newhampshire": "NH", "nj": "NJ", "newjersey": "NJ", "nm": "NM",
+    "newmexico": "NM", "ny": "NY", "newyork": "NY", "nc": "NC",
+    "northcarolina": "NC", "nd": "ND", "northdakota": "ND", "ohio": "OH",
+    "okla": "OK", "oklahoma": "OK", "ore": "OR", "oreg": "OR", "oregon": "OR",
+    "pa": "PA", "penn": "PA", "pennsylvania": "PA", "ri": "RI",
+    "rhodeisland": "RI", "sc": "SC", "southcarolina": "SC", "sd": "SD",
+    "southdakota": "SD", "tenn": "TN", "tennessee": "TN", "tex": "TX",
+    "texas": "TX", "utah": "UT", "vt": "VT", "vermont": "VT", "va": "VA",
+    "virginia": "VA", "wash": "WA", "washington": "WA", "wva": "WV",
+    "westvirginia": "WV", "wis": "WI", "wisc": "WI", "wisconsin": "WI",
+    "wyo": "WY", "wyoming": "WY",
+}
+_BRACKET_TAIL = re.compile(r"\s*[\(\[]\s*([A-Za-z. ]{2,20})\s*[\)\]]\s*$")
+
+
+def _bracketState(name):
+    """('Trinity', 'CT') for 'Trinity (Conn.)', else None. Pure."""
+    m = _BRACKET_TAIL.search(name)
+    if not m:
+        return None
+    code = _AP_STATE.get(re.sub(r"[^a-z]", "", m.group(1).lower()))
+    base = name[:m.start()].strip(" \t,-–—")
+    return (base, code) if code and base else None
+
+
+# ★ ONE WORD, ONE SPELLING (owner, 2026-11-01: "try to be exhaustive with
+#   variants"): "Conn College" / "Connecticut College", "St. Mark's" /
+#   "Saint Marks", "Mt. Hebron" / "Mount Hebron", "HS" / "High School".
+#   Expanding an abbreviation can only make two spellings of one name
+#   agree; the athletes still decide every merge.
+_ABBR = {
+    "mt": "mount", "ft": "fort", "pt": "point", "hts": "heights",
+    "spgs": "springs", "spg": "springs", "vly": "valley", "lk": "lake",
+    "twp": "township", "cty": "county", "ctr": "center", "cntr": "center",
+    "hs": "high school", "ms": "middle school", "jhs": "junior high school",
+    "jr": "junior", "sr": "senior", "acad": "academy", "prep": "preparatory",
+    "sch": "school", "elem": "elementary", "intl": "international",
+    "inst": "institute", "univ": "university", "coll": "college",
+    "conn": "connecticut", "mass": "massachusetts", "cath": "catholic",
+    "chr": "christian", "reg": "regional", "voc": "vocational",
+    "sci": "science", "tech": "tech", "assn": "association",
+}
+_DIRECTION = {"n": "north", "s": "south", "e": "east", "w": "west",
+              "ne": "northeast", "nw": "northwest", "se": "southeast",
+              "sw": "southwest"}
+_LEVEL_WORDS = {"high", "school", "college", "university", "middle", "junior",
+                "senior", "community"}
+
+
+def _words(base):
+    """A name's words, lowercased and spelled one way. Pure."""
+    t = base.lower().replace("&amp;", "&").replace("&", " and ")
+    t = re.sub(r"[\'’`]", "", t)                       # St. Mark's = St Marks
+    raw = [w for w in re.split(r"[^a-z0-9]+", t) if w]
+    out = []
+    for i, w in enumerate(raw):
+        nxt = raw[i + 1] if i + 1 < len(raw) else None
+        if w == "st":
+            # "St. Olaf", "Mount St. Mary's" -> saint; "Penn St.", "Ohio St.
+            # University" -> state: saint before a name, state at the end
+            out.append("saint" if nxt and nxt not in _LEVEL_WORDS
+                       and nxt not in ("univ", "coll", "hs") else "state")
+        elif w in _DIRECTION and i == 0 and nxt and len(nxt) >= 3:
+            out.append(_DIRECTION[w])                   # "N. Central"
+        else:
+            out.extend(_ABBR.get(w, w).split())
+    return out
+
+
 # ⚠⚠ LEVEL WORDS ARE NOT NOISE, AND THE FIRST DRY RUN PROVED IT (2026-09-17).
 #    This set used to hold "middle", "ms", "high", "hs", "junior", "senior",
 #    "college", "university", "academy" -- on the theory that "Williams" and
@@ -142,7 +230,8 @@ def splitStateSuffix(school):
     name = (school or "").strip()
     m = _DECORATION.search(name)
     if not m:
-        return name, None
+        got = _bracketState(name)
+        return got if got else (name, None)
     code = next(g for g in m.groups() if g).upper()
     if code not in STATE_CODES:
         return name, None
@@ -156,10 +245,40 @@ def nameWords(school):
     """The identifying words of a name, lowercased, with the trailing noise
     dropped. Pure. ('Williams College' and 'Williams' -> ('williams',))"""
     base, _state = splitStateSuffix(school)
-    words = [w for w in re.split(r"[^a-z0-9]+", base.lower()) if w]
+    words = _words(base)
     while words and words[-1] in _SUFFIX_NOISE:
         words.pop()
+    if words and words[0] == "the" and len(words) > 1:
+        words = words[1:]
     return tuple(words)
+
+
+def levelWords(school):
+    """nameWords without the level words: 'Williams College' -> ('williams',),
+    'University of Michigan' -> ('michigan',), 'La Jolla High School' ->
+    ('la', 'jolla'). Pure.
+
+    ! A KEY FOR PROPOSING, NEVER FOR DECIDING. This is the key the first dry
+      run of 2026-09-17 was burnt by (Adrian <- Adrian Middle School); a pair
+      it proposes merges only when both spellings race at the SAME level
+      (merge_school_names.levels), in one state, with the athletes to show
+      it."""
+    words = list(nameWords(school))
+    if len(words) > 2 and words[1] == "of" and words[0] in ("university", "college"):
+        words = words[2:]
+    while len(words) > 1 and words[-1] in _LEVEL_WORDS:
+        words.pop()
+    return tuple(words)
+
+
+def levelKey(school):
+    return " ".join(levelWords(school))
+
+
+def statedState(school):
+    """The state a spelling writes for itself ('Trinity (Conn.)' -> CT,
+    'La Jolla-CA' -> CA), or None. Pure."""
+    return splitStateSuffix(school)[1]
 
 
 def nameKey(school):

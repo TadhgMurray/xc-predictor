@@ -359,3 +359,79 @@ class Wiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class Exhaustive(unittest.TestCase):
+    """2026-11-01 (owner: "try to be exhaustive with variants"), from the
+    NESCAC list: Conn College / Connecticut College, Trinity / Trinity
+    (Conn.), Wesleyan / Wesleyan (Conn.)."""
+
+    def test_spelling_rules(self):
+        for a, b in (("Conn College", "Connecticut College"),
+                     ("Trinity (Conn.)", "Trinity"), ("Wesleyan (Conn.)", "Wesleyan"),
+                     ("St. Mark's", "Saint Marks"), ("Mt. Hebron", "Mount Hebron"),
+                     ("La Jolla HS", "La Jolla High School"), ("Penn St.", "Penn State"),
+                     ("N. Central", "North Central"), ("St. Cloud (Minn.)", "St Cloud"),
+                     ("Miami (Ohio)", "Miami-OH")):
+            self.assertEqual(N.nameKey(a), N.nameKey(b), f"{a} / {b}")
+        self.assertEqual(N.statedState("Trinity (Conn.)"), "CT")
+        self.assertEqual(N.statedState("St. John's (N.Y.)"), "NY")
+        self.assertIsNone(N.statedState("Notre Dame (Club)"))
+        self.assertNotEqual(N.nameKey("Ohio St. University"), N.nameKey("Saint Ohio"))
+
+    def test_level_key(self):
+        self.assertEqual(N.levelKey("Williams College"), N.levelKey("Williams"))
+        self.assertEqual(N.levelKey("University of Michigan"), "michigan")
+        self.assertEqual(N.levelKey("La Jolla High School"), "la jolla")
+
+    def _judge(self, rosters, states, levels, **kw):
+        pairs = M.candidatesAll(rosters.keys(), level_of=levels, **kw)
+        return M.judge(pairs, rosters, states, level_of=levels)
+
+    def test_the_nescac_three(self):
+        rosters = {"Conn College": set(range(1, 30)), "Connecticut College": set(range(5, 60)),
+                   "Trinity": set(range(100, 900)), "Trinity (Conn.)": set(range(100, 140)),
+                   "Wesleyan": set(range(1000, 1400)), "Wesleyan (Conn.)": set(range(1000, 1040))}
+        states = {"Trinity": {"CT", "TX", "KY"}, "Wesleyan": {"CT", "GA"},
+                  "Connecticut College": {"CT"}}
+        levels = {k: "college" for k in rosters}
+        merged, refused = self._judge(rosters, states, levels)
+        got = {(m[0], m[1]) for m in merged}
+        self.assertIn(("Conn College", "Connecticut College"), got)
+        self.assertIn(("Trinity", "Trinity (Conn.)"), got)
+        self.assertIn(("Wesleyan", "Wesleyan (Conn.)"), got)
+        grouped = dict((c, v) for c, v in M.groups(merged, rosters))
+        self.assertIn("Connecticut College", grouped)          # the most used
+
+    def test_a_level_pair_needs_the_same_level(self):
+        rosters = {"Adrian": set(range(1, 60)), "Adrian College": set(range(1, 60)),
+                   "Norwell": set(range(1, 300)), "Norwell Middle School": set(range(1, 300))}
+        states = {"Adrian": {"MI"}, "Adrian College": {"MI"},
+                  "Norwell": {"MA"}, "Norwell Middle School": {"MA"}}
+        levels = {"Adrian": "hs", "Adrian College": "college",
+                  "Norwell": "hs", "Norwell Middle School": "ms"}
+        merged, refused = self._judge(rosters, states, levels)
+        self.assertEqual(merged, [])
+        self.assertTrue(all("different levels" in r[7] for r in refused))
+
+    def test_a_school_level_pair_needs_one_known_state(self):
+        rosters = {"La Jolla": set(range(1, 60)), "La Jolla High School": set(range(1, 40))}
+        levels = {"La Jolla": "hs", "La Jolla High School": "hs"}
+        merged, _r = self._judge(rosters, {"La Jolla": {"CA"}, "La Jolla High School": {"CA"}}, levels)
+        self.assertEqual(len(merged), 1)
+        merged, refused = self._judge(rosters, {"La Jolla": {"CA"}}, levels)
+        self.assertEqual(merged, [])
+        self.assertIn("one known state", refused[0][7])
+
+    def test_the_directory_pairs_colleges_it_places_together(self):
+        rosters = {"UW-La Crosse": set(range(1, 50)), "Wisconsin-La Crosse": set(range(10, 80))}
+        levels = {k: "college" for k in rosters}
+        key = {k: ("University of Wisconsin-La Crosse", "WI") for k in rosters}
+        merged, _r = self._judge(rosters, {}, levels, college_key=key)
+        self.assertEqual([m[2] for m in merged], ["college"])
+
+    def test_a_wide_high_school_name_still_refuses(self):
+        rosters = {"Glendale": set(range(1, 500)), "Glendale (CA)": set(range(1, 200))}
+        states = {"Glendale": {"CA", "AZ"}, "Glendale (CA)": {"CA"}}
+        merged, _r = self._judge(rosters, states, {k: "hs" for k in rosters})
+        self.assertEqual(merged, [])

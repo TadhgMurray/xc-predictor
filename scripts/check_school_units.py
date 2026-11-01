@@ -764,6 +764,24 @@ def _collegeHome(school, st):
         return st
 
 
+def _nameAliases(cur):
+    """{variant: canonical} from school_name_alias, or {}."""
+    if cur is None:
+        return {}
+    try:
+        cur.execute("SELECT to_regclass('public.school_name_alias')")
+        if cur.fetchone()[0] is None:
+            return {}
+        cur.execute("SELECT variant, canonical FROM school_name_alias")
+        return dict(cur.fetchall())
+    except Exception:                                    # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                                # noqa: BLE001
+            pass
+        return {}
+
+
 def buildVotes(cur, sport, state_filter=None, split_level=False):
     """(votes, seasons, unit_eg, stats) over one sport's late season.
 
@@ -781,8 +799,15 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
     st_ = {"rows": 0, "excluded": 0, "hits": 0, "lvl": 0, "name": 0}
     name_hits, name_miss = Counter(), Counter()
     maps = _levelMaps(cur)          # BEFORE _rows: same cursor
+    # ★ ONE SCHOOL, ONE ROW (2026-11-01: NESCAC listed "Conn College" and
+    #   "Connecticut College", "Trinity" and "Trinity (Conn.)"). The rows
+    #   carry the feeds' spellings; the boards file them under one name
+    #   (school_name_alias, merge_school_names), so the units are voted
+    #   under that name too.
+    alias = _nameAliases(cur)
     for school, yr, meet_name, div_title, state, feed, *rest in _rows(
             cur, sport, lo, hi):
+        school = alias.get(school, school)
         st_["rows"] += 1
         st = (state or "").upper()
         if state_filter and st != state_filter.upper():
