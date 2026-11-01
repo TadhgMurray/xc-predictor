@@ -8,6 +8,7 @@
 #          (athleticlive cover closes its queue row afterwards).
 #
 #   python -m sources.athleticlive_xc land [--limit 100] [--meet ANET_ID] [--write]
+#   python -m sources.athleticlive_xc dedupe [--write]   # combined lists landed before 2026-11-01
 #
 # ★ WHY (owner, 2026-11-01: "it needs to skip everything for athletic live").
 #   About 28% of athletic.net's cross country is on AthleticLIVE; until now
@@ -59,18 +60,59 @@ def xcRow(r):
     return out
 
 
+# ★ A COMBINED LIST IS NOT A SECOND RACE (owner, 2026-11-01: meet 274532,
+#   one runner's 13:46.37 twice -- 34th in his division, 39th in the
+#   "combined" list over the divisions). Timers post both; landing both
+#   puts every runner in twice. An event whose timed runners (athlete,
+#   time) the meet's other kept events already hold goes, biggest first:
+#   so a combined list over divisions that are all posted goes and the
+#   divisions stay (athletic.net's own shape for the meet, and a combined
+#   list can stitch separate heats together), while a division posted only
+#   inside a combined list whose other divisions are missing goes instead
+#   -- nobody is lost either way.
+MERGED_COVER = 0.95
+
+
+def raceKeys(rows):
+    """{(athlete, time)} of an event's timed rows. Pure."""
+    return {(r.get("AthleteID"), r.get("SortInt")) for r in rows if r.get("SortInt")}
+
+
+def mergedEvents(keysets):
+    """{event: {(athlete, time)}} -> the events that only repeat runners
+    the other kept events already have. Pure."""
+    keep = {k: v for k, v in keysets.items() if v}
+    drop = set()
+    for eid in sorted(keep, key=lambda e: (-len(keep[e]), str(e))):
+        ks = keep[eid]
+        others = set().union(*(v for k, v in keep.items() if k != eid))
+        if len(ks & others) >= MERGED_COVER * len(ks):
+            drop.add(eid)
+            del keep[eid]
+    return drop
+
+
 def plan(anet_meet_id, alive, events, blobs):
     """Everything to save for one meet, in the track lander's plan shape so
     applyIds / holdUnknown apply unchanged. Pure."""
     meet_info = A.metaFromAlive(alive, anet_meet_id)
     p = {"results_to_save": [], "meets_to_save": [], "athletes": [], "own": True,
          "skipped": Counter(), "events": events}
+    parsed = {}
     for ev in events:
         doc = blobs.get(ev["id"])
         if not isinstance(doc, dict):
             p["skipped"]["no results document"] += 1
             continue
-        rows, athletes, skipped = A.resultRows(doc, ev)
+        parsed[ev["id"]] = A.resultRows(doc, ev)
+    merged = mergedEvents({eid: raceKeys(v[0]) for eid, v in parsed.items()})
+    for ev in events:
+        if ev["id"] not in parsed:
+            continue
+        if ev["id"] in merged:
+            p["skipped"]["combined list (its runners are in the other races)"] += 1
+            continue
+        rows, athletes, skipped = parsed[ev["id"]]
         p["skipped"].update(skipped)
         if not rows:
             continue
@@ -182,6 +224,48 @@ def cmdLand(a):
     return 0
 
 
+_LANDED_SQL = """
+    SELECT r.meet_id, r.div_id, r.athlete_id, round(r.time_seconds::numeric, 2)
+    FROM   results r
+    WHERE  r.source = 'anet' AND r.div_id >= %s AND r.result_id >= %s
+      AND  r.time_seconds > 0
+      AND  r.meet_id IN (SELECT DISTINCT u FROM alive_meets am
+                         CROSS JOIN LATERAL unnest(am.anet_ids) u
+                         WHERE am.sport = 'XC' AND am.landed_n > 0)
+"""
+
+
+def cmdDedupe(a):
+    """Combined lists landed before mergedEvents existed: the same test on
+    the rows already saved; --write deletes them (results and the meets
+    row). The rankings drop them on their next build."""
+    from collections import defaultdict
+    with A._conn() as conn:
+        cur = conn.cursor()
+        cur.execute(_LANDED_SQL, (A.DIV_BASE, A.RESULT_BASE))
+        by = defaultdict(lambda: defaultdict(set))
+        for meet_id, div_id, ath, t in cur.fetchall():
+            by[meet_id][div_id].add((ath, float(t)))
+        n_div = n_rows = 0
+        for meet_id, divs in sorted(by.items()):
+            for div_id in sorted(mergedEvents(divs)):
+                n_div += 1
+                print(f"  meet {meet_id} div {div_id}: {len(divs[div_id])} runners all in its other races")
+                if a.write:
+                    cur.execute("DELETE FROM results WHERE meet_id = %s AND div_id = %s AND source = 'anet'",
+                                (meet_id, div_id))
+                    n_rows += cur.rowcount
+                    cur.execute("DELETE FROM meets WHERE meet_id = %s AND div_id = %s AND source = 'anet'",
+                                (meet_id, div_id))
+        if a.write:
+            conn.commit()
+        else:
+            conn.rollback()
+    print(f"[alive xc] {n_div} combined lists in {len(by)} landed meets"
+          + (f"; {n_rows} rows deleted" if a.write else "  (dry run: --write deletes them)"))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="AthleticLIVE cross country -> meets / results")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -189,8 +273,10 @@ def main(argv=None):
     ld.add_argument("--limit", type=int, default=100)
     ld.add_argument("--meet", type=int, action="append", help="this athletic.net meet id")
     ld.add_argument("--write", action="store_true")
+    dd = sub.add_parser("dedupe", help="drop combined lists already landed")
+    dd.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
-    return {"land": cmdLand}[a.cmd](a)
+    return {"land": cmdLand, "dedupe": cmdDedupe}[a.cmd](a)
 
 
 if __name__ == "__main__":

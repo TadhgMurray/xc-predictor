@@ -52,3 +52,27 @@ def test_runner_without_anet_id_holds_meet_when_too_many():
 def test_scrape_local_lands_xc_before_cover():
     sh = open(os.path.join(ROOT, "deploy", "scrape_local.sh"), encoding="utf-8").read()
     assert sh.index("athleticlive_xc land") < sh.index("athleticlive cover")
+
+
+def test_a_combined_list_goes_and_the_divisions_stay():
+    """2026-11-01, meet 274532: the same runner and time in his division
+    and in the combined list over the divisions."""
+    a = {(1, 800), (2, 810), (3, 820)}
+    b = {(4, 805), (5, 815)}
+    m = a | b
+    assert X.mergedEvents({"a": a, "b": b, "m": m}) == {"m"}
+    # only one division posted beside the combined list: the division goes
+    assert X.mergedEvents({"a": a, "m": m}) == {"a"}
+    # separate races keep each other
+    assert X.mergedEvents({"a": a, "b": b}) == set()
+    # the same list twice: one stays
+    assert len(X.mergedEvents({"a": a, "a2": set(a)})) == 1
+
+
+def test_plan_skips_the_combined_list():
+    evs = X.xcEvents(_load("summary_76201.json"))
+    doc = _load("event_2906134.json")
+    comb = dict(evs[0], id=999)
+    p = X.plan(276933, ALIVE, [evs[0], comb], {2906134: doc, 999: doc})
+    assert len(p["meets_to_save"]) == 1 and len(p["results_to_save"]) == 6
+    assert p["skipped"]["combined list (its runners are in the other races)"] == 1
