@@ -19,8 +19,13 @@ def test_the_seam_is_august_15():
     assert "substring(r.date, 6, 5) >= '08-15'" in S.seasonYearSqlInt(None, "r.date")
 
 
+# scripts whose August dates are calendar windows (weather, race-day
+# timing), not the season seam
+CALENDAR_WINDOWS = ("diag_weather_window", "diag_race_day_inflation", "diag_sport_gap")
+
+
 def test_no_month_only_seam_left():
-    bad = re.compile(r"6, 2\) >= '08'|\.month >= 8\b|\[5:7\] >= \"08\"|ACADEMIC_START_MONTH, 1\)")
+    bad = re.compile(r"6, 2\) >= '08'|\.month >= 8\b|\[5:7\] >= \"08\"|ACADEMIC_START_MONTH, 1\)|\}-08-01\"")
     hits = []
     for d in ("engine", "racecast", "scripts", "model", "backfill", "tools", "sources"):
         for base, _dirs, files in os.walk(os.path.join(ROOT, d)):
@@ -28,6 +33,6 @@ def test_no_month_only_seam_left():
                 if f.endswith(".py"):
                     p = os.path.join(base, f)
                     for n, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
-                        if bad.search(line) and "diag_weather_window" not in p:
+                        if bad.search(line) and not any(k in p for k in CALENDAR_WINDOWS):
                             hits.append(f"{p}:{n}")
     assert hits == []

@@ -354,11 +354,11 @@ class SitemapCollect(unittest.TestCase):
     def test_race_window(self):
         import datetime as dt
         self.assertIsNone(self.BS.raceSince(0))
-        self.assertEqual(self.BS.raceSince(2, dt.date(2026, 10, 10)), "2025-08-01")
-        self.assertEqual(self.BS.raceSince(1, dt.date(2026, 3, 1)), "2025-08-01")
+        self.assertEqual(self.BS.raceSince(2, dt.date(2026, 10, 10)), "2025-08-15")
+        self.assertEqual(self.BS.raceSince(1, dt.date(2026, 3, 1)), "2025-08-15")
         by = self.BS.collect(_Conn(ALL_TABLES), race_years=50)
         self.assertEqual(len(by["races"]), 5)
-        self.assertFalse(self.BS.raceWanted(None, "2025-08-01"))
+        self.assertFalse(self.BS.raceWanted(None, "2025-08-15"))
         self.assertTrue(self.BS.raceWanted(None, None))
 
     def test_written_files_hold_the_urls(self):

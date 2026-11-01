@@ -50,7 +50,7 @@ def main():
         with conn.cursor() as cur:
             for sport, table in (("XC", "results"), ("TF", "results_tf")):
                 cur.execute(SQL.format(table=table, school=school),
-                            {"since": f"{a.since}-08-01", "school": a.school})
+                            {"since": f"{a.since}-08-15", "school": a.school})
                 rows = cur.fetchall()
                 print(f"\n{sport} ({table}, source tfrrs"
                       f"{', ' + a.school if a.school else ''})")

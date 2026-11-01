@@ -439,7 +439,7 @@ def _hasTable(cur, name):
 def sinceFor(seasons, today=None):
     today = today or datetime.date.today()
     ay = today.year if (today.month, today.day) >= (8, 15) else today.year - 1
-    return f"{ay - seasons + 1}-08-01"
+    return f"{ay - seasons + 1}-08-15"
 
 
 def _rowsSql(has_team, persons, real_only):

@@ -221,8 +221,8 @@ def test_the_pipeline_runs_it_between_the_snapshot_and_the_redirects():
 
 def test_the_window_since_is_the_academic_year():
     import datetime
-    assert T.sinceFor(3, datetime.date(2026, 9, 29)) == "2024-08-01"
-    assert T.sinceFor(1, datetime.date(2026, 3, 1)) == "2025-08-01"
+    assert T.sinceFor(3, datetime.date(2026, 9, 29)) == "2024-08-15"
+    assert T.sinceFor(1, datetime.date(2026, 3, 1)) == "2025-08-15"
 
 
 # ---- on a real Postgres, when one is offered ------------------------------ #
@@ -328,7 +328,7 @@ def test_gather_write_resolve_undo_on_postgres():
         cur.execute(PR.SNAPSHOT)                 # 01a, before anything moves
         conn.commit()
 
-        cands, namesakes, counts = T.gather(cur, "2024-08-01")
+        cands, namesakes, counts = T.gather(cur, "2024-08-15")
         conn.rollback()
         assert set(cands) == {13642378, 500, 600}, "29603086 has a team: no candidate"
         assert [t.pid for t in namesakes[13642378]] == [29603086]
@@ -364,7 +364,7 @@ def test_gather_write_resolve_undo_on_postgres():
         assert again == {"decisions new": 0, "XC rows moved": 0, "TF rows moved": 0,
                          "athletes rows repointed": 0, "redirects written": 0}
         cur = conn.cursor()
-        cands2, _n, _c = T.gather(cur, "2024-08-01")
+        cands2, _n, _c = T.gather(cur, "2024-08-15")
         conn.rollback()
         assert 13642378 not in cands2
 
@@ -390,7 +390,7 @@ def test_gather_write_resolve_undo_on_postgres():
         assert cur.fetchone()[0] == 0
         cur.execute("SELECT count(*) FROM person_link_log")
         assert cur.fetchone()[0] == 0
-        cands3, _n, _c = T.gather(cur, "2024-08-01")
+        cands3, _n, _c = T.gather(cur, "2024-08-15")
         conn.rollback()
         assert 13642378 not in cands3, "vetoed"
         assert T.write(conn, [])["XC rows moved"] == 0

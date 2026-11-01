@@ -327,7 +327,7 @@ def main():
 
     kailo, meta = kailoAthletes(a.sleep)
     season = int(meta.get("season") or datetime.date.today().year)
-    start = a.season_start or f"{season}-08-01"
+    start = a.season_start or f"{season}-08-15"
     today = datetime.date.today().isoformat()
     print(f"[kailo] {len(kailo):,} rated college runners, generated {meta.get('generated')}, "
           f"results through {meta.get('results_through')} (version {meta.get('version')})")

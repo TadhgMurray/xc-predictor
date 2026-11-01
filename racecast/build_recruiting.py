@@ -65,7 +65,24 @@ from school_identity import loadLabels, teamState, assignedStates  # noqa: E402
 #   counts only those (source 'hs').
 CLASSES = 4              # recruiting classes kept, newest first
 MIN_GAIN_PAIRS = 50      # linked pairs before the freshman gain is trusted
-HS_LOOKBACK = 1          # stored years before the first college season: the senior season
+HS_LOOKBACK = 1          # stored years before the class year: the senior season
+# ★ "NOT LINKED" WAS GIVEN TOO LIGHTLY (owner, 2026-11-01, Tufts: Tadhg
+#   Murray, Owen Staley, Chris Hovet, Will Olsen, Aidan Max, Gabe Grove --
+#   six of 21 recruits, every one with a high-school career on the site).
+#   Three causes, three fixes:
+#     a missing year   -- the college year before the first one on record
+#                         (both "SO-2" in their first season here) or the
+#                         senior season itself (Will Olsen: grade 11, then
+#                         college). The class now comes from the college
+#                         grade (classYear), and the high-school season is
+#                         the LAST one in the sport, up to HS_REACH seasons
+#                         before the class: the senior season, else the
+#                         junior season.
+#     a short season   -- Gabe Grove's senior XC is one race on record; the
+#                         boards' race floor dropped it. A recruit's senior
+#                         season is the evidence there is, at any count.
+HS_REACH = 2             # the senior season, or failing it the junior one
+HS_SCAN = 4              # stored years scanned back from the first college season
 _NOT_RECRUIT_GRADES = {"JR-3", "SR-4", "JR-5", "SR-5", "SR-6", "JR-6"}
 
 _DDL = """
@@ -145,8 +162,7 @@ def recruitSql(season_units):
             FROM   athlete_season h
             JOIN   firsts f ON f.person_id = h.person_id
             WHERE  h.pool IN ('hs_m', 'hs_f') AND h.mean_rating IS NOT NULL
-              AND  h.year < f.first_year AND h.year >= f.first_year - {int(HS_LOOKBACK)}
-              AND  {floorSql(False, 'h')}
+              AND  h.year < f.first_year AND h.year >= f.first_year - {int(HS_SCAN)}
         )
         SELECT p.person_id, p.sport, p.school, p.pool, p.year AS first_year, p.grade,
                p.mean_rating AS first_rating, p.n_races,
@@ -251,6 +267,24 @@ def _factors():
     return out
 
 
+def classYear(first_year, grade, pool):
+    """The class a recruit entered with: the first college season on record,
+    moved back a year for each college year it says came before (a first
+    season graded "SO-2" entered the year before). Unknown grades keep the
+    first season."""
+    import re
+    label = (gradeLabel(grade, pool) if grade else "") or ""
+    m = re.search(r"-(\d)$", label)
+    n = int(m.group(1)) if m else 1
+    return int(first_year) - max(0, min(n, 2) - 1)
+
+
+def hsSeasonFor(class_year, hs_year):
+    """True when a high-school season is the recruit's senior or junior one
+    for this class (HS_REACH)."""
+    return hs_year is not None and class_year - HS_REACH <= int(hs_year) < class_year
+
+
 def isRecruitSeason(grade, pool):
     """A first observed season graded junior or senior is a mid-career
     arrival, not a recruit. Unknown grades pass."""
@@ -346,10 +380,13 @@ def shapeRows(raw, factors, directory=None):
         if hs_equiv is None and r["hs_rating"] is None:
             dropped["no_scale"] += 1
             continue
+        cls = classYear(r["first_year"], r.get("grade"), pool)
+        if not hsSeasonFor(cls, r["hs_year"]):
+            r = dict(r, hs_rating=None, hs_year=None, hs_school=None, hs_state=None)
         rows.append({
             "person_id": r["person_id"], "sport": r["sport"], "school": r["school"],
             "state": r["state"], "gender": pool.rsplit("_", 1)[-1],
-            "first_year": r["first_year"], "grade": r.get("grade"),
+            "first_year": cls, "grade": r.get("grade"),
             "first_rating": float(r["first_rating"]), "hs_equiv": hs_equiv,
             "n_races": r["n_races"],
             "hs_rating": float(r["hs_rating"]) if r["hs_rating"] is not None else None,

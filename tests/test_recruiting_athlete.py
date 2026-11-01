@@ -247,7 +247,10 @@ def test_builder_sql_is_first_college_seasons_with_the_boards_floor():
     sql = " ".join(B.recruitSql(True).split())
     assert "min(year) AS first_year" in sql and "c.year = f.first_year" in sql
     assert "(c.n_races >= %(min_races)s OR c.year >= 2026)" in sql
-    assert "h.year < f.first_year AND h.year >= f.first_year - 1" in sql      # the senior season
+    # the last high-school season, any race count, scanned back HS_SCAN years;
+    # build_recruiting.hsSeasonFor keeps the senior or junior one
+    assert f"h.year < f.first_year AND h.year >= f.first_year - {B.HS_SCAN}" in sql
+    assert "(h.n_races >=" not in sql
     assert "s.division AS row_division" in sql
     assert "NULL::text AS row_division" in " ".join(B.recruitSql(False).split())
     # the states and units are resolved after the query (resolveRows), not
@@ -456,3 +459,17 @@ def test_the_transfers_section_places_the_college_athlete():
     assert 'R.subjectFrom(cur, request.args, level="college")' in app
     assert 'R.timesFor(rating, f["gender"])' in app
     assert "renderSubject(d);" in read("racecast", "static", "recruiting.js").split("function renderTransfers(d)")[1][:300]
+
+
+def test_class_year_follows_the_college_grade():
+    # Tadhg Murray: first season on record 2026, graded SO-2 -> class of 2025
+    assert B.classYear(2026, "SO", "college_m") == 2025
+    assert B.classYear(2026, "FR", "college_m") == 2026
+    assert B.classYear(2025, None, "college_m") == 2025
+
+
+def test_senior_or_junior_season_links():
+    assert B.hsSeasonFor(2025, 2024)          # senior season
+    assert B.hsSeasonFor(2025, 2023)          # no senior season on record: the junior one
+    assert not B.hsSeasonFor(2025, 2022)      # sophomore year is not a recruit's number
+    assert not B.hsSeasonFor(2025, None)

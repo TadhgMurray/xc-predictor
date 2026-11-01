@@ -155,7 +155,7 @@ def identity(conn, seasons, timeout_ms=BLOCK_TIMEOUT_MS):
         for sport, table in (("XC", "results"), ("TF", "results_tf")):
             for y in seasons:
                 cur.execute(_IDENTITY_SQL.format(table=table),
-                            (f"{y}-08-01", f"{y + 1}-08-01"))
+                            (f"{y}-08-15", f"{y + 1}-08-15"))
                 n, wp, nat, norm, rated = cur.fetchone()
                 out.append({"sport": sport, "season": y, "rows": n,
                             "person": wp, "native_only": nat,
@@ -173,7 +173,7 @@ def rated(conn, season, timeout_ms=BLOCK_TIMEOUT_MS):
                 SELECT source, count(*), count(speed_rating), max(date)
                 FROM   {table} WHERE date >= %s
                 GROUP  BY source ORDER BY source
-            """, (f"{season}-08-01",))
+            """, (f"{season}-08-15",))
             for source, n, r, last in cur.fetchall():
                 out.append({"sport": sport, "source": source, "rows": n,
                             "rated": r, "latest": last})

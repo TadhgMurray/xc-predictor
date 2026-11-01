@@ -32,9 +32,9 @@ class _Cfg:
 
 
 def test_since_is_the_start_of_last_season():
-    assert bn.newOnlySince(datetime.date(2026, 10, 4)) == "2025-08-01"
-    assert bn.newOnlySince(datetime.date(2026, 3, 1)) == "2024-08-01"
-    assert bn.newOnlySince(datetime.date(2026, 8, 1)) == "2025-08-01"
+    assert bn.newOnlySince(datetime.date(2026, 10, 4)) == "2025-08-15"
+    assert bn.newOnlySince(datetime.date(2026, 3, 1)) == "2024-08-15"
+    assert bn.newOnlySince(datetime.date(2026, 8, 1)) == "2024-08-15"   # still last season until Aug 15
 
 
 def test_stream_filters_only_when_on():

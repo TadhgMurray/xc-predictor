@@ -195,9 +195,9 @@ def test_a_past_season_is_projected_as_of_its_end_and_sees_nothing_after():
     it is predicting."""
     today = dt.date(2026, 9, 22)
     as_of = B.seasonAsOf(2021, 2026, today)
-    assert as_of == dt.date(2022, 8, 1)
+    assert as_of == dt.date(2022, 8, 15)
     t = B.targetFor("XC", today=as_of, history_before=as_of)
-    assert t["history_before"] == "2022-08-01"
+    assert t["history_before"] == "2022-08-15"
     assert t["date"] == (as_of + dt.timedelta(weeks=52)).isoformat()
 
 

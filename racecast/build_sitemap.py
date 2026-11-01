@@ -154,7 +154,7 @@ def raceSince(years, today=None):
         return None
     today = today or dt.date.today()
     start = today.year - int(years) + (1 if (today.month, today.day) >= (8, 15) else 0)
-    return f"{start:04d}-08-01"
+    return f"{start:04d}-08-15"
 
 
 def raceWanted(day, since):

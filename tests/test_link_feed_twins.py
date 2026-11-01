@@ -191,7 +191,7 @@ def test_gather_write_undo_on_postgres():
     try:
         cur.execute(FIXTURE)
         conn.commit()
-        groups, pairs = L.gather(cur, "2026-08-01")
+        groups, pairs = L.gather(cur, "2026-08-15")
         conn.rollback()
         verdicts = L.judge(groups)
         by = {tuple(m.pid for m in groups[i]): v for i, v in verdicts.items()}
@@ -206,7 +206,7 @@ def test_gather_write_undo_on_postgres():
         assert {m.name for m in groups[0] + groups[1]} >= {"Rachael Withrow"}
 
         # --person narrows to that person's group
-        g1, _p1 = L.gather(cur, "2026-08-01", 33400002)
+        g1, _p1 = L.gather(cur, "2026-08-15", 33400002)
         conn.rollback()
         assert [[m.pid for m in ms] for ms in g1.values()] == [[33400001, 33400002, 1009408205]]
 
@@ -239,7 +239,7 @@ def test_gather_write_undo_on_postgres():
         assert cur.fetchall() == [(101, 33400001), (105, 33400001)]
         cur.execute("SELECT DISTINCT person_id FROM athletes WHERE athlete_id = 33400001")
         assert cur.fetchall() == [(33400001,)]
-        g2, _p2 = L.gather(cur, "2026-08-01")
+        g2, _p2 = L.gather(cur, "2026-08-15")
         conn.rollback()
         assert not any(m.pid == 33400001 for ms in g2.values() for m in ms), "vetoed"
     finally:
@@ -294,7 +294,7 @@ def test_same_name_school_and_season_without_a_shared_run_on_postgres():
     try:
         cur.execute(NAME_FIXTURE)
         conn.commit()
-        groups, pairs = L.gather(cur, "2026-08-01")
+        groups, pairs = L.gather(cur, "2026-08-15")
         conn.rollback()
         verdicts = L.judge(groups)
         by = {tuple(m.pid for m in groups[i]): v for i, v in verdicts.items()}
@@ -302,7 +302,7 @@ def test_same_name_school_and_season_without_a_shared_run_on_postgres():
         v = by[(33048450, 1009435739)]
         assert v.reason == L.MATCH, v
         # off: run pairs only, and there are none
-        g2, _p2 = L.gather(cur, "2026-08-01", by_name=False)
+        g2, _p2 = L.gather(cur, "2026-08-15", by_name=False)
         conn.rollback()
         assert g2 == {}
     finally:

@@ -104,7 +104,7 @@ def main():
             WHERE  speed_rating IS NOT NULL AND person_id IS NOT NULL
               AND  split_part(pool, '|', 1) = ANY(%(pools)s)
               AND  {date}::text >= %(lo)s AND {date}::text ~ '^[0-9]{{4}}-[0-9]{{2}}'
-        """, {"pools": list(pools), "lo": f"{a.since}-08-01"})
+        """, {"pools": list(pools), "lo": f"{a.since}-08-15"})
         cur.execute("DELETE FROM cc_rows WHERE half IS NULL OR band IS NULL")
         cur.execute("""
             CREATE TEMP TABLE cc_med AS

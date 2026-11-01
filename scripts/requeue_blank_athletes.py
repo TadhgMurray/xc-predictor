@@ -65,7 +65,7 @@ def main():
                     help="one sport only (e.g. --sport XC --since 2026 first)")
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args()
-    since = f"{a.since}-08-01" if a.since else "0000"
+    since = f"{a.since}-08-15" if a.since else "0000"
     t0 = time.time()
     with getConn() as conn:
         with conn.cursor() as cur:

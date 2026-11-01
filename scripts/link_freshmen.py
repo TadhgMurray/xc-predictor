@@ -136,7 +136,7 @@ def freshmen(cur, years):
       athlete id -- the first dry run found 0 freshmen in 2026 for exactly
       that reason. Linking by native_id is how merge_links/stamp_fanout
       write a tfrrs person too."""
-    lo, hi = f"{min(years)}-08-01", f"{max(years) + 1}-08-01"
+    lo, hi = f"{min(years)}-08-15", f"{max(years) + 1}-08-15"
     cur.execute("SET LOCAL work_mem = '512MB'")
     cur.execute("DROP TABLE IF EXISTS lf_t")
     cur.execute("DROP TABLE IF EXISTS lf_early")
@@ -250,7 +250,7 @@ def seniors(cur, years):
     anet persons with a senior high school row in academic year y - 1;
     still_hs says they raced high school again in year y or later. One scan per
     table for every year."""
-    lo, hi = f"{min(years) - 1}-08-01", f"{max(years)}-08-01"
+    lo, hi = f"{min(years) - 1}-08-15", f"{max(years)}-08-15"
     # the "raced college since" test reads level_conflict's known colleges
     # off this session; staged once, reused if freshmen() already did
     stageCollegeSchools(cur)

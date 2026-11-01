@@ -64,7 +64,7 @@ def main():
     with getConn() as conn:
         with conn.cursor() as cur:
             for y in a.seasons:
-                lo, hi = f"{y}-08-01", f"{y + 1}-08-01"
+                lo, hi = f"{y}-08-15", f"{y + 1}-08-15"
                 cur.execute("""
                     SELECT result_id, person_id, canon_meet_id, event_short,
                            COALESCE(is_field::int, 0), COALESCE(is_relay::int, 0),
