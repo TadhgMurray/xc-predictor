@@ -56,7 +56,7 @@ def test_the_latest_index_queues_first_and_the_daily_hole_pass_is_off():
     assert 'walk(("www.tfrrs.org",), a.pages)' in hs and '"latest": cmdLatest' in hs
     assert "ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0, priority = 1" in hs
     assert "ORDER BY COALESCE(priority, 0) DESC, meet_id DESC" in read("scripts", "database.py")
-    assert "sources.tfrrs_hs latest --pages 3" in read("deploy", "nightly_update.sh")
+    assert 'sources.tfrrs_hs latest --pages "${XCP_NIGHTLY_TFRRS_LATEST_PAGES:-6}"' in read("deploy", "nightly_update.sh")
 
 
 def test_one_meet_runs_and_a_slower_night():
