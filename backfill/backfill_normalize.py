@@ -4089,7 +4089,7 @@ def main():
     if args.meet:
         import re as _re
         for m in args.meet:
-            mm = _re.fullmatch(r"([a-z_]+):(\d+)", m.strip())
+            mm = _re.fullmatch(r"([a-z_]+):(-?\d+)", m.strip())
             if not mm:
                 ap.error(f"--meet {m!r}: want SRC:MEET_ID, e.g. tfrrs:18170")
             _ONLY_MEETS["pairs"].append((mm.group(1), int(mm.group(2))))

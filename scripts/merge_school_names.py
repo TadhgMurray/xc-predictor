@@ -430,6 +430,17 @@ def judge(pairs, rosters_by_name, states_by_name,
         if generic and (a in generic) != (b in generic):
             g = a if a in generic else b
             g_frac = shared / max(1, len(rosters_by_name.get(g) or ()))
+        # ★ AN UNNAMED SPELLING INTO A NAMED ONE (2026-11-01, fourth look:
+        #   "Concordia University" into "Concordia (Neb.)" on 78 of 148,
+        #   "Archbishop Carroll" into "Archbishop Carroll (DC)" on 105 of
+        #   200): the unnamed one may be several schools, so nearly all of
+        #   its runners must be the named one's -- unless it is the wide
+        #   name the named spelling folds INTO (picks).
+        #   College only: a high school pair has the anet-state vetoes above,
+        #   and its unnamed spelling is usually the main team ("La Jolla").
+        if g_frac is None and bool(da) != bool(db) and not picks and "college" in (la, lb):
+            u = b if da else a
+            g_frac = shared / max(1, len(rosters_by_name.get(u) or ()))
         wa, wb = set(nameWords(a)), set(nameWords(b))
         if da and db and da != db:
             row[7] = f"they name different states ({da} vs {db})"
@@ -450,8 +461,8 @@ def judge(pairs, rosters_by_name, states_by_name,
             row[7] = "college vs university: two institutions"
             refused.append(tuple(row))
         elif g_frac is not None and g_frac < GENERIC_FRACTION:
-            row[7] = (f"a name several colleges share; only {g_frac:.0%} of its runners "
-                      f"are this one's")
+            row[7] = (f"a name that may be several schools; only {g_frac:.0%} of its "
+                      f"runners are this one's")
             refused.append(tuple(row))
         elif rel == "level" and la != "college" and ((wa | wb) & {"college", "university"}):
             # "Boston College High" into "Boston College": a high school
@@ -547,16 +558,24 @@ def groups(merged, rosters_by_name, states_by_name=None, level_mix=None):
     #   RUNNERS -- not a high school with a few middle-school rows
     #   (2026-11-01: "Abingdon High School" was made the canonical over
     #   "Abingdon" with 1,035 runners for that).
-    def wide(n):
+    def collegeNamed(m):
+        mix = level_mix.get(m) or {}
+        return bool(statedState(m)) and mix.get("college", 0) >= 0.5
+
+    def wide(n, names=()):
         mix = level_mix.get(n) or {}
+        mixed = (mix.get("college", 0) >= COLLEGE_MIX
+                 and mix.get("hs", 0) + mix.get("ms", 0) >= MIX_SHARE)
+        # a college-and-school mix makes the canonical only where a named
+        # college spelling is folding into it ("Ammons Middle School" with
+        # a stray college row is not the canonical over "Ammons MS")
         return (len(states_by_name.get(n) or ()) > 1
-                or (mix.get("college", 0) >= COLLEGE_MIX
-                    and mix.get("hs", 0) + mix.get("ms", 0) >= MIX_SHARE))
+                or (mixed and any(collegeNamed(m) for m in names if m != n)))
 
     out = []
     for root, names in sorted(members.items()):
         sized = [(n, len(rosters_by_name.get(n) or ())) for n in sorted(names)]
-        wides = [x for x in sized if wide(x[0])]
+        wides = [x for x in sized if wide(x[0], names)]
         if len(wides) > 1:
             continue                       # two wide names: never one school
         canon = wides[0][0] if wides else canonicalOf(sized)

@@ -488,7 +488,10 @@ class SecondDryRun(unittest.TestCase):
         pairs = M.candidatesAll(r.keys(), level_of=lv)
         merged, refused = M.judge(pairs, r, {}, level_of=lv, generic={"Concordia University"})
         self.assertEqual(merged, [])
-        self.assertIn("several colleges share", refused[0][7])
+        self.assertIn("several schools", refused[0][7])
+        # and without the directory's word for it: unnamed into named
+        merged, refused = M.judge(pairs, r, {}, level_of=lv)
+        self.assertEqual(merged, [])
 
     def test_a_named_college_picks_a_school_name_that_holds_college_runners(self):
         """Wesleyan: one Georgia high school on athletic.net, plus the CT
@@ -535,3 +538,24 @@ class SecondDryRun(unittest.TestCase):
         st = {"Boston College": {"MA"}}
         merged, refused, _g = self._run(r, st, {k: "hs" for k in r})
         self.assertEqual(merged, [])
+
+
+class FourthLook(unittest.TestCase):
+    def test_unnamed_into_named_needs_nearly_all(self):
+        r = {"Concordia (Wis.)": set(range(1, 400)), "Concordia": set(range(295, 495))}
+        lv = {k: "college" for k in r}
+        merged, refused = M.judge(M.candidatesAll(r.keys(), level_of=lv), r, {}, level_of=lv)
+        self.assertEqual(merged, [])
+        r = {"Alice Lloyd (Ky.)": set(range(1, 300)), "Alice Lloyd": set(range(1, 126)) | {9999}}
+        lv = {k: "college" for k in r}
+        merged, refused = M.judge(M.candidatesAll(r.keys(), level_of=lv), r, {}, level_of=lv)
+        self.assertEqual(len(merged), 1, refused)
+
+    def test_a_stray_college_row_does_not_make_the_canonical(self):
+        r = {"Ammons MS": set(range(1, 204)), "Ammons Middle School": set(range(1, 5))}
+        st = {k: {"FL"} for k in r}
+        mix = {"Ammons MS": {"ms": 1.0}, "Ammons Middle School": {"ms": 0.9, "college": 0.1}}
+        lv = {k: "ms" for k in r}
+        merged, _r = M.judge(M.candidatesAll(r.keys(), level_of=lv), r, st, level_of=lv, level_mix=mix)
+        g = M.groups(merged, r, st, mix)
+        self.assertEqual(g[0][0], "Ammons MS")
