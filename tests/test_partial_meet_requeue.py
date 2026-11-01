@@ -68,3 +68,17 @@ def test_half_a_meet_is_asked_again(cur):
     since = (datetime.date.today() - datetime.timedelta(days=11)).isoformat()
     assert Q.partialRecent(cur, "XC", since) == [1]
     assert Q.partialRecent(cur, "TF", since) == []
+
+
+def test_the_rest_of_the_season_is_asked_weekly(cur):
+    today = datetime.date.today()
+    s0 = (today - datetime.timedelta(days=60)).isoformat()
+    week = (today - datetime.timedelta(days=1)).isoformat()
+    assert Q.partialRecent(cur, "XC", s0, until=week, hours=Q.SEASON_REASK_HOURS) == [1]
+    # asked two days ago: a daily pass would ask again, the weekly one waits
+    cur.execute("UPDATE meet_queue SET requeued_at = now() - interval '2 days' WHERE meet_id = 1")
+    assert Q.partialRecent(cur, "XC", s0, until=week, hours=Q.SEASON_REASK_HOURS) == []
+    assert Q.partialRecent(cur, "XC", s0, until=week) == [1]
+    # outside [since, until]: not this tier's
+    old = (today - datetime.timedelta(days=5)).isoformat()
+    assert Q.partialRecent(cur, "XC", s0, until=old) == []

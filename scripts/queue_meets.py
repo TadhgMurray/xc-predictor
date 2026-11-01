@@ -336,10 +336,10 @@ def _emptyClause(a="q"):
             f"AND {a}.requeued_at > now() - interval '{float(STALE_REASK_HOURS)} hours')")
 
 
-def _rested(cur, a="q"):
-    """The SQL clause: not re-asked within REASK_HOURS, and not an empty meet
-    waiting for its date (above). Empty when the columns are not there yet
-    (a dry run against an old schema)."""
+def _rested(cur, a="q", hours=None):
+    """The SQL clause: not re-asked within REASK_HOURS (or `hours`), and not
+    an empty meet waiting for its date (above). Empty when the columns are
+    not there yet (a dry run against an old schema)."""
     cur.execute("""SELECT column_name FROM information_schema.columns
                    WHERE table_name = 'meet_queue'
                      AND column_name IN ('requeued_at', 'empty_date', 'empty_has_results')""")
@@ -347,9 +347,10 @@ def _rested(cur, a="q"):
     if "requeued_at" not in cols:
         return ""
     out = ""
-    if REASK_HOURS > 0:
+    rest = REASK_HOURS if hours is None else hours
+    if rest > 0:
         out = (f"AND ({a}.requeued_at IS NULL OR {a}.requeued_at < "
-               f"now() - interval '{float(REASK_HOURS)} hours')")
+               f"now() - interval '{float(rest)} hours')")
     if {"empty_date", "empty_has_results"} <= cols:
         out += " " + _emptyClause(a)
     return out
@@ -370,7 +371,7 @@ def hasDateColumn(cur, sport, source="anet"):
     return cur.fetchone() is not None
 
 
-def emptyRecent(cur, sport, since, source="anet"):
+def emptyRecent(cur, sport, since, source="anet", until=None, hours=None):
     """Meets DATED in the window that we finished and got nothing from.
 
     The owner's ask, literally: recent meets with 0 results.
@@ -384,7 +385,7 @@ def emptyRecent(cur, sport, since, source="anet"):
     """
     import datetime as _dt
     t = _t(source, sport)
-    rested = _rested(cur)
+    rested = _rested(cur, hours=hours)
     cur.execute(f"""
         SELECT DISTINCT q.meet_id
         FROM   meet_queue q
@@ -398,7 +399,7 @@ def emptyRecent(cur, sport, since, source="anet"):
                            WHERE r.meet_id = q.meet_id AND r.source = %s)
         {rested}
         ORDER  BY q.meet_id
-    """, (source, sport, since, _dt.date.today().isoformat(), source))
+    """, (source, sport, since, until or _dt.date.today().isoformat(), source))
     return [r[0] for r in cur.fetchall()]
 
 
@@ -415,8 +416,25 @@ def emptyRecent(cur, sport, since, source="anet"):
 #   PARTIAL_MIN_EMPTY of them.
 PARTIAL_MIN_EMPTY = 2
 
+# ★ THE WHOLE SEASON, WEEKLY (owner, 2026-11-01: "should probably go back
+#   further, same with the other re-ask, bcs these are things that have been
+#   happening a while"). Past the RECENT_DAYS window the empty and the partly
+#   empty meets of this season are still asked -- once a week, so a meet that
+#   never finishes posting costs one ask a week, not one a night.
+SEASON_REASK_HOURS = float(os.environ.get("SEED_SEASON_REASK_HOURS", "168"))
 
-def partialRecent(cur, sport, since, source="anet"):
+
+def seasonStartIso(today=None):
+    """The first day of the current season (season_year's Aug 15 seam)."""
+    import datetime as _dt
+    _eng = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "engine")
+    if _eng not in sys.path:
+        sys.path.insert(0, _eng)
+    from season_year import academicYear, seasonStart
+    return seasonStart(academicYear(today or _dt.date.today())).isoformat()
+
+
+def partialRecent(cur, sport, since, source="anet", until=None, hours=None):
     """Meets DATED in the window with results in some divisions and none in
     PARTIAL_MIN_EMPTY or more of the later ones. athletic.net only (the
     division tables are its)."""
@@ -432,7 +450,7 @@ def partialRecent(cur, sport, since, source="anet"):
                 (t["results"], t["meets"]))
     if cur.fetchone()[0] < 2:
         return []                     # an old or test schema: nothing to compare
-    rested = _rested(cur)
+    rested = _rested(cur, hours=hours)
     cur.execute(f"""
         WITH divs AS (
             SELECT m.meet_id, m.div_id,
@@ -455,7 +473,7 @@ def partialRecent(cur, sport, since, source="anet"):
         {rested}
         GROUP  BY d.meet_id
         HAVING count(*) >= %s
-    """, (since, _dt.date.today().isoformat(), source, sport, PARTIAL_MIN_EMPTY))
+    """, (since, until or _dt.date.today().isoformat(), source, sport, PARTIAL_MIN_EMPTY))
     return [r[0] for r in cur.fetchall()]
 
 
@@ -1031,6 +1049,19 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         out["partial"] = len(partial)
         say(f"  [{tag}] dated since {since} and only partly in (empty races after "
             f"full ones): {len(partial):,}")
+        # the rest of the season, once a week (SEASON_REASK_HOURS)
+        season = []
+        if has_date and not deep:
+            s0 = seasonStartIso()
+            if s0 < since:
+                season = sorted(set(emptyRecent(cur, sport, s0, source, until=since,
+                                                hours=SEASON_REASK_HOURS))
+                                | set(partialRecent(cur, sport, s0, source, until=since,
+                                                    hours=SEASON_REASK_HOURS)))
+        out["season"] = len(season)
+        say(f"  [{tag}] earlier this season ({seasonStartIso()} to {since}), empty or "
+            f"partly in, not asked this week: {len(season):,}")
+        partial = sorted(set(partial) | set(season))
         dated = sorted(set(dated) | set(undated) | set(unrecorded) | set(partial))
         out["dated"] = len(dated)
         out["scheduled_retry"] = len(sched_retry)
