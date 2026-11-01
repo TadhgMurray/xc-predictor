@@ -706,7 +706,7 @@ RULES = {
         "POOL_CEILING DEFAULT_CEILING", "DISPLAY",
         "board ceiling per pool; §5: an SD gate does it honestly, keep as a sanity net at first"),
     "racecast/pool_view.py": {
-        **_all("_FACTOR_LO _FACTOR_HI _MOVES _REP_DIST _MAP_GRID _REF", "DISPLAY",
+        **_all("_FACTOR_LO _FACTOR_HI _MOVES _REP_DIST _MAP_KNOTS _REF", "DISPLAY",
                "the public scale (HS-equivalent factor or equal-time map): " + ONE_SCALE),
         **_all("_FACTOR_CACHE _FACTOR_WHY _FAILED _STAMPED_TIMEOUT_MS _CONST_CACHE _CONST_SAMPLE "
                "_CONST_MIN_ROWS _CONST_FILE _CONST_FILE_TTL _NONE_UNTIL _NONE_RETRY_S _REFRESHING _GROUP "

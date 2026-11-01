@@ -81,10 +81,19 @@
     var selPool = root.querySelector(".eq-pool");
     var fieldKey = root.querySelector(".eqc-field-key");
 
-    // own -> public scale: hs = a * own ** b (pool_view.hsMap)
+    // own -> public scale (pool_view.hsMap): knots [[own, hs], ...] joined
+    // by straight lines in logs, the end stretches carried past the ends --
+    // pool_view.mapAt. An old [a, b] answer is hs = a * own ** b.
     function toHsView(r) {
       var m = st.hsMap || (st.hs ? [st.hs, 1] : null);
-      return m ? m[0] * Math.pow(r, m[1]) : r;
+      if (!m || !(r > 0)) return m && typeof m[0] === "number" ? r * m[0] : r;
+      if (typeof m[0] === "number") return m[0] * Math.pow(r, m[1]);
+      if (m.length < 2) return r;
+      var i = 0;
+      while (i < m.length - 2 && r > m[i + 1][0]) i++;
+      var x0 = m[i][0], y0 = m[i][1], x1 = m[i + 1][0], y1 = m[i + 1][1];
+      var b = Math.log(y1 / y0) / Math.log(x1 / x0);
+      return y0 * Math.pow(r / x0, b);
     }
 
     var st = {
@@ -242,8 +251,8 @@
           status.hidden = true;
           st.points = body.points;
           st.hs = body.hs_factor || null;
-          // the public scale is hs = a * own ** b (pool_view.hsMap); b = 1
-          // when the equal-time map is off, and a is then the factor
+          // the public scale's knots (pool_view.hsMap); with the equal-time
+          // map off they are the factor's one straight line
           st.hsMap = body.hs_map || (st.hs ? [st.hs, 1] : null);
           draw();
           // open on the race's winner, else a rating-100 runner (the group's

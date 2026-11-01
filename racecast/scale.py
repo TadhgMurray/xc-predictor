@@ -260,8 +260,23 @@ def _factor(pool):
 CACHE_DIR = os.environ.get("XCP_CACHE_DIR") or os.path.join(tempfile.gettempdir(), "racecast-cache")
 
 
+# ! A NEW DEPLOY IS A NEW FILE: the code that builds the table (this file,
+#   the public scale's map, the clocks) is part of the name, so a restart
+#   after a change never serves the old build for its last six hours.
+def _codeStamp():
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        return int(max(os.path.getmtime(os.path.join(here, f))
+                       for f in ("scale.py", "pool_view.py", "conversions.py")))
+    except OSError:
+        return 0
+
+
+_CODE = _codeStamp()
+
+
 def _diskPath(pool, step):
-    return os.path.join(CACHE_DIR, f"scale_{pool}_{int(step)}.json")
+    return os.path.join(CACHE_DIR, f"scale_{pool}_{int(step)}_{_CODE}.json")
 
 
 def _diskGet(pool, step, now=None):

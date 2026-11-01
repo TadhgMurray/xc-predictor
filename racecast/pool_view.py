@@ -825,14 +825,29 @@ def repFactor(pool, sport):
 #   conversions.fiveKForRating) is the same time, so the rating and the
 #   column agree everywhere.
 #
-# ★ A POWER CURVE, hs = a * own ** b, FITTED ONCE PER POOL to the exact
-#   equal-time answer on a grid of ratings. Monotone, so a pool's own order
-#   is its HS order on every board (the property ONE FACTOR PER POOL above
-#   exists for); the same two numbers work in Python, in a board's SQL
-#   (rankings._scaleExpr) and in the browser (equiv-line.js). Switch off,
-#   it is exactly today's multiplier: (factor, 1).
+# ★ KNOTS, NOT ONE CURVE (owner, 2026-11-01: "fix", after
+#   diag_hs_to_college still read the rating 1.7% (women) and 2.2% (men)
+#   behind the 5K column with equal time on). The clocks bend -- the
+#   distance curve, the venue effect and the college 5K calibration all move
+#   with the rating -- so one power curve hs = a * own ** b missed the exact
+#   answer by more than its 3% bar for college men (the map fell back to the
+#   old factor: men unchanged) and by ~1.7% in the middle for women. The map
+#   is now the exact equal-time answer at a ladder of ratings, joined by
+#   straight lines in logs (a power curve per stretch): exact at every knot,
+#   within a few hundredths of a percent between, and still monotone, so a
+#   pool's own order is its HS order on every board. Python (toHs / fromHs),
+#   a board's SQL (rankings._scaleExpr) and the browser (equiv-line.js) all
+#   read the same knots. Switch off, the knots are the old multiplier:
+#   ((1, f), (1000, 1000 f)), one straight line.
+# ★ THE CLOCK READERS SEE. The equal-time point is the athlete page's 5K
+#   column (conversions.xcTrackSeconds: the track clock and, for cross
+#   country, XC_TRACK_CAL), so re-calibrating the college 5K moves the
+#   college ratings with it -- one knob, and the rating and the column can
+#   never disagree. Track ratings use the track clock without the cross
+#   country calibration.
 _MAP_CACHE = {}
-_MAP_GRID = tuple(range(40, 202, 4))
+_MAP_KNOTS = (30, 50, 70, 80, 90, 100, 105, 110, 115, 120, 125, 130, 135,
+              140, 145, 150, 160, 170, 185, 200, 230)
 
 
 # ★ ON BY DEFAULT (owner, 2026-11-01: "times should match so the ratings
@@ -843,24 +858,23 @@ def equalTimeOn():
     return os.environ.get("XCP_EQUAL_TIME_SCALE", "1").strip() != "0"
 
 
-def _trackSeconds(rating, pool):
+def _trackSeconds(rating, pool, distance=5000.0, sport="XC"):
     import conversions
-    r = conversions.fiveKForRating(float(rating), pool, 5000.0)
-    return (r or {}).get("track")
+    return conversions.xcTrackSeconds(float(rating), pool, distance, sport)
 
 
-def _equalTimeHs(rating, pool, hs_pool, lo=10.0, hi=400.0):
-    """The HS rating whose track 5K equals `rating`'s on `pool`'s clock, or
-    None. Bisection: a higher rating is a faster time."""
-    t = _trackSeconds(rating, pool)
+def _equalTimeHs(rating, pool, hs_pool, distance=5000.0, sport="XC", lo=10.0, hi=400.0):
+    """The HS rating whose clock at `distance` equals `rating`'s on `pool`'s
+    clock, or None. Bisection: a higher rating is a faster time."""
+    t = _trackSeconds(rating, pool, distance, sport)
     if not t:
         return None
-    t_lo, t_hi = _trackSeconds(lo, hs_pool), _trackSeconds(hi, hs_pool)
+    t_lo, t_hi = _trackSeconds(lo, hs_pool, distance, sport), _trackSeconds(hi, hs_pool, distance, sport)
     if not t_lo or not t_hi or not (t_hi <= t <= t_lo):
         return None
     for _ in range(50):
         mid = 0.5 * (lo + hi)
-        tm = _trackSeconds(mid, hs_pool)
+        tm = _trackSeconds(mid, hs_pool, distance, sport)
         if not tm:
             return None
         if tm > t:
@@ -872,7 +886,8 @@ def _equalTimeHs(rating, pool, hs_pool, lo=10.0, hi=400.0):
 
 def fitPowerMap(pairs):
     """(a, b, max |log error| in %) of hs = a * own ** b over (own, hs)
-    pairs, least squares in logs. Pure."""
+    pairs, least squares in logs. Pure. (A summary for diagnostics; the
+    map itself is the knots.)"""
     import math
     xs = [math.log(o) for o, h in pairs if o > 0 and h and h > 0]
     ys = [math.log(h) for o, h in pairs if o > 0 and h and h > 0]
@@ -887,31 +902,72 @@ def fitPowerMap(pairs):
     return a, b, 100.0 * err
 
 
+def powerKnots(a, b=1.0):
+    """hs = a * own ** b as knots (one straight stretch in logs). Pure."""
+    return ((1.0, float(a)), (1000.0, float(a) * 1000.0 ** float(b)))
+
+
+def mapSegments(knots):
+    """[(own_upper or None, a, b)]: hs = a * own ** b up to own_upper; the
+    first stretch also runs below the first knot and the last one above the
+    last knot. Pure."""
+    import math
+    out = []
+    for (x0, y0), (x1, y1) in zip(knots, knots[1:]):
+        b = math.log(y1 / y0) / math.log(x1 / x0)
+        out.append((x1, y0 / x0 ** b, b))
+    if out:
+        out[-1] = (None,) + out[-1][1:]
+    return out
+
+
+def mapAt(x, knots):
+    """The map through `knots` at x > 0: straight lines in logs, the end
+    stretches carried on past the ends. Pure."""
+    import math
+    i = 0
+    while i < len(knots) - 2 and x > knots[i + 1][0]:
+        i += 1
+    (x0, y0), (x1, y1) = knots[i], knots[i + 1]
+    b = math.log(y1 / y0) / math.log(x1 / x0)
+    return y0 * (x / x0) ** b
+
+
 def hsMap(pool, sport=None):
-    """(a, b) with hs = a * own ** b for `pool`, or None when the pool has
-    no HS twin. Switch off (or no clock): (repFactor, 1.0)."""
+    """The public scale for `pool` as knots ((own, hs), ...) rising in both,
+    or None when the pool has no HS twin. Switch off (or no clock): the
+    representative factor, powerKnots(repFactor)."""
     f = repFactor(pool, sport)
     if f is None:
         return None
     bare = (pool or "").split("|", 1)[0]
     if bare in ("hs_m", "hs_f") or not equalTimeOn():
-        return (float(f), 1.0)
-    if bare in _MAP_CACHE:
-        return _MAP_CACHE[bare]
-    out = (float(f), 1.0)
+        return powerKnots(f)
+    sp = "TF" if str(sport or "").upper() == "TF" else "XC"
+    key = (bare, sp)
+    if key in _MAP_CACHE:
+        return _MAP_CACHE[key]
+    out = powerKnots(f)
     try:
         from normalize_distance import ratedScalePool
+        import conversions
         clock_pool = ratedScalePool(bare)
         hs_pool = "hs_" + bare.rsplit("_", 1)[-1]
-        pairs = [(r, _equalTimeHs(r, clock_pool, hs_pool)) for r in _MAP_GRID]
-        fit = fitPowerMap([(o, h) for o, h in pairs if h])
-        if fit and fit[2] < 3.0:           # a curve that does not fit is no map
-            out = (fit[0], fit[1])
-            _FACTOR_WHY[bare + "|map"] = (f"equal time on the track 5K: hs = {fit[0]:.4f} * "
-                                          f"own^{fit[1]:.4f} (worst fit {fit[2]:.2f}%)")
+        dist = conversions.XC_TRACK_M.get(clock_pool.partition("_")[0], 3200.0)
+        knots = []
+        for r in _MAP_KNOTS:
+            h = _equalTimeHs(r, clock_pool, hs_pool, dist, sp)
+            if h and (not knots or h > knots[-1][1]):
+                knots.append((float(r), float(h)))
+        if len(knots) >= 2:
+            out = tuple(knots)
+            _FACTOR_WHY[bare + "|map"] = (f"equal time on the {sp} clock at {dist:.0f} m: "
+                                          f"{len(knots)} knots, own {knots[0][0]:.0f}-{knots[-1][0]:.0f}")
+        else:
+            _FACTOR_WHY[bare + "|map"] = "equal-time map: no clock to read; factor kept"
     except Exception as exc:                            # noqa: BLE001
         _FACTOR_WHY[bare + "|map"] = f"equal-time map failed ({type(exc).__name__}); factor kept"
-    _MAP_CACHE[bare] = out
+    _MAP_CACHE[key] = out
     return out
 
 
@@ -924,7 +980,7 @@ def toHs(rating, pool, sport=None):
     if m is None:
         return None
     r = float(rating)
-    return m[0] * r ** m[1] if r > 0 else r * m[0]
+    return mapAt(r, m) if r > 0 else r * m[0][1] / m[0][0]
 
 
 def fromHs(hs_rating, pool, sport=None):
@@ -936,14 +992,14 @@ def fromHs(hs_rating, pool, sport=None):
     if m is None:
         return None
     h = float(hs_rating)
-    return (h / m[0]) ** (1.0 / m[1]) if h > 0 else h / m[0]
+    return mapAt(h, tuple((y, x) for x, y in m)) if h > 0 else h * m[0][0] / m[0][1]
 
 
 def mapMoves(pool, sport=None):
     """Whether the public scale changes this pool's numbers (the toggle's
     reason to exist)."""
     m = hsMap(pool, sport)
-    return m is not None and (abs(m[0] - 1.0) > _MOVES or abs(m[1] - 1.0) > 1e-6)
+    return m is not None and any(abs(y / x - 1.0) > _MOVES for x, y in m)
 
 
 def stampRowsHs(cur, sport, rows, distance=None, distance_key=None,

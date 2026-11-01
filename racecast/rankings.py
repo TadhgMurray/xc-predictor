@@ -1151,45 +1151,61 @@ def _scaleActive(f):
     return f.get("scale") == "hs" and f.get("pool") == "all"
 
 
-def _hsScaleCase(prefix, part=0):
-    """CASE over (pool, sport) -> the public-scale map's `part` (0: a, the
-    multiplier; 1: b, the exponent -- pool_view.hsMap, hs = a * own ** b),
-    or None when no pool moves. `prefix` is the table alias with its dot,
-    or ''. Switch off, a is the representative factor and b is 1."""
+def _mapSql(expr, knots):
+    """`expr` through one pool's public-scale knots as SQL: a power curve
+    per stretch (pool_view.mapSegments), the number toHs gives."""
+    from pool_view import mapSegments
+
+    def arm(a, b):
+        return f"{expr} * {a:.6f}" if abs(b - 1.0) < 1e-9 else f"{a:.6f} * power({expr}, {b:.6f})"
+    segs = mapSegments(knots)
+    if len(segs) == 1:
+        return arm(segs[0][1], segs[0][2])
+    whens = " ".join(f"WHEN {expr} < {hi:.4f} THEN {arm(a, b)}" for hi, a, b in segs[:-1])
+    return f"CASE {whens} ELSE {arm(segs[-1][1], segs[-1][2])} END"
+
+
+def _hsScaleCase(prefix, expr):
+    """`expr` on the public scale as one CASE over (pool, sport) -- each arm
+    the pool's own map (pool_view.hsMap: knots, a power curve per stretch)
+    -- or None when no pool moves. `prefix` is the table alias with its
+    dot, or ''. Switch off, each map is the representative factor."""
     from pool_view import hsMap
     arms = []
-    neutral = 1.0
     for pool in _SCALE_POOLS:
+        maps = {}
         for sport in ("XC", "TF"):
             m = hsMap(pool, sport)
-            if m is None:
-                continue
-            v = float(m[part])
-            if abs(v - neutral) > 1e-9:
-                arms.append(f"WHEN {prefix}pool = '{pool}' AND "
-                            f"{prefix}sport = '{sport}' THEN {v:.6f}")
+            if m is not None and any(abs(y / x - 1.0) > 1e-9 for x, y in m):
+                maps[sport] = m
+        if not maps:
+            continue
+        if len(maps) == 2 and maps["XC"] == maps["TF"]:
+            arms.append(f"WHEN {prefix}pool = '{pool}' THEN {_mapSql(expr, maps['XC'])}")
+            continue
+        for sport, m in maps.items():
+            arms.append(f"WHEN {prefix}pool = '{pool}' AND {prefix}sport = '{sport}' "
+                        f"THEN {_mapSql(expr, m)}")
     if not arms:
         return None
-    return "(CASE " + " ".join(arms) + " ELSE 1.0 END)"
+    # ! a rating of 0 or below has no power curve (power() of a negative
+    #   number raises); it is not a rating, so it passes unchanged
+    return f"(CASE WHEN {expr} IS NULL OR {expr} <= 0 THEN {expr} " + " ".join(arms) + f" ELSE {expr} END)"
 
 
 def _scaleExpr(f, expr):
-    """`expr` as the board displays it: multiplied by the HS factor when the
-    scale is active and `expr` is a rating column; otherwise unchanged."""
+    """`expr` as the board displays it: on the public scale when the scale
+    is active and `expr` is a rating column; otherwise unchanged."""
     if not _scaleActive(f):
         return expr
     alias, dot, col = expr.rpartition(".")
     if col not in _SCALED_COLS:
         return expr
     pre = f"{alias}." if dot else ""
-    case = _hsScaleCase(pre)
-    exp = _hsScaleCase(pre, 1)
-    if case is None and exp is None:
-        return expr
-    # ★ hs = a * own ** b (pool_view.hsMap): the equal-time map is a power
-    #   curve, so a board sorts on exactly the number the page shows
-    shown = f"power({expr}, {exp})" if exp is not None else expr
-    return shown if case is None else f"({shown} * {case})"
+    # ★ pool_view.hsMap's knots: a board sorts on exactly the number the
+    #   page shows
+    case = _hsScaleCase(pre, expr)
+    return expr if case is None else case
 
 
 _EVENT_KIND_PRESENT = None

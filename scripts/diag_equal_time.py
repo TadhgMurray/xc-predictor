@@ -10,7 +10,7 @@ READ ONLY; changes nothing on the site.
 
 ★ WHY (owner, 2026-10-22): a college 149.2 read 16:02 beside a high school
   149.3 at 16:50. For each pool with an HS twin it prints the map's fit
-  (hs = a * own ** b) and, for a ladder of own ratings, the public number
+  (knots, pool_view.hsMap) and, for a ladder of own ratings, the public number
   today and under the map, with the track 5K each one means on the HS clock
   -- under the map that 5K equals the pool's own 5K, which is the point.
   --person shows one athlete's seasons both ways.
@@ -63,13 +63,11 @@ def main():
             print(f"\n{pool}: no HS twin")
             continue
         why = PV._FACTOR_WHY.get(pool + "|map", "")
-        print(f"\n== {pool} -> {hs_pool}   today: x{m0[0]:.4f}   equal time: "
-              f"{m1[0]:.4f} * own^{m1[1]:.4f}   {why}")
-        print(f"   {'own':>5} {'own 5K':>8} | {'today':>6} {'= HS 5K':>8} | {'equal time':>10} {'= HS 5K':>8}")
+        print(f"\n== {pool} -> {hs_pool}   today: x{m0[0][1] / m0[0][0]:.4f}   {why}")
+        print(f"   {'own':>5} {'own 5K':>8} | {'factor':>6} {'= HS 5K':>8} | {'equal time':>10} {'= HS 5K':>8}")
         for own in LADDER:
             t_own = PV._trackSeconds(own, pool)
-            h0 = m0[0] * own ** m0[1]
-            h1 = m1[0] * own ** m1[1]
+            h0, h1 = PV.mapAt(own, m0), PV.mapAt(own, m1)
             print(f"   {own:>5} {mmss(t_own):>8} | {h0:>6.1f} {mmss(PV._trackSeconds(h0, hs_pool)):>8} | "
                   f"{h1:>10.1f} {mmss(PV._trackSeconds(h1, hs_pool)):>8}")
 

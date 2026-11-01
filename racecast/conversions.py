@@ -1426,6 +1426,23 @@ def xcTrackCal(pool, rating):
     return 0.0
 
 
+def xcTrackSeconds(rating, pool, distance=None, sport="XC"):
+    """Seconds the 5K column prints for a rating on `pool`'s own scale: the
+    track clock (ratingSeconds on the track's scale, the average outdoor
+    track) at `distance` (default the level's XC_TRACK_M), and for a cross
+    country rating XC_TRACK_CAL on top. ratingClock's XC path and the
+    public scale's equal-time map (pool_view.hsMap) both read this, so the
+    rating and the column cannot drift apart. None when it cannot be said."""
+    level = (_bare(pool) or "").partition("_")[0]
+    d = distance or XC_TRACK_M.get(level, 3200.0)
+    secs = ratingSeconds(rating, pool, "TF", d, track=True)
+    if secs and str(sport or "XC").upper() == "XC":
+        cal = xcTrackCal(pool, rating)
+        if cal:
+            secs = secs * math.exp(cal)
+    return secs
+
+
 # ★★ WHERE THE AVERAGE OUTDOOR TRACK SITS ON THE CROSS COUNTRY SCALE (owner,
 #    2026-10-28, scripts/diag_xc_track_gap.py). The go-live anchors the
 #    displayed difficulty on the track cells, so an XC course of 0.0 is
@@ -1559,10 +1576,10 @@ def ratingClock(rating, pool, sport="XC", distance=None):
     #   is the sport's MEDIAN race (venueEffect), never a track. (Every
     #   caller that says "on a track" reads TF since 2026-10-28, where the
     #   track is 0.0 anyway; an XC caller gets xcTrackZero's track.)
-    secs = ratingSeconds(rating, pool, sport, d, track=(where == "on a track"))
-    cal = xcTrackCal(pool, rating) if where == "on a track" else 0.0
-    if secs and cal:
-        secs = secs * math.exp(cal)
+    if where == "on a track":
+        secs = xcTrackSeconds(rating, pool, d, "XC")
+    else:
+        secs = ratingSeconds(rating, pool, sport, d, track=False)
     t = clockFor(secs)
     if not t:
         return None

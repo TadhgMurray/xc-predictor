@@ -36,6 +36,13 @@ the track agree with? READ ONLY.
   C  THE VERDICT. College clock fast by about A's gap and HS clock right:
      reading 1 (the courses). Both clocks right: reading 2 (the factor).
 
+  E  THE CALIBRATION IT ASKS FOR (2026-11-01). Per college pool, by the
+     college rating: how much too fast the 5K column reads, from the
+     stopwatch (A's column change minus D's) and from the track (B against
+     the same-sex HS clock), and the XC_TRACK_CAL points that take it out.
+     The public scale is equal time on that column, so the calibration is
+     the one knob for both.
+
 ! The 5K column and the public scale are display code on top of the solve;
   this reads them exactly as the athlete page does (fiveKForRating,
   repFactor), so what it measures is what readers see.
@@ -169,8 +176,10 @@ def main():
     def track(rating, pool, metres):
         key = (round(float(rating), 1), pool, metres)
         if key not in clock_cache:
-            r = C.fiveKForRating(float(rating), pool, metres)
-            clock_cache[key] = r.get("track") if r else None
+            # ★ THE 5K COLUMN READERS SEE (2026-11-01): the track clock and
+            #   the college XC_TRACK_CAL on top (conversions.xcTrackSeconds),
+            #   the same clock the public scale's equal-time map reads
+            clock_cache[key] = C.xcTrackSeconds(float(rating), pool, metres, "XC")
         return clock_cache[key]
 
     factor = {p: (repFactor(p, "XC") or 1.0) for p in ("hs_m", "hs_f", "college_m", "college_f")}
@@ -201,6 +210,7 @@ def main():
         # ---- A: same runners, HS -> college ----
         mv = movers(seasons)
         partA = defaultdict(lambda: {"rating": [], "clock": [], "gap": [], "x1": []})
+        clock_change = {}
         for _pid, hp, hr, cp, cr in mv:
             g = hp[-1]
             r_hs, r_col = hsv(hr, hp), hsv(cr, cp)
@@ -210,6 +220,7 @@ def main():
                 continue
             dr = logPct(r_col, r_hs)                 # + = rated faster in college
             dc = logPct(c_hs, c_col)                 # + = clock faster in college
+            clock_change[_pid] = dc
             for k in (g, "all"):
                 partA[k]["rating"].append(dr)
                 partA[k]["clock"].append(dc)
@@ -232,6 +243,7 @@ def main():
         rnd = random.Random(7)
         partB = defaultdict(list)                     # pool -> [bias %]
         serious = defaultdict(list)                   # the same, 3+ races at the distance
+        serious_r = defaultdict(list)                 # pool -> [(own rating, bias %)]
         bands = defaultdict(list)                     # (pool, tercile) -> [bias %]
         for yr in range(a.since, a.until + 1):
             for pool in ("hs_f", "hs_m", "college_f", "college_m"):
@@ -267,6 +279,7 @@ def main():
                     #   is the clock and how much the soft best.
                     if n_at >= 3:
                         serious[pool].append(b)
+                        serious_r[pool].append((rating[pid], b))
                     t = 0 if rating[pid] < cuts[0] else 1 if rating[pid] < cuts[1] else 2
                     bands[(pool, t)].append(b)
                 print(f"   {yr} {pool}: {len(partB[pool]) - n0:,} runners with a "
@@ -291,6 +304,8 @@ def main():
                 if ty in (last_hs[pid] + 1, last_hs[pid] + 2):
                     springs[pid][ty].append((ev, sec))
         partD = defaultdict(lambda: {"actual": [], "rated": []})
+        col_of = {pid: (cp, cr) for pid, hp, hr, cp, cr in mv}
+        partE = defaultdict(list)                     # college pool -> [(own rating, clock - stopwatch)]
         for pid, by in springs.items():
             y = last_hs[pid]
             for event, hs_d, col_ds in (("mile", 1600.0, (1609.344, 1500.0)),
@@ -306,6 +321,9 @@ def main():
                 if not cands:
                     continue
                 actual = logPct(t_hs, min(cands))                # + = faster in college
+                if event == "3000" and pid in clock_change:
+                    cp, cr = col_of[pid]
+                    partE[cp].append((cr, clock_change[pid] - actual))
                 for k in (sex[pid], "all"):
                     partD[(event, k)]["actual"].append(actual)
                     partD[(event, k)]["rated"].append(rated_change[pid])
@@ -351,6 +369,8 @@ def main():
             print(f"   {pool:<11}{int(TRACK_DIST[level(pool)]):>9}{s['n']:>9,}{s['median']:>+8.2f}%"
                   f"{s['sd']:>7.2f}%")
 
+    printCalibration(partE, serious_r, C)
+
     print("\n== C. Reading it")
     for g, name in (("f", "women"), ("m", "men")):
         hs, col = verdict.get(f"hs_{g}"), verdict.get(f"college_{g}")
@@ -362,6 +382,55 @@ def main():
         print(f"   {name}: HS -> college, the clock says {gap:+.2f}% more improvement than the "
               f"rating. Against the track, the college clock reads {rel:+.2f}% vs the HS clock.")
         print(f"     {verdictText(gap, rel)}")
+
+
+def bands(rows, n=5):
+    """rows [(rating, x)] -> [(median rating, n, median x)] over n equal
+    bands of rating. Pure."""
+    rows = sorted(r for r in rows if r[1] is not None and math.isfinite(r[1]))
+    if len(rows) < 5 * n:
+        return []
+    out = []
+    for i in range(n):
+        part = rows[(i * len(rows)) // n:((i + 1) * len(rows)) // n]
+        out.append((statistics.median(r for r, _x in part), len(part),
+                    statistics.median(x for _r, x in part)))
+    return out
+
+
+def proposeCal(cur_cal, rows):
+    """XC_TRACK_CAL points ((rating, log seconds added), ...) that take each
+    band's median `x` (% the college clock reads too fast; + = too fast)
+    out of the clock, on top of what the calibration adds there today.
+    cur_cal(rating) -> today's log correction. Pure."""
+    return tuple((round(r, 1), round(cur_cal(r) + x / 100.0, 4)) for r, _n, x in rows)
+
+
+def printCalibration(partE, serious_r, C):
+    """== E: the college 5K calibration the numbers ask for, by rating."""
+    print("\n== E. College 5K calibration (conversions.XC_TRACK_CAL), by the college rating")
+    print("   stopwatch: A's 5K-column change minus D's 3200 -> 3000 stopwatch change, same runners")
+    print("     (+ = the college column reads that much too fast; it is what moves the public scale)")
+    print("   track: B's college clock vs the next spring's 5000 (3+ races), minus the same-sex HS one")
+    for pool in ("college_f", "college_m"):
+        hs = summarize([b for _r, b in serious_r.get("hs_" + pool[-1], [])])
+        e = bands(partE.get(pool, []))
+        t = bands(serious_r.get(pool, []))
+        if not e:
+            print(f"   {pool}: too few runners")
+            continue
+        print(f"   {pool}   today: {C.XC_TRACK_CAL.get(pool, ())}")
+        print(f"     {'rating':>7}{'runners':>9}{'stopwatch':>11}   |{'rating':>8}{'runners':>9}{'track':>8}")
+        for i, (r, n, x) in enumerate(e):
+            tb = t[i] if i < len(t) else None
+            rel = (-(tb[2] - hs["median"])) if (tb and hs) else float("nan")
+            print(f"     {r:>7.1f}{n:>9,}{x:>+10.2f}%   |"
+                  + (f"{tb[0]:>8.1f}{tb[1]:>9,}{rel:>+7.2f}%" if tb else ""))
+        cur = (lambda r, p=pool: C.xcTrackCal(p, r))
+        print(f"     proposal (stopwatch): {pool!r}: {proposeCal(cur, e)},")
+        if t and hs:
+            tr = [(r, n, -(x - hs['median'])) for r, n, x in t]
+            print(f"     proposal (track):     {pool!r}: {proposeCal(cur, tr)},")
 
 
 def verdictText(gap, rel):

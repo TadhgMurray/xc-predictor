@@ -29,3 +29,16 @@ def test_verdict_text():
     assert "reading 2" in D.verdictText(5.0, -0.5)
     assert "both" in D.verdictText(5.0, -2.5)
     assert "agree" in D.verdictText(0.4, -3.0)
+
+
+def test_bands_and_the_calibration_proposal():
+    """Part E (2026-11-01): five equal bands by rating, and points that add
+    each band's 'too fast' on top of today's correction."""
+    import diag_hs_to_college as D
+    rows = [(100.0 + i, 1.0 if i < 50 else 2.0) for i in range(100)]
+    b = D.bands(rows)
+    assert len(b) == 5 and all(n == 20 for _r, n, _x in b)
+    assert b[0][2] == 1.0 and b[-1][2] == 2.0
+    assert D.bands(rows[:10]) == []
+    prop = D.proposeCal(lambda r: -0.01 if r > 150 else 0.0, [(120.0, 9, 1.5), (160.0, 9, 2.0)])
+    assert prop == ((120.0, 0.015), (160.0, 0.01))
