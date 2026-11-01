@@ -98,6 +98,10 @@ PREFIX_MIN_FRACTION = 0.50
 #   St./Saint, Mt./Mount, HS/High School, Conn/Connecticut ...).
 LEVEL_MIN_SHARED = 5
 LEVEL_MIN_FRACTION = 0.20
+# a level a spelling races at for at least this share of its races counts as
+# one of its levels (Trinity: high schools and colleges)
+MIX_SHARE = 0.05
+_LVL_NAMES = {"college", "university", "high", "middle", "junior", "senior", "community"}
 
 DDL = """
 CREATE TABLE IF NOT EXISTS school_name_alias (
@@ -246,10 +250,10 @@ def candidates(names, want_prefix=False):
     return sorted(set(pairs))
 
 
-def levels(cur):
-    """{school string: 'college' | 'hs' | 'ms'} -- the level each spelling
-    mostly races at, from the last boards build (athlete_season). A spelling
-    the boards already fold onto another takes its canonical's level."""
+def levelMix(cur):
+    """{school string: {'college' | 'hs' | 'ms': share of its races}} from
+    the last boards build (athlete_season). A spelling the boards already
+    fold onto another takes its canonical's."""
     cur.execute("SELECT to_regclass('public.athlete_season')")
     if cur.fetchone()[0] is None:
         return {}
@@ -259,15 +263,18 @@ def levels(cur):
         WHERE  COALESCE(btrim(school), '') <> '' AND pool IS NOT NULL
         GROUP  BY 1, 2
     """)
-    best = {}
+    tot = {}
     norm = {"pro": "college", "college": "college", "hs": "hs", "ms": "ms", "elem": "ms"}
     for school, lvl, n in cur.fetchall():
         lv = norm.get(lvl)
-        if lv is None:
-            continue
-        tot = best.setdefault(school, {})
-        tot[lv] = tot.get(lv, 0) + int(n or 0)
-    out = {sc: max(t, key=t.get) for sc, t in best.items() if t}
+        if lv is not None:
+            t = tot.setdefault(school, {})
+            t[lv] = t.get(lv, 0) + int(n or 0)
+    out = {}
+    for sc, t in tot.items():
+        n = sum(t.values())
+        if n:
+            out[sc] = {k: v / n for k, v in t.items()}
     cur.execute("SELECT to_regclass('public.school_name_alias')")
     if cur.fetchone()[0] is not None:
         cur.execute("SELECT variant, canonical FROM school_name_alias")
@@ -275,6 +282,12 @@ def levels(cur):
             if variant not in out and canon in out:
                 out[variant] = out[canon]
     return out
+
+
+def levels(cur, mix=None):
+    """{school string: its dominant level} (levelMix's biggest share)."""
+    mix = levelMix(cur) if mix is None else mix
+    return {sc: max(t, key=t.get) for sc, t in mix.items() if t}
 
 
 def collegeKeys(cur, names, level_of):
@@ -340,7 +353,8 @@ def candidatesAll(names, want_prefix=False, level_of=None, college_key=None):
 def judge(pairs, rosters_by_name, states_by_name,
           min_shared=MIN_SHARED, min_fraction=MIN_FRACTION,
           prefix_min_shared=PREFIX_MIN_SHARED,
-          prefix_min_fraction=PREFIX_MIN_FRACTION, level_of=None):
+          prefix_min_fraction=PREFIX_MIN_FRACTION, level_of=None,
+          level_mix=None):
     """(merged, refused) -- the whole decision, and it is pure so it is
     testable. Each entry is
     (a, b, relation, n_a, n_b, n_shared, fraction, why)."""
@@ -358,35 +372,71 @@ def judge(pairs, rosters_by_name, states_by_name,
         sb = states_by_name.get(b) or set()
         la = (level_of or {}).get(a)
         lb = (level_of or {}).get(b)
-        # ★ A COLLEGE SPELLING THAT WRITES ITS STATE PICKS ONE OF A WIDE
-        #   NAME'S COLLEGES (2026-11-01): "Trinity (Conn.)" folds into
-        #   "Trinity", which the boards split by state for a college by its
-        #   runners (school_identity.teamState, college_person_state) -- the
-        #   wide name stays several colleges. Colleges only: a high school
-        #   has no such split, so "Glendale (CA)" still stays out of
-        #   "Glendale".
+        mix = level_mix or {}
         da, db = statedState(a), statedState(b)
-        picks = bool(la == lb == "college"
-                     and ((len(sa) > 1 and db and db in sa and sb <= {db})
-                          or (len(sb) > 1 and da and da in sb and sa <= {da})))
-        # ! A MIDDLE SCHOOL IS NOT ITS HIGH SCHOOL, A COLLEGE IS NEITHER --
-        #   whatever the words say and however many athletes they share (a
-        #   kid runs both). Known on both sides and different: no.
-        if la and lb and la != lb:
+        # ★ THE LEVELS (2026-11-01, the second dry run). Each spelling's
+        #   dominant level; a spelling worn at several levels (Trinity:
+        #   high schools AND colleges) can take in a narrower spelling of
+        #   one of its levels -- "Trinity (Conn.)" into "Trinity" -- because
+        #   the boards keep the levels apart by pool. The wider one is then
+        #   the canonical (groups).
+        def holds(name, lvl):
+            return (mix.get(name) or {}).get(lvl, 0.0) >= MIX_SHARE
+        level_ok = (not la or not lb or la == lb
+                    or (rel == "same" and not (da or db))       # decoration, as always
+                    or (rel in ("same", "college") and (holds(b, la) or holds(a, lb))))
+        # ★ A SPELLING THAT WRITES ITS STATE PICKS ONE OF A WIDE NAME'S
+        #   COLLEGES: "Trinity (Conn.)" folds into "Trinity", which the
+        #   boards split by state for a college by its runners
+        #   (school_identity.teamState, college_person_state). College only:
+        #   a high school has no such split, so "Glendale (CA)" still stays
+        #   out of "Glendale" unless it is a college.
+        coll_a = la == "college" or holds(a, "college")
+        coll_b = lb == "college" or holds(b, "college")
+        picks = bool((len(sa) > 1 and (db or rel == "college") and (lb == "college") and coll_a
+                      and sb <= ({db} if db else sb))
+                     or (len(sb) > 1 and (da or rel == "college") and (la == "college") and coll_b
+                         and sa <= ({da} if da else sa)))
+        wa, wb = set(nameWords(a)), set(nameWords(b))
+        if da and db and da != db:
+            row[7] = f"they name different states ({da} vs {db})"
+            refused.append(tuple(row))
+        elif (da and sb and da not in sb and not picks) or (db and sa and db not in sa and not picks):
+            row[7] = f"a named state is not where the other's teams are ({da or db})"
+            refused.append(tuple(row))
+        elif not level_ok:
             row[7] = f"different levels ({la} vs {lb})"
             refused.append(tuple(row))
         elif rel == "level" and not (la and lb):
             row[7] = "level words differ and a level is unknown"
             refused.append(tuple(row))
-        elif rel == "level" and la != "college" and not (sa and sb and sa == sb and len(sa) == 1):
+        elif rel == "level" and (wa & _LVL_NAMES) and (wb & _LVL_NAMES) and \
+                (wa & _LVL_NAMES) != (wb & _LVL_NAMES):
+            # "Antelope Valley College" / "University of Antelope Valley",
+            # "Boston College" / "Boston University": two institutions
+            row[7] = "two different level words (college vs university)"
+            refused.append(tuple(row))
+        elif rel == "level" and la != "college" and ((wa | wb) & {"college", "university"}):
+            # "Boston College High" into "Boston College": a high school
+            # named for a college is not that college's shortening
+            row[7] = "a school named for a college"
+            refused.append(tuple(row))
+        elif rel == "level" and la != "college" and not (
+                (sa and sb and sa == sb and len(sa) == 1)
+                or (len(sa | sb) == 1 and shared >= 20 and frac >= 0.5)):
             row[7] = "level words differ; a school pair needs one known state"
             refused.append(tuple(row))
-        elif rel == "college" and not (la == lb == "college"):
+        elif rel == "college" and not (coll_a and coll_b):
             row[7] = "the directory's match, but not both college-level"
+            refused.append(tuple(row))
+        elif rel == "college" and (("state" in wa) != ("state" in wb)):
+            # the directory reads past "State" ("Arkansas" / "Arkansas
+            # State"); a name that says State is another university
+            row[7] = "one says State, the other does not"
             refused.append(tuple(row))
         # THE STATE VETO. A string whose anet teams sit in several states is
         #   a name many schools wear; it is never one team, whoever it shares
-        #   athletes with -- unless the other spelling names one of them.
+        #   athletes with -- unless the other spelling picks one of them.
         elif (len(sa) > 1 or len(sb) > 1) and not picks:
             wide = a if len(sa) > 1 else b
             row[7] = (f"{wide!r} spans {sorted(sa if len(sa) > 1 else sb)} "
@@ -411,37 +461,65 @@ def judge(pairs, rosters_by_name, states_by_name,
 #   which points at "La Jolla" -- a chain the reader would have to walk.
 #   Union-find, then one canonical per group, so every variant resolves in
 #   one lookup.
-def groups(merged, rosters_by_name):
+def groups(merged, rosters_by_name, states_by_name=None, level_mix=None):
     """[(canonical, [(variant, n, relation, n_shared)])] -- one row per
-    spelling that is NOT the canonical. Pure."""
-    parent = {}
+    spelling that is NOT the canonical. Pure.
+
+    ★ NO CHAINS (2026-11-01, the second dry run: "Concordia (Wis.)" reached
+      "Concordia (Neb.)" through "Concordia University", which both wear;
+      "Arkansas State" reached "Arkansas" through a three-runner "Arkansas
+      St."). Two groups never join when they name different states; a
+      spelling worn in several states or at several levels is the group's
+      canonical (it is the one the narrower spellings fold INTO); and a
+      variant stays only when its own pair with the canonical was judged
+      a merge -- a link through a third spelling is not evidence."""
+    states_by_name = states_by_name or {}
+    level_mix = level_mix or {}
+    parent, named = {}, {}
 
     def find(x):
         while parent.get(x, x) != x:
             x = parent[x]
         return x
 
-    evidence = {}
+    def stated(x):
+        st = statedState(x)
+        return {st} if st else set()
+
+    direct = {}
     for a, b, rel, _na, _nb, shared, _f, _why in merged:
+        direct[(a, b)] = direct[(b, a)] = (rel, shared)
         ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-        evidence[a] = max(evidence.get(a, 0), shared)
-        evidence[b] = max(evidence.get(b, 0), shared)
-        evidence[(a, "rel")] = rel
-        evidence[(b, "rel")] = rel
+        if ra == rb:
+            continue
+        na = named.get(ra, stated(a)) | stated(a)
+        nb = named.get(rb, stated(b)) | stated(b)
+        if len(na | nb) > 1:
+            continue                       # two named states never share a group
+        parent[rb] = ra
+        named[ra] = na | nb
 
     members = {}
     for name in {x for r in merged for x in r[:2]}:
         members.setdefault(find(name), set()).add(name)
 
+    def wide(n):
+        return (len(states_by_name.get(n) or ()) > 1
+                or sum(1 for v in (level_mix.get(n) or {}).values() if v >= MIX_SHARE) > 1)
+
     out = []
     for root, names in sorted(members.items()):
         sized = [(n, len(rosters_by_name.get(n) or ())) for n in sorted(names)]
-        canon = canonicalOf(sized)
-        variants = [(n, sz, evidence.get((n, "rel"), "same"),
-                     evidence.get(n, 0))
-                    for n, sz in sized if n != canon]
+        wides = [x for x in sized if wide(x[0])]
+        if len(wides) > 1:
+            continue                       # two wide names: never one school
+        canon = wides[0][0] if wides else canonicalOf(sized)
+        variants = []
+        for n, sz in sized:
+            if n == canon or (n, canon) not in direct:
+                continue
+            rel, shared = direct[(n, canon)]
+            variants.append((n, sz, rel, shared))
         if variants:
             out.append((canon, sorted(variants)))
     return out
@@ -487,7 +565,8 @@ def main():
     with getConn() as conn, conn.cursor() as cur:
         by_name = rosters(cur)
         print(f"  {len(by_name):,} school strings with two or more athletes")
-        level_of = levels(cur)
+        level_mix = levelMix(cur)
+        level_of = levels(cur, level_mix)
         print(f"  {len(level_of):,} spellings with a known level (college / hs / ms)")
         college_key = collegeKeys(cur, by_name.keys(), level_of)
         print(f"  {len(college_key):,} college spellings the directory places")
@@ -502,8 +581,9 @@ def main():
               f"state is known")
         merged, refused = judge(pairs, by_name, by_state,
                                 min_shared=a.min_shared,
-                                min_fraction=a.min_fraction, level_of=level_of)
-        grouped = groups(merged, by_name)
+                                min_fraction=a.min_fraction, level_of=level_of,
+                                level_mix=level_mix)
+        grouped = groups(merged, by_name, by_state, level_mix)
         n_variants = sum(len(v) for _c, v in grouped)
         print(f"  {len(merged):,} pairs agree -> {len(grouped):,} groups, "
               f"{n_variants:,} spellings folded onto another\n")

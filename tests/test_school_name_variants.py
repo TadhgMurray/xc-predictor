@@ -164,7 +164,8 @@ class TheAthletesDecide(unittest.TestCase):
                    "Kingston-MO": set(range(100, 140))}
         merged, refused = M.judge(M.candidates(rosters.keys()), rosters, {})
         self.assertEqual(merged, [])
-        self.assertIn("0 shared", refused[0][7])
+        # 2026-11-01: the named states now refuse it before the count does
+        self.assertTrue("0 shared" in refused[0][7] or "different states" in refused[0][7])
 
     def test_one_transfer_is_not_a_merge(self):
         """MIN_FRACTION: a single shared athlete between two big rosters is
@@ -419,7 +420,11 @@ class Exhaustive(unittest.TestCase):
         levels = {"La Jolla": "hs", "La Jolla High School": "hs"}
         merged, _r = self._judge(rosters, {"La Jolla": {"CA"}, "La Jolla High School": {"CA"}}, levels)
         self.assertEqual(len(merged), 1)
-        merged, refused = self._judge(rosters, {"La Jolla": {"CA"}}, levels)
+        # one side's state unknown: only on overwhelming evidence (20+, half)
+        merged, _r = self._judge(rosters, {"La Jolla": {"CA"}}, levels)
+        self.assertEqual(len(merged), 1)
+        thin = {"La Jolla": set(range(1, 60)), "La Jolla High School": set(range(50, 90))}
+        merged, refused = self._judge(thin, {"La Jolla": {"CA"}}, levels)
         self.assertEqual(merged, [])
         self.assertIn("one known state", refused[0][7])
 
@@ -434,4 +439,65 @@ class Exhaustive(unittest.TestCase):
         rosters = {"Glendale": set(range(1, 500)), "Glendale (CA)": set(range(1, 200))}
         states = {"Glendale": {"CA", "AZ"}, "Glendale (CA)": {"CA"}}
         merged, _r = self._judge(rosters, states, {k: "hs" for k in rosters})
+        self.assertEqual(merged, [])
+
+
+class SecondDryRun(unittest.TestCase):
+    """2026-11-01, the owner's dry run: Concordia (Wis.) chained into
+    Concordia (Neb.), Anderson (S.C.) into Anderson (Ind.), Arkansas State
+    into Arkansas, Antelope Valley College into the University of Antelope
+    Valley -- and Trinity (Conn.), Wesleyan (Conn.), St Johns refused."""
+
+    def _run(self, rosters, states, levels, mix=None, key=None):
+        pairs = M.candidatesAll(rosters.keys(), level_of=levels, college_key=key or {})
+        merged, refused = M.judge(pairs, rosters, states, level_of=levels, level_mix=mix)
+        return merged, refused, M.groups(merged, rosters, states, mix)
+
+    def test_two_named_states_never_merge(self):
+        r = {"Anderson (Ind.)": set(range(1, 400)), "Anderson (S.C.)": set(range(1, 300))}
+        merged, refused, _g = self._run(r, {}, {k: "college" for k in r})
+        self.assertEqual(merged, [])
+        self.assertIn("different states", refused[0][7])
+
+    def test_no_chain_through_a_shared_generic_name(self):
+        r = {"Concordia (Neb.)": set(range(1, 300)), "Concordia (Wis.)": set(range(500, 1000)),
+             "Concordia University": set(range(1, 100)) | set(range(500, 600))}
+        lv = {k: "college" for k in r}
+        _m, _r, g = self._run(r, {}, lv)
+        for canon, variants in g:
+            names = {canon} | {v[0] for v in variants}
+            self.assertFalse({"Concordia (Neb.)", "Concordia (Wis.)"} <= names, g)
+
+    def test_state_is_another_university(self):
+        r = {"Arkansas": set(range(1, 800)), "Arkansas State": set(range(1, 800))}
+        lv = {k: "college" for k in r}
+        key = {k: ("University of Arkansas", "AR") for k in r}
+        merged, refused, _g = self._run(r, {}, lv, key=key)
+        self.assertEqual(merged, [])
+
+    def test_college_and_university_are_two_schools(self):
+        r = {"Antelope Valley College": set(range(1, 400)),
+             "University of Antelope Valley": set(range(1, 300))}
+        merged, refused, _g = self._run(r, {}, {k: "college" for k in r})
+        self.assertEqual(merged, [])
+
+    def test_a_named_college_folds_into_a_wide_mixed_name(self):
+        r = {"Trinity": set(range(1, 4000)), "Trinity (Conn.)": set(range(1, 700))}
+        st = {"Trinity": {"TX", "KY", "IL"}}
+        lv = {"Trinity": "hs", "Trinity (Conn.)": "college"}
+        mix = {"Trinity": {"hs": 0.8, "college": 0.2}, "Trinity (Conn.)": {"college": 1.0}}
+        merged, refused, g = self._run(r, st, lv, mix)
+        self.assertEqual(len(merged), 1, refused)
+        self.assertEqual(g[0][0], "Trinity")              # the wide one is the canonical
+
+    def test_decoration_merges_across_ms_and_hs_as_before(self):
+        r = {"St Johns": set(range(1, 2400)), "St. Johns": set(range(1, 1200))}
+        st = {"St Johns": {"FL"}, "St. Johns": {"FL"}}
+        merged, refused, _g = self._run(r, st, {"St Johns": "ms", "St. Johns": "hs"})
+        self.assertEqual(len(merged), 1, refused)
+
+    def test_a_school_named_for_a_college(self):
+        r = {"Boston College": set(range(1, 2800)), "Boston College High": set(range(1, 560))}
+        st = {"Boston College": {"MA"}}
+        merged, refused, _g = self._run(r, st, {k: "hs" for k in r})
         self.assertEqual(merged, [])
