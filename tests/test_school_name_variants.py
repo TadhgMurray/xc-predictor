@@ -591,3 +591,19 @@ class FifthLook(unittest.TestCase):
         lv = {"St. Joseph's": "hs", "St. Joseph's (Pa.)": "college"}
         mix = {"St. Joseph's": {"hs": 0.8, "college": 0.2}, "St. Joseph's (Pa.)": {"college": 1.0}}
         self.assertEqual(self._m(r, lv, {"St. Joseph's": {"PA", "IN", "NY"}}, mix), [])
+
+
+class SixthLook(unittest.TestCase):
+    def test_a_named_college_does_not_fold_into_a_vaguer_college_name(self):
+        r = {"Concordia University": set(range(1, 150)), "Concordia University (WI)": set(range(1, 6))}
+        lv = {k: "college" for k in r}
+        mix = {k: {"college": 1.0} for k in r}
+        m = M.judge(M.candidatesAll(r.keys(), level_of=lv), r, {}, level_of=lv, level_mix=mix)[0]
+        self.assertEqual(m, [])
+
+    def test_a_bracketed_place_is_named(self):
+        r = {"St. Joseph's (Brooklyn)": set(range(1, 100)), "St. Joseph's College": set(range(95, 103))}
+        lv = {k: "college" for k in r}
+        key = {k: ("St. Joseph's University", "NY") for k in r}
+        m = M.judge(M.candidatesAll(r.keys(), level_of=lv, college_key=key), r, {}, level_of=lv)[0]
+        self.assertEqual(m, [])

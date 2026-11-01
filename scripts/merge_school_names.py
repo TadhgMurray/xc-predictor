@@ -468,8 +468,15 @@ def judge(pairs, rosters_by_name, states_by_name,
         #   to an ambiguous one.
         def picksInto(x, sx, y, y_lvl, y_stated, sy):
             ny = len(rosters_by_name.get(y) or ()) or 1
+            # ! the plain name must be WIDE -- several states, or schools and
+            #   a college together; a plain name that is only colleges
+            #   ("Concordia University") is just a vaguer spelling, and the
+            #   named one does not fold into it
+            mx = mix.get(x) or {}
+            mixed = (mx.get("college", 0) >= COLLEGE_MIX
+                     and mx.get("hs", 0) + mx.get("ms", 0) >= MIX_SHARE)
             return bool(y_lvl == "college" and (y_stated or rel == "college")
-                        and (len(sx) > 1 or holds(x, "college", COLLEGE_MIX))
+                        and (len(sx) > 1 or mixed)
                         and sy <= ({y_stated} if y_stated else sy)
                         and shared / ny >= PICK_SHARE)
         picks = picksInto(a, sa, b, lb, db, sb) or picksInto(b, sb, a, la, da, sa)
@@ -491,8 +498,10 @@ def judge(pairs, rosters_by_name, states_by_name,
         #   A school pair too, when the unnamed one carries no athletic.net
         #   state to check it by ("Archbishop Carroll" into "... (DC)" on 105
         #   of 200).
-        if g_frac is None and bool(da) != bool(db) and not picks:
-            u = b if da else a
+        #   A bracketed place counts as naming one ("St. Joseph's (Brooklyn)").
+        na, nb = bool(da or _qualifier(a)), bool(db or _qualifier(b))
+        if g_frac is None and na != nb and not picks:
+            u = b if na else a
             if "college" in (la, lb) or not (states_by_name.get(u)):
                 g_frac = shared / max(1, len(rosters_by_name.get(u) or ()))
         wa, wb = set(nameWords(a)), set(nameWords(b))
