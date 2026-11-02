@@ -313,9 +313,13 @@ def qualifiedField(cur, plan, div_id):
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
     if rule is None or race is None or not plan.get("date"):
         return None
+    forecast = os.environ.get("XCP_QUALIFY_FORECAST", "1") != "0"
     try:
         cur.execute("SAVEPOINT up_qual")
-        field = Q.fieldFor(cur, rule, str(plan["date"])[:10], race.get("gender"))
+        field, _n_pred = Q.fieldFromRounds(
+            cur, rule, str(plan["date"])[:10], race.get("gender"),
+            predict=(lambda mid, g: predictedRound(cur, mid, g, rule["source"]))
+            if forecast else None)
         cur.execute("RELEASE SAVEPOINT up_qual")
     except Exception as exc:                            # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT up_qual")
@@ -323,6 +327,24 @@ def qualifiedField(cur, plan, div_id):
               flush=True)
         return None
     return field
+
+
+def predictedRound(cur, meet_id, gender, source):
+    """A round that has not run, as we predict it: [(person_id, school,
+    seconds, rating)] of its `gender` race (the one with the most schools),
+    from racePrediction -- the stored forecast, else a live one."""
+    plan = meetPlan(cur, meet_id, source)
+    races = [r for r in (plan or {}).get("races") or [] if r.get("gender") == gender]
+    if not races:
+        return []
+    race = max(races, key=lambda r: len(r.get("schools") or {}))
+    pred = racePrediction(cur, meet_id, race["div_id"], source)
+    if not pred.get("available"):
+        return []
+    return [(int(r["person_id"]), r.get("school"), float(r["seconds"]),
+             float(r["rating"]) if r.get("rating") is not None else None)
+            for r in pred.get("runners") or []
+            if r.get("person_id") is not None and r.get("seconds")]
 
 
 def livePrediction(cur, meet_id, div_id, source=None):

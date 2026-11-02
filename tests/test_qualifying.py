@@ -82,3 +82,19 @@ def test_the_check_scores_people_and_teams():
            (11, "B"), (12, "B")]
     f, p, th, tr, miss, extra = C.score(field, fin)
     assert (round(f, 2), round(p, 2), th, tr, miss, extra) == (0.4, 0.67, 1, 2, ["B"], [])
+
+
+def test_a_round_not_run_is_taken_from_its_forecast(monkeypatch):
+    rule = Q.ruleFor("NCAA Division III Cross Country Championships", "tfrrs")
+    monkeypatch.setattr(Q, "_roundMeets", lambda cur, r, d, w: [(i, f"R{i}", "2026-11-14")
+                                                               for i in range(4)])
+    ran = {0: _region("a"), 1: _region("b")}
+    monkeypatch.setattr(Q, "roundResults", lambda cur, r, mid, g, s=None: ran.get(mid, []))
+    asked = []
+
+    def predict(mid, g):
+        asked.append(mid)
+        return _region(f"p{mid}")
+    field, n_pred = Q.fieldFromRounds(None, rule, "2026-11-22", "F", predict)
+    assert n_pred == 2 and asked == [2, 3] and field
+    assert Q.fieldFromRounds(None, rule, "2026-11-22", "F") == (None, 0)   # 2 ran < MIN_ROUNDS

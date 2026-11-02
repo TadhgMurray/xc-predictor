@@ -27,9 +27,17 @@ qualifiers from its rounds, by the meet's published rules.
   High school state, division and conference routes are learned from the
   results instead (scripts/qualifier_audit.py), not typed.
 
-! NONE UNTIL THE ROUNDS HAVE RUN. fieldFor answers only when every round it
-  expects has results (at least MIN_ROUNDS of them); before that the meet
-  keeps the last-edition field (last_edition.py).
+★ AND BEFORE THE ROUNDS HAVE RUN, THE ROUNDS AS WE PREDICT THEM (owner,
+  2026-11-02: "This should be what we do ... it's the entire point").
+  fieldFromRounds(predict=...) takes a round that has no results yet from
+  our own forecast of it (upcoming_preview.predictedRound: the stored or
+  live prediction of that race), in predicted finish order, and applies the
+  same rule: the likeliest field, weeks ahead. A round that has run is read
+  from its results. scripts/qualifying_check.py scored the rules on 2025
+  from the rounds' results: 82-93% of finishers found, 28-34 of 32-34 teams.
+
+! NONE WITHOUT ENOUGH ROUNDS: at least MIN_ROUNDS rounds, run or predicted;
+  otherwise the meet keeps its last-edition field (last_edition.py).
 """
 import collections
 import math
@@ -256,17 +264,26 @@ def roundResults(cur, rule, meet_id, gender, season=None):
     return best
 
 
-def fieldFor(cur, rule, day, gender):
-    """{person_id: school} for the championship on `day` (ISO) in `gender`,
-    from this season's rounds, or None when fewer than MIN_ROUNDS have
-    results (the meet keeps its last-edition field)."""
+def fieldFromRounds(cur, rule, day, gender, predict=None):
+    """({person_id: school}, rounds predicted) for the championship on
+    `day` (ISO) in `gender`, or (None, 0) with fewer than MIN_ROUNDS
+    rounds. predict(meet_id, gender) -> rows like roundResults', for a round
+    with no results yet; without it only rounds that have run count."""
     if rule is None or gender not in ("M", "F"):
-        return None
-    rounds = {}
+        return None, 0
+    rounds, n_pred = {}, 0
     for mid, _name, _d in _roundMeets(cur, rule, day, rule.get("window", 21)):
         rows = roundResults(cur, rule, mid, gender, int(str(day)[:4]))
+        if len(rows) < 10 and predict is not None:
+            rows = predict(mid, gender) or []
+            n_pred += len(rows) >= 10
         if len(rows) >= 10:
             rounds[mid] = rows
     if len(rounds) < MIN_ROUNDS:
-        return None
-    return selectField(rule, rounds)
+        return None, 0
+    return selectField(rule, rounds), n_pred
+
+
+def fieldFor(cur, rule, day, gender):
+    """{person_id: school} from the rounds that have run, or None."""
+    return fieldFromRounds(cur, rule, day, gender)[0]
