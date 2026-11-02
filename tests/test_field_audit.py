@@ -52,3 +52,26 @@ def test_as_many_as_they_brought():
     assert P.broughtCap(0) == P.MAX_PER_TEAM
     assert P.broughtCap(3) == 3 and P.broughtCap(6) == 7 and P.broughtCap(10) == 10
     assert P.broughtCap(15, varsity=False) == 15 and P.broughtCap(2, varsity=False) == 2
+
+
+def test_grade_races():
+    import upcoming_preview as U
+    assert U.raceGrades("Freshman Boys 2 Mile") == (9,)
+    assert U.raceGrades("Sophomore Girls") == (10,)
+    assert U.raceGrades("Frosh/Soph Boys") == (9, 10) and U.raceGrades("F/S Girls") == (9, 10)
+    assert U.raceGrades("Fr-So Boys") == (9, 10)
+    assert U.raceGrades("7th/8th Grade Boys") == (7, 8) and U.raceGrades("6th grade") == (6,)
+    assert U.raceGrades("JV Boys") == () and U.raceGrades("Varsity 5K") == ()
+    plan = {"races": [
+        {"div_id": 1, "label": "Varsity Boys", "gender": "M", "schools": {("A", ""): 7}},
+        {"div_id": 2, "label": "Freshman Boys", "gender": "M", "schools": {("A", ""): 9}},
+        {"div_id": 3, "label": "8th Grade Boys", "gender": "M", "schools": {("A MS", ""): 9}}]}
+    fr = U.fieldRules(plan, 2)
+    assert fr["grades"] == [9] and fr["skip_by_school"] == {"A": 7}
+    ms = U.fieldRules(plan, 3)
+    assert ms["grades"] == [8] and ms["skip_by_school"] == {}     # not the varsity's leftovers
+
+
+def test_a_middle_school_race_by_its_initials():
+    import upcoming_preview as U
+    assert U._OTHER_LEVEL.search("MS Boys 2 Mile") and not U._OTHER_LEVEL.search("Varsity Boys")

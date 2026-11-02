@@ -247,7 +247,27 @@ def _target(meet_id, div_id, source):
 #   (predict.broughtCap), and in a race that is not the varsity one, leave
 #   out as many of each school's fastest as it ran in the same-gender
 #   varsity race(s). XCP_FIELD_RULES=0 turns it off.
-_OTHER_LEVEL = re.compile(r"middle|ms|elementary|youth|grade school", re.I)
+_OTHER_LEVEL = re.compile(r"middle|\bms\b|elementary|youth|grade school", re.I)
+# ★ AND BY GRADE WHERE THE RACE SAYS SO (owner, 2026-11-02: "Can you filter
+#   them by grade?"): a freshman race takes ninth graders, a sophomore race
+#   tenth, a frosh/soph race both, a "7th/8th grade" race those grades.
+_GRADE_RACES = ((re.compile(r"fr(osh|eshm\w*)?\s*[/&-]\s*so(ph\w*)?|f\s*/\s*s\b|underclass", re.I),
+                 (9, 10)),
+                (re.compile(r"frosh|freshm", re.I), (9,)),
+                (re.compile(r"soph", re.I), (10,)))
+_GRADE_WORDS = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.I)
+
+
+def raceGrades(label):
+    """The grades a race is for, from its label, or (). Pure."""
+    lab = label or ""
+    nums = tuple(sorted({int(n) for n in _GRADE_WORDS.findall(lab) if 1 <= int(n) <= 12}))
+    if nums and re.search(r"grade", lab, re.I):
+        return nums
+    for pat, grades in _GRADE_RACES:
+        if pat.search(lab):
+            return grades
+    return ()
 
 
 def fieldRules(plan, div_id):
@@ -260,9 +280,16 @@ def fieldRules(plan, div_id):
 
     def isVarsity(r):
         lab = r.get("label") or ""
-        return not _NOT_VARSITY.search(lab) and not _OTHER_LEVEL.search(lab)
+        return (not _NOT_VARSITY.search(lab) and not _OTHER_LEVEL.search(lab)
+                and not raceGrades(lab))
     out = {"cap_rule": "brought", "varsity": isVarsity(race), "skip_by_school": {}}
-    if out["varsity"] or _OTHER_LEVEL.search(race.get("label") or ""):
+    grades = raceGrades(race.get("label"))
+    if grades and not out["varsity"]:
+        out["grades"] = list(grades)
+    # a race of another level (middle school, a 7th/8th grade race) is not
+    # the varsity's leftovers
+    if out["varsity"] or _OTHER_LEVEL.search(race.get("label") or "") or (
+            grades and min(grades) < 9):
         return out
     skip = {}
     for r in races:

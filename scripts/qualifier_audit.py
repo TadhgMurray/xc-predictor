@@ -123,7 +123,8 @@ def _season(conn, y):
         SELECT source, meet_id, div_id, date, person_id, school, time_seconds
         FROM   results
         WHERE  date ~ '^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$' AND date BETWEEN %s AND %s
-          AND  person_id IS NOT NULL AND time_seconds > 0 AND time_seconds < 20000""",
+          AND  person_id IS NOT NULL AND time_seconds > 0 AND time_seconds < 20000
+          AND  meet_id IS NOT NULL AND div_id IS NOT NULL""",
                 (lo, hi))
     races, day = collections.defaultdict(list), {}
     seen = set()
