@@ -158,9 +158,15 @@ def main():
     ap.add_argument("--season", type=int, required=True,
                     help="the season to score (its August's year); rules from the one before")
     ap.add_argument("--show", type=int, default=15)
+    ap.add_argument("--frozen", default=None, metavar="TABLE",
+                    help="this season, against the site's own field: meet_forecast (or a "
+                         "pred_ archive), for the races it froze -- and the two combined")
     ap.add_argument("--max-races", type=int, default=600,
                     help="the largest qualifying races only (each reads its meets' races)")
     a = ap.parse_args()
+    if a.frozen and not (a.frozen == "meet_forecast" or (
+            a.frozen.startswith("pred_") and a.frozen.replace("_", "").isalnum())):
+        raise SystemExit(f"--frozen {a.frozen!r}: meet_forecast or a pred_ name only")
 
     import psycopg2.extras
     import last_edition as LE
@@ -240,6 +246,10 @@ def main():
             return byReturners((src, mid, div), near) if returners else None
 
         found = collections.defaultdict(lambda: [0, 0, 0, 0, 0])
+        # --frozen: group -> {method: [finishers found, listed]} and races
+        versus = collections.defaultdict(lambda: collections.defaultdict(lambda: [0, 0]))
+        vs_n = collections.Counter()
+        vs_fin = collections.Counter()
         shown = []
         n_qual = 0
         done = 0
@@ -287,6 +297,16 @@ def main():
                     continue
                 guess |= qualifiers(this[F2], k, m)
             actual = {p for p, _s, _t in this[R2]}
+            site = None
+            if a.frozen:
+                cur.execute(f"SELECT runners FROM {a.frozen} WHERE source = %s AND meet_id = %s "
+                            "AND div_id = %s", R2)
+                row = cur.fetchone()
+                if row:
+                    import meet_forecast as MF
+                    rr = MF._load(row[0]) if isinstance(row[0], str) else row[0]
+                    site = {int(r["person_id"]) for r in rr or []
+                            if r.get("person_id") is not None}
             last_schools = {s for _p, s, _t in rrows if s}
             school_ok = sum(1 for _p, s, _t in this[R2] if s in last_schools)
             kind = {6: "national", 5: "state", 4: "conf / region"}.get(
@@ -298,6 +318,16 @@ def main():
                 f[2] += len(guess & actual)
                 f[3] += len(guess)
                 f[4] += school_ok
+                if site is not None:
+                    vs_n[g] += 1
+                    vs_fin[g] += len(actual)
+                    # ★ THE SITE'S FIELD, THE QUALIFIERS', BOTH, AND "THE
+                    #   QUALIFIERS WHEN EVERY ROUND WAS FOUND, ELSE THE SITE'S"
+                    for meth, fld in (("site", site), ("qualifiers", guess),
+                                      ("both", site | guess),
+                                      ("qualifiers if all found", guess if ok else site)):
+                        versus[g][meth][0] += len(fld & actual)
+                        versus[g][meth][1] += len(fld)
             shown.append((len(actual), names.get((R2[0], R2[1])) or str(R2), dthis[R2],
                           len(rules), ok, len(guess & actual) / max(len(actual), 1),
                           len(guess & actual) / max(len(guess), 1), school_ok / max(len(actual), 1)))
@@ -314,6 +344,22 @@ def main():
                   f"{100 * f[2] / max(f[3], 1):>7.0f}% {100 * f[4] / max(f[1], 1):>9.0f}%")
     print("  (found: of the finishers, in the qualifiers' field; precise: of that field, "
           "finished; last year: of the finishers, school ran it last year)")
+    if a.frozen:
+        print(f"\n  AGAINST THE SITE'S OWN FIELD ({a.frozen}, frozen before the race), the races "
+              "it froze:")
+        print(f"  {'':24} {'races':>6} {'finishers':>10}   " + "   ".join(
+            f"{m:>23}" for m in ("site", "qualifiers", "both", "qualifiers if all found")))
+        for g in ("national", "state", "conf / region", "ALL",
+                  "ALL, every round found", "ALL, a round missing"):
+            if not vs_n.get(g):
+                continue
+            cells = []
+            for m in ("site", "qualifiers", "both", "qualifiers if all found"):
+                hit, n = versus[g][m]
+                cells.append(f"{100 * hit / max(vs_fin[g], 1):>9.0f}% found "
+                             f"{100 * hit / max(n, 1):>4.0f}% pr")
+            print(f"  {g:24} {vs_n[g]:>6} {vs_fin[g]:>10,}   " + "   ".join(cells))
+        print("  (found: of the finishers, listed; pr: of those listed, finished)")
     print("\n  the biggest:")
     for n, nm, d, nf, ok, fd, pr, ly in sorted(shown, reverse=True)[:a.show]:
         print(f"    {nm[:44]:44} {d}  {n:>5} finishers, {nf:>2} feeders"
