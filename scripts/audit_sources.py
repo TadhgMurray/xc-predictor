@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 audit_sources.py -- does every source land everything a race needs, and
-land it right? READ ONLY.
+land it right?
 
     set -a; . /etc/xc-predictor.env; set +a
     /srv/venv/bin/python scripts/audit_sources.py                 # this season
@@ -31,7 +31,9 @@ land it right? READ ONLY.
                rather than against ourselves.
 
   The worst races of each check are listed with their racecast link, so
-  each can be opened beside the source page.
+  each can be opened beside the source page. --requeue puts the athletic.net
+  meets of checks 2 and 3 back in its queue (its saver rewrites time_seconds
+  on a re-scrape). Otherwise READ ONLY.
 """
 import argparse
 import os
@@ -59,6 +61,11 @@ def capture(cur, table, since):
     cur.execute("""SELECT column_name FROM information_schema.columns
                    WHERE table_name = %s AND column_name IN ('place', 'status')""", (table,))
     have = {r[0] for r in cur.fetchall()}
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_name = %s AND column_name IN ('is_field', 'is_relay')""", (table,))
+    kinds = {r[0] for r in cur.fetchall()}
+    # a field mark and a relay are not a runner's time: track counts running events only
+    running = "".join(f" AND COALESCE(r.{k}, 0) = 0" for k in sorted(kinds))
     place = "r.place" if "place" in have else "NULL::int"
     status = "r.status IS NULL" if "status" in have else "TRUE"
     cur.execute(f"""
@@ -70,7 +77,7 @@ def capture(cur, table, since):
                count(*) FILTER (WHERE COALESCE(btrim(r.school), '') IN ('', 'Unknown')),
                count(*) FILTER (WHERE {place} IS NULL OR {place} <= 0)
         FROM   {table} r
-        WHERE  r.date >= %s
+        WHERE  r.date >= %s{running}
         GROUP  BY 1 ORDER BY 2 DESC""", (since,))
     return cur.fetchall()
 
@@ -136,6 +143,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", help="first date (default: this season's first day)")
     ap.add_argument("--show", type=int, default=12)
+    ap.add_argument("--requeue", action="store_true",
+                    help="put the athletic.net meets of the ORDER and PACE lists back in its "
+                         "queue: a re-scrape rewrites their times from the source")
     a = ap.parse_args()
     since = a.since
     if not since:
@@ -199,6 +209,16 @@ def main():
         for f, m, d, dist, why in bad[:a.show]:
             print(f"    {f:<13} {dist:>6.0f} m  {why:<18} {link(None, m, d)}")
 
+        if a.requeue:
+            again = sorted({m for (m, d) in breaks if feed_of[(m, d)] == "athletic.net"}
+                           | {m for f, m, _d, _dist, _w in bad if f == "athletic.net"})
+            for m in again:
+                cur.execute("""INSERT INTO meet_queue (meet_id, sport, source, scraped, priority)
+                               VALUES (%s, 'XC', 'anet', 0, 1)
+                               ON CONFLICT (meet_id, sport, source)
+                               DO UPDATE SET scraped = 0, priority = 1""", (m,))
+            conn.commit()
+            print(f"\n  {len(again)} athletic.net meets back in its queue (ORDER and PACE)")
         print(f"\n== 4. TWINS: one runner, one meet, athletic.net and AthleticLIVE (XC)")
         cur.execute(f"""SELECT l.meet_id, l.div_id, n.div_id, l.athlete_id,
                                l.time_seconds, n.time_seconds

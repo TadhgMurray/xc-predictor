@@ -103,7 +103,11 @@ def promoteMeet(cur, ext, now=None):
         out["races"] += len(tf)
         res = []
         for race in tf:
-            title = (race["division"] or race["title"] or "")[:200]
+            # ★ THE RACE'S TITLE, AS AN UPLOAD WRITES IT (audit, 2026-11-02:
+            #   every timer track row unnormalised). The division came first
+            #   ('Varsity'), and the event name is where track normalisation
+            #   reads the gender and the distance; meets_tf carries the title
+            title = (race["title"] or race["division"] or "")[:200]
             for r in rows[race["n"]]:
                 res.append((rid(r, race), None, None, SOURCE, slug, r["id"], r["name"], meet_id,
                             divIdFor(ext, race["n"]), race["n"], title, r["ts"], "running", 0,
