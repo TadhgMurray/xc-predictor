@@ -98,3 +98,29 @@ def test_a_round_not_run_is_taken_from_its_forecast(monkeypatch):
     field, n_pred = Q.fieldFromRounds(None, rule, "2026-11-22", "F", predict)
     assert n_pred == 2 and asked == [2, 3] and field
     assert Q.fieldFromRounds(None, rule, "2026-11-22", "F") == (None, 0)   # 2 ran < MIN_ROUNDS
+
+
+def test_a_learned_route_found_again_and_its_field(monkeypatch, tmp_path):
+    import json
+    path = tmp_path / "routes.json"
+    path.write_text(json.dumps({"routes": [
+        {"source": "anet", "meet": "springfield state championships", "race": "Class A Boys",
+         "gender": "M", "rounds": [
+             {"meet": "north regional", "race": "Class A Boys", "gender": "M",
+              "date": "2025-10-25", "teams": 2, "individuals": 3},
+             {"meet": "south regional", "race": "Class A Boys", "gender": "M",
+              "date": "2025-10-25", "teams": 2, "individuals": 3}]},
+        {"source": "anet", "meet": "springfield state championships", "race": "Class B Boys",
+         "gender": "M", "rounds": []}]}))
+    monkeypatch.setattr(Q, "ROUTES_PATH", str(path))
+    Q._ROUTES["mtime"] = None
+    r = Q.learnedRoute("2026 Springfield State Championships", "anet", "Class A Boys", "M")
+    assert r and r["race"] == "Class A Boys"
+    assert Q.learnedRoute("2026 Springfield State Championships", "anet", "Boys 5K", "M") is None
+    rows = _region("n", n_teams=5, extras=0)
+    got = Q.simpleQualifiers(rows, 2, 3)
+    assert sum(1 for s in got.values() if s in ("n0", "n1")) == 14 and len(got) == 17
+    monkeypatch.setattr(Q, "_thisRound", lambda cur, rnd, day, src: (
+        (1, 1, False) if rnd["meet"] == "north regional" else None))
+    field, n_pred = Q.learnedField(None, r, "2026-11-07", lambda mid, div: rows)
+    assert n_pred == 1 and len(field) == 17                  # one of two rounds is half: enough
