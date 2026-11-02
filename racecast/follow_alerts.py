@@ -274,11 +274,43 @@ def teamRows(cur, school, state, level, year):
     return [dict(r) for r in cur.fetchall()]
 
 
+# ★ ONLY WHAT A FULL RUN HAS RATED (owner, 2026-11-02: an email for the
+#   NESCAC race, rated by the nightly with no race day and no weather -- "I
+#   shouldn't have gotten an email if it wasn't rated by a full pipeline
+#   run"). The nightly prices a new race at its course on a typical day; the
+#   full solve adds the day and the weather. race_day_effect holds every
+#   race the last solve saw, so a race dated after its newest one waits.
+#   Items are keyed per result and recorded once, so a race held back here
+#   is mailed the night after the full run that rates it.
+def solveHorizon(cur):
+    """The newest race date the last full solve covered, ISO, or None when
+    there is no record (then nothing is held back)."""
+    try:
+        cur.execute("SELECT to_regclass('public.race_day_effect') AS t")
+        row = cur.fetchone()
+        if (row["t"] if isinstance(row, dict) else row[0]) is None:
+            return None
+        cur.execute("SELECT max(race_date)::text AS d FROM race_day_effect")
+        row = cur.fetchone()
+        return row["d"] if isinstance(row, dict) else row[0]
+    except Exception:                                    # noqa: BLE001
+        cur.connection.rollback()
+        return None
+
+
+def solved(rows, horizon):
+    """The rows a full solve has rated (race_date on or before horizon)."""
+    if not horizon:
+        return rows
+    return [r for r in rows if str(r.get("race_date") or "")[:10] <= horizon]
+
+
 def findItems(cur, follows, year):
     """{follow_id: [(key, subject, payload)]} for every follow."""
     out = {f["id"]: [] for f in follows}
     pids = {f["person_id"] for f in follows if f["kind"] == "athlete"}
-    arows = _fill(cur, athleteRows(cur, pids, year))
+    horizon = solveHorizon(cur)
+    arows = _fill(cur, solved(athleteRows(cur, pids, year), horizon))
     prs, jumps = _breakoutsFor(cur, [(r["sport"], r["result_id"]) for r in arows])
     sbs = seasonBests(arows)
     prior = priorRatings(arows)
@@ -296,7 +328,7 @@ def findItems(cur, follows, year):
             tk = (f["school"], f.get("state"), f.get("level"))
             if tk not in teams:
                 # a hidden athlete's race is never a team's news item
-                rows = [r for r in _fill(cur, teamRows(cur, *tk, year))
+                rows = [r for r in _fill(cur, solved(teamRows(cur, *tk, year), horizon))
                         if not optout.isHidden(r.get("person_id"))]
                 tp, tj = _breakoutsFor(cur, [(r["sport"], r["result_id"]) for r in rows])
                 teams[tk] = teamItems(F.subjectKey(f), rows, tp, tj)

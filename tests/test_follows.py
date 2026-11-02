@@ -708,3 +708,12 @@ def test_alert_mail_shows_the_pictures_and_the_team_squad():
     # an older item without the squad keeps the one Team line
     q = dict(p, team={"school": "Jesuit", "place": 2, "n_teams": 31, "points": 87})
     assert ("Team", "Jesuit 2nd of 31 teams, 87 points") in AE.raceFacts(q)
+
+
+def test_alerts_wait_for_the_full_solve():
+    """2026-11-02: a race priced only by the nightly (no race day, no
+    weather) is not mailed; the night after the full run rates it, it is."""
+    import follow_alerts as FA
+    rows = [{"race_date": "2026-10-24"}, {"race_date": "2026-10-31"}]
+    assert FA.solved(rows, "2026-10-28") == [rows[0]]
+    assert FA.solved(rows, None) == rows
