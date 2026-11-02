@@ -44,6 +44,7 @@ import collections
 import datetime
 import math
 import os
+import re
 import sys
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -62,6 +63,11 @@ TEAM_MIN = 4             # a school with this many feeder runners in R went as a
 TEAM_SIZE = 7
 ROUTE_FOUND = 0.7        # --write-routes: a route must rebuild this much of its own field
 ROUTE_PRECISE = 0.6      # ... at this precision
+NEXT_FOUND = 0.5         # ... and, where this season's edition has run, find this much of it
+# ! NOT A MEET YOU QUALIFY FOR (review of the first routes file): NXR regionals
+#   are open entry (the round for NXN), a "Top 10" race is each team's best
+#   ten, an invitational invites
+NOT_A_ROUTE = re.compile(r"\bnxr\b|nike cross regional|\btop\s*\d+|seeded|invit", re.I)
 
 
 def placeRanks(rows):
@@ -270,12 +276,16 @@ def main():
             if RR.meetType(names.get((R[0], R[1]))) < 4:
                 continue
             rday = datetime.date.fromisoformat(dprev[R])
+            # ★ EACH RUNNER'S LAST RACE BEFORE IT, NOT EVERY ONE (review of the
+            #   first routes file: IHSA 1A state read 38 "rounds", its
+            #   regionals as well as its sectionals, so regional qualifiers
+            #   who then went out at sectionals were listed for state)
             feeders = collections.Counter()
             for pid, _s, _t in rrows:
-                for F in by_person[pid]:
-                    if F[0] == R[0] and F != R and 1 <= (rday - datetime.date.fromisoformat(
-                            dprev[F])).days <= FEED_DAYS:
-                        feeders[F] += 1
+                before = [F for F in by_person[pid] if F[0] == R[0] and F != R and
+                          1 <= (rday - datetime.date.fromisoformat(dprev[F])).days <= FEED_DAYS]
+                if before:
+                    feeders[max(before, key=lambda F: dprev[F])] += 1
             rules, cover = {}, set()
             for F, n in feeders.items():
                 if n < 3:
@@ -299,7 +309,8 @@ def main():
             own_found = len(own & rset) / max(len(rset), 1)
             own_prec = len(own & rset) / max(len(own), 1)
             route = None
-            if a.write_routes and own_found >= ROUTE_FOUND and own_prec >= ROUTE_PRECISE:
+            if (a.write_routes and own_found >= ROUTE_FOUND and own_prec >= ROUTE_PRECISE
+                    and not NOT_A_ROUTE.search(names.get((R[0], R[1])) or "")):
                 def label(key):
                     r = next((x for x in racesOf(key[0], key[1])
                               if int(x["div_id"]) == key[2]), {})
@@ -374,6 +385,12 @@ def main():
     if a.write_routes:
         import json
         with open(a.write_routes, "w") as fh:
+            # ! A ROUTE THIS SEASON'S EDITION SHOWED WRONG IS NOT WRITTEN
+            n_all = len(routes)
+            routes = [r for r in routes if r.get("next_found", 1.0) >= NEXT_FOUND
+                      and not NOT_A_ROUTE.search(r.get("race") or "")]
+            print(f"  {n_all - len(routes):,} routes left out: under {100 * NEXT_FOUND:.0f}% "
+                  "found on this season's edition, or a race that is not a qualifier by its label")
             json.dump({"made": datetime.date.today().isoformat(), "from_season": a.season - 1,
                        "routes": routes}, fh, indent=1)
         print(f"wrote {len(routes):,} routes to {a.write_routes} (each rebuilds "
