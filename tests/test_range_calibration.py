@@ -33,9 +33,22 @@ def test_z_is_read_against_the_unscaled_range():
     fc = {"made_on": "2026-11-03", "runners": [
         {"person_id": 1, "seconds": 1000.0, "hi": 1000.0 * math.exp(0.5 * w)}]}
     fin = [{"person_id": 1, "time_seconds": 1000.0 * math.exp(-w)}]
-    (z,) = C.zScores(fc, fin, [{"from": "2026-11-02", "k": 0.5}])
-    assert z == pytest.approx(1.0, rel=1e-3)
-    assert C.zScores(fc, [], []) == []
+    (z,), place = C.zScores(fc, fin, [{"from": "2026-11-02", "k": 0.5}])
+    assert z == pytest.approx(1.0, rel=1e-3) and place == []      # no sigma_pct stored
+    assert C.zScores(fc, [], []) == ([], [])
+
+
+def test_the_place_spread_is_read_without_the_race_level_and_on_its_own_factor():
+    # the whole race ran 5% slow; each runner is off the race's median by 1%
+    fc = {"made_on": "2026-11-10", "runners": [
+        {"person_id": i, "seconds": 1000.0, "hi": 1100.0, "sigma_pct": 1.0} for i in range(3)]}
+    fin = [{"person_id": i, "time_seconds": 1000.0 * math.exp(0.05 + d)}
+           for i, d in enumerate((-0.01, 0.0, 0.01))]
+    h = [{"from": "2026-11-02", "k": 0.5}, {"from": "2026-11-09", "k_place": 0.5}]
+    _t, place = C.zScores(fc, fin, h)
+    assert sorted(place) == pytest.approx([0.0, 0.5, 0.5])        # 1% over an unscaled 2%
+    assert M.scaleOn(h, "2026-11-10") == 0.5 and M.scaleOn(h, "2026-11-10", "k_place") == 0.5
+    assert M.scaleOn(h, "2026-11-05", "k_place") == 1.0
 
 
 def test_the_factor_makes_68_percent_true():

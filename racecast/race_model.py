@@ -64,23 +64,28 @@ def loadModel(path=None):
 #   so they run wide. scripts/range_calibration.py measures the factor that
 #   makes 68% true on the last weeks' frozen forecasts and appends it to
 #   this file; every range made on or after an entry's day is scaled by it.
+#   ! TWO FACTORS: "k" for the time range (lo/hi: the place spread AND the
+#   race's level), "k_place" for the place spread alone (sigma_pct, what
+#   race_sim draws for win and place chances). One measured on the other
+#   would make win chances overconfident; until k_place is measured
+#   (sigma_pct is stored from 2026-11-02) the place spread is left alone.
 CAL_PATH = os.environ.get("XCP_RACE_CALIBRATION") or os.path.join(
     os.path.dirname(MODEL_PATH), "race_calibration.json")
 _CAL = {"mtime": None, "history": []}
 
 
-def scaleOn(history, day):
-    """The range factor in force on `day` (ISO date): the last entry whose
-    "from" is on or before it, else 1.0. Pure."""
+def scaleOn(history, day, key="k"):
+    """The factor `key` in force on `day` (ISO date): the last entry on or
+    before it that carries one, else 1.0. Pure."""
     k = 1.0
     for h in sorted(history or [], key=lambda h: h["from"]):
-        if h["from"] <= day:
-            k = float(h["k"])
+        if h["from"] <= day and h.get(key) is not None:
+            k = float(h[key])
     return k
 
 
-def rangeScale(day=None):
-    """The factor for ranges made today (or on `day`), from CAL_PATH."""
+def rangeScale(day=None, key="k"):
+    """The factor `key` for ranges made today (or on `day`), from CAL_PATH."""
     import json
     try:
         mtime = os.path.getmtime(CAL_PATH)
@@ -93,7 +98,7 @@ def rangeScale(day=None):
         except Exception:                                # noqa: BLE001
             _CAL["history"] = []
         _CAL["mtime"] = mtime
-    return scaleOn(_CAL["history"], day or datetime.date.today().isoformat())
+    return scaleOn(_CAL["history"], day or datetime.date.today().isoformat(), key)
 
 
 def gradeAt(grade, then, day):
@@ -314,13 +319,14 @@ def predictField(model, field, race):
     spread = model.get("spread")
     own_ps = (np.clip(spread.predict(X), RT.SPREAD_MIN, RT.SPREAD_MAX)
               if spread is not None else None)
-    k = rangeScale()
+    k, k_place = rangeScale(), rangeScale(key="k_place")
     out = {}
     for i, (r, x) in enumerate(zip(field, rel)):
         band = RT.bandOf(r["f"]["opener"], r["f"]["last_days"])
-        ps = k * (float(own_ps[i]) if own_ps is not None
-                  else float(sig.get(band, sig.get("_all", 0.03))))
-        ts = k * math.sqrt((ps / k) ** 2 + float(sig.get("_level", 0.0)) ** 2)
+        ps0 = (float(own_ps[i]) if own_ps is not None
+               else float(sig.get(band, sig.get("_all", 0.03))))
+        ps = k_place * ps0
+        ts = k * math.sqrt(ps0 * ps0 + float(sig.get("_level", 0.0)) ** 2)
         secs = math.exp(mean_base + level + float(x))
         out[r["pid"]] = {"seconds": round(secs, 1), "lo": round(secs * math.exp(-ts), 1),
                          "hi": round(secs * math.exp(ts), 1),

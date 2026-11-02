@@ -288,7 +288,9 @@ def racePrediction(cur, meet_id, div_id, source=None):
 # runner's sim, crest, link) stays the predictions page's
 _RUNNER_KEYS = ("person_id", "name", "school", "school_state", "school_label",
                 "school_href", "grade", "grade_label", "pool", "rating",
-                "place", "score_place", "seconds", "lo", "hi")
+                "place", "score_place", "seconds", "lo", "hi",
+                # the place spread, so scripts/range_calibration.py can check it
+                "sigma_pct")
 _TEAM_KEYS = ("team", "state", "school_label", "school_href", "score", "note", "pool")
 
 
