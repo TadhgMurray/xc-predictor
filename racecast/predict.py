@@ -1571,31 +1571,45 @@ def _servedTimes(cur, person_ids, target):
 
 
 def forecastCourse(spec):
-    """The course key the weather correction used for this race's venue:
-    an anet XC meet's course_name; None for tfrrs, whose meets the
-    correction reads against the global reference
-    (backfill_normalize._loadMeetCellsTfrrsXC). Pure."""
-    if (spec or {}).get("source") == "tfrrs":
+    """The course key the weather correction used for this race's venue
+    (backfill_normalize's WeatherIndex loaders). Pure.
+      XC anet   its course_name
+      XC tfrrs  None: corrected against the global reference
+      track     'TF:loc:<location_id>:out', None with no location"""
+    spec = spec or {}
+    if not spec.get("is_xc"):
+        loc = spec.get("location_id")
+        return f"TF:loc:{loc}:out" if loc not in (None, 0, "0", "") else None
+    if spec.get("source") == "tfrrs":
         return None
-    return (spec or {}).get("course_name")
+    return spec.get("course_name")
 
 
 def forecastFactor(cur, spec):
     """(multiplier, day summary) the forecast puts on this race's typical-day
     times -- forecast.raceDayWeather through forecast.weatherEffect -- or
     (1.0, None) with no forecast (past the 16-day horizon, a past race, no
-    coordinates, track). See forecast.py's note."""
-    if not spec or not spec.get("is_xc"):
+    coordinates, an indoor meet, no distance). See forecast.py's note.
+
+    ! INDOOR IS NEVER WEATHER: the correction leaves indoor meets alone
+      (backfill_normalize loads outdoor cells only), so the forecast does too."""
+    if not spec:
+        return 1.0, None
+    if not spec.get("is_xc") and spec.get("is_indoor") in (1, True, "1"):
+        return 1.0, None
+    dist = spec.get("distance_meters")
+    try:
+        dist = float(dist) if dist else None
+    except (TypeError, ValueError):
+        dist = None
+    if not dist or dist <= 0:
         return 1.0, None
     fc = _fc()
     wx = fc.raceDayWeather(spec.get("gps_lat"), spec.get("gps_long"), spec.get("date"),
                            spec.get("sport"), cur=cur)
     if not wx:
         return 1.0, None
-    dist = spec.get("distance_meters")
-    m = fc.weatherEffect(wx, forecastCourse(spec), spec.get("sport"),
-                         float(dist) if dist else None)
-    return m, wx
+    return fc.weatherEffect(wx, forecastCourse(spec), spec.get("sport"), dist), wx
 
 
 def forecastWeather(cur, preds, spec):
@@ -1611,13 +1625,14 @@ def forecastWeather(cur, preds, spec):
         return preds
     pct = round(100.0 * (m - 1.0), 2)
     text = _fc().describeDay(wx)
+    nd = 1 if (spec or {}).get("is_xc", True) else 2      # track to the hundredth
     for e in preds:
         if not e.get("seconds") or not e.get("is_race_time", True):
             continue
         e["seconds_typical"] = e["seconds"]
         for k in ("seconds", "lo", "hi"):
             if e.get(k):
-                e[k] = round(float(e[k]) * m, 1)
+                e[k] = round(float(e[k]) * m, nd)
         e["weather_pct"] = pct
         e["weather_text"] = text
     return preds

@@ -107,13 +107,25 @@ def test_forecast_weather_moves_times_not_ratings(monkeypatch):
 
 def test_forecast_course_key():
     import predict
-    assert predict.forecastCourse({"source": "tfrrs", "course_name": "X"}) is None
-    assert predict.forecastCourse({"source": "anet", "course_name": "X"}) == "X"
+    assert predict.forecastCourse({"is_xc": True, "source": "tfrrs", "course_name": "X"}) is None
+    assert predict.forecastCourse({"is_xc": True, "source": "anet", "course_name": "X"}) == "X"
 
 
-def test_no_forecast_for_track():
+def test_track_key_and_indoor():
     import predict
-    assert predict.forecastFactor(None, {"is_xc": False}) == (1.0, None)
+    assert predict.forecastCourse({"is_xc": False, "location_id": 812}) == "TF:loc:812:out"
+    assert predict.forecastCourse({"is_xc": False, "location_id": 0}) is None
+    assert predict.forecastFactor(None, {"is_xc": False, "is_indoor": 1,
+                                         "distance_meters": 1600}) == (1.0, None)
+    assert predict.forecastFactor(None, {"is_xc": False, "distance_meters": None}) == (1.0, None)
+
+
+def test_track_times_to_the_hundredth(monkeypatch):
+    import predict
+    monkeypatch.setattr(predict, "forecastFactor", lambda cur, spec: (1.01, {"apparent_temp": 30.0}))
+    preds = [{"seconds": 61.23, "is_race_time": True}]
+    predict.forecastWeather(None, preds, {"is_xc": False})
+    assert preds[0]["seconds"] == 61.84
 
 
 def test_a_miss_is_not_refetched_at_once(monkeypatch):

@@ -359,9 +359,9 @@ def _asDate(day):
 #   weather_provisional.rowsFrom turns Open-Meteo's hours into grid rows,
 #   so the two can never read a forecast differently.
 #
-# ! CROSS COUNTRY ONLY for now: a track venue's correction key is its
-#   location and indoor flag (backfill_normalize._loadMeetCellsAnetTF),
-#   which a prediction target does not carry yet.
+# ★ AND TRACK (owner, 2026-11-02: "can you?"): a track venue's key is its
+#   location ('TF:loc:<id>:out', predict.forecastCourse); an indoor meet
+#   is never weather, as the correction leaves it alone.
 
 _DAY_HOURLY = None          # weather_provisional.HOURLY, read on first use
 _DAY_CODE = {"XC": -1, "TF": -2}     # weather_forecast.hour for a day summary

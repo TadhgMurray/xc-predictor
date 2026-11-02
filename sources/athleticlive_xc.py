@@ -9,6 +9,7 @@
 #
 #   python -m sources.athleticlive_xc land [--limit 100] [--meet ANET_ID] [--write]
 #   python -m sources.athleticlive_xc dedupe [--write]   # combined lists landed before 2026-11-01
+#   python -m sources.athleticlive_xc distances [--write] # races landed with no distance
 #
 # ★ WHY (owner, 2026-11-01: "it needs to skip everything for athletic live").
 #   About 28% of athletic.net's cross country is on AthleticLIVE; until now
@@ -92,6 +93,112 @@ def mergedEvents(keysets):
     return drop
 
 
+# ★ A RACE LABEL WITH NO DISTANCE (owner, 2026-11-02: JV Season Finale,
+#   "Fastest JV Boys", no ratings). The distance comes from the race's own
+#   label ('5K', '1.7 Mile'); a label that names none landed with no
+#   distance, and a race with no distance is never normalised or rated.
+#   1. the meet's other races: when every label that names a distance names
+#      the SAME one (meetDistance / siblingDistance)
+#   2. else the venue's: the distance DOMINANT_SHARE of its meets at the
+#      same level ran, over VENUE_MIN_MEETS meets at least (venueDistance)
+#   3. either way the times must be possible at it (plausiblePace)
+#   Otherwise it stays without one -- a wrong distance rates every runner
+#   wrong, none rates nobody.
+DOMINANT_SHARE = 0.8
+VENUE_MIN_MEETS = 3
+FASTEST_PACE = 0.160          # s per metre: a 13:20 5K; faster is not a runner
+SLOWEST_MEDIAN_PACE = 0.50    # s per metre: a 41:40 5K median
+
+
+def meetDistance(events):
+    """The one distance every labelled race of the meet names, or None when
+    none names one or they disagree. Pure."""
+    seen = {round(m) for m in (metersOf(e.get("ab") or e.get("name") or "")
+                               for e in events) if m}
+    return float(seen.pop()) if len(seen) == 1 else None
+
+
+def dominant(counts, share=DOMINANT_SHARE, min_n=1):
+    """{distance: n} -> the distance holding `share` of n (of min_n at
+    least), else None. Pure."""
+    total = sum(counts.values())
+    if total < min_n:
+        return None
+    d, n = max(counts.items(), key=lambda kv: kv[1]) if counts else (None, 0)
+    return d if d and n / total >= share else None
+
+
+def plausiblePace(times, meters):
+    """Could this race's times have been run at `meters`? Pure."""
+    t = sorted(float(x) for x in times if x and float(x) > 0)
+    if not t or not meters:
+        return False
+    return t[0] / meters >= FASTEST_PACE and t[len(t) // 2] / meters <= SLOWEST_MEDIAN_PACE
+
+
+def siblingDistance(cur, meet_id, div_id):
+    cur.execute("""SELECT round(distance)::int, count(*) FROM meets
+                   WHERE meet_id = %s AND div_id <> %s AND distance > 0
+                   GROUP BY 1""", (meet_id, div_id))
+    seen = dict(cur.fetchall())
+    return float(next(iter(seen))) if len(seen) == 1 else None
+
+
+def venueDistance(cur, course, state, level_mask, meet_id):
+    if not course:
+        return None
+    cur.execute("""SELECT round(distance)::int, count(DISTINCT meet_id) FROM meets
+                   WHERE course_name = %s AND state IS NOT DISTINCT FROM %s
+                     AND level_mask IS NOT DISTINCT FROM %s
+                     AND distance > 0 AND meet_id <> %s
+                   GROUP BY 1""", (course, state, level_mask, meet_id))
+    got = dominant(dict(cur.fetchall()), min_n=VENUE_MIN_MEETS)
+    return float(got) if got else None
+
+
+def cmdDistances(a):
+    """Landed AthleticLIVE XC races with no distance: the meet's other
+    races', else the venue's (see the note above meetDistance). --write sets
+    meets.distance; the night's normalisation (05_normalize_new, rows with
+    no normalized_time) then prices them."""
+    total = Counter()
+    with A._conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""SELECT m.meet_id, m.div_id, m.course_name, m.state, m.level_mask,
+                              left(m.meet_name, 40), m.division
+                       FROM meets m
+                       WHERE m.source = 'anet' AND m.div_id >= %s
+                         AND COALESCE(m.distance, 0) <= 0""", (A.DIV_BASE,))
+        for meet_id, div_id, course, state, mask, name, division in cur.fetchall():
+            d, how = siblingDistance(cur, meet_id, div_id), "the meet's other races"
+            if d is None:
+                d, how = venueDistance(cur, course, state, mask, meet_id), "the venue's"
+            if d is None:
+                total["no distance to give"] += 1
+                continue
+            cur.execute("""SELECT time_seconds FROM results
+                           WHERE source = 'anet' AND meet_id = %s AND div_id = %s
+                             AND time_seconds > 0""", (meet_id, div_id))
+            times = [r[0] for r in cur.fetchall()]
+            if not plausiblePace(times, d):
+                total["times impossible at it"] += 1
+                print(f"  meet {meet_id} div {div_id} ({name}, {division}): {d:.0f} m from "
+                      f"{how}, but the times do not fit; left alone")
+                continue
+            total[f"from {how}"] += 1
+            print(f"  meet {meet_id} div {div_id} ({name}, {division}): {d:.0f} m from {how}")
+            if a.write:
+                cur.execute("UPDATE meets SET distance = %s WHERE div_id = %s "
+                            "AND COALESCE(distance, 0) <= 0", (d, div_id))
+        if a.write:
+            conn.commit()
+        else:
+            conn.rollback()
+    print(f"[alive xc] distances: {dict(total)}"
+          + ("" if a.write else "  (dry run: --write sets them)"))
+    return 0
+
+
 def plan(anet_meet_id, alive, events, blobs):
     """Everything to save for one meet, in the track lander's plan shape so
     applyIds / holdUnknown apply unchanged. Pure."""
@@ -106,6 +213,7 @@ def plan(anet_meet_id, alive, events, blobs):
             continue
         parsed[ev["id"]] = A.resultRows(doc, ev)
     merged = mergedEvents({eid: raceKeys(v[0]) for eid, v in parsed.items()})
+    meet_m = meetDistance(events)
     for ev in events:
         if ev["id"] not in parsed:
             continue
@@ -117,7 +225,8 @@ def plan(anet_meet_id, alive, events, blobs):
         if not rows:
             continue
         div_id = A.DIV_BASE + int(ev["id"])
-        div = {"IDMeetDiv": div_id, "Meters": metersOf(ev.get("ab") or ev.get("name") or ""),
+        div = {"IDMeetDiv": div_id,
+               "Meters": metersOf(ev.get("ab") or ev.get("name") or "") or meet_m,
                "Division": _division(ev), "LevelMask": meet_info.get("LevelMask") or 4,
                "CourseId": 0}
         p["meets_to_save"].append((meet_info, div_id, 0, div))
@@ -365,8 +474,11 @@ def main(argv=None):
     rc.add_argument("--write", action="store_true")
     dd = sub.add_parser("dedupe", help="drop combined lists already landed")
     dd.add_argument("--write", action="store_true")
+    ds = sub.add_parser("distances", help="give landed races with no distance the meet's or venue's")
+    ds.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
-    return {"land": cmdLand, "dedupe": cmdDedupe, "recheck": cmdRecheck}[a.cmd](a)
+    return {"land": cmdLand, "dedupe": cmdDedupe, "recheck": cmdRecheck,
+            "distances": cmdDistances}[a.cmd](a)
 
 
 if __name__ == "__main__":

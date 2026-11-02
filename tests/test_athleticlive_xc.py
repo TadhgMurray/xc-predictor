@@ -86,3 +86,34 @@ def test_athletic_net_short_of_athleticlive_is_requeued():
     evs = X.xcEvents(_load("summary_76201.json"))
     n = X.aliveCount(evs[:1], {2906134: _load("event_2906134.json")})
     assert n == 6
+
+
+def test_a_label_with_no_distance_takes_the_meets():
+    evs = X.xcEvents(_load("summary_76201.json"))
+    ev = dict(evs[0], ab="", name="Fastest JV Boys")
+    p = X.plan(276933, ALIVE, [ev, evs[1]], {ev["id"]: _load("event_2906134.json")})
+    assert round(p["meets_to_save"][0][3]["Meters"]) == round(X.metersOf(evs[1]["ab"] or evs[1]["name"]))
+
+
+def test_meet_distance_only_when_unanimous():
+    assert X.meetDistance([{"name": "5K Varsity"}, {"name": "Fastest JV Boys"}]) == 5000.0
+    assert X.meetDistance([{"name": "5K Varsity"}, {"name": "2 Mile MS"}]) is None
+    assert X.meetDistance([{"name": "JV Boys"}]) is None
+
+
+def test_venue_distance_needs_a_dominant_one():
+    assert X.dominant({5000: 9, 4000: 1}, min_n=3) == 5000
+    assert X.dominant({5000: 6, 4000: 4}, min_n=3) is None
+    assert X.dominant({5000: 2}, min_n=3) is None
+
+
+def test_times_must_fit_the_distance():
+    assert X.plausiblePace([989.4, 1050, 1100], 5000)          # 16:29 for 5K
+    assert not X.plausiblePace([600, 650, 700], 5000)          # 10:00 for 5K
+    assert not X.plausiblePace([989.4, 1050, 1100], 1600)      # a 1600 median of 17:30
+    assert not X.plausiblePace([], 5000)
+
+
+def test_nightly_gives_distances_before_normalising():
+    src = open(os.path.join(ROOT, "deploy", "nightly_update.sh"), encoding="utf-8").read()
+    assert src.index("athleticlive_xc distances --write") < src.index("step 05_normalize_new")
