@@ -339,3 +339,28 @@ def test_a_middle_name_one_feed_keeps():
     assert L.namesAgree("mary kate smith", "mary smith")
     assert L.namesAgree("christopher james hovet", "chris hovet")
     assert not L.namesAgree("mary kate smith", "mary jones")
+
+
+def test_histories_that_cannot_be_one_runner():
+    """2026-11-02: "what if someone has two track races, or different
+    histories?" -- two events on one day are a meet; one event at two far
+    times, two schools in one season, or high school and college in one
+    season are two runners."""
+    import link_feed_twins as L
+    R, M = L.Run, L.Member
+    a = M(1, "chris hovet", ["M"], L.CAREER,
+          [R(1, "2026-10-01", 1500.0, "anet", "Tufts", "")],
+          (R(10, "2026-04-10", 260.0, "anet", "Tufts", "", "1600m"),
+           R(11, "2026-04-10", 560.0, "anet", "Tufts", "", "3200m")))
+    b = M(2, "chris hovet", ["M"], L.MINTED,
+          [R(2, "2026-10-01", 1500.4, "tfrrs", "Tufts", "SO-2")])
+    assert L.historiesConflict([a, b]) is None           # two events, one day: fine
+    c = b._replace(tf=(R(12, "2026-04-10", 300.0, "tfrrs", "Tufts", "SO-2", "1600m"),))
+    assert "track event" in L.historiesConflict([a, c])
+    d = b._replace(runs=[R(3, "2026-09-12", 1600.0, "tfrrs", "Ohio State", "SO-2")])
+    assert "two schools" in L.historiesConflict([a, d])
+    e = M(3, "chris hovet", ["M"], L.STRAY, [R(4, "2026-09-20", 1000.0, "anet", "Tufts", "11")])
+    assert "high school and college" in L.historiesConflict([e, b])
+    # a senior's spring and a freshman's fall are two seasons
+    f = M(4, "chris hovet", ["M"], L.STRAY, [R(5, "2026-05-01", 600.0, "anet", "Somerville", "12")])
+    assert L.historiesConflict([f, b]) is None

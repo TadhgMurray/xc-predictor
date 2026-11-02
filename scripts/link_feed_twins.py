@@ -222,8 +222,9 @@ def _schoolWordsSql(col):
 # ------------------------------------------------------------------ #
 #  THE DECISION -- pure
 # ------------------------------------------------------------------ #
-Run = namedtuple("Run", "result_id date ts source")
-Member = namedtuple("Member", "pid name genders kind runs")
+Run = namedtuple("Run", "result_id date ts source school grade event",
+                 defaults=(None, None, None))
+Member = namedtuple("Member", "pid name genders kind runs tf", defaults=((),))
 Verdict = namedtuple("Verdict", "target movers reason", defaults=((), ""))
 
 
@@ -303,6 +304,10 @@ def decideGroup(members):
         if any(not closeTime(ts[0], t) for t in ts[1:]):
             return Verdict(None, (), "two times on one day: two runners")
 
+    why = historiesConflict(members)
+    if why:
+        return Verdict(None, (), why)
+
     careers = [m for m in members if m.kind == CAREER]
     minted = [m for m in members if m.kind == MINTED]
     if len(careers) > 1:
@@ -315,6 +320,83 @@ def decideGroup(members):
         return Verdict(None, (), "no career and no single minted person")
     movers = tuple(sorted(m.pid for m in members if m.pid != target.pid))
     return Verdict(target.pid, movers, MATCH)
+
+
+# ★ TWO HISTORIES THAT CANNOT BOTH BE ONE RUNNER (owner, 2026-11-02: "what
+#   if someone has two track races, or different histories?"). A merge
+#   moves every row, track included, so before it the members' careers are
+#   read side by side, season by season (the Aug 15 seam):
+#     - two schools with no word in common in one season (a mid-season
+#       transfer is refused too -- a missed merge, never a wrong one);
+#     - high school (grade 9-12) for one and college for another in one
+#       season;
+#     - one track event on one day at times more than TF_EVENT_SHARE apart
+#       (a prelim and a final are much closer; two runners are not).
+#   Two track races of DIFFERENT events on one day are a normal meet and say
+#   nothing; cross country's same-day rule is the veto above.
+TF_EVENT_SHARE = 0.05
+_NOT_A_SCHOOL = re.compile(r"unattached|unknown|independent|^\s*$", re.I)
+
+
+def _ay(date):
+    d = str(date or "")[:10]
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", d):
+        return None
+    y, mo, dd = int(d[:4]), int(d[5:7]), int(d[8:10])
+    return y if (mo, dd) >= (8, 15) else y - 1
+
+
+def _level(run):
+    g = str(run.grade or "").strip().upper()
+    if run.source == "tfrrs" or re.match(r"^(FR|SO|JR|SR|GR)", g):
+        return "college"
+    if g.isdigit():
+        n = int(g)
+        return "hs" if 9 <= n <= 12 else "college" if 13 <= n <= 17 else None
+    return None
+
+
+def _eventKey(ev):
+    return re.sub(r"[^a-z0-9]+", "", str(ev or "").lower()) or None
+
+
+def historiesConflict(members):
+    """Why these members' histories cannot be one runner, or None. Pure."""
+    seasons = defaultdict(lambda: defaultdict(lambda: {"schools": set(), "levels": set()}))
+    tf_day = defaultdict(list)
+    for m in members:
+        for r in list(m.runs) + list(m.tf):
+            ay = _ay(r.date)
+            if ay is None:
+                continue
+            cell = seasons[ay][m.pid]
+            if r.school and not _NOT_A_SCHOOL.search(r.school):
+                cell["schools"].add(r.school)
+            lv = _level(r)
+            if lv:
+                cell["levels"].add(lv)
+        for r in m.tf:
+            k = _eventKey(r.event)
+            if k and r.ts:
+                tf_day[(str(r.date)[:10], k)].append((m.pid, float(r.ts)))
+    for ay, by in seasons.items():
+        pids = [p for p in by if by[p]["schools"] or by[p]["levels"]]
+        for i, a in enumerate(pids):
+            for b in pids[i + 1:]:
+                sa, sb = by[a]["schools"], by[b]["schools"]
+                if sa and sb and not any(sameSchool(x, y) for x in sa for y in sb):
+                    return f"two schools in the {ay} season: two runners"
+                la, lb = by[a]["levels"], by[b]["levels"]
+                if ("hs" in la and "college" in lb and "college" not in la) or \
+                        ("hs" in lb and "college" in la and "college" not in lb):
+                    return f"high school and college in the {ay} season: two runners"
+    for (day, ev), xs in tf_day.items():
+        if len({p for p, _t in xs}) < 2:
+            continue
+        ts = [t for _p, t in xs]
+        if max(ts) > min(ts) * (1 + TF_EVENT_SHARE):
+            return f"one track event on {day} at two far-apart times: two runners"
+    return None
 
 
 def groupsOf(pairs):
@@ -564,15 +646,25 @@ def members(cur, pids):
     """, {"lo": MINT_LO, "hi": MINT_HI})
     facts = {p: (nm, list(g or []), STRAY if stray else MINTED if minted else CAREER)
              for p, nm, g, stray, minted in cur.fetchall()}
-    runs = defaultdict(list)
+    runs, tf = defaultdict(list), defaultdict(list)
     cur.execute("""
-        SELECT r.person_id, r.result_id, r.date, r.time_seconds, r.source
+        SELECT r.person_id, r.result_id, r.date, r.time_seconds, r.source, r.school, r.grade
         FROM results r JOIN ft_mp m ON m.person_id = r.person_id
         WHERE r.time_seconds > 0 AND r.time_seconds < 100000
     """)
-    for p, rid, d, ts, src in cur.fetchall():
-        runs[p].append(Run(rid, d, ts, src))
-    return {p: Member(p, f[0], f[1], f[2], sorted(runs.get(p, []), key=lambda r: str(r.date)))
+    for p, rid, d, ts, src, sch, gr in cur.fetchall():
+        runs[p].append(Run(rid, d, ts, src, sch, gr))
+    # the track history too (historiesConflict): every row moves with a merge
+    cur.execute("""
+        SELECT r.person_id, r.result_id, r.date, r.time_seconds, r.source, r.school,
+               r.grade, r.event_short
+        FROM results_tf r JOIN ft_mp m ON m.person_id = r.person_id
+        WHERE COALESCE(r.is_relay, 0) = 0 AND COALESCE(r.is_field, 0) = 0
+    """)
+    for p, rid, d, ts, src, sch, gr, ev in cur.fetchall():
+        tf[p].append(Run(rid, d, ts if ts and ts > 0 else None, src, sch, gr, ev))
+    return {p: Member(p, f[0], f[1], f[2], sorted(runs.get(p, []), key=lambda r: str(r.date)),
+                      tuple(tf.get(p, ())))
             for p, f in facts.items()}
 
 
