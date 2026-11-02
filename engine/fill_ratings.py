@@ -432,6 +432,94 @@ def checkVenue(conn, sport, n):
           f"  middle half {q(0.25):+.2f} .. {q(0.75):+.2f}  5-95% {q(0.05):+.2f} .. {q(0.95):+.2f} points")
 
 
+# ★ A RACE WITH NO COURSE IS ANCHORED TO ITS OWN FIELD (owner, 2026-11-02:
+#   the Middlesex League 2023 on tfrrs, "crazy ratings, presumably bcs we
+#   chose a random difficulty"). The solve leaves a race with no venue out
+#   (speed_ratings_db: venue NULL), so every rating on it is priced here --
+#   and with no course, at the pool's MEDIAN race and no day term. The tfrrs
+#   copy of that race read Jared Rife 138.0 for 15:17; athletic.net's copy
+#   of the same race, on its own fast course, 131.2.
+#   With no course to price at, the field says what the course was: for the
+#   runners with a season of rated races (athlete_season, BASE_MIN races),
+#   the median of (rating here / their season rating) is the course-and-day
+#   offset, and every row of the race is divided by it.
+# ! ONLY UNDER FIELD_CAP. A field 12%+ off its level is a wrong distance far
+#   more often than a course (data_checks.race_field's shape); those stay
+#   priced as before -- visibly absurd, so the distance tools see them.
+# ! ONLY RACES WITH NO COURSE NAME. A named course the solve has not fitted
+#   yet is priced at the median as before until the next full run.
+FIELD_MIN = 5            # runners with a baseline before the field testifies
+FIELD_BASE_MIN = 3       # rated races in their season before a runner has one
+FIELD_CAP = 0.12
+
+_FIELD_SQL = """
+    WITH u AS (
+        SELECT r.source, r.meet_id, r.div_id, r.person_id, r.normalized_time AS nt,
+               left(r.date, 4)::int AS y
+        FROM   results r
+        LEFT   JOIN meets m ON m.div_id = r.div_id AND m.source = r.source
+        LEFT   JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id
+                                  AND mt.sport = 'XC'
+        WHERE  r.speed_rating IS NULL AND r.normalized_time > 0 AND r.person_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-'
+          AND  NULLIF(btrim(COALESCE(m.course_name, mt.venue_name)), '') IS NULL
+    )
+    SELECT DISTINCT ON (u.source, u.meet_id, u.div_id, u.person_id)
+           u.source, u.meet_id, u.div_id, u.nt, s.pool, s.mean_rating
+    FROM   u
+    JOIN   athlete_season s
+           ON s.person_id = u.person_id AND s.sport = 'XC'
+          AND s.year IN (u.y, u.y - 1) AND s.mean_rating IS NOT NULL
+          AND s.n_races >= %(base)s
+    ORDER  BY u.source, u.meet_id, u.div_id, u.person_id, s.year DESC
+"""
+
+
+def fieldOffset(pairs, k_by_pool, field_min=FIELD_MIN):
+    """[(nt, pool, season rating)] for one race -> the race's offset (the
+    median of K_pool / nt over the runner's season rating), or None with
+    fewer than field_min runners. Pure."""
+    import statistics
+    ratios = []
+    for nt, pool, base in pairs:
+        k = k_by_pool.get(pool)
+        if k and nt and base and float(nt) > 0 and float(base) > 0:
+            ratios.append((k / float(nt)) / float(base))
+    if len(ratios) < field_min:
+        return None
+    return statistics.median(ratios)
+
+
+def fieldOffsets(conn, k_by_pool, cap=FIELD_CAP):
+    """{(source, meet, div): offset} for the unrated races with no course
+    name, within the cap (see the note above)."""
+    import math
+    by = {}
+    with conn.cursor() as cur:
+        try:
+            cur.execute(_FIELD_SQL, {"base": FIELD_BASE_MIN})
+        except Exception as exc:                          # noqa: BLE001
+            conn.rollback()
+            print(f"  XC: field anchor skipped ({type(exc).__name__}: {exc})")
+            return {}
+        for src, meet, div, nt, pool, base in cur.fetchall():
+            by.setdefault((src, int(meet), int(div)), []).append(
+                (float(nt), (pool or "").split("|")[0], float(base)))
+    conn.commit()
+    out, wide = {}, 0
+    for key, rows in by.items():
+        off = fieldOffset(rows, k_by_pool)
+        if off is None:
+            continue
+        if abs(math.log(off)) > cap:
+            wide += 1
+            continue
+        out[key] = off
+    print(f"  XC: {len(out):,} races with no course anchored to their own field"
+          f" ({wide:,} more than {cap:.0%} off, left as they were)")
+    return out
+
+
 def fillSport(conn, sport, dry_run=False, venue=False):
     t0 = time.time()
     k_by_pool = poolConstants(conn, sport)
@@ -443,7 +531,8 @@ def fillSport(conn, sport, dry_run=False, venue=False):
           "(median speed_rating * normalized_time per pool)")
 
     census = {"filled": 0, "no_pool": 0, "no_constant": 0, "bad_nt": 0,
-              "at_course": 0}
+              "at_course": 0, "field": 0}
+    offsets = fieldOffsets(conn, k_by_pool) if (venue and sport == "XC") else {}
     samples = []
     races = cells = None
     if venue:
@@ -486,6 +575,7 @@ def fillSport(conn, sport, dry_run=False, venue=False):
                     census["no_constant"] += 1
                     continue
                 rating = None
+                d = None
                 if venue:
                     d = rowDifficulty(row, sport, races, cells)
                     rating = venueRating(float(nt), pool, sport, d,
@@ -493,6 +583,13 @@ def fillSport(conn, sport, dry_run=False, venue=False):
                     census["at_course"] += rating is not None and d is not None
                 if rating is None:
                     rating = k / float(nt)
+                # no course: the race's own field instead of the median race
+                off = (offsets.get((row.source, int(row.meet_id), int(row.div_id)))
+                       if offsets and d is None and row.div_id is not None
+                       and row.meet_id is not None else None)
+                if off:
+                    rating = (k / float(nt)) / off
+                    census["field"] += 1
                 rating = round(rating, 2)
                 census["filled"] += 1
                 if len(samples) < 5:
@@ -518,7 +615,8 @@ def fillSport(conn, sport, dry_run=False, venue=False):
           f"{census['bad_nt']:,} no normalized time   "
           f"({(time.time() - t0) / 60:.1f} min)")
     if venue:
-        print(f"  {sport}: {census['at_course']:,} priced at their own course")
+        print(f"  {sport}: {census['at_course']:,} priced at their own course, "
+              f"{census['field']:,} anchored to their race's field (no course)")
     for rid, pool, nt, rating in samples:
         print(f"    sample: result {rid}  {pool:<12} nt {nt:7.1f}s "
               f"-> {rating:.1f}")
@@ -533,6 +631,10 @@ def main():
     ap.add_argument("--venue", action="store_true",
                     help="price each row at its own course (the nightly light "
                          "update); default: the pool constant")
+    ap.add_argument("--refill-no-course", action="store_true",
+                    help="clear the ratings of every XC race with no course name (never "
+                         "solved: all of them were priced here at the median race) so "
+                         "this run prices them again, anchored to their field")
     ap.add_argument("--check", type=int, default=0, metavar="N",
                     help="re-price N solved rows per sport with --venue's "
                          "formula and compare with the solve; writes nothing")
@@ -551,6 +653,20 @@ def main():
         #   speed_rating across untouched -- and race pages display that
         #   column directly. Every nuked row kept its pre-nuke rating
         #   through every rebuild until this scrub existed.
+        if args.refill_no_course and not args.dry_run:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE results r SET speed_rating = NULL
+                    FROM   results x
+                    LEFT   JOIN meets m ON m.div_id = x.div_id AND m.source = x.source
+                    LEFT   JOIN meets_tfrrs mt ON x.source = 'tfrrs' AND mt.meet_id = x.meet_id
+                                              AND mt.sport = 'XC'
+                    WHERE  r.result_id = x.result_id AND r.source = x.source
+                      AND  x.speed_rating IS NOT NULL
+                      AND  NULLIF(btrim(COALESCE(m.course_name, mt.venue_name)), '') IS NULL""")
+                print(f"[fill] results: {cur.rowcount:,} ratings on races with no course "
+                      f"cleared to be priced again")
+            conn.commit()
         if not args.dry_run:
             with conn.cursor() as cur:
                 for t in ("results", "results_tf"):
