@@ -32,10 +32,13 @@ for sub in ("racecast", "scripts", "engine", "model"):
 def score(field, finishers):
     """(found, precise, teams found, teams run, missed teams, extra teams).
     field: {pid: school}; finishers: [(pid, school)]. Pure."""
+    import qualifying as Q
     ran = {p for p, _s in finishers}
     got = set(field)
-    t_ran = {s for s, n in collections.Counter(s for _p, s in finishers if s).items() if n >= 5}
-    t_had = {s for s, n in collections.Counter(field.values()).items() if s and n >= 5}
+    t_ran = {s for s, n in collections.Counter(s for _p, s in finishers if s).items()
+             if n >= 5 and Q.isTeam(s)}
+    t_had = {s for s, n in collections.Counter(field.values()).items()
+             if s and n >= 5 and Q.isTeam(s)}
     return (len(got & ran) / max(len(ran), 1), len(got & ran) / max(len(got), 1),
             len(t_ran & t_had), len(t_ran), sorted(t_ran - t_had), sorted(t_had - t_ran))
 
@@ -55,12 +58,23 @@ def main():
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
-        cur.execute("""SELECT 'tfrrs' AS src, meet_id, meet_name, date AS d FROM meets_tfrrs
-                       WHERE sport = 'XC' AND date ~ '^(19|20)[0-9]{2}-' AND date BETWEEN %s AND %s
-                       UNION
-                       SELECT DISTINCT 'anet', meet_id, meet_name, meet_date FROM meets
-                       WHERE meet_date ~ '^(19|20)[0-9]{2}-' AND meet_date BETWEEN %s AND %s""",
-                    (lo, hi, lo, hi))
+        # ★ THE DATE FROM THE RESULTS (owner, 2026-11-02: NXN 2025 is
+        #   racecast.co/race/xc/253956 but its meets row carries no usable
+        #   meet_date, so a date filter on the meta tables missed it)
+        cur.execute("""SELECT 'tfrrs' AS src, m.meet_id, min(m.meet_name) AS meet_name,
+                              min(r.date) AS d
+                       FROM   meets_tfrrs m JOIN results r
+                              ON r.source = 'tfrrs' AND r.meet_id = m.meet_id
+                       WHERE  m.sport = 'XC' AND m.meet_name ~* 'ncaa|nike|nxn|naia'
+                         AND  r.date ~ '^(19|20)[0-9]{2}-' AND r.date BETWEEN %s AND %s
+                       GROUP  BY m.meet_id
+                       UNION ALL
+                       SELECT 'anet', m.meet_id, min(m.meet_name), min(r.date)
+                       FROM   meets m JOIN results r
+                              ON r.source = 'anet' AND r.meet_id = m.meet_id
+                       WHERE  m.meet_name ~* 'ncaa|nike|nxn|naia'
+                         AND  r.date ~ '^(19|20)[0-9]{2}-' AND r.date BETWEEN %s AND %s
+                       GROUP  BY m.meet_id""", (lo, hi, lo, hi))
         meets = [dict(r) for r in cur.fetchall()]
         print(f"[qualifying] season {a.season}: rules {', '.join(r['key'] for r in Q.RULES)}")
         for m in sorted(meets, key=lambda m: str(m["d"])):
@@ -88,8 +102,12 @@ def main():
                     print(f"  {m['meet_name'][:50]} {g}: fewer than {Q.MIN_ROUNDS} rounds found")
                     continue
                 f, p, th, tr, miss, extra = score(field, fin)
+                rounds = Q._roundMeets(cur, rule, str(m["d"])[:10], rule.get("window", 21))
                 print(f"  {rule['key']:8} {m['meet_name'][:44]:44} {g}  {len(fin):>4} ran: "
-                      f"found {100 * f:.0f}%, precise {100 * p:.0f}%, teams {th}/{tr}")
+                      f"found {100 * f:.0f}%, precise {100 * p:.0f}%, teams {th}/{tr}; "
+                      f"{len(rounds)} rounds")
+                if rule["key"] == "nxn":
+                    print("      rounds: " + "; ".join(f"{nm} ({d})" for _mid, nm, d in rounds))
                 if miss or extra:
                     print(f"      missed {', '.join(miss[:8]) or '-'}"
                           f"{' ...' if len(miss) > 8 else ''}; had but not there "
