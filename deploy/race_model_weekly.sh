@@ -95,3 +95,10 @@ mv -f "$ROWS_NEW" "$DIR/rows_weekly.npz"
 # the records cache (race_trees loadTable) belongs to the old table
 rm -f "$DIR/rows_weekly.npz".records-*.npz "$ROWS_NEW".records-*.npz
 echo "[race model] swapped in $MODEL (the last one is $MODEL.prev)" | tee -a "$LOGDIR/summary.log"
+
+# ★ THE RANGES, ON WHAT HAPPENED: the factor that makes +-1 sigma hold 68% on
+#   the last four weeks' frozen forecasts (scripts/range_calibration.py,
+#   race_model.rangeScale). A failure leaves the factor in force.
+"$PY" -u scripts/range_calibration.py > "$LOGDIR/range_calibration.log" 2>&1 \
+  || echo "  range calibration failed: $LOGDIR/range_calibration.log"
+say "ranges: $(tail -1 "$LOGDIR/range_calibration.log")"

@@ -914,3 +914,23 @@ bound: it also holds the engine's own changes since September.
   pred_meet_forecast`, the site's frozen forecasts against the pre-race
   recorder's race model on the same races and runners, once results come
   in (from 2026-10-28).
+
+### The first clean head-to-head (owner's run, 2026-11-02)
+
+187 races, 7,779 runners, both frozen before the race (`score_frozen_forecasts
+--against pred_meet_forecast`):
+
+| | Site (blend) | Race model |
+|---|---|---|
+| Median time miss | 2.23% | **1.75%** |
+| Bias | +0.28% | **−0.09%** |
+| Within the race | 1.55% | **1.41%** |
+| Rank correlation | 0.917 | **0.925** |
+| Inside ±1 sigma (honest 68%) | 63% | 85% |
+
+No bias to fix. **The ranges run wide** (the refit on every season misses
+less than the held-out fit the ranges came from), so
+`scripts/range_calibration.py` measures the factor that makes ±1 sigma
+hold 68% on the last four weeks' frozen forecasts and appends it to
+`race_calibration.json`; `race_model.rangeScale` scales every range made
+from that day. The weekly rebuild runs it after the swap.
