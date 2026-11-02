@@ -40,6 +40,7 @@ qualifiers from its rounds, by the meet's published rules.
   otherwise the meet keeps its last-edition field (last_edition.py).
 """
 import collections
+import os
 import math
 import re
 
@@ -287,3 +288,144 @@ def fieldFromRounds(cur, rule, day, gender, predict=None):
 def fieldFor(cur, rule, day, gender):
     """{person_id: school} from the rounds that have run, or None."""
     return fieldFromRounds(cur, rule, day, gender)[0]
+
+
+# ------------------------------------------------------------------ #
+#  the learned routes (high school state / section / district, NAIA)
+# ------------------------------------------------------------------ #
+
+# ★ LEARNED, WRITTEN DOWN, CHECKED (owner, 2026-11-02: "state/div/conference
+#   can be found by yourself", "you're checking it"). scripts/qualifier_audit.py
+#   --write-routes reads last season's results: each championship race, the
+#   races in the four weeks before whose top finishers went on to it, and how
+#   many teams and individuals each sent. Only routes whose rule rebuilds
+#   70%+ of their own field at 60%+ precision are written. A route is found
+#   again this season by name (last_edition.editionName) and race label.
+ROUTES_PATH = os.environ.get("XCP_QUALIFY_ROUTES") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model", "data",
+    "qualifying_routes.json")
+_ROUTES = {"mtime": None, "by_meet": {}}
+
+
+def _loadRoutes():
+    import json
+    try:
+        mtime = os.path.getmtime(ROUTES_PATH)
+    except OSError:
+        return {}
+    if _ROUTES["mtime"] != mtime:
+        try:
+            with open(ROUTES_PATH) as fh:
+                routes = json.load(fh).get("routes") or []
+        except Exception:                                # noqa: BLE001
+            routes = []
+        by = collections.defaultdict(list)
+        for r in routes:
+            by[(r["source"], r["meet"])].append(r)
+        _ROUTES.update(mtime=mtime, by_meet=dict(by))
+    return _ROUTES["by_meet"]
+
+
+def learnedRoute(meet_name, source, race_label, gender):
+    """The learned route of this championship race, or None: the same meet
+    by edition name, the race by its label, else its gender if the meet has
+    one route of that gender."""
+    import last_edition as LE
+    cands = _loadRoutes().get((source, LE.editionName(meet_name))) or []
+    lab = LE.editionName(race_label)
+    same = [r for r in cands if lab and LE.editionName(r.get("race")) == lab
+            and (not gender or not r.get("gender") or r["gender"] == gender)]
+    if len(same) == 1:
+        return same[0]
+    by_g = [r for r in cands if gender and r.get("gender") == gender]
+    return by_g[0] if len(by_g) == 1 else None
+
+
+def simpleQualifiers(rows, teams, individuals, size=7):
+    """A round's top `teams` teams (at most `size` each) and its top
+    `individuals` off those teams. rows: [(pid, school, seconds, rating)].
+    Pure."""
+    order = teamOrder(rows)
+    keep = set(order[:teams])
+    out, per, ind = {}, collections.Counter(), []
+    for r in sorted(rows, key=lambda r: r[2]):
+        if r[1] in keep:
+            if per[r[1]] < size:
+                out[r[0]] = r[1]
+                per[r[1]] += 1
+        else:
+            ind.append(r)
+    out.update({r[0]: r[1] for r in ind[:individuals]})
+    return out
+
+
+def _thisRound(cur, rnd, day, source):
+    """(meet_id, div_id, ran) of this season's edition of a learned round:
+    the meet of that edition name dated within two weeks of a year after
+    the round's date and before `day`, its race by label (else gender)."""
+    import datetime
+    import last_edition as LE
+    near = datetime.date.fromisoformat(rnd["date"]) + datetime.timedelta(days=364)
+    lo, hi = (near - datetime.timedelta(days=14)).isoformat(), \
+        min(day, (near + datetime.timedelta(days=14)).isoformat())
+    if source == "tfrrs":
+        cur.execute("""SELECT meet_id, meet_name, date FROM meets_tfrrs
+                       WHERE sport = 'XC' AND date ~ '^(19|20)[0-9]{2}-'
+                         AND date >= %s AND date < %s""", (lo, hi))
+    else:
+        cur.execute("""SELECT DISTINCT meet_id, meet_name, meet_date FROM meets
+                       WHERE meet_date ~ '^(19|20)[0-9]{2}-'
+                         AND meet_date >= %s AND meet_date < %s""", (lo, hi))
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        if LE.editionName(row[1]) != rnd["meet"]:
+            continue
+        races = LE.editionRaces(cur, int(row[0]), "XC", source)
+        ran = bool(races)
+        if not ran:
+            import upcoming_preview as U
+            races = [{"div_id": r["div_id"], "label": r["label"], "gender": r.get("gender"),
+                      "distance": r.get("distance")}
+                     for r in (U.meetPlan(cur, int(row[0]), source) or {}).get("races") or []]
+        lab = LE.editionName(rnd.get("race"))
+        pick = [r for r in races if lab and LE.editionName(r.get("label")) == lab
+                and (not rnd.get("gender") or not r.get("gender") or r["gender"] == rnd["gender"])]
+        if len(pick) != 1:
+            pick = [r for r in races if rnd.get("gender") and r.get("gender") == rnd["gender"]]
+        if len(pick) == 1:
+            return int(row[0]), int(pick[0]["div_id"]), ran
+    return None
+
+
+def learnedField(cur, route, day, predict_div=None):
+    """({person_id: school}, rounds predicted) for a learned route's race on
+    `day`, or (None, 0) when fewer than half of its rounds are found.
+    predict_div(meet_id, div_id) -> rows, for a round with no results yet."""
+    field, found, n_pred = {}, 0, 0
+    for rnd in route.get("rounds") or []:
+        at = _thisRound(cur, rnd, day, route["source"])
+        if at is None:
+            continue
+        mid, div, ran = at
+        rows = []
+        if ran:
+            cur.execute("""
+                SELECT DISTINCT ON (r.person_id) r.person_id, r.school, r.time_seconds
+                FROM   results r
+                WHERE  r.meet_id = %s AND r.div_id = %s AND r.source = %s
+                  AND  r.person_id IS NOT NULL AND r.time_seconds > 0
+                ORDER  BY r.person_id, r.time_seconds""", (mid, div, route["source"]))
+            for row in cur.fetchall():
+                row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+                rows.append((int(row[0]), row[1], float(row[2]), None))
+        elif predict_div is not None:
+            rows = predict_div(mid, div) or []
+            n_pred += len(rows) >= 5
+        if len(rows) < 5:
+            continue
+        found += 1
+        field.update(simpleQualifiers(rows, int(rnd.get("teams") or 0),
+                                      int(rnd.get("individuals") or 0)))
+    if found * 2 < len(route.get("rounds") or []) or not field:
+        return None, 0
+    return field, n_pred
