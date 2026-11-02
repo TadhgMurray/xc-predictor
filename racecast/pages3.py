@@ -492,7 +492,7 @@ def units_page():
     for u in units:
         u["href"] = UB.unitHref(kind, u["unit"], u["state"] or st, pool, sport)
         u["name"] = UB.label(kind, u["unit"], u["state"] or st)
-        u["badge"] = UB.badgeSvg(u["name"])
+        u["badge"] = UB.unitMark(kind, u["unit"], u["state"] or st, shown=u["name"])
     return render_template("units.html", units=units, kind=kind, kinds=kinds, pool=pool,
                            pools=UNIT_POOLS, sport=sport, state=st, states=states,
                            state_name=names.get(st or "", ""), n=n, sort=sort,
@@ -586,7 +586,8 @@ def unit_page(kind, name):
                            unit=shown, state=st, state_name=names.get(st or "", ""),
                            pool=pool, pools=pools, sport=sport, label=label, teams=teams,
                            athletes=athletes, place=place, n_units=n_units,
-                           badge=UB.badgeSvg(shown, size=56), level=levelOf(pool),
+                           badge=UB.unitMark(kind, stored, st, size=56, shown=shown),
+                           level=levelOf(pool),
                            board_href=f"/rankings/units?kind={kind}&pool={pool}&sport={sport.lower()}"
                                       + (f"&state={st}" if st else ""),
                            self_href=lambda p=pool, s=sport: UB.unitHref(kind, stored, st, p, s))

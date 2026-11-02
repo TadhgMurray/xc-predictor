@@ -236,3 +236,27 @@ def label(kind, value, state=None):
         return _label(kind, value, False, {"state": state})
     except Exception:                                     # noqa: BLE001
         return value
+
+
+def logoKey(kind, name):
+    """The school_logo name a unit's own logo is stored under
+    (scripts/unit_logos.py). Pure."""
+    return f"unit:{kind}:{str(name).strip().upper()}"
+
+
+def unitMark(kind, name, state=None, size=28, shown=None):
+    """The unit's mark for a page: its own logo when scripts/unit_logos.py
+    stored one (served like a school crest), else the generated badge.
+    Markup."""
+    import html
+    try:
+        from school_logo import crestUrl
+        url = crestUrl(logoKey(kind, name), state if not KINDS.get(kind, ("", True))[1] else None,
+                       px=128 if size > 32 else 64)
+    except Exception:                                     # noqa: BLE001
+        url = None
+    if url:
+        return (f'<img class="unit-badge unit-logo" src="{html.escape(url)}" alt="" '
+                f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async" '
+                f'style="object-fit:contain">')
+    return badgeSvg(shown or name, size=size)

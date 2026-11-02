@@ -210,6 +210,9 @@ _AP_STATES = {
     "ny", "n.c", "nc", "n.d", "nd", "ohio", "okla", "ore", "oreg", "pa", "penn",
     "r.i", "ri", "s.c", "sc", "s.d", "sd", "tenn", "texas", "tex", "utah", "vt",
     "va", "wash", "w.va", "w. va", "wis", "wisc", "wyo",
+    # 2026-11-02: "Charleston (W.V.) (WV)" -- tfrrs's own spelling
+    "w.v", "w. v", "n.mex", "n. mex", "s.dak", "s. dak", "n.dak", "n. dak",
+    "n. h", "n. j", "n. y", "n. c", "s. c", "r. i",
 }
 _STATE_NAMES = {
     "alabama", "alaska", "arizona", "arkansas", "california", "colorado",

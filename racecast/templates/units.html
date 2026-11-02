@@ -18,7 +18,10 @@
 <link rel="stylesheet" href="{{ static_v('pages2.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
 <script defer src="{{ static_v('topbar-search.js') }}"></script>
-<style>.unit-badge{vertical-align:middle;margin-right:.4rem;flex:none}.un-name{white-space:nowrap}.school-mark{vertical-align:middle;margin-right:.3rem}</style>
+<style>.unit-badge{vertical-align:middle;margin-right:.4rem;flex:none}.un-name{white-space:nowrap}.school-mark{vertical-align:middle;margin-right:.3rem}
+.un-filters{display:grid;gap:.45rem;margin:.6rem 0 .8rem}.un-row{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem .8rem}
+.un-q{min-width:4.5rem;font-weight:600;font-size:.85rem;color:#444}.un-pick{display:inline-flex;align-items:center;gap:.35rem;font-size:.85rem;color:#555}
+.un-clear{font-size:.85rem}.un-say{font-size:.9rem;color:#444;margin:.2rem 0 .6rem}</style>
 </head>
 <body>
 {% include "_topbar.html" %}
@@ -40,38 +43,54 @@
     <div class="rc-meta">{% if label %}{{ label }} season{% endif %} · ranked by the average of each one's best {{ n }} team{{ "s" if n != 1 }}, with its top seven runners raced as one team beside it · ratings on the high school scale</div>
   </div></div></header>
 
-  <nav class="p2-toggles" aria-label="Unit board options">
-    <span class="p2-chips" role="group" aria-label="Level">
-      {% for p, w in pools %}<a href="{{ qs(pl=p, k='') }}" class="{{ 'is-on' if p == pool }}">{{ w }}</a>{% endfor %}
-    </span>
-    <span class="p2-chips" role="group" aria-label="Kind">
-      {% for k, w in kinds %}<a href="{{ qs(k=k) }}" class="{{ 'is-on' if k == kind }}">{{ w }}</a>{% endfor %}
-    </span>
-    <span class="p2-seg" role="group" aria-label="Sport">
-      <a href="{{ qs(sp='XC') }}" class="{{ 'is-on' if sport == 'XC' }}">XC</a>
-      <a href="{{ qs(sp='TF') }}" class="{{ 'is-on' if sport == 'TF' }}">Track</a>
-    </span>
-    <form class="p2-state-form" method="get" action="/rankings/units">
+  {# ★ ONE QUESTION PER ROW, IN WORDS (owner, 2026-11-02: "the filters for
+     conferences/leagues are kind of hard to understand"): who, what is
+     ranked, narrowed to what, measured how -- and a sentence saying what
+     the table below is. #}
+  {% set one = kind_label[:-1] if kind_label.endswith('s') else kind_label %}
+  <div class="un-filters">
+    <div class="un-row"><span class="un-q">Runners</span>
+      <span class="p2-chips" role="group" aria-label="Runners">
+        {% for p, w in pools %}<a href="{{ qs(pl=p, k='', w={}) }}" class="{{ 'is-on' if p == pool }}">{{ w }}</a>{% endfor %}
+      </span>
+      <span class="p2-seg" role="group" aria-label="Sport">
+        <a href="{{ qs(sp='XC') }}" class="{{ 'is-on' if sport == 'XC' }}">Cross country</a>
+        <a href="{{ qs(sp='TF') }}" class="{{ 'is-on' if sport == 'TF' }}">Track</a>
+      </span>
+    </div>
+    <div class="un-row"><span class="un-q">Rank</span>
+      <span class="p2-chips" role="group" aria-label="What to rank">
+        {% for k, w in kinds %}<a href="{{ qs(k=k, w={}) }}" class="{{ 'is-on' if k == kind }}">{{ w }}</a>{% endfor %}
+      </span>
+    </div>
+    <form class="un-row" method="get" action="/rankings/units">
       <input type="hidden" name="kind" value="{{ kind }}"><input type="hidden" name="pool" value="{{ pool }}">
       <input type="hidden" name="sport" value="{{ sport|lower }}"><input type="hidden" name="sort" value="{{ sort }}">
-      <label for="un-state" class="p2-muted">State</label>
-      <select id="un-state" name="state" onchange="this.form.submit()">
-        <option value="">{{ "All states" if college or kind in ("league", "section") else "Pick a state" }}</option>
-        {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
-      </select>
+      <span class="un-q">Only</span>
       {% for c, opts in pickers.items() %}{% if opts %}
-      <label for="un-{{ c }}" class="p2-muted">{{ within_labels[c] }}</label>
-      <select id="un-{{ c }}" name="{{ c }}" onchange="this.form.submit()">
-        <option value="">All</option>
-        {% for o in opts %}<option value="{{ o }}"{% if within.get(c) == o %} selected{% endif %}>{{ o }}</option>{% endfor %}
-      </select>{% endif %}{% endfor %}
-      <label for="un-n" class="p2-muted">Best</label>
-      <select id="un-n" name="n" onchange="this.form.submit()">
-        {% for k in (3, 4, 5, 6, 8, 10) %}<option value="{{ k }}"{% if k == n %} selected{% endif %}>{{ k }} teams</option>{% endfor %}
-      </select>
+      <label class="un-pick">{{ within_labels[c] }}
+        <select name="{{ c }}" onchange="this.form.submit()">
+          <option value="">Any</option>
+          {% for o in opts %}<option value="{{ o }}"{% if within.get(c) == o %} selected{% endif %}>{{ o }}</option>{% endfor %}
+        </select></label>{% endif %}{% endfor %}
+      <label class="un-pick">State
+        <select name="state" onchange="this.form.submit()">
+          <option value="">{{ "Any" if college or kind in ("league", "section") else "Pick one" }}</option>
+          {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
+        </select></label>
+      <label class="un-pick">Counting each {{ one|lower }}'s best
+        <select name="n" onchange="this.form.submit()">
+          {% for k in (3, 4, 5, 6, 8, 10) %}<option value="{{ k }}"{% if k == n %} selected{% endif %}>{{ k }} teams</option>{% endfor %}
+        </select></label>
       <noscript><button type="submit">Go</button></noscript>
+      {% if within or state %}<a class="un-clear" href="{{ qs(st=none, w={}) }}">Clear</a>{% endif %}
     </form>
-  </nav>
+  </div>
+  {% if units %}
+  <p class="un-say">{{ units|length }} {{ kind_label|lower }}{% for c, v in within.items() %} in {{ v }}{% endfor %}{% if state %} in {{ state_name }}{% endif %}, {{ pool_words|lower }} {{ sport_words }}{% if label %} {{ label }}{% endif %},
+    ranked {% if sort == 'raced' %}by racing each one's top seven runners as a team{% else %}by the average of each one's best {{ n }} teams{% endif %}.
+    {% if sort == 'raced' %}<a href="{{ qs(so='top') }}">Rank by best-teams average instead</a>{% else %}<a href="{{ qs(so='raced') }}">Rank by racing their top runners instead</a>{% endif %}</p>
+  {% endif %}
 
   {% if err %}
   <p class="p2-note">{{ err }}</p>

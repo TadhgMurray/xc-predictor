@@ -71,3 +71,22 @@ def test_within_filter_is_whitelisted():
     w = U._where("MA", {"division": "NCAA DIII", "evil; drop": "x"}, args)
     assert "upper(division) = upper(%(w0)s)" in w and "evil" not in w
     assert args == {"state": "MA", "w0": "NCAA DIII"}
+
+
+def test_own_logo_first_then_the_badge(monkeypatch):
+    import school_logo
+    assert U.logoKey("conference", "nescac") == "unit:conference:NESCAC"
+    monkeypatch.setattr(school_logo, "crestUrl", lambda *a, **k: None)
+    assert U.unitMark("conference", "NESCAC").startswith("<svg")
+    monkeypatch.setattr(school_logo, "crestUrl",
+                        lambda key, state, px=None: f"/img/school/{key}.png?v=1")
+    m = U.unitMark("conference", "NESCAC")
+    assert m.startswith("<img") and "unit:conference:NESCAC" in m
+
+
+def test_wikipedia_titles():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import unit_logos as L
+    assert L.looksLikeConference("New England Small College Athletic Conference")
+    assert L.looksLikeConference("Mountain East Conference")
+    assert not L.looksLikeConference("Williams College")
