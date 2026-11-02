@@ -59,6 +59,7 @@ RACE_HOUR = {"XC": 9, "TF": 15}
 HORIZON_DAYS = 16          # Open-Meteo's reach
 FRESH_SECONDS = 6 * 3600   # a forecast older than this is fetched again
 TIMEOUT = 4.0              # seconds a page will wait on the network
+MISS_SECONDS = 15 * 60     # a failed race-day fetch is not retried sooner
 _GRID = 0.25               # ERA5 cell, as backfill_normalize snaps it
 
 _mem = {}                  # (kind, key) -> (expires, row); the in-process layer
@@ -333,3 +334,184 @@ def _asDate(day):
     if isinstance(day, _date):
         return day
     return _date.fromisoformat(str(day)[:10])
+
+
+# ------------------------------------------------------------------ #
+#  the forecast as the ratings' weather correction reads it
+# ------------------------------------------------------------------ #
+#
+# ★ WHY (owner, 2026-11-02: "sure", to forecasts moving upcoming
+#   predictions). A rating is a time with the day's weather divided out
+#   (normalize_distance._applyWeather: norm = time / wmult, wmult measured
+#   against the venue's own normal for that fortnight). A predicted time
+#   comes back from ratings, so it is a time on a TYPICAL day at that
+#   course. Multiplying it by the same wmult for the forecast day is the
+#   correction run in reverse: a hot or muddy forecast slows every runner
+#   by exactly what the ratings would credit them for it afterwards.
+#
+# ! NOT THE MODEL'S WEATHER FEATURES. Those biased predictions by -5%
+#   (predict._weatherVariants, app._target); this path never touches the
+#   network. It is the measured correction, nothing new fitted.
+#
+# ! THE SAME DAY SUMMARY THE CORRECTION WAS FITTED ON: the artifact's local
+#   race window (race_local_hours), avg apparent temperature (Steadman, the
+#   grid's formula), avg wind, summed rain, avg 0-7 cm soil, snow as water.
+#   weather_provisional.rowsFrom turns Open-Meteo's hours into grid rows,
+#   so the two can never read a forecast differently.
+#
+# ! CROSS COUNTRY ONLY for now: a track venue's correction key is its
+#   location and indoor flag (backfill_normalize._loadMeetCellsAnetTF),
+#   which a prediction target does not carry yet.
+
+_DAY_HOURLY = None          # weather_provisional.HOURLY, read on first use
+_DAY_CODE = {"XC": -1, "TF": -2}     # weather_forecast.hour for a day summary
+
+
+def _provisional():
+    import os
+    import sys
+    bf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backfill")
+    if bf not in sys.path:
+        sys.path.insert(0, bf)
+    import weather_provisional
+    return weather_provisional
+
+
+def daySummary(rows, lon, day, hours, min_hours=3):
+    """Grid rows (UTC hours, weather_provisional.rowsFrom) -> the correction's
+    day dict {apparent_temp, wind, precip, soil, snow, doy} over the LOCAL
+    window `hours` (lo, hi inclusive), local = UTC + round(lon / 15) as the
+    fitter reads it. None when fewer than `min_hours` of the window are
+    there. Pure."""
+    d = _asDate(day)
+    signed = ((float(lon) + 180.0) % 360.0) - 180.0
+    off = int(round(signed / 15.0))
+    lo, hi = hours
+    got = []
+    for r in rows:
+        t = datetime.fromisoformat(f"{r['date']}T{int(r['hour']):02d}:00") + timedelta(hours=off)
+        if t.date() == d and lo <= t.hour <= hi:
+            got.append(r)
+    if len(got) < min_hours:
+        return None
+
+    def avg(k):
+        v = [float(r[k]) for r in got if r.get(k) is not None]
+        return sum(v) / len(v) if v else None
+    snowfall = sum(float(r.get("snowfall") or 0.0) for r in got)
+    depth = avg("snow_depth")
+    return {"apparent_temp": avg("apparent_temperature"),
+            "wind": avg("wind_speed_10m"),
+            "precip": sum(float(r.get("precipitation") or 0.0) for r in got),
+            "soil": avg("soil_moisture"),
+            "snow": (depth or 0.0) + snowfall,
+            "doy": d.timetuple().tm_yday,
+            "hours": len(got)}
+
+
+def raceDayWeather(lat, lon, day, sport="XC", cur=None, now=None):
+    """The forecast race day as the weather correction reads it (daySummary),
+    16 days out at most; None past the horizon, for a past date, a venue
+    with no coordinates, or no answer from Open-Meteo. Cached like
+    forecastAt: six hours in process and in weather_forecast."""
+    sport = (sport or "XC").upper()
+    if lat is None or lon is None or not day or sport not in _DAY_CODE:
+        return None
+    try:
+        d = _asDate(day)
+    except (TypeError, ValueError):
+        return None
+    today = (now or datetime.now(timezone.utc)).date()
+    if d < today or (d - today).days > HORIZON_DAYS:
+        return None
+    hours = _raceWindow(sport)
+    if hours is None:
+        return None
+    key = ("fc", round(float(lat), 2), round(float(lon), 2), d.isoformat(), _DAY_CODE[sport])
+    hit = _memGet(key)
+    if hit is not None:
+        return hit or None
+    wx = _tableGet(cur, key) if cur is not None else None
+    if wx is None:
+        rows = _fetchDayRows(float(lat), float(lon), d)
+        wx = daySummary(rows, lon, d, hours) if rows else None
+        if wx is not None:
+            wx.update({"kind": "forecast_day", "source": SOURCE,
+                       "fetched_at": datetime.now(timezone.utc).isoformat(timespec="minutes")})
+            if cur is not None:
+                _tablePut(cur, key, wx)
+    # ! A MISS IS REMEMBERED TOO, for MISS_SECONDS: with Open-Meteo down
+    #   every prediction of that race would otherwise wait out TIMEOUT
+    _memPut(key, wx if wx is not None else {}, FRESH_SECONDS if wx is not None else MISS_SECONDS)
+    return wx or None
+
+
+def _raceWindow(sport):
+    try:
+        from normalize_distance import _weatherArtifactFor
+    except Exception:                                    # noqa: BLE001
+        return None
+    art = _weatherArtifactFor(sport)
+    if not art:
+        return None
+    return tuple(art.get("race_local_hours", (8, 12)))
+
+
+def _fetchDayRows(lat, lon, d):
+    """The day's 24 UTC hours at the venue as weather_grid rows, or None.
+    The paid endpoint when OPENMETEO_KEY is set (weather_provisional's rule)."""
+    import os
+    wp = _provisional()
+    key = os.environ.get("OPENMETEO_KEY", "").strip()
+    base = ("https://customer-api.open-meteo.com/v1/forecast" if key else _URL)
+    q = {"latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}",
+         "hourly": wp.HOURLY, "timezone": "GMT", "wind_speed_unit": "kmh",
+         "start_date": d.isoformat(), "end_date": d.isoformat()}
+    if key:
+        q["apikey"] = key
+    req = urllib.request.Request(f"{base}?{urllib.parse.urlencode(q)}",
+                                 headers={"User-Agent": "racecast.co predictions"})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:                                    # noqa: BLE001
+        return None
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return wp.rowsFrom((lat, lon), data) or None
+
+
+def weatherEffect(wx, course, sport, distance):
+    """The multiplier a forecast day puts on a typical-day time at this
+    course: the ratings' own wmult (conversions._weather_mult), 1.0 when
+    the correction refuses the day or has no artifact. Pure but for the
+    artifact."""
+    if not wx:
+        return 1.0
+    try:
+        import conversions
+        return float(conversions._weather_mult(
+            {k: wx.get(k) for k in ("apparent_temp", "wind", "precip", "soil", "snow", "doy")},
+            course, sport, distance))
+    except Exception:                                    # noqa: BLE001
+        return 1.0
+
+
+def describeDay(wx):
+    """'feels 74°F, wind 9 mph, 0.10 in rain' for a day summary, or None."""
+    if not wx:
+        return None
+    parts = []
+    t = wx.get("apparent_temp")
+    if t is not None:
+        parts.append(f"feels {t * 9 / 5 + 32:.0f}°F")
+    w = wx.get("wind")
+    if w is not None and w >= 10:
+        parts.append(f"wind {w / 1.609344:.0f} mph")
+    p = wx.get("precip")
+    if p is not None and p >= 0.3:
+        parts.append(f"{p / 25.4:.2f} in rain")
+    s = wx.get("snow")
+    if s is not None and s >= 0.005:
+        parts.append("snow")
+    return ", ".join(parts) or None

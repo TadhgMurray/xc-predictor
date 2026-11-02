@@ -12029,13 +12029,21 @@ def api_predict_weather():
                 lat, lon, day = spec.get("gps_lat"), spec.get("gps_long"), spec.get("date")
                 normal = fc.normalAt(cur, lat, lon, day, hour)
                 forecast = fc.forecastAt(lat, lon, day, hour, cur=cur)
+                # ★ WHAT THE FORECAST DOES TO THE TIMES (owner, 2026-11-02):
+                #   the predictions' own factor (predict.forecastFactor), so
+                #   the line and the times agree
+                from predict import forecastFactor
+                mult, day_wx = forecastFactor(cur, spec)
     except Exception:                                # noqa: BLE001
         app.logger.exception("/api/predict/weather failed")
         return jsonify({"available": False, "reason": "Could not resolve the target race."})
     return jsonify({"available": True, "date": str(day) if day else None,
                     "hour_local": hour, "has_venue": lat is not None,
                     "normal": normal, "normal_text": fc.describe(normal),
-                    "forecast": forecast, "forecast_text": fc.describe(forecast)})
+                    "forecast": forecast, "forecast_text": fc.describe(forecast),
+                    "forecast_effect_pct": (round(100.0 * (mult - 1.0), 2)
+                                            if day_wx else None),
+                    "forecast_day_text": fc.describeDay(day_wx)})
 
 
 # ★ GET OR POST, AND POST IS NOT AN AFTERTHOUGHT (owner, 2026-09-16: "The

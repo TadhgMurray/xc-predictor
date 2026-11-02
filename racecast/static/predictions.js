@@ -3899,7 +3899,16 @@ async function loadWeather(div) {
     const fc = d.forecast_text
       ? `<span class="wx-forecast" title="Open-Meteo, fetched ${esc((d.forecast && d.forecast.fetched_at) || "")}">forecast for ${esc(d.date || "")}${when}: ${esc(d.forecast_text)}</span>`
       : (d.date ? `<span class="wx-forecast">no forecast yet for ${esc(fmtDate(d.date))} (forecasts reach 16 days out)</span>` : "");
-    el.innerHTML = `<div class="wx-line">${normal}${fc}</div>`;
+    // ★ WHAT THE FORECAST DOES TO THE TIMES (owner, 2026-11-02): the
+    //   ratings' weather correction run in reverse, already in every time
+    let eff = "";
+    if (d.forecast_effect_pct != null) {
+      const p = Number(d.forecast_effect_pct);
+      eff = Math.abs(p) < 0.1
+        ? `<span class="wx-effect" title="${esc(d.forecast_day_text || "")}">forecast race morning is a typical day here: times unchanged</span>`
+        : `<span class="wx-effect" title="${esc(d.forecast_day_text || "")}">forecast makes times about ${Math.abs(p).toFixed(1)}% ${p > 0 ? "slower" : "faster"} than a typical day here (included in the times)</span>`;
+    }
+    el.innerHTML = `<div class="wx-line">${normal}${fc}${eff}</div>`;
   } catch (err) {
     el.innerHTML = "";
   }

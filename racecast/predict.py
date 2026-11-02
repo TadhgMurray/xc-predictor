@@ -1560,6 +1560,66 @@ def _servedTimes(cur, person_ids, target):
     #   time read back on this course, on the race's pool (_stampRaceRatings).
     if spec is not None:
         _stampRaceRatings(preds, spec)
+        # ! AFTER the race ratings: a rating is weather-neutral, so the
+        #   forecast moves the time and never the rating read back from it
+        try:
+            forecastWeather(cur, preds, spec)
+        except Exception:                               # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("forecast weather failed")
+    return preds
+
+
+def forecastCourse(spec):
+    """The course key the weather correction used for this race's venue:
+    an anet XC meet's course_name; None for tfrrs, whose meets the
+    correction reads against the global reference
+    (backfill_normalize._loadMeetCellsTfrrsXC). Pure."""
+    if (spec or {}).get("source") == "tfrrs":
+        return None
+    return (spec or {}).get("course_name")
+
+
+def forecastFactor(cur, spec):
+    """(multiplier, day summary) the forecast puts on this race's typical-day
+    times -- forecast.raceDayWeather through forecast.weatherEffect -- or
+    (1.0, None) with no forecast (past the 16-day horizon, a past race, no
+    coordinates, track). See forecast.py's note."""
+    if not spec or not spec.get("is_xc"):
+        return 1.0, None
+    fc = _fc()
+    wx = fc.raceDayWeather(spec.get("gps_lat"), spec.get("gps_long"), spec.get("date"),
+                           spec.get("sport"), cur=cur)
+    if not wx:
+        return 1.0, None
+    dist = spec.get("distance_meters")
+    m = fc.weatherEffect(wx, forecastCourse(spec), spec.get("sport"),
+                         float(dist) if dist else None)
+    return m, wx
+
+
+def forecastWeather(cur, preds, spec):
+    """Every predicted race time (and its band) times the forecast's
+    multiplier, in place; the typical-day time kept as seconds_typical.
+
+    ★ OWNER, 2026-11-02 ("sure"): a hot or wet forecast moves the predicted
+      times the way the weather correction moves ratings, in reverse.
+    ! ONE FACTOR FOR THE FIELD, so places, team scores and the race ratings
+      (_stampRaceRatings, read before this) do not move; only the clock."""
+    m, wx = forecastFactor(cur, spec)
+    if not wx or abs(m - 1.0) < 1e-6:
+        return preds
+    pct = round(100.0 * (m - 1.0), 2)
+    text = _fc().describeDay(wx)
+    for e in preds:
+        if not e.get("seconds") or not e.get("is_race_time", True):
+            continue
+        e["seconds_typical"] = e["seconds"]
+        for k in ("seconds", "lo", "hi"):
+            if e.get(k):
+                e[k] = round(float(e[k]) * m, 1)
+        e["weather_pct"] = pct
+        e["weather_text"] = text
     return preds
 
 
