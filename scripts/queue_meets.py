@@ -439,6 +439,57 @@ def seasonStartIso(today=None):
     return seasonStart(academicYear(today or _dt.date.today())).isoformat()
 
 
+# ★ A MEET SCRAPED ON ITS OWN DAY IS ASKED ONCE MORE (owner, 2026-11-02:
+#   ICCAC 2026, every time on our page different from athletic.net's). It was
+#   scraped once, at 04:12 local on its race date, and never again: results
+#   are posted, corrected and re-posted in the days after a meet, and only an
+#   EMPTY or PARTLY empty meet was re-asked. A meet whose latest scrape came
+#   within SETTLE_GAP_DAYS of its date is asked again once SETTLE_DAYS have
+#   passed, while it is under SETTLE_MAX_DAYS old. The re-scrape stamps
+#   every row it writes, so a settled meet does not come back; the saver
+#   replaces a re-posted division's rows and reprices a corrected time.
+SETTLE_DAYS = int(os.environ.get("SEED_SETTLE_DAYS", "3"))
+SETTLE_GAP_DAYS = 1
+SETTLE_MAX_DAYS = int(os.environ.get("SEED_SETTLE_MAX_DAYS", "21"))
+
+
+def settleRecent(cur, sport, source="anet", today=None, hours=None):
+    """Meets dated SETTLE_DAYS to SETTLE_MAX_DAYS ago whose newest scraped
+    row is from within SETTLE_GAP_DAYS of the meet's date."""
+    import datetime as _dt
+    t = _t(source, sport)
+    cur.execute("""SELECT 1 FROM information_schema.columns
+                   WHERE table_name = %s AND column_name = 'scraped_at'""", (t["results"],))
+    if cur.fetchone() is None:
+        return []
+    today = today or _dt.date.today()
+    lo = (today - _dt.timedelta(days=SETTLE_MAX_DAYS)).isoformat()
+    hi = (today - _dt.timedelta(days=SETTLE_DAYS)).isoformat()
+    own = f" AND r.result_id < {ALIVE_RESULT_BASE}" if source == "anet" else ""
+    rested = _rested(cur, hours=hours)
+    cur.execute(f"""
+        WITH m AS (
+            SELECT d.meet_id, min(d.{t['date_col']})::date AS day
+            FROM   {t['dates']} d
+            WHERE  d.{t['date_col']} >= %s AND d.{t['date_col']} <= %s
+                   {_clause(t['dates_where'], 'd')}
+            GROUP  BY 1
+        ), s AS (
+            SELECT m.meet_id, m.day, max(r.scraped_at) AS last_scrape
+            FROM   m JOIN {t['results']} r ON r.meet_id = m.meet_id AND r.source = %s{own}
+            GROUP  BY 1, 2
+        )
+        SELECT q.meet_id
+        FROM   s JOIN meet_queue q ON q.meet_id = s.meet_id AND q.source = %s AND q.sport = %s
+        WHERE  q.scraped IN (1, 2)
+          AND  s.last_scrape IS NOT NULL
+          AND  s.last_scrape::date <= s.day + {SETTLE_GAP_DAYS}
+        {rested}
+        ORDER  BY q.meet_id
+    """, (lo, hi, source, source, sport))
+    return [r[0] for r in cur.fetchall()]
+
+
 def partialRecent(cur, sport, since, source="anet", until=None, hours=None):
     """Meets DATED in the window with results in some divisions and none in
     PARTIAL_MIN_EMPTY or more of the later ones. athletic.net only (the
@@ -1070,7 +1121,11 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
             f"partly in, not asked this week: {n_season:,}"
             + (f" (this launch takes the newest {len(season):,}; SEED_SEASON_CAP)"
                if n_season > len(season) else ""))
-        partial = sorted(set(partial) | set(season))
+        settle = settleRecent(cur, sport, source) if (has_date and not deep) else []
+        out["settle"] = len(settle)
+        say(f"  [{tag}] scraped on their own day, {SETTLE_DAYS}+ days since, asked once more "
+            f"for the corrected results: {len(settle):,}")
+        partial = sorted(set(partial) | set(season) | set(settle))
         dated = sorted(set(dated) | set(undated) | set(unrecorded) | set(partial))
         out["dated"] = len(dated)
         out["scheduled_retry"] = len(sched_retry)
