@@ -835,6 +835,24 @@ def stampSchoolStates(cur, rows):
                             ([p[0] for p in pairs], [p[1] for p in pairs]))
                 known = {((row["school"], row["state"]) if isinstance(row, dict)
                           else (row[0], row[1])) for row in cur.fetchall()}
+                # ★ OR A SCHOOL THERE THAT THE NAME STARTS (owner, 2026-11-02:
+                #   "Reading (MI)" and "Lexington (NE)" at the Middlesex League
+                #   meet, a tfrrs race with no state). tfrrs writes "Reading"
+                #   where athletic.net has "Reading Memorial"; the runner's
+                #   home state is MA, and MA has a Reading Memorial, but no
+                #   school called exactly "Reading" -- so the page took the
+                #   name's biggest namesake, in Michigan.
+                rest = [p for p in pairs if p not in known]
+                if rest:
+                    cur.execute("""
+                        SELECT DISTINCT p.school, p.state
+                        FROM   unnest(%s::text[], %s::text[]) AS p(school, state)
+                        JOIN   school_identity s
+                               ON s.state = p.state
+                              AND s.school ILIKE replace(replace(p.school, '%%', ''), '_', '') || ' %%'
+                    """, ([p[0] for p in rest], [p[1] for p in rest]))
+                    known |= {((row["school"], row["state"]) if isinstance(row, dict)
+                               else (row[0], row[1])) for row in cur.fetchall()}
                 for r in rows:
                     if r.get("school_state") or not r.get("person_id"):
                         continue
