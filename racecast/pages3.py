@@ -425,3 +425,60 @@ def card_recap(meet_id):
     src = _src()
     return _serveCard(f"recap xc {meet_id}",
                       lambda cur: cards.cachedRecapCard(cur, meet_id, src))
+
+
+# ------------------------------------------------------------------ #
+#  9. units ranked against each other (owner, 2026-11-02)
+# ------------------------------------------------------------------ #
+
+UNIT_POOLS = (("college_m", "College men"), ("college_f", "College women"),
+              ("hs_m", "HS boys"), ("hs_f", "HS girls"))
+
+
+@bp.route("/rankings/units")
+def units_page():
+    """Conferences, leagues, sections and divisions, ranked: unit_board.py."""
+    import unit_board as UB
+    from rankings import boardYear
+    states, names = _stateNames()
+    pool = (request.args.get("pool") or "college_m").strip().lower()
+    if pool not in dict(UNIT_POOLS):
+        pool = "college_m"
+    college = pool.startswith("college")
+    kinds = [(k, v[0]) for k, v in UB.KINDS.items() if v[1] == college]
+    kind = (request.args.get("kind") or "").strip().lower()
+    if kind not in dict(kinds):
+        kind = kinds[0][0]
+    sport = "TF" if (request.args.get("sport") or "").strip().lower() in ("tf", "track") else "XC"
+    st = (request.args.get("state") or "").strip().upper() or None
+    if st and st not in names:
+        st = None
+    try:
+        n = max(1, min(20, int(request.args.get("n") or UB.DEFAULT_N)))
+    except ValueError:
+        n = UB.DEFAULT_N
+    sort = "raced" if request.args.get("sort") == "raced" else "top"
+    needs_state = UB.KINDS[kind][2]
+    units, year, err = [], None, None
+    with getConn() as conn:
+        with _cursor(conn) as cur:
+            from app import _seasonYears
+            label = request.args.get("year") or (_seasonYears(cur) or {}).get(sport)
+            year = boardYear(sport, label) if label else None
+            if year is None:
+                err = "No current season is known for this sport."
+            elif needs_state and not st:
+                err = f"{UB.KINDS[kind][0]} share names across states: pick a state."
+            else:
+                try:
+                    rows = UB.load(cur, kind, pool, sport, year, st)
+                    units = UB.sortUnits(UB.rankUnits(rows, kind, n), sort)
+                except Exception as exc:                 # noqa: BLE001
+                    conn.rollback()
+                    err = f"The team board is not available right now ({type(exc).__name__})."
+            conn.rollback()
+    return render_template("units.html", units=units, kind=kind, kinds=kinds, pool=pool,
+                           pools=UNIT_POOLS, sport=sport, state=st, states=states,
+                           state_name=names.get(st or "", ""), n=n, sort=sort,
+                           year=year, label=label, err=err, college=college,
+                           kind_label=UB.KINDS[kind][0])
