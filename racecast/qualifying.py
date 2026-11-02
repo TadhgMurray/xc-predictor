@@ -80,14 +80,23 @@ RULES = (
      "cite": "2025-26 NCAA DIII Cross Country Pre-Championships Manual, section 2.1: "
              "10 regions; 1 team each; 22 at-large; top 7 not on a qualifying team"},
     {"key": "nxn", "source": "anet",
-     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b.*regional|nike cross regional",
+     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b.*regional|nike cross regional|federation.*\bnxr\b",
      # ! A REGIONAL'S MEET ALSO HOLDS ITS COMMUNITY, CITIZENS, KIDS AND
      #   MIDDLE SCHOOL RACES, and the NYS Federation runs "at NXR" (the
      #   server's 2025 list)
      "round_not": r"^(?!.*regional (champ|open)).*(community|citizen|kids|grade school|"
-                  r"middle school|\bms\b|federation)",
+                  r"middle school|\bms\b)",
+     # ★ BUT NEW YORK'S TEAMS QUALIFIED THROUGH "NYS Federation Championships at
+     #   NXR" in 2025, the day of the merged Northeast & New York regional
+     #   (qualifying_check: Bethlehem Central, Shenendehowa, Ward Melville
+     #   missed without it)
      "not": r"region|\bnxr\b", "window": 28,
-     "teams_auto": 2, "teams_at_large": 4, "ind_auto": 5, "ind_at_large": 5,
+     "teams_auto": 2, "teams_at_large": 8, "ind_auto": 5, "ind_at_large": 5,
+     # ★ CALIFORNIA'S AT-LARGE TEAMS COME FROM ITS STATE MEET (qualifying_check
+     #   on NXN 2025: Mira Costa, Redondo Union, San Clemente, Coronado, J Serra,
+     #   Trabuco Hills missed, all at-large after the CIF state meet), and the
+     #   field ran 22 teams a gender: 7 regionals x 2 + 8 at-large
+     "at_large_from": r"\bcif\b.*state",
      "team_size": 7,
      "cite": "NXN qualifying (MileSplit / Dyestat summaries; check each year): top 2 "
              "teams per regional; 4 at-large teams per gender; top 5 individuals not on "
@@ -162,18 +171,23 @@ def teamStrength(rows, school):
     return sum(rs) / len(rs) if rs else -math.inf
 
 
-def atLargeTeams(queues, n, strength):
+def atLargeTeams(queues, n, strength, taken=()):
     """n picks from per-round queues of teams in regional finish order: each
     pick the strongest team at the head of any queue, so no team goes
-    ahead of one that beat it at its own round. queues: {round: [school]}."""
+    ahead of one that beat it at its own round. queues: {round: [school]};
+    a school already in (`taken`, or picked from another queue) is passed."""
     q = {k: list(v) for k, v in queues.items()}
-    out = []
+    out, seen = [], set(taken)
     for _ in range(n):
+        for v in q.values():
+            while v and v[0] in seen:
+                v.pop(0)
         heads = [(strength(k, v[0]), k) for k, v in q.items() if v]
         if not heads:
             break
         _s, k = max(heads, key=lambda h: (h[0], str(h[1])))
         out.append((k, q[k].pop(0)))
+        seen.add(out[-1][1])
     return out
 
 
@@ -192,17 +206,28 @@ def atLargeIndividuals(queues, n, n_teams):
     return out
 
 
-def selectField(rule, rounds):
+def selectField(rule, rounds, pools=None):
     """{person_id: school}: the championship's field from its rounds by the
-    rule. rounds: {round key: [(pid, school, seconds, rating)]}."""
+    rule. rounds: {round key: [(pid, school, seconds, rating)]}; pools: other
+    races at-large teams may also come from (rule["at_large_from"]), same
+    shape -- no automatic places and no individuals from them."""
     size = rule.get("team_size", 7)
+    pools = pools or {}
     orders = {k: teamOrder(v) for k, v in rounds.items()}
     qualified = {k: list(o[:rule["teams_auto"]]) for k, o in orders.items()}
     queues = {k: o[rule["teams_auto"]:] for k, o in orders.items()}
-    for k, school in atLargeTeams(queues, rule.get("teams_at_large", 0),
-                                  lambda k, s: teamStrength(rounds[k], s)):
-        qualified[k].append(school)
+    queues.update({("pool", k): teamOrder(v) for k, v in pools.items()})
+    rows_of = dict(rounds)
+    rows_of.update({("pool", k): v for k, v in pools.items()})
+    auto = {s for v in qualified.values() for s in v}
     field = {}
+    for k, school in atLargeTeams(queues, rule.get("teams_at_large", 0),
+                                  lambda k, s: teamStrength(rows_of[k], s), taken=auto):
+        if k in qualified:
+            qualified[k].append(school)
+        else:
+            for r in sorted((r for r in rows_of[k] if r[1] == school), key=lambda r: r[2])[:size]:
+                field[r[0]] = r[1]
     ind_queues, n_teams = {}, {}
     for k, rows in rounds.items():
         teams = set(qualified[k])
@@ -263,14 +288,17 @@ def _shift(day, days):
             + datetime.timedelta(days=days)).isoformat()
 
 
-def roundResults(cur, rule, meet_id, gender, season=None):
+def roundResults(cur, rule, meet_id, gender, season=None, every=False):
     """[(pid, school, seconds, season rating)] of the round meet's race of
-    that gender (the largest, when it has several), or []. The rating is
-    the season's (or the latest before it): never one made after."""
+    that gender (the largest, when it has several), or []; every=True: a
+    list of every race of that gender's rows. The rating is the season's
+    (or the latest before it): never one made after."""
     import last_edition as LE
-    races = pickRace([r for r in LE.editionRaces(cur, meet_id, "XC", rule["source"])
-                      if r.get("gender") == gender])
-    best = []
+    races = [r for r in LE.editionRaces(cur, meet_id, "XC", rule["source"])
+             if r.get("gender") == gender]
+    if not every:
+        races = pickRace(races)
+    best, all_rows = [], []
     for race in races:
         cur.execute("""
             SELECT DISTINCT ON (r.person_id) r.person_id, r.school, r.time_seconds,
@@ -288,9 +316,10 @@ def roundResults(cur, rule, meet_id, gender, season=None):
             row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
             rows.append((int(row[0]), row[1], float(row[2]),
                          float(row[3]) if row[3] is not None else None))
+        all_rows.append(rows)
         if len(rows) > len(best):
             best = rows
-    return best
+    return all_rows if every else best
 
 
 def fieldFromRounds(cur, rule, day, gender, predict=None):
@@ -310,7 +339,15 @@ def fieldFromRounds(cur, rule, day, gender, predict=None):
             rounds[mid] = rows
     if len(rounds) < MIN_ROUNDS:
         return None, 0
-    return selectField(rule, rounds), n_pred
+    pools = {}
+    if rule.get("at_large_from"):
+        extra = dict(rule, round=rule["at_large_from"], round_not=None)
+        for mid, _name, _d in _roundMeets(cur, extra, day, rule.get("window", 21)):
+            for i, rows in enumerate(roundResults(cur, rule, mid, gender,
+                                                  int(str(day)[:4]), every=True)):
+                if len(rows) >= 10:
+                    pools[(mid, i)] = rows
+    return selectField(rule, rounds, pools), n_pred
 
 
 def fieldFor(cur, rule, day, gender):

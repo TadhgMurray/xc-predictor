@@ -133,9 +133,9 @@ def test_nxr_rounds_are_the_regional_championships_only():
         assert Q.isRound(rule, name), name
     for name in ("NXR Midwest MS & Community Race", "NXR Southwest Citizens Race",
                  "NXR NE/NY Kids Race Presented by USATF New York",
-                 "NYS Federation Championships at NXR",
                  "NXR Northwest Grade School/Middle School Championships"):
         assert not Q.isRound(rule, name), name
+    assert Q.isRound(rule, "NYS Federation Championships at NXR")
     races = [{"label": "Boys Championship"}, {"label": "Boys Community 5K"}]
     assert Q.pickRace(races) == [races[0]]
     assert Q.pickRace([{"label": "Men 10k"}, {"label": "Men 8k"}]) == [{"label": "Men 10k"},
@@ -149,3 +149,18 @@ def test_unattached_runners_are_never_a_team():
     rows = [(i, "UNA-CO", 900.0 + i, None) for i in range(6)] + \
         [(10 + i, "Lone Peak", 950.0 + i, None) for i in range(5)]
     assert Q.teamOrder(rows) == ["Lone Peak"]
+
+
+def test_at_large_teams_can_come_from_another_meet():
+    rule = dict(Q.ruleFor("Nike Cross Nationals", "anet"), teams_at_large=2)
+    rounds = {f"r{i}": _region(f"r{i}", n_teams=4, strength=0) for i in range(3)}
+    pools = {"cif": _region("ca", n_teams=3, strength=20, extras=0)}
+    import collections
+    field = Q.selectField(rule, rounds, pools)
+    per = collections.Counter(field.values())
+    teams = {s for s, n in per.items() if n >= 5}
+    assert {"ca0", "ca1"} <= teams and "ca2" not in teams          # the two strongest at-large
+    assert all(f"r{i}0" in teams and f"r{i}1" in teams for i in range(3))
+    # a school already in automatically is not picked twice
+    got = Q.atLargeTeams({"a": ["x", "y"], "b": ["x", "z"]}, 2, lambda k, s: 1, taken={"x"})
+    assert sorted(s for _k, s in got) == ["y", "z"]
