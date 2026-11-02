@@ -60,6 +60,8 @@ MAX_ADVANCE = 0.7        # a feeder sends on at most this share of its field
 MIN_COVER = 0.6          # a qualifying race: its feeders hold this share of it
 TEAM_MIN = 4             # a school with this many feeder runners in R went as a team
 TEAM_SIZE = 7
+ROUTE_FOUND = 0.7        # --write-routes: a route must rebuild this much of its own field
+ROUTE_PRECISE = 0.6      # ... at this precision
 
 
 def placeRanks(rows):
@@ -158,6 +160,10 @@ def main():
     ap.add_argument("--season", type=int, required=True,
                     help="the season to score (its August's year); rules from the one before")
     ap.add_argument("--show", type=int, default=15)
+    ap.add_argument("--write-routes", default=None, metavar="JSON",
+                    help="write the routes learned from the season before (each championship "
+                         "race, its rounds, k teams and m individuals from each) for "
+                         "racecast/qualifying.py; only routes that rebuild their own field")
     ap.add_argument("--frozen", default=None, metavar="TABLE",
                     help="this season, against the site's own field: meet_forecast (or a "
                          "pred_ archive), for the races it froze -- and the two combined")
@@ -253,6 +259,7 @@ def main():
         shown = []
         n_qual = 0
         done = 0
+        routes = []
         for R, rrows in sorted(prev.items(), key=lambda kv: -len(kv[1])):
             if len(rrows) < MIN_FIELD or dprev[R][5:7] not in ("10", "11", "12"):
                 continue
@@ -282,6 +289,34 @@ def main():
                 continue
             n_qual += 1
             done += 1
+            # ★ THE ROUTE MUST REBUILD ITS OWN FIELD (owner: "you're checking
+            #   it"): the rule applied to last season's rounds against last
+            #   season's race. Only routes that do are written.
+            rset = {p for p, _s, _t in rrows}
+            own = set()
+            for F, (k, m) in rules.items():
+                own |= qualifiers(prev[F], k, m)
+            own_found = len(own & rset) / max(len(rset), 1)
+            own_prec = len(own & rset) / max(len(own), 1)
+            route = None
+            if a.write_routes and own_found >= ROUTE_FOUND and own_prec >= ROUTE_PRECISE:
+                def label(key):
+                    r = next((x for x in racesOf(key[0], key[1])
+                              if int(x["div_id"]) == key[2]), {})
+                    return r.get("label"), r.get("gender"), r.get("distance")
+                lab, gen, dist = label(R)
+                route = {"source": R[0], "meet": LE.editionName(names.get((R[0], R[1]))),
+                         "meet_name": names.get((R[0], R[1])), "race": lab, "gender": gen,
+                         "distance": dist, "date": dprev[R],
+                         "own_found": round(own_found, 3), "own_precise": round(own_prec, 3),
+                         "rounds": []}
+                for F, (k, m) in sorted(rules.items(), key=lambda kv: dprev[kv[0]]):
+                    fl, fg, fd = label(F)
+                    route["rounds"].append({"meet": LE.editionName(names.get((F[0], F[1]))),
+                                            "meet_name": names.get((F[0], F[1])), "race": fl,
+                                            "gender": fg, "distance": fd, "date": dprev[F],
+                                            "teams": k, "individuals": m})
+                routes.append(route)
             near = rday + datetime.timedelta(days=364)
             R2 = nextYear(R[0], R[1], R[2], near)
             if R2 is None:
@@ -328,10 +363,27 @@ def main():
                                       ("qualifiers if all found", guess if ok else site)):
                         versus[g][meth][0] += len(fld & actual)
                         versus[g][meth][1] += len(fld)
+            if route is not None:
+                route["next_found"] = round(len(guess & actual) / max(len(actual), 1), 3)
+                route["next_precise"] = round(len(guess & actual) / max(len(guess), 1), 3)
             shown.append((len(actual), names.get((R2[0], R2[1])) or str(R2), dthis[R2],
                           len(rules), ok, len(guess & actual) / max(len(actual), 1),
                           len(guess & actual) / max(len(guess), 1), school_ok / max(len(actual), 1)))
         conn.rollback()
+
+    if a.write_routes:
+        import json
+        with open(a.write_routes, "w") as fh:
+            json.dump({"made": datetime.date.today().isoformat(), "from_season": a.season - 1,
+                       "routes": routes}, fh, indent=1)
+        print(f"wrote {len(routes):,} routes to {a.write_routes} (each rebuilds "
+              f"{100 * ROUTE_FOUND:.0f}%+ of its own field at {100 * ROUTE_PRECISE:.0f}%+ precision)")
+        for r in sorted(routes, key=lambda r: -len(r["rounds"]))[:a.show]:
+            print(f"    {(r['meet_name'] or '')[:40]:40} {(r['race'] or '')[:18]:18} "
+                  f"{len(r['rounds']):>2} rounds, own {100 * r['own_found']:.0f}%/"
+                  f"{100 * r['own_precise']:.0f}%, next "
+                  + (f"{100 * r['next_found']:.0f}%/{100 * r['next_precise']:.0f}%"
+                     if "next_found" in r else "-"))
 
     print(f"\n{n_qual:,} qualifying races in {a.season - 1}, the largest {a.max_races} (feeders hold "
           f"{100 * MIN_COVER:.0f}%+ of the field); scored on their {a.season} editions:")

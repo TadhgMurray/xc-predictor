@@ -311,15 +311,27 @@ def qualifiedField(cur, plan, div_id):
         return None
     rule = Q.ruleFor(plan.get("name"), plan.get("source"))
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
-    if rule is None or race is None or not plan.get("date"):
+    if race is None or not plan.get("date"):
+        return None
+    # ★ ELSE A LEARNED ROUTE (high school state / section / district, NAIA):
+    #   Q.learnedRoute, from scripts/qualifier_audit.py --write-routes
+    route = None if rule is not None else Q.learnedRoute(
+        plan.get("name"), plan.get("source"), race.get("label"), race.get("gender"))
+    if rule is None and route is None:
         return None
     forecast = os.environ.get("XCP_QUALIFY_FORECAST", "1") != "0"
+    src = rule["source"] if rule is not None else route["source"]
     try:
         cur.execute("SAVEPOINT up_qual")
-        field, _n_pred = Q.fieldFromRounds(
-            cur, rule, str(plan["date"])[:10], race.get("gender"),
-            predict=(lambda mid, g: predictedRound(cur, mid, g, rule["source"]))
-            if forecast else None)
+        if rule is not None:
+            field, _n_pred = Q.fieldFromRounds(
+                cur, rule, str(plan["date"])[:10], race.get("gender"),
+                predict=(lambda mid, g: predictedRound(cur, mid, g, src)) if forecast else None)
+        else:
+            field, _n_pred = Q.learnedField(
+                cur, route, str(plan["date"])[:10],
+                predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src))
+                if forecast else None)
         cur.execute("RELEASE SAVEPOINT up_qual")
     except Exception as exc:                            # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT up_qual")
@@ -338,7 +350,12 @@ def predictedRound(cur, meet_id, gender, source):
     if not races:
         return []
     race = max(races, key=lambda r: len(r.get("schools") or {}))
-    pred = racePrediction(cur, meet_id, race["div_id"], source)
+    return predictedDiv(cur, meet_id, race["div_id"], source)
+
+
+def predictedDiv(cur, meet_id, div_id, source):
+    """One race that has not run, as we predict it (predictedRound)."""
+    pred = racePrediction(cur, meet_id, div_id, source)
     if not pred.get("available"):
         return []
     return [(int(r["person_id"]), r.get("school"), float(r["seconds"]),
