@@ -408,7 +408,8 @@ def test_an_uploaded_race_the_feed_scrapes_later_is_a_twin():
 
 def test_the_twin_rule_flags_the_upload_side_and_reuses_the_feed_rules():
     import twin_flag as TF
-    assert [r for r, _ in TF.RULES][:5] == ["twin_race", "twin_person", "twin_same_day", "twin_race_rest", "twin_upload"]
+    assert [r for r, _ in TF.RULES][:6] == ["twin_race", "twin_person", "twin_same_day", "twin_race_rest",
+                                            "twin_race_shifted", "twin_upload"]
     xc = TF.twinUploadSql("results", "XC")
     assert "WHERE  source IN ('upload', 'timer')" in xc and "r.source IN ('anet', 'tfrrs')" in xc
     assert "SELECT DISTINCT u_rid AS result_id" in xc, "the upload's copy is flagged, the feed's stays"

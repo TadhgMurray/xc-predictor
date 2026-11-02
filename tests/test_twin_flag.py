@@ -39,7 +39,8 @@ def test_rules_key_on_the_right_things():
     assert "min(result_id) AS keep" in dup_xc and "r.result_id <> k.keep" in dup_xc, \
         "the lowest result_id survives, every later copy goes"
     assert [r for r, _ in TF.RULES] == ["twin_race", "twin_person", "twin_same_day",
-                                        "twin_race_rest", "twin_upload",
+                                        "twin_race_rest", "twin_race_shifted",
+                                        "twin_upload",
                                         "dup_same_feed",
                                         "dup_cross_date", "dup_race_copy",
                                         "dup_same_day", "dup_adjacent_day",
@@ -83,6 +84,10 @@ _EXPECTED = {
     # 2026-10-13: the MIT Alumni race -- the whole tfrrs copy, not race 76
     ("XC", "twin_race_rest"): [7301, 7302, 7303, 7304, 7305, 7306, 7307],
     ("TF", "twin_race_rest"): [],
+    # 2026-11-02: the same copy found with the day relaxed (no shifted pair
+    # in the fixtures beyond it); TF never
+    ("XC", "twin_race_shifted"): [7301, 7302, 7303, 7304, 7305, 7306, 7307],
+    ("TF", "twin_race_shifted"): [],
     ("TF", "twin_same_day"):  [1901],
     # 2026-10-10: the fixtures hold no uploaded row
     ("XC", "twin_upload"):    [],
@@ -265,3 +270,33 @@ def test_the_two_sports_in_parallel_write_what_one_session_writes():
         admin.close()
     assert one and two == one
     assert leftover is None
+
+
+def test_a_copy_dated_days_apart_is_one_race():
+    """2026-11-02: Middlesex League 2023, tfrrs on Oct 30, athletic.net on
+    another day -- the whole tfrrs division goes, a lone match does not."""
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres")
+    import importlib
+    for name in [n for n in sys.modules if n == "psycopg2" or n.startswith("psycopg2.")]:
+        if not hasattr(sys.modules[name], "__file__"):
+            del sys.modules[name]
+    psycopg2 = importlib.import_module("psycopg2")
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    cur.execute("""CREATE TEMP TABLE results (result_id bigint, person_id bigint, source text,
+                   meet_id bigint, div_id bigint, date text, time_seconds real)""")
+    for i in range(8):                       # the copied race: 8 of 9 match, 4 days apart
+        cur.execute("INSERT INTO results VALUES (%s, %s, 'anet', 227716, 1, '2023-10-26', %s)",
+                    (100 + i, i, 900 + i * 3))
+        cur.execute("INSERT INTO results VALUES (%s, %s, 'tfrrs', 23157, 3, '2023-10-30', %s)",
+                    (200 + i, i, 900 + i * 3 + 0.4))
+    cur.execute("INSERT INTO results VALUES (208, 99, 'tfrrs', 23157, 3, '2023-10-30', 1100)")
+    # a lone runner matching another anet race: not a copy
+    cur.execute("INSERT INTO results VALUES (300, 50, 'anet', 5, 1, '2023-10-01', 1000)")
+    cur.execute("INSERT INTO results VALUES (301, 50, 'tfrrs', 6, 1, '2023-10-03', 1000.2)")
+    cur.execute(f"SELECT result_id FROM ({TF.twinRaceShiftedSql('results', 'XC')}) s ORDER BY 1")
+    assert [r[0] for r in cur.fetchall()] == list(range(200, 209))
+    conn.rollback()

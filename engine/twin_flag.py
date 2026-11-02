@@ -34,6 +34,8 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
                   the same time (XC within a second, track to the
                   hundredth): one race under two names with no canon link
                   (2026-10-06, the UVU pair).
+    twin_race_shifted a tfrrs division copying one anet meet the two
+                  feeds date up to a week apart (twinRaceShiftedSql).
     twin_upload   an uploaded row (racecast/uploads.py, source 'upload'),
                   or a timing company's (sources/promote.py, source 'timer'),
                   that a scraped feed also has: same day, same time, and the
@@ -223,6 +225,66 @@ def twinRaceRestSql(table, sport):
             SELECT t.meet_id, t.div_id, a.meet_id AS am,
                    count(DISTINCT t.result_id) AS k
             FROM   t JOIN a ON a.person_id = t.person_id AND a.d = t.d
+                           AND abs(a.ts - t.ts) < 1.0
+            GROUP  BY 1, 2, 3
+            HAVING count(DISTINCT t.result_id) >= {RACE_REST_MIN}),
+        size AS (
+            SELECT meet_id, div_id, count(*) AS n
+            FROM   {table}
+            WHERE  source = 'tfrrs'
+              AND  (meet_id, div_id) IN (SELECT meet_id, div_id FROM hit)
+            GROUP  BY 1, 2),
+        copy AS (
+            SELECT DISTINCT h.meet_id, h.div_id
+            FROM   hit h JOIN size s ON s.meet_id = h.meet_id AND s.div_id = h.div_id
+            WHERE  h.k >= {RACE_REST_SHARE} * s.n)
+        SELECT r.result_id
+        FROM   {table} r
+        JOIN   copy c ON c.meet_id = r.meet_id AND c.div_id = r.div_id
+        WHERE  r.source = 'tfrrs'
+    """
+
+
+SHIFTED_MAX_DAYS = 7      # how far apart two feeds' dates for one race may be
+
+
+def twinRaceShiftedSql(table, sport):
+    """A COPIED RACE WHOSE FEEDS DISAGREE ABOUT THE DAY (owner, 2026-11-02:
+    the Middlesex League XC Championship 2023, tfrrs 23157/3 on Oct 30 and
+    athletic.net 227716 -- the meet meet_date_fix moved -- on another day).
+    twin_same_day and twin_race_rest key on the DATE, so a race the two
+    feeds date differently was rated twice: the tfrrs copy with no course,
+    5% high.
+
+    twin_race_rest's own test with the day relaxed to SHIFTED_MAX_DAYS:
+    a tfrrs division where RACE_REST_MIN rows, and RACE_REST_SHARE of all
+    its rows, match ONE anet meet (same person, under a second). Nobody's
+    whole field runs the same times twice in a week; a race-level share is
+    what makes the wider window safe, so there is no row-level version.
+    The anet copy survives. XC only, like twin_race_rest."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH t AS (
+            SELECT result_id, person_id, meet_id, div_id,
+                   left(date, 10)::date AS d, time_seconds AS ts
+            FROM   {table}
+            WHERE  source = 'tfrrs' AND person_id IS NOT NULL
+              AND  time_seconds > 0 AND time_seconds < 100000
+              AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+        a AS (
+            SELECT r.person_id, r.meet_id, left(r.date, 10)::date AS d,
+                   r.time_seconds AS ts
+            FROM   {table} r
+            JOIN   (SELECT DISTINCT person_id FROM t) p ON p.person_id = r.person_id
+            WHERE  r.source = 'anet'
+              AND  r.time_seconds > 0 AND r.time_seconds < 100000
+              AND  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
+        hit AS (
+            SELECT t.meet_id, t.div_id, a.meet_id AS am,
+                   count(DISTINCT t.result_id) AS k
+            FROM   t JOIN a ON a.person_id = t.person_id
+                           AND abs(a.d - t.d) <= {SHIFTED_MAX_DAYS}
                            AND abs(a.ts - t.ts) < 1.0
             GROUP  BY 1, 2, 3
             HAVING count(DISTINCT t.result_id) >= {RACE_REST_MIN}),
@@ -792,6 +854,7 @@ import level_conflict as LC                                     # noqa: E402
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("twin_same_day", twinSameDaySql),
          ("twin_race_rest", twinRaceRestSql),
+         ("twin_race_shifted", twinRaceShiftedSql),
          ("twin_upload", twinUploadSql),
          ("dup_same_feed", dupSameFeedSql),
          ("dup_cross_date", dupCrossDateSql),
