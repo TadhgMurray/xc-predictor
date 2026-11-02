@@ -66,6 +66,12 @@ def capture(cur, table, since):
     kinds = {r[0] for r in cur.fetchall()}
     # a field mark and a relay are not a runner's time: track counts running events only
     running = "".join(f" AND COALESCE(r.{k}, 0) = 0" for k in sorted(kinds))
+    if table == "results_tf":
+        # ★ AND ONLY WHAT THE RATINGS COVER (owner's run, 2026-11-02: 77%
+        #   "not normalised" was 100m, 200m, hurdles and half marathons --
+        #   ratings start at 600 m and are track only, so those never are)
+        running += (r" AND NOT (COALESCE(r.event_short, '') ~* "
+                    r"'^(\d{2}|[1-5]\d{2})m|h$|hurdle|steeple|sc$|mar$|marathon|walk|rw$')")
     place = "r.place" if "place" in have else "NULL::int"
     status = "r.status IS NULL" if "status" in have else "TRUE"
     cur.execute(f"""
