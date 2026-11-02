@@ -636,6 +636,9 @@ _SQL = {
           --   ensureWheelchairPerson.
           AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc
                           WHERE wc.person_id = r.person_id)
+          -- and a one-off chair race by itself (wheelchair_flag MIN_CHAIR_RACES)
+          AND NOT EXISTS (SELECT 1 FROM wheelchair_result wr
+                          WHERE wr.sport = 'XC' AND wr.result_id = r.result_id)
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s
           AND r.date <  %(until)s
@@ -735,6 +738,8 @@ _SQL = {
           --   person; see the XC half and ensureWheelchairPerson.
           AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc
                           WHERE wc.person_id = r.person_id)
+          AND NOT EXISTS (SELECT 1 FROM wheelchair_result wr
+                          WHERE wr.sport = 'TF' AND wr.result_id = r.result_id)
           AND COALESCE(r.is_relay, 0) = 0
           AND r.date ~ '^(19|20)[0-9]{{2}}-[0-9]{{2}}-[0-9]{{2}}$'
           AND r.date >= %(since)s

@@ -48,7 +48,7 @@ def ok(cond, msg):
 def test_wheelchair_sticky():
     # ---- 1. the previous list is captured BEFORE the rebuild drops it ----- #
     i_prev = SRC.index("wheelchair_person_prev")
-    i_people = SRC.index("cur.execute(_PEOPLE)")
+    i_people = SRC.index("cur.execute(_PEOPLE")
     ok(SRC.index("CREATE TEMP TABLE wheelchair_person_prev") < i_people,
        "the old list must be copied before _PEOPLE drops the table, or there "
        "is nothing left to carry forward")
@@ -254,3 +254,20 @@ if __name__ == "__main__":
         print("  - " + str(e).replace("\n", "\n  - "))
         sys.exit(1)
     print("test_wheelchair_sticky: all checks passed")
+
+
+def test_a_one_off_chair_race_does_not_take_the_career():
+    """owner, 2026-11-02: Chris Barbato, 1 'Para/Ambulatory' race of 128."""
+    people = re.search(r'_PEOPLE = """(.*?)"""', SRC, re.S).group(1)
+    assert "HAVING count(*) >= {min_races}" in people and "{min_share}" in people
+    carry = re.search(r'_CARRY = """(.*?)"""', SRC, re.S).group(1)
+    assert "FROM wheelchair_race w WHERE w.person_id = o.person_id" in carry
+    res = re.search(r'_RESULTS = """(.*?)"""', SRC, re.S).group(1)
+    assert "CREATE TABLE wheelchair_result" in res and "NOT EXISTS" in res
+    assert SRC.index("cur.execute(_CARRY)") < SRC.index("cur.execute(_RESULTS)")
+    db = io.open(os.path.join(ROOT, "engine", "speed_ratings_db.py"), encoding="utf-8").read()
+    assert "{_chairFilter('XC')}" in db and "{_chairFilter('TF')}" in db
+    assert "FROM wheelchair_result wr" in db
+    b = io.open(os.path.join(ROOT, "racecast", "build_ranking_results.py"), encoding="utf-8").read()
+    assert "wr.sport = 'XC' AND wr.result_id = r.result_id" in b
+    assert "wr.sport = 'TF' AND wr.result_id = r.result_id" in b

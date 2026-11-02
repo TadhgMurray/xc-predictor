@@ -45,7 +45,7 @@ def test_ensure_table_exists_and_the_engine_treats_empty_as_absent():
     assert "def ensureTable(cur)" in wf
     assert "CREATE TABLE IF NOT EXISTS wheelchair_person" in wf
     db = read("engine", "speed_ratings_db.py")
-    i = db.index("def _chairFilter()")
+    i = db.index("def _chairFilter(")
     body = db[i:db.index("\ndef ", i + 1)]
     assert "SELECT count(*) FROM wheelchair_person" in body
     assert "_CHAIR_READY = cur.fetchone()[0] > 0" in body

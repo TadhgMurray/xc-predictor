@@ -327,6 +327,19 @@ def buildRaces(cur, workers, work_mem):
 #   Neither table has an index on person_id, so both scans stay; but a semi
 #   join against a few hundred people is a tiny hash table and no aggregate
 #   worth the name. Same numbers, and it stops being the slowest step here.
+# ★ A PERSON, ONLY WHEN THE CHAIR IS PART OF THEIR CAREER (owner, 2026-11-02:
+#   Chris Barbato, a Tufts runner with no rating anywhere, all five seasons).
+#   One race in a "Para/Ambulatory" division on 2025-05-21 among 128 put him
+#   on this list and took every race he ever ran out of the ratings; the
+#   review list held more of the same shape (one "Wheelchair" division at
+#   one 2022-06-04 meet, 1-2 races of ~128 each). A racing chair is raced
+#   season after season, not once. So a person is listed when their chair or
+#   para races number MIN_CHAIR_RACES, or make MIN_CHAIR_SHARE of every race
+#   they ran; below that, only THOSE races are left out (wheelchair_result),
+#   which still keeps a chair time from setting anyone's ability.
+MIN_CHAIR_RACES = 3
+MIN_CHAIR_SHARE = 0.25
+
 _PEOPLE = """
     DROP TABLE IF EXISTS wheelchair_person;
     CREATE TABLE wheelchair_person AS
@@ -351,7 +364,9 @@ _PEOPLE = """
            mode() WITHIN GROUP (ORDER BY w.via)            AS via
     FROM   wheelchair_race w
     LEFT   JOIN tot t ON t.person_id = w.person_id
-    GROUP  BY w.person_id, t.n_total;
+    GROUP  BY w.person_id, t.n_total
+    HAVING count(*) >= {min_races}
+        OR count(*)::float / GREATEST(COALESCE(t.n_total, count(*)), 1) >= {min_share};
     ALTER TABLE wheelchair_person ADD PRIMARY KEY (person_id);
     ANALYZE wheelchair_person;
 """
@@ -394,6 +409,21 @@ _CARRY = """
     FROM   wheelchair_person_prev o
     WHERE  NOT EXISTS (SELECT 1 FROM wheelchair_person n
                        WHERE n.person_id = o.person_id)
+      -- ! ONLY WHEN THE EVIDENCE IS GONE. A person the fresh scan still finds,
+      --   below the bar (MIN_CHAIR_RACES / MIN_CHAIR_SHARE), is not carried:
+      --   their chair races go to wheelchair_result instead
+      AND  NOT EXISTS (SELECT 1 FROM wheelchair_race w WHERE w.person_id = o.person_id)
+"""
+
+# the chair races of the people NOT listed: left out one by one
+_RESULTS = """
+    DROP TABLE IF EXISTS wheelchair_result;
+    CREATE TABLE wheelchair_result AS
+        SELECT DISTINCT w.sport, w.result_id, w.person_id, w.date, w.label
+        FROM   wheelchair_race w
+        WHERE  NOT EXISTS (SELECT 1 FROM wheelchair_person p WHERE p.person_id = w.person_id);
+    CREATE INDEX ON wheelchair_result (sport, result_id);
+    ANALYZE wheelchair_result;
 """
 
 # ★ THE TABLE, POSSIBLY EMPTY, FOR EVERY READER THAT ANTI-JOINS IT (2026-09-03).
@@ -429,10 +459,23 @@ def _one(cur):
         return int(next(iter(row.values())))
 
 
+_EMPTY_RESULT_DDL = """
+    CREATE TABLE IF NOT EXISTS wheelchair_result (
+        sport      text,
+        result_id  bigint,
+        person_id  bigint,
+        date       text,
+        label      text
+    )
+"""
+
+
 def ensureTable(cur):
-    """wheelchair_person exists, possibly empty. Returns its row count so
-    the caller can say out loud when the exclusion is a no-op."""
+    """wheelchair_person (and wheelchair_result) exist, possibly empty.
+    Returns wheelchair_person's row count so the caller can say out loud
+    when the exclusion is a no-op."""
     cur.execute(_EMPTY_DDL)
+    cur.execute(_EMPTY_RESULT_DDL)
     cur.execute("SELECT count(*) AS n FROM wheelchair_person")
     return _one(cur)
 
@@ -524,7 +567,8 @@ def main():
         print(f"[chair]   previous list kept: {n_prev:,} people", flush=True)
 
         t0 = time.time()
-        cur.execute(_PEOPLE)
+        cur.execute(_PEOPLE.format(min_races=int(MIN_CHAIR_RACES),
+                                   min_share=float(MIN_CHAIR_SHARE)))
         cur.execute("SELECT count(*) AS n FROM wheelchair_person")
         print(f"[chair]   people rolled up            "
               f"{_one(cur):>8,} rows {time.time() - t0:7.1f}s", flush=True)
@@ -543,6 +587,12 @@ def main():
 
         cur.execute(_CARRY)
         n_carried = cur.rowcount
+        cur.execute(_RESULTS)
+        cur.execute("SELECT count(*) AS n, count(DISTINCT person_id) AS p FROM wheelchair_result")
+        r = cur.fetchone()
+        print(f"[chair]   one-off chair races left out by RACE (under {MIN_CHAIR_RACES} races "
+              f"and {MIN_CHAIR_SHARE:.0%} of a career): {r['n']:,} races of {r['p']:,} people",
+              flush=True)
         if n_carried:
             # ⚠ LOUD. A nonzero count is the churn this exists to survive:
             #   people the labels no longer reach, most often because the

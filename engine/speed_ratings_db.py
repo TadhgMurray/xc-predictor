@@ -456,7 +456,7 @@ def _impossibleFilter(sport: str) -> str:
             f"\n                          WHERE ir.sport = '{sport}' AND ir.result_id = r.result_id)")
 
 
-def _chairFilter() -> str:
+def _chairFilter(sport=None) -> str:
     global _CHAIR_READY
     if _CHAIR_READY is None:
         try:
@@ -492,8 +492,30 @@ def _chairFilter() -> str:
             print("!" * 70 + "\n")
     if not _CHAIR_READY:
         return ""
-    return ("\n          AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc"
-            "\n                          WHERE wc.person_id = r.person_id)")
+    out = ("\n          AND NOT EXISTS (SELECT 1 FROM wheelchair_person wc"
+           "\n                          WHERE wc.person_id = r.person_id)")
+    if _chairResultReady():
+        # ★ AND A ONE-OFF CHAIR RACE BY ITSELF (2026-11-02, wheelchair_flag
+        #   MIN_CHAIR_RACES): the person stays, that race does not
+        sp = f"wr.sport = '{sport}' AND " if sport in ("XC", "TF") else ""
+        out += ("\n          AND NOT EXISTS (SELECT 1 FROM wheelchair_result wr"
+                f"\n                          WHERE {sp}wr.result_id = r.result_id)")
+    return out
+
+
+_CHAIR_RESULT_READY = None
+
+
+def _chairResultReady():
+    global _CHAIR_RESULT_READY
+    if _CHAIR_RESULT_READY is None:
+        try:
+            with getConn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.wheelchair_result')")
+                _CHAIR_RESULT_READY = cur.fetchone()[0] is not None
+        except Exception:                               # noqa: BLE001
+            _CHAIR_RESULT_READY = False
+    return _CHAIR_RESULT_READY
 
 # loadCanonicalNames
 # Purpose:   {canonical_id_as_text: canonical_name} for display.
@@ -756,7 +778,7 @@ def _xcQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   slipped past it and set that athlete's ability. See
           --   _chairFilter and engine/wheelchair_flag.py (issue #14). The
           --   division test is KEPT: it costs nothing and still holds when
-          --   wheelchair_person has not been built.{_chairFilter()}
+          --   wheelchair_person has not been built.{_chairFilter('XC')}
 {_dedupFilter(tw, 'XC')}
     """
 
@@ -901,7 +923,7 @@ def _tfQuery(min_time: float, max_time: float, tw: str = "") -> str:
           --   slipped past it and set that athlete's ability. See
           --   _chairFilter and engine/wheelchair_flag.py (issue #14). The
           --   division test is KEPT: it costs nothing and still holds when
-          --   wheelchair_person has not been built.{_chairFilter()}
+          --   wheelchair_person has not been built.{_chairFilter('TF')}
 {_dedupFilter(tw, 'TF')}
     """
 
