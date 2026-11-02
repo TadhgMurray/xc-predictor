@@ -57,6 +57,45 @@ def loadModel(path=None):
     return _CACHE["model"]
 
 
+# ★ THE RANGES, CALIBRATED ON WHAT HAPPENED (owner's run, 2026-11-02: the
+#   race model's frozen forecasts held 85% of runners inside a +-1 sigma
+#   range that should hold 68%). The ranges are fitted on the held-out
+#   season, then the served trees are refit on every season and miss less,
+#   so they run wide. scripts/range_calibration.py measures the factor that
+#   makes 68% true on the last weeks' frozen forecasts and appends it to
+#   this file; every range made on or after an entry's day is scaled by it.
+CAL_PATH = os.environ.get("XCP_RACE_CALIBRATION") or os.path.join(
+    os.path.dirname(MODEL_PATH), "race_calibration.json")
+_CAL = {"mtime": None, "history": []}
+
+
+def scaleOn(history, day):
+    """The range factor in force on `day` (ISO date): the last entry whose
+    "from" is on or before it, else 1.0. Pure."""
+    k = 1.0
+    for h in sorted(history or [], key=lambda h: h["from"]):
+        if h["from"] <= day:
+            k = float(h["k"])
+    return k
+
+
+def rangeScale(day=None):
+    """The factor for ranges made today (or on `day`), from CAL_PATH."""
+    import json
+    try:
+        mtime = os.path.getmtime(CAL_PATH)
+    except OSError:
+        return 1.0
+    if _CAL["mtime"] != mtime:
+        try:
+            with open(CAL_PATH) as fh:
+                _CAL["history"] = json.load(fh).get("history") or []
+        except Exception:                                # noqa: BLE001
+            _CAL["history"] = []
+        _CAL["mtime"] = mtime
+    return scaleOn(_CAL["history"], day or datetime.date.today().isoformat())
+
+
 def gradeAt(grade, then, day):
     """A grade recorded on `then`, carried to `day` by academic years.
     '10' two seasons on is '12'; '12' one season on is 'FR'; 'SO' on is
@@ -275,12 +314,13 @@ def predictField(model, field, race):
     spread = model.get("spread")
     own_ps = (np.clip(spread.predict(X), RT.SPREAD_MIN, RT.SPREAD_MAX)
               if spread is not None else None)
+    k = rangeScale()
     out = {}
     for i, (r, x) in enumerate(zip(field, rel)):
         band = RT.bandOf(r["f"]["opener"], r["f"]["last_days"])
-        ps = (float(own_ps[i]) if own_ps is not None
-              else float(sig.get(band, sig.get("_all", 0.03))))
-        ts = math.sqrt(ps * ps + float(sig.get("_level", 0.0)) ** 2)
+        ps = k * (float(own_ps[i]) if own_ps is not None
+                  else float(sig.get(band, sig.get("_all", 0.03))))
+        ts = k * math.sqrt((ps / k) ** 2 + float(sig.get("_level", 0.0)) ** 2)
         secs = math.exp(mean_base + level + float(x))
         out[r["pid"]] = {"seconds": round(secs, 1), "lo": round(secs * math.exp(-ts), 1),
                          "hi": round(secs * math.exp(ts), 1),
