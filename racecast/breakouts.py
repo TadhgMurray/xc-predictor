@@ -425,12 +425,25 @@ def _fillMeets(cur, sport, rows):
     got = {}
     try:
         if sport == "XC":
-            divs = sorted({r["div_id"] for r in rows if r.get("div_id")})
-            cur.execute("""SELECT div_id, meet_name FROM meets
-                           WHERE div_id = ANY(%s)""", (divs,))
-            by_div = {d: n for d, n in (_row(x, "div_id", "meet_name")
-                                        for x in cur.fetchall())}
+            # ★ THE ROW'S OWN SOURCE, NOT ITS DIVISION ID ALONE (owner,
+            #   2026-11-02: a follow email called a tfrrs NESCAC race "OSAA
+            #   2A/1A State Championships"). tfrrs division ids are 0, 1, 2
+            #   within each meet and athletic.net's are global, so a div_id
+            #   lookup in `meets` found some other meet's division. The
+            #   source comes from `results` by result_id; athletic.net and
+            #   the timers' rows look up (meet, division, source) in
+            #   `meets`, tfrrs rows their meet in meets_tfrrs.
+            ids = sorted({r["result_id"] for r in rows if r.get("result_id") is not None})
+            cur.execute("SELECT result_id, source FROM results WHERE result_id = ANY(%s)", (ids,))
+            src_of = {i: s for i, s in (_row(x, "result_id", "source") for x in cur.fetchall())}
+            divs = sorted({r["div_id"] for r in rows if r.get("div_id") is not None})
             mids = sorted({r["meet_id"] for r in rows if r.get("meet_id")})
+            cur.execute("""SELECT meet_id, div_id, source, meet_name FROM meets
+                           WHERE div_id = ANY(%s) AND meet_id = ANY(%s)""", (divs, mids))
+            by_key = {}
+            for x in cur.fetchall():
+                m, d, s, n = (_row(x, "meet_id", "div_id", "source", "meet_name"))
+                by_key[(m, d, s)] = n
             by_meet = {}
             try:
                 cur.execute("""SELECT meet_id, meet_name FROM meets_tfrrs
@@ -441,8 +454,11 @@ def _fillMeets(cur, sport, rows):
             except Exception:                           # noqa: BLE001
                 cur.connection.rollback()
             for r in rows:
-                got[r["result_id"]] = (by_div.get(r.get("div_id"))
-                                       or by_meet.get(r.get("meet_id")))
+                src = src_of.get(r.get("result_id"))
+                if src == "tfrrs":
+                    got[r["result_id"]] = by_meet.get(r.get("meet_id"))
+                else:
+                    got[r["result_id"]] = by_key.get((r.get("meet_id"), r.get("div_id"), src or "anet"))
         else:
             divs = sorted({r["div_id"] for r in rows if r.get("div_id")})
             cur.execute("""SELECT DISTINCT ON (div_id) div_id, meet_name

@@ -138,3 +138,36 @@ def test_unit_args_use_the_boards_spelling():
 
 def test_windows_include_a_month():
     assert 30 in B.WINDOW_CHOICES and max(B.WINDOW_CHOICES) == 30
+
+
+def test_a_tfrrs_race_takes_its_own_meet_name():
+    """2026-11-02: a follow email called a tfrrs NESCAC race "OSAA 2A/1A
+    State Championships" -- tfrrs div ids (0, 1, 2) were looked up in
+    athletic.net's `meets` by div_id alone."""
+    import breakouts as B
+
+    class Cur:
+        def __init__(self):
+            self.q = None
+            self.connection = self
+
+        def rollback(self):
+            pass
+
+        def execute(self, sql, args=None):
+            self.q = sql
+
+        def fetchall(self):
+            if "FROM results" in self.q:
+                return [(-5, "tfrrs"), (7, "anet")]
+            if "FROM meets_tfrrs" in self.q:
+                return [(28639, "NESCAC Championship")]
+            if "FROM meets" in self.q:
+                return [(28639, 1, "anet", "OSAA 2A/1A State Championships"),
+                        (900, 1, "anet", "Some anet meet")]
+            return []
+    rows = [{"result_id": -5, "meet_id": 28639, "div_id": 1},
+            {"result_id": 7, "meet_id": 900, "div_id": 1}]
+    B._fillMeets(Cur(), "XC", rows)
+    assert rows[0]["meet_name"] == "NESCAC Championship"
+    assert rows[1]["meet_name"] == "Some anet meet"
