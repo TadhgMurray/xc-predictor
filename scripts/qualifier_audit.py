@@ -63,7 +63,7 @@ TEAM_MIN = 4             # a school with this many feeder runners in R went as a
 TEAM_SIZE = 7
 ROUTE_FOUND = 0.7        # --write-routes: a route must rebuild this much of its own field
 ROUTE_PRECISE = 0.6      # ... at this precision
-NEXT_FOUND = 0.5         # ... and, where this season's edition has run, find this much of it
+NEXT_FOUND = 0.6         # ... and, where this season's edition has run, find this much of it
 # ! NOT A MEET YOU QUALIFY FOR (review of the first routes file): NXR regionals
 #   are open entry (the round for NXN), a "Top 10" race is each team's best
 #   ten, an invitational invites
