@@ -64,6 +64,45 @@ def find(cur, since):
     return [(src, int(mid), int(n)) for src, mid, n in cur.fetchall()]
 
 
+def renormalize(conn, races, sport="XC"):
+    """Re-normalise these (source, meet_id) races on today's genders, pools,
+    pins and weather (backfill_normalize --meets-file, update mode), and
+    clear the rating of every row whose normalized_time moved so
+    fill_ratings prices it again. -> (exit code, rows moved). Shared by
+    fix_stragglers and weather_provisional."""
+    tables = {"XC": ("results",), "TF": ("results_tf",), "both": ("results", "results_tf")}[sport]
+    from psycopg2.extras import execute_values
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS strag_meet")
+        cur.execute("CREATE TEMP TABLE strag_meet (src text, mid bigint)")
+        execute_values(cur, "INSERT INTO strag_meet VALUES %s", list(races))
+        for t in tables:
+            cur.execute(f"DROP TABLE IF EXISTS strag_snap_{t}")
+            cur.execute(f"""CREATE TEMP TABLE strag_snap_{t} AS
+                            SELECT r.result_id, r.source, r.normalized_time
+                            FROM {t} r JOIN strag_meet s
+                              ON s.src = r.source AND s.mid = r.meet_id""")
+        conn.commit()
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+        fh.write("\n".join(f"{s}:{m}" for s, m in races))
+        path = fh.name
+    rc = subprocess.call([sys.executable, "-u", os.path.join(_ROOT, "backfill", "backfill_normalize.py"),
+                          "--sport", sport, "--apply", "--meets-file", path])
+    os.unlink(path)
+    if rc != 0:
+        return rc, 0
+    moved = 0
+    with conn.cursor() as cur:
+        for t in tables:
+            cur.execute(f"""UPDATE {t} r SET speed_rating = NULL
+                            FROM strag_snap_{t} s
+                            WHERE r.result_id = s.result_id AND r.source = s.source
+                              AND r.normalized_time IS DISTINCT FROM s.normalized_time""")
+            moved += cur.rowcount
+        conn.commit()
+    return 0, moved
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -92,32 +131,10 @@ def main():
                 print("  DRY RUN -- --apply re-normalises them")
             conn.rollback()
             return 0
-        # 1. what each row is now
-        cur.execute("CREATE TEMP TABLE strag_meet (src text, mid bigint)")
-        from psycopg2.extras import execute_values
-        execute_values(cur, "INSERT INTO strag_meet VALUES %s", [(s, m) for s, m, _n in races])
-        cur.execute("""CREATE TEMP TABLE strag_snap AS
-                       SELECT r.result_id, r.source, r.normalized_time
-                       FROM results r JOIN strag_meet s
-                         ON s.src = r.source AND s.mid = r.meet_id""")
-        conn.commit()
-        # 2. re-normalise those races
-        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
-            fh.write("\n".join(f"{s}:{m}" for s, m, _n in races))
-            path = fh.name
-        rc = subprocess.call([sys.executable, "-u", os.path.join(_ROOT, "backfill", "backfill_normalize.py"),
-                              "--sport", "XC", "--apply", "--meets-file", path])
-        os.unlink(path)
+        rc, moved = renormalize(conn, [(s, m) for s, m, _n in races])
         if rc != 0:
             print(f"[stragglers] backfill_normalize exited {rc}; ratings left as they were")
             return rc
-        # 3. a row whose distance moved is priced again by fill_ratings
-        cur.execute("""UPDATE results r SET speed_rating = NULL
-                       FROM strag_snap s
-                       WHERE r.result_id = s.result_id AND r.source = s.source
-                         AND r.normalized_time IS DISTINCT FROM s.normalized_time""")
-        moved = cur.rowcount
-        conn.commit()
         print(f"[stragglers] {moved:,} rows re-normalised to a new distance; their ratings "
               f"are cleared for fill_ratings")
         # 4. what is left is not stale
