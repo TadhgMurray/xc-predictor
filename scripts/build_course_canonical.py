@@ -213,6 +213,76 @@ def protectedSplit(venueA, venueB):
     return protectedTag(venueA.get("name")) != protectedTag(venueB.get("name"))
 
 
+# ★ ONE NAME, ONE PARK, A FEW HUNDRED METRES OR A TOWN APART (owner,
+#   2026-11-02: Harkness Memorial State Park read +2.5% on its course page and
+#   +5.1% on a race there). Three canonical ids for the one park: the main
+#   one, a geocode 590 m off (outside the 500 m radius) and one 5 km off at
+#   the town's centre (outside the 1 km search cells altogether). Each got
+#   its own difficulty from its own few races.
+#   EXACTLY the same name (after normalising and expanding) merges within
+#   SAME_NAME_RADIUS, and within SAME_NAME_FAR when the name has
+#   DISTINCTIVE_MIN words that are not the generic ones -- "Harkness
+#   Memorial" is one place; "Central Park" and "Lincoln High School" are
+#   many, and keep the ordinary rule. protectedSplit still vetoes (a rain
+#   course stays its own).
+SAME_NAME_RADIUS = 1500
+SAME_NAME_FAR = 8000
+DISTINCTIVE_MIN = 2
+_GENERIC_VENUE = frozenset("""
+    high school middle elementary junior senior jr sr park state county city town
+    field fields complex course courses golf club country center centre regional
+    community college university sports sport athletic athletics recreation rec area
+    the of at and a trail trails grounds ground farm farms lake memorial north south
+    east west central saint st stadium track xc cross
+""".split())
+
+
+def distinctive(canonical):
+    """The words of a normalised venue name that name THIS place. Pure."""
+    return [w for w in str(canonical or "").split() if w not in _GENERIC_VENUE and not w.isdigit()]
+
+
+_SCHOOL_WORDS = frozenset({"high", "school", "middle", "elementary", "academy", "junior", "prep"})
+
+
+def farName(canonical):
+    """Does this name pick out ONE place, so a geocode a town away is still
+    it? Two distinctive words ("Lehigh Parkway"), or a long non-school name
+    with one ("Harkness Memorial State Park"). "Central Park", "Riverside
+    Park", "Lincoln High School" do not. Pure."""
+    words = str(canonical or "").split()
+    d = distinctive(canonical)
+    if len(d) >= DISTINCTIVE_MIN:
+        return not (_SCHOOL_WORDS & set(words))
+    return len(d) >= 1 and len(words) >= 4 and not (_SCHOOL_WORDS & set(words))
+
+
+def sameNamePairs(venues):
+    """[(idxA, idxB, metres, 1.0)] for venues with exactly the same normalised
+    name inside SAME_NAME_RADIUS, or SAME_NAME_FAR for a distinctive name.
+    Pure."""
+    from course_identity import haversineMeters
+    by = {}
+    for v in venues:
+        if v.get("canonical"):
+            by.setdefault(v["canonical"], []).append(v)
+    out = []
+    for name, group in by.items():
+        if len(group) < 2:
+            continue
+        reach = SAME_NAME_FAR if farName(name) else SAME_NAME_RADIUS
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a, b = group[i], group[j]
+                if protectedSplit(a, b):
+                    continue
+                d = haversineMeters(float(a["gps_lat"]), float(a["gps_long"]),
+                                    float(b["gps_lat"]), float(b["gps_long"]))
+                if d <= reach:
+                    out.append((min(a["idx"], b["idx"]), max(a["idx"], b["idx"]), d, 1.0))
+    return out
+
+
 def buildMapping(venues, radiusMeters, minNameSimilarity):
     """
     Cluster the venues and flatten to insertable rows.
@@ -230,6 +300,7 @@ def buildMapping(venues, radiusMeters, minNameSimilarity):
     """
     pairs = findMergePairs(venues, radiusMeters, minNameSimilarity,
                            blockFn=blocksMerge, venueBlockFn=protectedSplit)
+    pairs = pairs + sameNamePairs(venues)
     clusters = buildClusters(len(venues), pairs)
 
     rows = []
@@ -316,7 +387,7 @@ def loadExisting():
             return {(n, la, lo): (cid, cname) for n, la, lo, cid, cname in cursor.fetchall()}
 
 
-def keepIds(rows, old):
+def keepIds(rows, old, merge_same_name=False):
     """The fresh clustering, renumbered so every course keeps the id it has.
 
     ★ WHY (2026-09-26: Penrose Park, raced this season, had no difficulty
@@ -333,6 +404,12 @@ def keepIds(rows, old):
           cluster
       Two existing ids are never merged, even when a new venue bridges them:
       that would renumber a course, which is the thing this exists to stop.
+    ★ EXCEPT, WITH merge_same_name (--merge-same-name, 2026-11-02), a
+      cluster whose venues all carry the SAME normalised name and that holds
+      several existing ids: one place under several ids (Harkness Memorial
+      State Park). It takes the id of its biggest venue; the others' rows in
+      course_difficulties stand orphaned until the next full solve fits the
+      merged course. Printed in the plan, opt-in, never in the nightly.
     Pure. rows: buildMapping's tuples. Returns (rows, n_new_venues, n_new_ids).
     """
     by_cluster = {}
@@ -340,10 +417,21 @@ def keepIds(rows, old):
         by_cluster.setdefault(r[3], []).append(r)
     next_id = max((cid for cid, _ in old.values()), default=0) + 1
     out, n_new_v, n_new_ids = [], 0, 0
+    merges = []
     for cid in sorted(by_cluster):
         members = by_cluster[cid]
         mapped = [(old[(m[0], m[1], m[2])], m[6]) for m in members
                   if (m[0], m[1], m[2]) in old]
+        one_name = len({expandAbbreviations(normalizeCourseName(m[0])) for m in members}) == 1
+        if merge_same_name and one_name and len({oid for (oid, _n), _r in mapped}) > 1:
+            (host_id, host_name), _n = max(mapped, key=lambda t: t[1])
+            gone = sorted({oid for (oid, _nm), _r in mapped} - {host_id})
+            merges.append((host_name, host_id, gone))
+            for m in members:
+                if (m[0], m[1], m[2]) not in old:
+                    n_new_v += 1
+                out.append((m[0], m[1], m[2], host_id, host_name, 0, m[6]))
+            continue
         if mapped:
             (host_id, host_name), _n = max(mapped, key=lambda t: t[1])
         else:
@@ -387,6 +475,7 @@ def keepIds(rows, old):
     for r in out:
         sizes[r[3]] = sizes.get(r[3], 0) + 1
     out = [(a, b, c, d, e, sizes[d], g) for a, b, c, d, e, _f, g in out]
+    keepIds.merges = merges
     return out, n_new_v, n_new_ids
 
 
@@ -423,6 +512,9 @@ def main():
                         help="minimum name similarity (default 0.8)")
     parser.add_argument("--apply", action="store_true",
                         help="actually write; without this it is a dry run")
+    parser.add_argument("--merge-same-name", action="store_true",
+                        help="with --incremental: merge existing ids that are one venue under "
+                             "one name (see sameNamePairs); listed in the plan")
     parser.add_argument("--incremental", action="store_true",
                         help="keep every existing course's id; new venues join their "
                              "cluster's id or get a fresh one (the pipeline's mode, 06b)")
@@ -432,7 +524,9 @@ def main():
     rows, stats = buildMapping(venues, args.radius, args.min_sim)
     if args.incremental:
         old = loadExisting()
-        rows, n_new_v, n_new_ids = keepIds(rows, old)
+        rows, n_new_v, n_new_ids = keepIds(rows, old, merge_same_name=args.merge_same_name)
+        for name, host, gone in getattr(keepIds, "merges", []):
+            print(f"  merge: {name}  ids {', '.join(map(str, gone))} -> {host}")
         print(f"\nincremental: {len(old):,} venues already mapped keep their ids; "
               f"{n_new_v:,} new venues ({n_new_ids:,} new courses, "
               f"{n_new_v - n_new_ids:,}-ish joining existing ones)")
