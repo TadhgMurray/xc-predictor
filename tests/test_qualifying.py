@@ -1,0 +1,84 @@
+"""racecast/qualifying.py: the published rules applied to a set of rounds.
+No database.
+
+    python -m pytest -q tests/test_qualifying.py
+"""
+import math
+import os
+import sys
+
+os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (_ROOT, os.path.join(_ROOT, "racecast"), os.path.join(_ROOT, "engine"),
+           os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "model")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import qualifying as Q                                       # noqa: E402
+
+
+def _region(tag, n_teams=6, per=7, strength=0.0, extras=3):
+    """Teams tag0..tagN, team k slower than k-1; `extras` unattached
+    individuals fastest of all."""
+    rows, pid = [], 0
+    for i in range(extras):
+        rows.append((f"{tag}-ind{i}", f"{tag}-solo{i}", 900.0 + i, 60.0))
+    for rank in range(per):
+        for k in range(n_teams):
+            rows.append((f"{tag}-{k}-{rank}", f"{tag}{k}", 1000.0 + 10 * k + 60 * rank,
+                         50.0 + strength - k))
+    return rows
+
+
+def test_the_rules_find_their_meets():
+    assert Q.ruleFor("NCAA Division I Cross Country Championships", "tfrrs")["key"] == "ncaa_d1"
+    assert Q.ruleFor("NCAA Division II Cross Country Championships", "tfrrs")["key"] == "ncaa_d2"
+    assert Q.ruleFor("2025 NCAA Division III Cross Country Championships", "tfrrs")["key"] == "ncaa_d3"
+    assert Q.ruleFor("NCAA Division I Northeast Region Cross Country Championships", "tfrrs") is None
+    assert Q.ruleFor("Nike Cross Nationals 2025", "anet")["key"] == "nxn"
+    assert Q.ruleFor("NXR Southeast Regional", "anet") is None
+    assert Q.isRound(Q.ruleFor("NCAA Division I Cross Country Championships"),
+                     "NCAA Division I Mountain Region Cross Country Championships")
+    assert not Q.isRound(Q.ruleFor("NCAA Division I Cross Country Championships"),
+                         "NCAA Division II Midwest Region Championships")
+
+
+def test_d1_by_its_manual():
+    rule = Q.ruleFor("NCAA Division I Cross Country Championships", "tfrrs")
+    rounds = {f"r{i}": _region(f"r{i}", n_teams=12, strength=i) for i in range(9)}
+    field = Q.selectField(rule, rounds)
+    import collections
+    per = collections.Counter(field.values())
+    teams = {s for s, n in per.items() if n >= 5}       # a team runs seven; an individual alone
+    assert len(teams) == 18 + 14
+    assert all(f"r{i}0" in teams and f"r{i}1" in teams for i in range(9))   # the auto bids
+    # at-large keeps regional order: no region's fourth team before its third
+    for i in range(9):
+        if f"r{i}3" in teams:
+            assert f"r{i}2" in teams
+    assert sum(1 for s in field.values() if s in teams) == 32 * 7
+    # 4 auto individuals a region (all 3 solos + the first non-qualifier), + 2 at-large
+    assert sum(1 for s in field.values() if s not in teams) == 9 * 4 + 2
+
+
+def test_at_large_teams_go_to_the_strongest_head_of_each_queue():
+    got = Q.atLargeTeams({"a": ["a2", "a3"], "b": ["b2"]}, 2,
+                         lambda k, s: {"a2": 1, "a3": 9, "b2": 5}[s])
+    assert got == [("b", "b2"), ("a", "a2")]           # a3 waits behind a2
+    assert Q.teamStrength([(1, "x", 1.0, None)], "x") == -math.inf
+
+
+def test_d2_individuals_by_its_ratio():
+    # region a sent 3 teams, b sent 1: a's 10th beats b's 5th (3/10 > 1/5? no: 0.3 > 0.2)
+    got = Q.atLargeIndividuals({"a": [(10, "a10"), (11, "a11")], "b": [(5, "b5")]}, 2,
+                               {"a": 3, "b": 1})
+    assert got == ["a10", "a11"]
+
+
+def test_the_check_scores_people_and_teams():
+    import qualifying_check as C
+    field = {1: "A", 2: "A", 3: "A", 4: "A", 5: "A", 9: "Z"}
+    fin = [(1, "A"), (2, "A"), (3, "A"), (4, "A"), (6, "A"), (7, "B"), (8, "B"), (10, "B"),
+           (11, "B"), (12, "B")]
+    f, p, th, tr, miss, extra = C.score(field, fin)
+    assert (round(f, 2), round(p, 2), th, tr, miss, extra) == (0.4, 0.67, 1, 2, ["B"], [])
