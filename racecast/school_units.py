@@ -227,7 +227,9 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
                     "raw": value,
                     "label": _label(col, value, long, row),
                     "conflict": bool(row["conflict"]),
-                    "asof": row["asof"]})
+                    "asof": row["asof"],
+                    # the unit's page needs it for a high school unit
+                    "state": row.get("state"), "college": bool(row.get("is_college"))})
     # the conflict flag is per ROW, so mark only the first chip -- the
     # tooltip explains, and three amber marks would read as three faults
     for chip in out[1:]:
@@ -390,6 +392,7 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None,
             continue
         out.append({"kind": col, "raw": value,
                     "label": _label(col, value, long, row),
-                    "conflict": False, "asof": None})
+                    "conflict": False, "asof": None,
+                    "state": row.get("state"), "college": bool(row.get("is_college"))})
     return out
 

@@ -440,6 +440,8 @@ def units_page():
     """Conferences, leagues, sections and divisions, ranked: unit_board.py."""
     import unit_board as UB
     from rankings import boardYear
+    from pool_view import stampBoardRows
+    from school_identity import levelOf
     states, names = _stateNames()
     pool = (request.args.get("pool") or "college_m").strip().lower()
     if pool not in dict(UNIT_POOLS):
@@ -458,8 +460,12 @@ def units_page():
     except ValueError:
         n = UB.DEFAULT_N
     sort = "raced" if request.args.get("sort") == "raced" else "top"
+    # ★ INSIDE A PARENT: the best conference in NCAA DIII, the best league
+    #   in one section (unit_board.WITHIN)
+    within = {c: (request.args.get(c) or "").strip() for c in UB.WITHIN[college] if c != kind}
+    within = {c: v for c, v in within.items() if v}
     needs_state = UB.KINDS[kind][2]
-    units, year, err = [], None, None
+    units, year, err, label, pickers = [], None, None, None, {}
     with getConn() as conn:
         with _cursor(conn) as cur:
             from app import _seasonYears
@@ -471,14 +477,116 @@ def units_page():
                 err = f"{UB.KINDS[kind][0]} share names across states: pick a state."
             else:
                 try:
-                    rows = UB.load(cur, kind, pool, sport, year, st)
+                    for c in UB.WITHIN[college]:
+                        if c != kind:
+                            pickers[c] = UB.options(cur, c, pool, sport, year, st)
+                    rows = UB.load(cur, kind, pool, sport, year, st, within)
                     units = UB.sortUnits(UB.rankUnits(rows, kind, n), sort)
                 except Exception as exc:                 # noqa: BLE001
                     conn.rollback()
                     err = f"The team board is not available right now ({type(exc).__name__})."
             conn.rollback()
+    # ★ THE SITE'S SCALE (owner, 2026-11-02: "the ratings are not
+    #   hs-equivalent"): hs_top_avg / hs_best_avg beside the pool's own
+    stampBoardRows(units, rating_keys=("top_avg", "best_avg"), pool=pool, sport=sport)
+    for u in units:
+        u["href"] = UB.unitHref(kind, u["unit"], u["state"] or st, pool, sport)
+        u["name"] = UB.label(kind, u["unit"], u["state"] or st)
+        u["badge"] = UB.badgeSvg(u["name"])
     return render_template("units.html", units=units, kind=kind, kinds=kinds, pool=pool,
                            pools=UNIT_POOLS, sport=sport, state=st, states=states,
                            state_name=names.get(st or "", ""), n=n, sort=sort,
                            year=year, label=label, err=err, college=college,
-                           kind_label=UB.KINDS[kind][0])
+                           kind_label=UB.KINDS[kind][0], within=within, pickers=pickers,
+                           level=levelOf(pool), within_labels=_WITHIN_LABELS)
+
+
+_WITHIN_LABELS = {"division": "Division", "region": "Region", "section": "Section",
+                  "state_div": "State division"}
+
+
+_UNIT_ATHLETES = """
+    SELECT s.person_id, s.school, s.state, s.mean_rating, s.n_races,
+           NULLIF(btrim(concat_ws(' ', a.first_name, a.last_name)), '') AS name
+    FROM   athlete_season s
+    LEFT   JOIN LATERAL (SELECT first_name, last_name FROM athletes
+                         WHERE athlete_id = s.person_id LIMIT 1) a ON TRUE
+    WHERE  s.pool = %(pool)s AND s.sport = %(sport)s AND s.year = %(year)s
+      AND  upper(s.{col}) = upper(%(unit)s) AND s.mean_rating IS NOT NULL
+      {state}
+    ORDER  BY s.mean_rating DESC
+    LIMIT  25
+"""
+
+
+@bp.route("/unit/<kind>/<path:name>")
+def unit_page(kind, name):
+    """One conference, league, section or division: its teams, its best
+    runners, and where it ranks (owner, 2026-11-02: "there should be
+    conference/league pages you can view, and they should be linked")."""
+    import unit_board as UB
+    from rankings import boardYear
+    from pool_view import stampBoardRows
+    from school_identity import levelOf
+    if kind not in UB.KINDS:
+        abort(404)
+    college = UB.KINDS[kind][1]
+    states, names = _stateNames()
+    st = (request.args.get("state") or "").strip().upper() or None
+    if st and st not in names:
+        st = None
+    if not college and not st:
+        abort(404)                # a high school unit is a name inside a state
+    pools = [p for p in UNIT_POOLS if p[0].startswith("college") == college]
+    pool = (request.args.get("pool") or pools[0][0]).strip().lower()
+    if pool not in dict(pools):
+        pool = pools[0][0]
+    sport = "TF" if (request.args.get("sport") or "").strip().lower() in ("tf", "track") else "XC"
+    teams, athletes, place, n_units, label = [], [], None, 0, None
+    with getConn() as conn:
+        with _cursor(conn) as cur:
+            from app import _seasonYears
+            label = request.args.get("year") or (_seasonYears(cur) or {}).get(sport)
+            year = boardYear(sport, label) if label else None
+            if year is not None:
+                try:
+                    teams = UB.load(cur, kind, pool, sport, year, st if not college else None,
+                                    unit=name)
+                    teams.sort(key=lambda t: (t["top5_mean"] is None, -(t["top5_mean"] or 0)))
+                    # where it stands among its kind (same parent where it has one)
+                    parent = {}
+                    if teams:
+                        for c in UB.WITHIN[college]:
+                            if c != kind and teams[0].get(c):
+                                parent[c] = teams[0][c]
+                                break
+                    every = UB.rankUnits(UB.load(cur, kind, pool, sport, year,
+                                                 st if not college else None, parent),
+                                         kind, UB.DEFAULT_N)
+                    n_units = len(every)
+                    for u in every:
+                        if str(u["unit"]).upper() == str(name).upper():
+                            place = dict(u, parent=parent)
+                    cur.execute(_UNIT_ATHLETES.format(
+                        col=kind, state="AND s.state = %(state)s" if not college else ""),
+                        {"pool": pool, "sport": sport, "year": year, "unit": name, "state": st})
+                    athletes = [dict(r) for r in cur.fetchall()]
+                except Exception:                        # noqa: BLE001
+                    conn.rollback()
+            conn.rollback()
+    if not teams and not athletes:
+        abort(404)
+    stampBoardRows(teams, rating_keys=("top5_mean", "best_rating"), pool=pool, sport=sport)
+    stampBoardRows(athletes, rating_keys=("mean_rating",), pool=pool, sport=sport)
+    if place:
+        stampBoardRows([place], rating_keys=("top_avg",), pool=pool, sport=sport)
+    stored = teams[0][kind] if teams else name
+    shown = UB.label(kind, stored, st)
+    return render_template("unit.html", kind=kind, kind_label=UB.KINDS[kind][0][:-1],
+                           unit=shown, state=st, state_name=names.get(st or "", ""),
+                           pool=pool, pools=pools, sport=sport, label=label, teams=teams,
+                           athletes=athletes, place=place, n_units=n_units,
+                           badge=UB.badgeSvg(shown, size=56), level=levelOf(pool),
+                           board_href=f"/rankings/units?kind={kind}&pool={pool}&sport={sport.lower()}"
+                                      + (f"&state={st}" if st else ""),
+                           self_href=lambda p=pool, s=sport: UB.unitHref(kind, stored, st, p, s))

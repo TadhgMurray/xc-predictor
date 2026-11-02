@@ -1,0 +1,77 @@
+{# =====================================================================
+  unit.html -- one conference, league, section or division (pages3.unit_page,
+  owner 2026-11-02): its teams, its best runners, where it ranks.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set sport_words = "cross country" if sport == "XC" else "track" %}
+{% set pool_words = dict(pools)[pool] %}
+{% set meta_title = unit ~ ((" (" ~ state ~ ")") if state else "") ~ ": " ~ pool_words ~ " " ~ sport_words ~ " teams and runners" %}
+{% set meta_description = "The " ~ unit ~ " " ~ kind_label|lower ~ " in " ~ pool_words|lower ~ " " ~ sport_words ~ ": its teams ranked, its best runners, and how it compares." %}
+{% set meta_path = self_href() %}
+{% set meta_crumbs = [("Rankings", "/rankings"), (kind_label ~ "s", board_href), (unit, none)] %}
+{% include "_meta.html" %}
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>.unit-badge{vertical-align:middle;flex:none}.un-hd{display:flex;gap:.8rem;align-items:center}.school-mark{vertical-align:middle;margin-right:.3rem}.un-h2{margin:1.4rem 0 .4rem;font-size:1.05rem}</style>
+</head>
+<body>
+{% include "_topbar.html" %}
+{% macro shown(r, key) -%}{% set h = r.get("hs_" ~ key) %}{% set v = h if h is not none else r.get(key) %}{{ "%.1f"|format(v) if v is not none else "-" }}{%- endmacro %}
+<main class="page-wide p2-page rc">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ pool_words }} {{ sport_words }}</span></div>
+    <div class="un-hd">{{ badge|safe }}<h1>{{ unit }}{% if state %} <span class="p2-muted">{{ state_name }}</span>{% endif %}</h1></div>
+    <div class="rc-meta">{{ kind_label }}{% if label %} · {{ label }} season{% endif %} · {{ teams|length }} team{{ "s" if teams|length != 1 }} on the board
+      {% if place %} · <a href="{{ board_href }}{% for c, v in place.parent.items() %}&{{ c }}={{ v|urlencode }}{% endfor %}">#{{ place.rank }} of {{ n_units }} {{ kind_label|lower }}s{% for c, v in place.parent.items() %} in {{ v }}{% endfor %}</a> by its best {{ place.top_n }} teams ({{ shown(place, "top_avg") }}){% if place.raced_rank %}, #{{ place.raced_rank }} raced{% endif %}{% endif %}
+    </div>
+  </div></div></header>
+
+  <nav class="p2-toggles" aria-label="Level and sport">
+    <span class="p2-chips" role="group" aria-label="Level">
+      {% for p, w in pools %}<a href="{{ self_href(p, sport) }}" class="{{ 'is-on' if p == pool }}">{{ w }}</a>{% endfor %}
+    </span>
+    <span class="p2-seg" role="group" aria-label="Sport">
+      <a href="{{ self_href(pool, 'XC') }}" class="{{ 'is-on' if sport == 'XC' }}">XC</a>
+      <a href="{{ self_href(pool, 'TF') }}" class="{{ 'is-on' if sport == 'TF' }}">Track</a>
+    </span>
+  </nav>
+
+  <h2 class="un-h2">Teams</h2>
+  {% if teams %}
+  <table class="p2-tbl">
+    <thead><tr><th class="num">#</th><th>Team</th><th class="num" title="The average of its top five runners' season ratings, high school scale">Top-5 avg</th>
+      <th class="num p2-wide" title="Its place on the national team board">National</th><th class="num p2-wide">Best runner</th><th class="num p2-wide">Runners</th></tr></thead>
+    <tbody>{% for t in teams %}<tr>
+      <td class="num">{{ loop.index }}</td>
+      <td>{{ crest(t.school, t.state, level=level) }}<a href="{{ school_href(t.school, t.state, pool=pool) }}">{{ t.school }}</a>{% if not state and t.state %} <span class="p2-muted">{{ t.state }}</span>{% endif %}</td>
+      <td class="num">{{ shown(t, "top5_mean") }}</td>
+      <td class="num p2-wide">{{ t.rank }}</td>
+      <td class="num p2-wide">{% if t.best_person_id %}<a href="/athlete/{{ t.best_person_id }}">{{ shown(t, "best_rating") }}</a>{% else %}{{ shown(t, "best_rating") }}{% endif %}</td>
+      <td class="num p2-wide">{{ t.n_athletes }}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="p2-note">No ranked teams this season.</p>{% endif %}
+
+  <h2 class="un-h2">Best runners</h2>
+  {% if athletes %}
+  <table class="p2-tbl">
+    <thead><tr><th class="num">#</th><th>Athlete</th><th>Team</th><th class="num" title="Season rating, high school scale">Rating</th><th class="num p2-wide">Races</th></tr></thead>
+    <tbody>{% for a in athletes %}<tr>
+      <td class="num">{{ loop.index }}</td>
+      <td><a href="/athlete/{{ a.person_id }}">{{ a.name or "?" }}</a></td>
+      <td>{{ crest(a.school, a.state, level=level) }}<a href="{{ school_href(a.school, a.state, pool=pool) }}">{{ a.school }}</a></td>
+      <td class="num">{{ shown(a, "mean_rating") }}</td>
+      <td class="num p2-wide">{{ a.n_races }}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="p2-note">No rated runners this season.</p>{% endif %}
+  <p class="p2-note">Ratings are on the high school scale, like the rest of the site. The badge is ours, drawn from the name, not the {{ kind_label|lower }}'s own logo.</p>
+</main>
+</body>
+</html>

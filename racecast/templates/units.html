@@ -18,12 +18,14 @@
 <link rel="stylesheet" href="{{ static_v('pages2.css') }}">
 <link rel="stylesheet" href="{{ static_v('race.css') }}">
 <script defer src="{{ static_v('topbar-search.js') }}"></script>
+<style>.unit-badge{vertical-align:middle;margin-right:.4rem;flex:none}.un-name{white-space:nowrap}.school-mark{vertical-align:middle;margin-right:.3rem}</style>
 </head>
 <body>
 {% include "_topbar.html" %}
-{% macro qs(k=kind, pl=pool, sp=sport, st=state, nn=n, so=sort) -%}
-/rankings/units?kind={{ k }}&pool={{ pl }}&sport={{ sp|lower }}{% if st %}&state={{ st }}{% endif %}&n={{ nn }}&sort={{ so }}
+{% macro qs(k=kind, pl=pool, sp=sport, st=state, nn=n, so=sort, w=within) -%}
+/rankings/units?kind={{ k }}&pool={{ pl }}&sport={{ sp|lower }}{% if st %}&state={{ st }}{% endif %}&n={{ nn }}&sort={{ so }}{% for c, v in w.items() %}&{{ c }}={{ v|urlencode }}{% endfor %}
 {%- endmacro %}
+{% macro shown(r, key) -%}{% set h = r.get("hs_" ~ key) %}{% set v = h if h is not none else r.get(key) %}{{ "%.1f"|format(v) if v is not none else "-" }}{%- endmacro %}
 <main class="page-wide p2-page rc">
   <div class="board-strip" role="navigation" aria-label="Rankings boards">
     <a href="/rankings?board=ability">Athletes (season)</a>
@@ -34,8 +36,8 @@
   </div>
   <header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ pool_words }} {{ sport_words }}</span></div>
-    <h1>{{ kind_label }}{% if state %} in {{ state_name }}{% endif %}, ranked</h1>
-    <div class="rc-meta">{% if label %}{{ label }} season{% endif %} · ranked by the average of each one's best {{ n }} team{{ "s" if n != 1 }}, with its top seven runners raced as one team beside it</div>
+    <h1>{{ kind_label }}{% for c, v in within.items() %} in {{ v }}{% endfor %}{% if state %} in {{ state_name }}{% endif %}, ranked</h1>
+    <div class="rc-meta">{% if label %}{{ label }} season{% endif %} · ranked by the average of each one's best {{ n }} team{{ "s" if n != 1 }}, with its top seven runners raced as one team beside it · ratings on the high school scale</div>
   </div></div></header>
 
   <nav class="p2-toggles" aria-label="Unit board options">
@@ -57,6 +59,12 @@
         <option value="">{{ "All states" if college or kind in ("league", "section") else "Pick a state" }}</option>
         {% for code, name in states %}<option value="{{ code }}"{% if code == state %} selected{% endif %}>{{ name }}</option>{% endfor %}
       </select>
+      {% for c, opts in pickers.items() %}{% if opts %}
+      <label for="un-{{ c }}" class="p2-muted">{{ within_labels[c] }}</label>
+      <select id="un-{{ c }}" name="{{ c }}" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for o in opts %}<option value="{{ o }}"{% if within.get(c) == o %} selected{% endif %}>{{ o }}</option>{% endfor %}
+      </select>{% endif %}{% endfor %}
       <label for="un-n" class="p2-muted">Best</label>
       <select id="un-n" name="n" onchange="this.form.submit()">
         {% for k in (3, 4, 5, 6, 8, 10) %}<option value="{{ k }}"{% if k == n %} selected{% endif %}>{{ k }} teams</option>{% endfor %}
@@ -79,14 +87,14 @@
     </tr></thead>
     <tbody>{% for u in units %}<tr>
       <td class="num">{{ u.rank if sort == 'top' else (u.raced_rank or "-") }}</td>
-      <td><a href="/rankings?board=teams&sport={{ sport }}&pool={{ pool }}&{{ kind }}={{ u.unit|urlencode }}{% if u.state %}&state={{ u.state }}{% endif %}">{{ u.unit }}</a>{% if u.state and not state %}<span class="p2-row-sub">{{ u.state }}</span>{% endif %}</td>
-      <td class="num">{{ "%.1f"|format(u.top_avg) if u.top_avg is not none else "-" }}{% if u.top_n < n %} <span class="p2-muted" title="only {{ u.top_n }} rated team{{ 's' if u.top_n != 1 }}">({{ u.top_n }})</span>{% endif %}</td>
+      <td class="un-name">{{ u.badge|safe }}<a href="{{ u.href }}">{{ u.name or u.unit }}</a>{% if u.state and not state %}<span class="p2-row-sub">{{ u.state }}</span>{% endif %}</td>
+      <td class="num">{{ shown(u, "top_avg") }}{% if u.top_n < n %} <span class="p2-muted" title="only {{ u.top_n }} rated team{{ 's' if u.top_n != 1 }}">({{ u.top_n }})</span>{% endif %}</td>
       <td class="num">{% if u.raced_rank %}{{ u.raced_rank }} <span class="p2-muted">{{ u.raced_points }} pts</span>{% else %}-{% endif %}</td>
       <td class="num p2-wide">{{ u.n_teams }}</td>
-      <td class="p2-wide">{% if u.best_team %}{{ u.best_team }}{% if u.best_state %} ({{ u.best_state }}){% endif %} <span class="p2-muted">{{ "%.1f"|format(u.best_avg) }}</span>{% endif %}</td>
+      <td class="p2-wide">{% if u.best_team %}{{ crest(u.best_team, u.best_state, level=level) }}<a href="{{ school_href(u.best_team, u.best_state, pool=pool) }}">{{ u.best_team }}</a>{% if u.best_state %} <span class="p2-muted">{{ u.best_state }}</span>{% endif %} <span class="p2-muted">{{ shown(u, "best_avg") }}</span>{% endif %}</td>
     </tr>{% endfor %}</tbody>
   </table>
-  <p class="p2-note">Best {{ n }} avg: the mean top-5 rating of each one's best {{ n }} teams this season; a number in brackets means it has fewer rated teams than that. Raced: its seven best runners entered as one team in a meet against every other one listed, scored like a cross country meet (five score, low points win). Click a name for its teams.</p>
+  <p class="p2-note">Ratings are on the high school scale, like the rest of the site. Best {{ n }} avg: the mean top-5 rating of each one's best {{ n }} teams this season; a number in brackets means it has fewer rated teams than that. Raced: its seven best runners entered as one team in a meet against every other one listed, scored like a cross country meet (five score, low points win). Click a name for its page: its teams, its best runners and where it ranks.</p>
   {% endif %}
 </main>
 </body>

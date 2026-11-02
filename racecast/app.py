@@ -425,6 +425,8 @@ app.jinja_env.globals["crest"] = school_logo.crestImg
 #   one answer about one school; the href used to be a bare /school/<name>
 #   and sent Oregon (IL) to Oregon (OR)'s page.
 app.jinja_env.globals["school_href"] = school_identity.schoolHref
+import unit_board as _unit_board                                  # noqa: E402
+app.jinja_env.globals["unit_href"] = _unit_board.chipHref
 
 
 # ★ THE RACE'S GENDER WORD, AND ONLY WHEN THE NAME LACKS ONE (owner,

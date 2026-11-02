@@ -45,3 +45,29 @@ def test_high_school_units_are_per_state():
     got = U.rankUnits(rows, "league")
     assert sorted((u["unit"], u["state"]) for u in got) == [("Central", "CA"), ("Central", "OH")]
     assert U.unitKey("conference", "NESCAC", "MA") == ("NESCAC", None)
+
+
+def test_badge_initials():
+    assert U.initials("Middlesex League") == "ML"
+    assert U.initials("NESCAC") == "NESC"
+    assert U.initials("NCAA DIII") == "DIII"
+    assert U.initials("Big Ten") == "BT"
+    svg = U.badgeSvg("NESCAC")
+    assert svg.startswith("<svg") and ">NESC</text>" in svg
+    assert U.badgeSvg("<b>x</b>").count("<b>") == 0          # only letters reach the markup
+
+
+def test_links():
+    assert U.unitHref("league", "Middlesex League", "MA", "hs_m", "XC") == \
+        "/unit/league/Middlesex%20League?state=MA&pool=hs_m&sport=xc"
+    assert U.unitHref("conference", "NESCAC", "MA", "college_m") == "/unit/conference/NESCAC?pool=college_m"
+    assert U.chipHref("county", "Essex", "MA") is None
+    assert U.chipHref("league", "X", None) is None
+    assert U.chipHref("conference", "UAA", None).startswith("/unit/conference/UAA")
+
+
+def test_within_filter_is_whitelisted():
+    args = {}
+    w = U._where("MA", {"division": "NCAA DIII", "evil; drop": "x"}, args)
+    assert "upper(division) = upper(%(w0)s)" in w and "evil" not in w
+    assert args == {"state": "MA", "w0": "NCAA DIII"}
