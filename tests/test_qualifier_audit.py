@@ -44,3 +44,17 @@ def test_a_feeder_and_its_rule():
     # nor one whose slowest went on
     slow = sorted(F, key=lambda r: -r[2])[:8]
     assert Q.feederRule(slow, F) is None
+
+
+def test_which_learned_routes_are_kept():
+    def r(name, race="Varsity", n=5, f=0.9, p=0.9, **kw):
+        return dict(meet_name=name, race=race, rounds=[{}] * n, own_found=f, own_precise=p, **kw)
+    assert Q.keepRoute(r("IHSA Class 1A State XC Championships"))
+    assert Q.keepRoute(r("USATF Region 15 Junior Olympic Cross Country", race="8U", n=2))
+    assert not Q.keepRoute(r("Coastal Conference Finals", n=1))
+    assert not Q.keepRoute(r("Cross Country City League Championship", n=2))
+    assert Q.keepRoute(r("Big Sky Conference Championships", n=6))       # a strong league route
+    assert not Q.keepRoute(r("2025 NCAA DII Southeast Region Cross Country", n=3))
+    assert not Q.keepRoute(r("NXR Midwest Regional Championships"))
+    assert not Q.keepRoute(r("State Meet", next_found=0.55))
+    assert not Q.keepRoute(r("State Meet", f=0.7, p=0.7))
