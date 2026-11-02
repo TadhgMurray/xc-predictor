@@ -127,3 +127,14 @@ def test_board_merges_spellings_and_drops_the_other_level():
     assert [m["school"] for m in u["members"]] == ["Haverford", "Hopkins"]
     U.sortBoard(got, "name")
     assert got[0]["rank"] == 1
+
+
+def test_logo_match_second_dry_run():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import unit_logos as L
+    assert not L.matches("NEC", "Northeast Conference men's soccer tournament",
+                         "The Northeast Conference (NEC) men's soccer tournament is")
+    assert not L.matches("MAAC", "Metro Conference", "... the Metro Atlantic Athletic Conference (MAAC) ...")
+    assert L.matches("SEC", "Southeastern Conference", "The Southeastern Conference (SEC) is")
+    assert L.matches("PSAC", "Pennsylvania State Athletic Conference", "The Pennsylvania State Athletic Conference (PSAC) is")
+    assert not L.matches("MIAC", "1962 Minnesota Intercollegiate Athletic Conference football season", "(MIAC)")

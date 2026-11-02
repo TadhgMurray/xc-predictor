@@ -85,8 +85,21 @@ def matches(name, title, intro=""):
       Atlantic" / "Middle Atlantic Conferences"."""
     import re
     raw = str(name or "").strip()
+    # ! NOT AN ARTICLE ABOUT ONE SEASON, ONE TOURNAMENT OR ONE SPORT (the
+    #   owner's second dry run: NEC -> "Northeast Conference men's soccer
+    #   tournament"); the conference's own article carries its logo
+    if re.search(r"\b(season|tournament|championships?|men's|women's|football|basketball|"
+                 r"soccer|baseball|softball|hockey|\d{4})\b", title or "", re.I):
+        return False
     if raw and re.search(r"\(\s*" + re.escape(raw) + r"\s*\)", intro or "", re.I):
-        return True
+        # ...and the abbreviation spells the title (MAAC is not "Metro
+        # Conference", whose intro happens to name the MAAC): its letters
+        # appear in order in the title
+        letters = re.sub(r"[^a-z0-9]", "", raw.lower())
+        hay = re.sub(r"[^a-z0-9]", "", (title or "").lower())
+        it = iter(hay)
+        if all(ch in it for ch in letters):
+            return True
     a = {t.rstrip("s") for t in _tokens(raw)} - {g.rstrip("s") for g in _GENERIC}
     b = {t.rstrip("s") for t in _tokens(title)} - {g.rstrip("s") for g in _GENERIC}
     return bool(a) and a == b

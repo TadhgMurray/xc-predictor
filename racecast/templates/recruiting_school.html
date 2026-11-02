@@ -197,7 +197,7 @@
   {% for side, rows, ts, head in [("in", t["in"], t.in_summary, "transfers in"), ("out", t["out"], t.out_summary, "transfers out")] %}
   {% if rows %}
   <h3>{{ sport_words[b.sport] }} {{ head }} <span class="dist-note">{{ ts.n }}</span></h3>
-  <p class="meta">Typical rating {{ "before" if side == "in" else "here" }} {{ "%.1f"|format(ts.before) if ts.before is not none else "-" }},
+  <p class="meta">Typical rating {{ "before" if side == "in" else "here" }} {{ "%.1f"|format(ts.before|hs(("hs_" if side == "in" else "college_") ~ gender, b.sport)) if ts.before is not none else "-" }},
      {{ "here" if side == "in" else "after" }} {{ "%.1f"|format(ts.after) if ts.after is not none else "-" }}{% if ts.gain is not none %} ({{ "%+.1f"|format(ts.gain) }} typical change){% endif %}.</p>
   <div class="r-scroll"><table class="recruit-tbl r-list">
     <thead><tr><th>Season</th><th>Athlete</th><th>{{ "From" if side == "in" else "To" }}</th><th class="num">Rating there</th><th class="num">{{ "Rating here" if side == "in" else "Last here" }}</th><th class="num">Change</th><th>Year</th></tr></thead>
@@ -210,8 +210,8 @@
         <td>{{ r.class_label }}</td>
         <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a></td>
         <td>{{ crest(other_school, other_state, level='college') }}<a href="/recruiting/school/{{ other_school|urlencode }}?gender={{ gender }}{% if other_state %}&amp;state={{ other_state }}{% endif %}#transfers">{{ other_label }}</a></td>
-        <td class="num">{{ "%.1f"|format(r.from_rating if side == "in" else r.to_rating) }}</td>
-        <td class="num"><strong>{{ "%.1f"|format(r.to_rating if side == "in" else r.from_rating) }}</strong></td>
+        <td class="num">{{ "%.1f"|format((r.from_rating if side == "in" else r.to_rating)|hs("college_" ~ gender, b.sport)) }}</td>
+        <td class="num"><strong>{{ "%.1f"|format((r.to_rating if side == "in" else r.from_rating)|hs("college_" ~ gender, b.sport)) }}</strong></td>
         <td class="num">{{ ("%+.1f"|format(r.gain)) if r.gain is not none else " - " }}</td>
         <td>{{ r.grade_label or " - " }}</td>
       </tr>

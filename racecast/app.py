@@ -469,6 +469,36 @@ app.jinja_env.globals["race_title"] = raceTitle
 #   cell and header macros are _scale.html's fk_th / fk_td / fk_inline.
 import conversions as _conv_fk
 app.jinja_env.globals["five_k"] = _conv_fk.fiveK
+
+
+# ★ EVERY RATING ON THE PUBLIC SCALE (owner, 2026-11-02: "make everything
+#   everywhere hs equivalent and make it a standing rule"; My Page showed a
+#   college runner's own-pool numbers). A template that prints a rating it
+#   did not get through rv() / a stamped hs_* key passes it through `hs`
+#   with the rating's pool -- an HS pool is unchanged, a college or middle
+#   school one takes its factor (pool_view.toHs), and a pool with no factor
+#   keeps its own number, as rv() does. `hs_delta` does the same for a
+#   change in rating (a gain, a week's move): the difference of the two
+#   converted ends, so the arrow matches the numbers beside it.
+def _hsFilter(value, pool, sport=None):
+    if value is None:
+        return None
+    try:
+        from pool_view import toHs
+        h = toHs(float(value), pool, sport)
+    except Exception:                                    # noqa: BLE001
+        h = None
+    return h if h is not None else float(value)
+
+
+def _hsDelta(delta, rating, pool, sport=None):
+    if delta is None or rating is None:
+        return delta
+    return _hsFilter(rating, pool, sport) - _hsFilter(float(rating) - float(delta), pool, sport)
+
+
+app.jinja_env.filters["hs"] = _hsFilter
+app.jinja_env.globals["hs_delta"] = _hsDelta
 app.jinja_env.globals["five_k_label"] = _conv_fk.fiveKLabel
 app.jinja_env.globals["FIVE_K_TITLE"] = _conv_fk.FIVE_K_TITLE
 # ★ THE RECORD BOOKS' TEMPLATE HELPERS (2026-10-10, record_pages.py)

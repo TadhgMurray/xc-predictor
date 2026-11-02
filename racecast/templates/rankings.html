@@ -664,22 +664,9 @@
   </div>
 
   <aside class="rc-side">
-    {# the state ranking pages (landing.py): plain links, so a crawler and a
-       person both have a path into them from here.
-       ! A SIDE CARD NOW (owner, 2026-10-10), XC · Track per pool; on a phone
-         it comes after the pager (race.css). #}
-    <div class="rk-states-card">
-    <h2>Rankings by state <small>XC and track</small></h2>
-    <table class="rc-tscores rc-tscores-plain rk-states">
-      <tbody>
-      {% for words, slug in [("HS boys", "hs-boys"), ("HS girls", "hs-girls"), ("College men", "college-men"), ("College women", "college-women")] %}
-      <tr><td class="tn">{{ words }}</td>
-        <td class="n tpts"><a href="/rankings/xc/{{ slug }}">XC</a> · <a href="/rankings/tf/{{ slug }}">Track</a></td></tr>
-      {% endfor %}
-      <tr><td class="tn" colspan="2"><a href="/schools">Teams by state →</a></td></tr>
-      </tbody>
-    </table>
-    </div>
+    {# ! NO "Rankings by state" CARD (owner, 2026-11-02: "I really hate the
+         rankings by state thing on everything, can we remove that?"). The
+         state pages stay reachable from the "By state" link above the board. #}
 
     {# Jump straight to an athlete's page of the board.
 

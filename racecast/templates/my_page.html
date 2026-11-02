@@ -81,7 +81,7 @@
       <span class="mp-tag">{{ "You" if c.claimed else "Following" }}</span></h2>
     <p class="mp-sub">{{ c.season_label }} {{ "cross country" if s.sport == "XC" else "track" }} · {{ s.n_races }} race{{ "s" if s.n_races != 1 }}</p>
     <div class="mp-stats">
-      <div><span class="k">Season rating</span><span class="v">{{ "%.1f"|format(s.mean_rating) }}{{ fk_inline(five_k(s.mean_rating, s.pool, s.sport)) }}</span>{{ rmove(c.move.rating if c.move else none) }}</div>
+      <div><span class="k">Season rating</span><span class="v">{{ "%.1f"|format(s.mean_rating|hs(s.pool, s.sport)) }}{{ fk_inline(five_k(s.mean_rating, s.pool, s.sport)) }}</span>{{ rmove(hs_delta(c.move.rating, s.mean_rating, s.pool, s.sport) if c.move else none) }}</div>
       {% if c.ranks.nation %}<div><span class="k">National</span><span class="v">#{{ c.ranks.nation }}</span>{{ move(c.move.nation if c.move else none) }}</div>{% endif %}
       {% if c.ranks.state_rank %}<div><span class="k">{{ s.state }}</span><span class="v">#{{ c.ranks.state_rank }}</span>{{ move(c.move.state if c.move else none) }}</div>{% endif %}
     </div>
@@ -122,7 +122,7 @@
           <td>{% if r.race_href %}<a href="{{ r.race_href }}">{{ r.meet_name }}</a>{% else %}{{ r.meet_name }}{% endif %}</td>
           <td class="n rc-wide">{{ "%.0f"|format(r.distance) ~ " m" if r.distance else "" }}</td>
           <td class="n">{{ fmt_time(r.time_seconds, s.sport != "XC") }}</td>
-          <td class="n"><b>{{ "%.1f"|format(r.speed_rating) }}</b></td>
+          <td class="n"><b>{{ "%.1f"|format(r.speed_rating|hs(s.pool, s.sport)) }}</b></td>
           {{ fk(r.speed_rating, s.pool, s.sport, none, five_k_label([s.pool])) }}</tr>
       {% endfor %}
       </tbody>
@@ -154,7 +154,7 @@
         {% for r in sq.runners %}{% set p = r.prediction %}
         <tr><td class="nm"><a href="/athlete/{{ r.person_id }}">{{ r.name }}</a></td>
             <td class="n">{% if p and p.available %}<b>{{ fmt_time(p.seconds, false) }}</b>{% else %}<span class="dist-note">{{ (p.reason if p else "") }}</span>{% endif %}</td>
-            <td class="n">{{ "%.1f"|format(r.mean_rating) }}</td></tr>
+            <td class="n">{{ "%.1f"|format(r.mean_rating|hs(r.pool or sq.pool, nx.next.sport)) }}</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -186,7 +186,7 @@
       <tr><td class="d">{{ day(m.date) }}</td>
           <td><a href="/meet/{{ c.recent_sport|lower }}/{{ m.meet_id }}">{{ m.meet_name or "Meet" }}</a></td>
           <td class="n rc-wide">{{ m.runners }}</td>
-          <td class="n">{{ "%.1f"|format(m.best_rating) if m.best_rating is not none else "" }}</td></tr>
+          <td class="n">{{ "%.1f"|format(m.hs_best_rating if m.hs_best_rating is not none else m.best_rating) if m.best_rating is not none else "" }}</td></tr>
       {% endfor %}
       </tbody>
     </table>

@@ -551,7 +551,7 @@ _UNIT_ATHLETES = """
       AND  upper(s.{col}) = ANY(%(spell)s) AND s.mean_rating IS NOT NULL
       {state}
     ORDER  BY s.mean_rating DESC
-    LIMIT  50
+    LIMIT  100
 """
 
 # the meets several of the unit's teams ran this season: its championship,
@@ -569,7 +569,7 @@ _UNIT_MEETS = """
     GROUP  BY x.meet_id, x.div_id
     HAVING count(DISTINCT x.school) >= %(min_teams)s
     ORDER  BY min(x.race_date) DESC
-    LIMIT  30
+    LIMIT  60
 """
 
 

@@ -8,6 +8,6 @@
   <span class="rb-otd-k">On this day{% if otd.race_date %} in {{ otd.race_date[:4] }}{% endif %}</span>
   <p><a href="/athlete/{{ otd.person_id }}{% if otd.result_id %}?r={{ otd.result_id }}{% endif %}">{{ otd.name or "A runner" }}</a>{% if otd.school %} ({{ otd.school }}){% endif %}
     ran {% if otd.result_id and otd.meet_id %}{% if otd.sport == 'TF' and otd.event_id and otd.div_id is not none %}<a href="/race/tf/{{ otd.meet_id }}/{{ otd.event_id }}/{{ otd.div_id }}?r={{ otd.result_id }}">{% elif otd.sport == 'TF' %}<a href="/meet/tf/{{ otd.meet_id }}?r={{ otd.result_id }}">{% else %}<a href="/race/xc/{{ otd.meet_id }}/{{ otd.div_id }}?r={{ otd.result_id }}">{% endif %}{{ otd.time_seconds|clock }}{% if otd.distance %} for {{ otd.distance|rb_dist }}{% endif %}</a>{% else %}{{ otd.time_seconds|clock }}{% endif %}{% if otd.meet_name %} at {{ otd.meet_name }}{% endif %}.</p>
-  <span class="rb-otd-s">Rated {{ "%.1f"|format(otd.rating) }}{% if otd.years_ago %} · {{ otd.years_ago }} year{{ "s" if otd.years_ago != 1 }} ago{% endif %}{% if otd.scope and otd.scope != "US" %} · in {{ otd.scope }}{% endif %}</span>
+  <span class="rb-otd-s">Rated {{ "%.1f"|format(otd.rating|hs(otd.pool or otd.rating_pool, otd.sport)) }}{% if otd.years_ago %} · {{ otd.years_ago }} year{{ "s" if otd.years_ago != 1 }} ago{% endif %}{% if otd.scope and otd.scope != "US" %} · in {{ otd.scope }}{% endif %}</span>
 </div>
 {% endif %}

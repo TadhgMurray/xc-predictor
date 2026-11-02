@@ -26,6 +26,15 @@
 </head>
 <body>
 {% include "_topbar.html" %}
+{# ★ THE SCHOOL PAGE'S STAGED LISTS AND "VIEW ALL" (owner, 2026-11-02: "all
+     things should have a view all like school page"): fifteen rows, then
+     "Show 20 more" (staged.js), then a link to the whole list on its board. #}
+{% macro more_row(rows, cols) -%}
+  {%- if rows|length > 15 %}
+  <tr class="more-row"><td colspan="{{ cols }}"><button type="button" class="more-btn">Show 20 more <span class="more-left">({{ rows|length - 15 }} left)</span></button></td></tr>
+  {%- endif %}
+{%- endmacro %}
+{% set unit_q = "&" ~ kind ~ "=" ~ (stored|urlencode) ~ (("&state=" ~ state) if state else "") %}
 <main class="page-wide rc">
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div class="rc-left">
@@ -78,9 +87,9 @@
   <section class="rc-panel" id="standings" data-panel="standings">
     <p class="meta rc-lead">Every team, ranked by the average rating of its top five runners this season.</p>
     {% if teams %}
-    <table>
+    <table class="staged" data-step="20">
       <thead><tr><th>#</th><th>Team</th><th>Top-5 avg<a class="flag info-i" href="/scale" data-title="What a Rating Means" data-blurb="100 is an average high-school runner of the same sex; every level is shown on that one scale." aria-label="What a rating means">i</a></th>{{ fk_th("5K", "fk-sm") }}<th>National</th><th>Best runner</th><th>Runners</th></tr></thead>
-      <tbody>{% for t in teams %}<tr>
+      <tbody>{% for t in teams %}<tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
         <td>{{ loop.index }}</td>
         <td>{{ crest(t.school, t.state, level=level) }}<a href="{{ school_href(t.school, t.state, pool=pool) }}">{{ t.school }}</a>{% if not state and t.state %}<span class="un-sub">{{ t.state }}</span>{% endif %}</td>
         <td>{{ rv(t.top5_mean, t.hs_top5_mean) }}</td>
@@ -88,17 +97,18 @@
         <td>{{ "#" ~ t.rank if t.rank else "-" }}</td>
         <td>{% if t.best_person_id %}<a href="/athlete/{{ t.best_person_id }}">{{ t.best_name or "?" }}</a> <span class="un-sub">{{ rv(t.best_rating, t.hs_best_rating) }}</span>{% else %}-{% endif %}</td>
         <td>{{ t.n_athletes }}</td>
-      </tr>{% endfor %}</tbody>
+      </tr>{% endfor %}{{ more_row(teams, 7) }}</tbody>
     </table>
+    <p class="view-all"><a href="/rankings?board=teams&amp;sport={{ sport }}&amp;pool={{ pool }}{{ unit_q }}">View all →</a></p>
     {% else %}<p class="meta">No ranked teams this season.</p>{% endif %}
   </section>
 
   <section class="rc-panel" id="runners" data-panel="runners" hidden>
     <p class="meta rc-lead">The best season ratings of the {{ kind_label|lower }}'s runners, {{ year }}.</p>
     {% if athletes %}
-    <table class="staged" data-step="25">
+    <table class="staged" data-step="20">
       <thead><tr><th>#</th><th>Athlete</th><th>Team</th><th>Grade</th><th>Rating</th>{{ fk_th("5K", "fk-sm") }}<th>Races</th></tr></thead>
-      <tbody>{% for a in athletes %}<tr>
+      <tbody>{% for a in athletes %}<tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
         <td>{{ loop.index }}</td>
         <td><a href="/athlete/{{ a.person_id }}">{{ a.name or "?" }}</a></td>
         <td>{{ crest(a.school, a.state, level=level) }}<a href="{{ school_href(a.school, a.state, pool=pool) }}">{{ a.school }}</a></td>
@@ -106,8 +116,9 @@
         <td>{{ rv(a.mean_rating, a.hs_mean_rating) }}</td>
         <td class="n fk fk-sm">{{ a.mean_rating_5k or "-" }}</td>
         <td>{{ a.n_races }}</td>
-      </tr>{% endfor %}</tbody>
+      </tr>{% endfor %}{{ more_row(athletes, 7) }}</tbody>
     </table>
+    <p class="view-all"><a href="/rankings?board=ability&amp;sport={{ sport }}&amp;pool={{ pool }}{{ unit_q }}">View all →</a></p>
     {% else %}<p class="meta">No rated runners this season.</p>{% endif %}
   </section>
 
@@ -115,15 +126,16 @@
   <section class="rc-panel" id="meets" data-panel="meets" hidden>
     <p class="meta rc-lead">The races several of its teams ran this season, newest first.</p>
     {% if meets %}
-    <table>
+    <table class="staged" data-step="20">
       <thead><tr><th>Date</th><th>Meet</th><th>Its teams</th><th>Its runners</th></tr></thead>
-      <tbody>{% for m in meets %}<tr>
+      <tbody>{% for m in meets %}<tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
         <td>{{ m.day|mdy if m.day else "" }}</td>
         <td><a href="/race/xc/{{ m.meet_id }}/{{ m.div_id }}">{{ m.meet_name or ("Meet " ~ m.meet_id) }}</a></td>
         <td>{{ m.n_teams }}</td>
         <td>{{ m.n_runners }}</td>
-      </tr>{% endfor %}</tbody>
+      </tr>{% endfor %}{{ more_row(meets, 4) }}</tbody>
     </table>
+    <p class="view-all"><a href="/meets?sport={{ sport }}{% if state %}&amp;state={{ state }}{% endif %}">View all meets →</a></p>
     {% else %}<p class="meta">No meet this season with several of its teams yet.</p>{% endif %}
   </section>
   {% endif %}

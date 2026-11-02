@@ -79,7 +79,7 @@
             <td class="pl{% if loop.index <= 3 %} rc-m{{ loop.index }}{% endif %}"><span>{{ loop.index }}</span></td>
             <td><a href="/athlete/{{ r.person_id }}">{{ r.name or "Unknown" }}</a>
                 {% if r.grade %}<span class="rb-g">{{ r.grade|grade_label(r.pool) }}</span>{% endif %}</td>
-            {% if gain %}<td class="num rb-gain">+{{ "%.1f"|format(r.gain) }}</td><td class="num">{{ "%.1f"|format(r.prev_rating) }}</td>{% endif %}
+            {% if gain %}<td class="num rb-gain">+{{ "%.1f"|format(hs_delta(r.gain, r.rating, r.pool, r.sport)) }}</td><td class="num">{{ "%.1f"|format(r.prev_rating|hs(r.pool, r.sport)) }}</td>{% endif %}
             <td class="num">{{ rv(r.rating, r.hs_rating) }}</td>
             {{ fk(r.rating, r.pool, r.sport, r.hs_rating, fk_label, "fk-sm") }}
             <td class="rb-race">{% if r.best %}{{ race_link(r.best, race_text(r.best) or "race") }}{% if r.best.meet_name %}<span class="rb-m">{{ r.best.meet_name }}</span>{% endif %}{% else %} - {% endif %}</td>
