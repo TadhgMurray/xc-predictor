@@ -2130,6 +2130,36 @@ def saveAthletesBulk(conn, athletes: list):
            OR COALESCE(btrim(athletes.gender), '') = ''
     """, rows)
 
+# ★ A RE-POSTED DIVISION REPLACES ITS OLD ROWS (owner, 2026-11-02: UIAAA,
+#   every runner listed twice). athletic.net gives every result a NEW id when
+#   a meet re-posts its results; the upsert keys on result_id, so a re-scrape
+#   added the new rows beside the old ones and nothing took the old ones out.
+#   A division is saved whole (collect-then-save), so after a save the rows
+#   of that division the page no longer lists are the stale ones. athletic.
+#   net's own rows only (result_id under ALIVE_RESULT_BASE); a division saved
+#   with no rows removes nothing.
+ALIVE_RESULT_BASE = 3_000_000_000_000
+
+
+def dropStaleResults(conn, results):
+    """Delete each saved division's athletic.net rows that this save did not
+    write. `results` is saveResultsBulk's list. -> rows deleted."""
+    by_div = {}
+    for t in results:
+        rid, meet = t[0].get("IDResult"), (t[1] or {}).get("ID")
+        div = t[3] if len(t) > 3 else None
+        if rid is not None and meet is not None and div is not None and int(rid) < ALIVE_RESULT_BASE:
+            by_div.setdefault((int(meet), int(div)), set()).add(int(rid))
+    n = 0
+    cur = conn.cursor()
+    for (meet, div), ids in by_div.items():
+        cur.execute("""DELETE FROM results WHERE source = 'anet' AND meet_id = %s AND div_id = %s
+                         AND result_id > 0 AND result_id < %s AND NOT (result_id = ANY(%s))""",
+                    (meet, div, ALIVE_RESULT_BASE, list(ids)))
+        n += cur.rowcount
+    return n
+
+
 # saveResultsBulk
 # Purpose: Bulk-upsert XC results, now capturing the full per-result set the
 #          6/22 console work surfaced (place, score, exhibition, official,
@@ -2432,6 +2462,13 @@ def saveResultsBulk(conn, results: list):
             -- mirrors person_id above: backfill a NULL, but never clobber a good
             -- stored div_id with a re-scrape that happened to yield NULL.
             div_id        = COALESCE(results.div_id, EXCLUDED.div_id),
+            -- ★ A CORRECTED TIME IS PRICED AGAIN (2026-11-02): the stored
+            --   normalised time and rating were the OLD time's, kept beside
+            --   the new one; nulled, tonight's 05 / 09b price it again
+            normalized_time = CASE WHEN results.time_seconds IS DISTINCT FROM EXCLUDED.time_seconds
+                                   THEN NULL ELSE results.normalized_time END,
+            speed_rating  = CASE WHEN results.time_seconds IS DISTINCT FROM EXCLUDED.time_seconds
+                                 THEN NULL ELSE results.speed_rating END,
             time_seconds  = EXCLUDED.time_seconds,
             place         = EXCLUDED.place,
             score         = EXCLUDED.score,

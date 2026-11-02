@@ -19,7 +19,7 @@ from playwright.async_api import async_playwright
 from database import (
     _statusOf,
     createTables, getConn,
-    saveMeet, saveAthletesBulk, saveResultsBulk,
+    saveMeet, saveAthletesBulk, saveResultsBulk, dropStaleResults,
     saveMeetTF, saveResultsTFBulk,
     logScrapedEventsTFBulk,
     markScraped, countRows, saveMeetTeams,
@@ -526,6 +526,10 @@ def _saveXCMeet(meet_id: int, label: str, collected_meets: list,
 
 
             saveResultsBulk(conn, collected_results)
+            # the division's rows from an earlier posting (database.dropStaleResults)
+            stale = dropStaleResults(conn, collected_results)
+            if stale:
+                print(f"{label} meet {meet_id}: {stale} rows from an earlier posting removed")
 
 
             # meet_extras: only write a row if there's something to store.
