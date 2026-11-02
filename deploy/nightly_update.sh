@@ -297,6 +297,11 @@ if [ "$PEOPLE_OK" -eq 0 ]; then
          "boards stay up. XCP_IGNORE_PEOPLE_FAIL=1 to price anyway." | tee -a "$SUMMARY"
   fi
 fi
+# ★ 04w (2026-11-02): this week's races get Open-Meteo's model weather,
+#   marked provisional, where ERA5 (about five days behind) has none yet;
+#   their rows are re-normalised with it and 09b prices them. Never blocks.
+step 04w_weather "$PY" -u backfill/weather_provisional.py --apply || true
+
 # ★ 05b (2026-11-01, Sagebrush 2021): rows normalised before their gender
 #   was known keep the wrong side of a combined race's distance; 05b
 #   re-normalises the races where a few rows sit apart from their group and

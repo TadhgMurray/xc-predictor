@@ -218,10 +218,13 @@ def loadDoneKeys(conn):
     Output: a set of (cellLat, cellLon, dateStr) tuples for O(1) membership tests.
     CONFIRM: match the column names your writeWeatherRows actually inserts.
     """
-    sql = f"SELECT DISTINCT cell_lat, cell_lon, date FROM {WEATHER_TABLE}"
+    # ★ A PROVISIONAL DAY IS NOT DONE (2026-11-02, backfill/weather_provisional.py):
+    #   Open-Meteo's model weather stands in for the days ERA5 has not reached,
+    #   and the ERA5 day still has to be fetched to replace it.
     try:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            prov = " WHERE NOT provisional" if _hasProvisional(cur) else ""
+            cur.execute(f"SELECT DISTINCT cell_lat, cell_lon, date FROM {WEATHER_TABLE}{prov}")
             fetched = cur.fetchall()
     except Exception:
         # Missing table etc. leaves the txn aborted; roll back so the pooled
@@ -531,6 +534,19 @@ def _rowsFromHourly(cellLat, cellLon, hours, base):
     return rows
 
 
+_PROV = {}
+
+
+def _hasProvisional(cur):
+    """weather_grid carries the provisional flag (weather_provisional.py adds
+    it); asked once per process."""
+    if "has" not in _PROV:
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_name = %s AND column_name = 'provisional'""", (WEATHER_TABLE,))
+        _PROV["has"] = cur.fetchone() is not None
+    return _PROV["has"]
+
+
 def writeWeatherRows(conn, rows):
     """
     Purpose: insert a batch of hourly rows idempotently (safe to re-run).
@@ -547,12 +563,19 @@ def writeWeatherRows(conn, rows):
     cols = list(rows[0].keys())
     # execute_values fills the single "%s" with all rows in one round trip; far
     # faster than executemany. VALUES %s is its required template placeholder.
-    sql = (
-        f"INSERT INTO {WEATHER_TABLE} ({', '.join(cols)}) VALUES %s "
-        f"ON CONFLICT (cell_lat, cell_lon, date, hour) DO NOTHING"
-    )
     data = [tuple(r[c] for c in cols) for r in rows]
     with conn.cursor() as cur:
+        # ★ ERA5 REPLACES A PROVISIONAL ROW (weather_provisional.py) and
+        #   leaves an ERA5 row alone, as before
+        if _hasProvisional(cur):
+            sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols
+                             if c not in ("cell_lat", "cell_lon", "date", "hour"))
+            sql = (f"INSERT INTO {WEATHER_TABLE} ({', '.join(cols)}) VALUES %s "
+                   f"ON CONFLICT (cell_lat, cell_lon, date, hour) DO UPDATE SET {sets}, "
+                   f"provisional = false WHERE {WEATHER_TABLE}.provisional")
+        else:
+            sql = (f"INSERT INTO {WEATHER_TABLE} ({', '.join(cols)}) VALUES %s "
+                   f"ON CONFLICT (cell_lat, cell_lon, date, hour) DO NOTHING")
         # page_size defaults to 100 -> a 14k-row batch would be ~140 round-trips.
         # Send the whole batch in one shot instead.
         execute_values(cur, sql, data, page_size=len(data))
