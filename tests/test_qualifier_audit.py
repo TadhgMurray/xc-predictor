@@ -58,3 +58,15 @@ def test_which_learned_routes_are_kept():
     assert not Q.keepRoute(r("NXR Midwest Regional Championships"))
     assert not Q.keepRoute(r("State Meet", next_found=0.55))
     assert not Q.keepRoute(r("State Meet", f=0.7, p=0.7))
+
+
+def test_a_name_that_is_not_a_qualified_level_needs_the_league_bar():
+    def r(name, n=5, f=0.9, p=0.9):
+        return dict(meet_name=name, race="Varsity", rounds=[{}] * n, own_found=f, own_precise=p)
+    assert not Q.keepRoute(r("NAIC Championships", n=4, f=0.77, p=0.72))
+    assert not Q.keepRoute(r("MSHSL Section 1A Championships", n=5, f=0.76, p=0.74))
+    assert not Q.keepRoute(r("FCPS Middle School XC Championship", n=7, f=0.93, p=0.62))
+    assert Q.keepRoute(r("AHSAA XC State Championship", n=4, f=0.82, p=0.68))
+    assert Q.keepRoute(r("UIL Region IV Championship XC25", n=7, f=0.71, p=0.82))
+    assert Q.keepRoute(r("2025 3C2A SoCal XC Championships", n=3, f=0.77, p=0.73))
+    assert not Q.keepRoute(r("2025 European XC Championships", n=8, f=0.91, p=0.9))
