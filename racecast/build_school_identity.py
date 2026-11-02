@@ -1428,12 +1428,15 @@ def buildCollegePersonState(conn):
         cur.execute("DROP TABLE IF EXISTS college_person_state_new")
         cur.execute("""
             CREATE TABLE college_person_state_new AS
+            -- ! the per-season table, not the 23 GB boards table (the
+            --   2026-09-15 rule this file keeps; test_db_quiet): a season's
+            --   n_races is the same count the race rows would give
             WITH r AS (
-                SELECT rr.school, rr.person_id, rr.state, count(*) AS n
-                FROM   ranking_results rr
-                JOIN   si_cand c ON c.school = rr.school AND c.state = rr.state
-                WHERE  rr.person_id IS NOT NULL
-                  AND  (starts_with(rr.pool, 'college') OR starts_with(rr.pool, 'pro'))
+                SELECT s.school, s.person_id, s.state, sum(COALESCE(s.n_races, 1)) AS n
+                FROM   athlete_season s
+                JOIN   si_cand c ON c.school = s.school AND c.state = s.state
+                WHERE  s.person_id IS NOT NULL
+                  AND  (starts_with(s.pool, 'college') OR starts_with(s.pool, 'pro'))
                 GROUP  BY 1, 2, 3
             )
             SELECT DISTINCT ON (school, person_id) school, person_id, state
