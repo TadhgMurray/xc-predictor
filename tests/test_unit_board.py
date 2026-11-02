@@ -146,3 +146,11 @@ def test_the_logo_file_not_the_map():
     assert L.logoFile(["File:Atlantic 10 Conference map.svg", "File:Atlantic 10 Conference logo.svg"]) \
         == "File:Atlantic 10 Conference logo.svg"
     assert L.logoFile(["File:Atlantic 10 Conference map.svg"]) is None
+
+
+def test_division_bodies():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import unit_logos as L
+    assert L.orgFor("NCAA DIII") == "National Collegiate Athletic Association"
+    assert L.orgFor("NAIA") and L.orgFor("NJCAA DII")
+    assert L.orgFor("Mideast") is None

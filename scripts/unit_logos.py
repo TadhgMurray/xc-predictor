@@ -156,12 +156,53 @@ def wikiLogo(name, pause=1.0):
 
 
 def collegeConferences(cur, limit=None):
-    """The college conferences on record, most schools first."""
+    """The college conferences on record, most schools first -- only the
+    ones the Conferences tab lists (unit_board.validKeys: mostly colleges),
+    so a high school league filed as a conference is not looked up."""
+    import unit_board as UB
     cur.execute("""SELECT conference, count(DISTINCT school) FROM school_unit
                    WHERE is_college AND NULLIF(btrim(conference), '') IS NOT NULL
                    GROUP BY 1 ORDER BY 2 DESC, 1""")
     rows = [r[0] for r in cur.fetchall()]
+    valid = UB.validKeys(cur, "conference", True)
+    rows = [r for r in rows if UB.normKey(r) in valid]
     return rows[:limit] if limit else rows
+
+
+# ★ A DIVISION'S MARK IS ITS GOVERNING BODY'S (owner, 2026-11-02: "what about
+#   regions ... or divisions?"). "NCAA DIII" has no logo of its own; the NCAA's
+#   is the one a reader knows. Mapped by the division's leading word.
+DIVISION_ORGS = {
+    "NCAA": "National Collegiate Athletic Association",
+    "NAIA": "National Association of Intercollegiate Athletics",
+    "NJCAA": "National Junior College Athletic Association",
+    "NCCAA": "National Christian College Athletic Association",
+    "USCAA": "United States Collegiate Athletic Association",
+    "CCCAA": "California Community College Athletic Association",
+    "NWAC": "Northwest Athletic Conference",
+}
+
+
+def orgFor(division):
+    """The governing body's article for a division value, or None. Pure."""
+    head = str(division or "").strip().upper().split(" ")[0] if division else ""
+    return DIVISION_ORGS.get(head)
+
+
+def articleLogo(title, pause=1.0):
+    """The logo url of one named article, or None."""
+    page = _get({"action": "query", "titles": title, "prop": "images", "imlimit": 50})
+    time.sleep(pause)
+    pages = (page.get("query") or {}).get("pages") or []
+    f = logoFile([i.get("title") for i in (pages[0].get("images") or [])]) if pages else None
+    if not f:
+        return None
+    info = _get({"action": "query", "titles": f, "prop": "imageinfo",
+                 "iiprop": "url", "iiurlwidth": 512})
+    time.sleep(pause)
+    pages = (info.get("query") or {}).get("pages") or []
+    ii = ((pages[0].get("imageinfo") or [{}])[0]) if pages else {}
+    return ii.get("thumburl") or ii.get("url")
 
 
 def haveLogo(cur, key):
@@ -178,12 +219,15 @@ def main():
     ap.add_argument("--state", default="", help="a high school unit's state")
     ap.add_argument("--auto", action="store_true",
                     help="look up every college conference on Wikipedia")
+    ap.add_argument("--divisions", action="store_true",
+                    help="give each college division its governing body's logo "
+                         "(NCAA, NAIA, NJCAA ...)")
     ap.add_argument("--redo", action="store_true", help="--auto: ask again where one is stored")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
-    if not a.set and not a.auto:
-        ap.error("--set KIND NAME --url URL, or --auto")
+    if not a.set and not a.auto and not a.divisions:
+        ap.error("--set KIND NAME --url URL, --auto, or --divisions")
 
     import scrape_school_logos as S
     from database import getConn
@@ -197,6 +241,31 @@ def main():
             kind, name = a.set
             S.setLogo(cur, manners, unitKey(kind, name), (a.state or "").upper(), a.url,
                       level="", write=a.write)
+        elif a.divisions:
+            cur.execute("""SELECT DISTINCT division FROM school_unit
+                           WHERE is_college AND NULLIF(btrim(division), '') IS NOT NULL""")
+            divs = sorted(r[0] for r in cur.fetchall())
+            logos = {}
+            for d in divs:
+                org = orgFor(d)
+                if not org:
+                    print(f"  {d:<20} -- no governing body known")
+                    continue
+                if org not in logos:
+                    logos[org] = articleLogo(org)
+                url = logos[org]
+                if not url:
+                    print(f"  {d:<20} -- {org}: no logo file")
+                    continue
+                key = unitKey("division", d)
+                if not a.redo and haveLogo(cur, key):
+                    continue
+                print(f"  {d:<20} -> {org}")
+                if a.write:
+                    try:
+                        S.setLogo(cur, manners, key, "", url, level="", write=True)
+                    except Exception as exc:              # noqa: BLE001
+                        print(f"  {d:<20} not stored ({type(exc).__name__}: {exc})")
         else:
             todo = collegeConferences(cur, a.limit)
             print(f"[unit logos] {len(todo)} college conferences on record")
