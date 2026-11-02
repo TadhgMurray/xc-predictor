@@ -133,9 +133,9 @@ def test_nxr_rounds_are_the_regional_championships_only():
         assert Q.isRound(rule, name), name
     for name in ("NXR Midwest MS & Community Race", "NXR Southwest Citizens Race",
                  "NXR NE/NY Kids Race Presented by USATF New York",
-                 "NYS Federation Championships at NXR",
                  "NXR Northwest Grade School/Middle School Championships"):
         assert not Q.isRound(rule, name), name
+    assert Q.isRound(rule, "NYS Federation Championships at NXR")
     races = [{"label": "Boys Championship"}, {"label": "Boys Community 5K"}]
     assert Q.pickRace(races) == [races[0]]
     assert Q.pickRace([{"label": "Men 10k"}, {"label": "Men 8k"}]) == [{"label": "Men 10k"},

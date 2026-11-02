@@ -80,12 +80,16 @@ RULES = (
      "cite": "2025-26 NCAA DIII Cross Country Pre-Championships Manual, section 2.1: "
              "10 regions; 1 team each; 22 at-large; top 7 not on a qualifying team"},
     {"key": "nxn", "source": "anet",
-     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b.*regional|nike cross regional",
+     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b.*regional|nike cross regional|federation.*\bnxr\b",
      # ! A REGIONAL'S MEET ALSO HOLDS ITS COMMUNITY, CITIZENS, KIDS AND
      #   MIDDLE SCHOOL RACES, and the NYS Federation runs "at NXR" (the
      #   server's 2025 list)
      "round_not": r"^(?!.*regional (champ|open)).*(community|citizen|kids|grade school|"
-                  r"middle school|\bms\b|federation)",
+                  r"middle school|\bms\b)",
+     # ★ BUT NEW YORK'S TEAMS QUALIFIED THROUGH "NYS Federation Championships at
+     #   NXR" in 2025, the day of the merged Northeast & New York regional
+     #   (qualifying_check: Bethlehem Central, Shenendehowa, Ward Melville
+     #   missed without it)
      "not": r"region|\bnxr\b", "window": 28,
      "teams_auto": 2, "teams_at_large": 8, "ind_auto": 5, "ind_at_large": 5,
      # ★ CALIFORNIA'S AT-LARGE TEAMS COME FROM ITS STATE MEET (qualifying_check
