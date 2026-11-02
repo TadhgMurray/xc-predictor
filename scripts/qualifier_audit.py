@@ -67,7 +67,28 @@ NEXT_FOUND = 0.6         # ... and, where this season's edition has run, find th
 # ! NOT A MEET YOU QUALIFY FOR (review of the first routes file): NXR regionals
 #   are open entry (the round for NXN), a "Top 10" race is each team's best
 #   ten, an invitational invites
-NOT_A_ROUTE = re.compile(r"\bnxr\b|nike cross regional|\btop\s*\d+|seeded|invit", re.I)
+NOT_A_ROUTE = re.compile(r"\bnxr\b|nike cross regional|\btop\s*\d+|seeded|invit|"
+                         r"ncaa.*\bregion", re.I)
+# ★ A LEAGUE'S OWN CHAMPIONSHIP IS EVERY TEAM IN THE LEAGUE (review of the
+#   weakest routes: Coastal Conference, SMC, HVAL, PCAL, City League, CCSD
+#   middle schools ... one or two "rounds", the league's last meet before
+#   it). Such a name needs LEAGUE_ROUNDS rounds and a strong own field to be
+#   a route; every route needs MIN_ROUNDS and own found x precise MIN_OWN.
+LEAGUE = re.compile(r"conference|league|\bcity\b|county|\bcyo\b|\bisd\b|wpial", re.I)
+MIN_ROUNDS, LEAGUE_ROUNDS, MIN_OWN = 2, 4, 0.55
+
+
+def keepRoute(r):
+    """Is a learned route a meet you qualify for? Pure."""
+    name = f"{r.get('meet_name') or ''} {r.get('race') or ''}"
+    if NOT_A_ROUTE.search(name) or r.get("next_found", 1.0) < NEXT_FOUND:
+        return False
+    n = len(r.get("rounds") or [])
+    if n < MIN_ROUNDS or r["own_found"] * r["own_precise"] < MIN_OWN:
+        return False
+    if LEAGUE.search(r.get("meet_name") or ""):
+        return n >= LEAGUE_ROUNDS and r["own_found"] >= 0.85 and r["own_precise"] >= 0.8
+    return True
 
 
 def placeRanks(rows):
@@ -387,10 +408,9 @@ def main():
         with open(a.write_routes, "w") as fh:
             # ! A ROUTE THIS SEASON'S EDITION SHOWED WRONG IS NOT WRITTEN
             n_all = len(routes)
-            routes = [r for r in routes if r.get("next_found", 1.0) >= NEXT_FOUND
-                      and not NOT_A_ROUTE.search(r.get("race") or "")]
-            print(f"  {n_all - len(routes):,} routes left out: under {100 * NEXT_FOUND:.0f}% "
-                  "found on this season's edition, or a race that is not a qualifier by its label")
+            routes = [r for r in routes if keepRoute(r)]
+            print(f"  {n_all - len(routes):,} routes left out (keepRoute: not a qualifier by "
+                  "name, too few rounds, a league's own meet, or wrong this season)")
             json.dump({"made": datetime.date.today().isoformat(), "from_season": a.season - 1,
                        "routes": routes}, fh, indent=1)
         print(f"wrote {len(routes):,} routes to {a.write_routes} (each rebuilds "
