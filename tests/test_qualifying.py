@@ -124,3 +124,19 @@ def test_a_learned_route_found_again_and_its_field(monkeypatch, tmp_path):
         (1, 1, False) if rnd["meet"] == "north regional" else None))
     field, n_pred = Q.learnedField(None, r, "2026-11-07", lambda mid, div: rows)
     assert n_pred == 1 and len(field) == 17                  # one of two rounds is half: enough
+
+
+def test_nxr_rounds_are_the_regional_championships_only():
+    rule = Q.ruleFor("Nike Cross Nationals", "anet")
+    for name in ("NXR Northwest Regional Championships", "NXR Northeast & New York Regional Open",
+                 "NXR South Regional Championships & Community Race XC25"):
+        assert Q.isRound(rule, name), name
+    for name in ("NXR Midwest MS & Community Race", "NXR Southwest Citizens Race",
+                 "NXR NE/NY Kids Race Presented by USATF New York",
+                 "NYS Federation Championships at NXR",
+                 "NXR Northwest Grade School/Middle School Championships"):
+        assert not Q.isRound(rule, name), name
+    races = [{"label": "Boys Championship"}, {"label": "Boys Community 5K"}]
+    assert Q.pickRace(races) == [races[0]]
+    assert Q.pickRace([{"label": "Men 10k"}, {"label": "Men 8k"}]) == [{"label": "Men 10k"},
+                                                                          {"label": "Men 8k"}]
