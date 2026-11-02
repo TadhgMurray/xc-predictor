@@ -626,7 +626,10 @@
      projection, so it cannot be on screen over a board that is not one. #}
   <div class="projected-banner" id="projected-banner" role="note"></div>
 
-  <div class="rc-grid">
+  {# ★ ONE COLUMN, THE BOARD AT FULL WIDTH (owner, 2026-11-02: "you removed
+       the box, but you didn't make the tables show their width"). The side
+       card is gone; "Find an athlete" sits above the board instead. #}
+  <div class="rc-grid rc-grid-one">
   <div class="rc-mainc">
     {# ★ THE BOARD'S OWN HEADING (owner, 2026-10-10): "Athletes (season) · HS boys",
          kept in step by rankings.js; the scale toggle sits at its end. The
@@ -635,6 +638,16 @@
     <div class="rc-tbar">
       <h2 class="rk-board-h" id="rk-board-h">Athletes (season)</h2>
       <div class="rc-tbar-end">{{ scale_toggle(hidden=True) }}</div>
+    </div>
+
+    <div class="findme rk-findme">
+      <label for="find-input">Find an athlete on this board</label>
+      <div class="find-wrap">
+        <input id="find-input" type="search" autocomplete="off"
+               placeholder="Name, or paste an athlete link">
+        <div id="find-results" class="find-results"></div>
+      </div>
+      <div class="find-status" id="find-status"></div>
     </div>
 
     <div id="results"></div>
@@ -663,30 +676,6 @@
       <a id="csv-all" rel="nofollow">whole board</a></p>
   </div>
 
-  <aside class="rc-side">
-    {# ! NO "Rankings by state" CARD (owner, 2026-11-02: "I really hate the
-         rankings by state thing on everything, can we remove that?"). The
-         state pages stay reachable from the "By state" link above the board. #}
-
-    {# Jump straight to an athlete's page of the board.
-
-       ★ ON EVERY BOARD NOW. This was ability-only because the result boards
-         bounded their candidate set before deduping, so a rank computed against
-         one was a rank within that window rather than within the corpus. They
-         are ranked by COUNTING instead -- see rankings._rankInResults -- which
-         became possible once the per-athlete cap came off Performances.
-       ! THE SECOND SIDE CARD (owner, 2026-10-10); on a phone it comes before
-         the board (race.css). Still hidden on Teams and Courses by style.css. #}
-    <div class="findme">
-      <label for="find-input">Find an athlete on this board</label>
-      <div class="find-wrap">
-        <input id="find-input" type="search" autocomplete="off"
-               placeholder="Name, or paste an athlete link">
-        <div id="find-results" class="find-results"></div>
-      </div>
-      <div class="find-status" id="find-status"></div>
-    </div>
-  </aside>
   </div>
 </main>
 

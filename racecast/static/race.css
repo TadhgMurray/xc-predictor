@@ -511,14 +511,20 @@ main.rc.rankings-page .rc-tbar-end .scale-toggle { margin: 0; }
 main.rc.rankings-page #results .status { margin-top: 0; }
 main.rc.rankings-page .rk-states td.tpts { width: 7rem; font-weight: 600; }
 main.rc.rankings-page .rk-states td.tn { font-weight: 600; }
-/* find-an-athlete as the second side card */
+/* find-an-athlete above the board, compact (2026-11-02: the side column is
+   gone so the board takes the full width) */
+main.rc.rankings-page .rk-findme { margin: 0 0 .8rem; max-width: 28rem; }
+main.rc.rankings-page .rk-findme > label { font-size: .9rem; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); display: block; margin-bottom: .35rem; }
+main.rc.rankings-page .rk-findme .find-wrap { max-width: none; }
+main.rc.rankings-page .rk-findme .find-wrap input { width: 100%; box-sizing: border-box; }
+/* find-an-athlete as the second side card (pages that still have one) */
 main.rc.rankings-page .rc-side .findme { margin: 1.4rem 0 0; }
 main.rc.rankings-page .rc-side .findme > label { font-size: 1rem; font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--ink); display: block; margin-bottom: .5rem; }
 main.rc.rankings-page .rc-side .find-wrap { max-width: none; }
 main.rc.rankings-page .rc-side .find-wrap input { width: 100%; box-sizing: border-box; }
 main.rc.rankings-page .rc-side .find-results { width: 100%; }
-/* beside the 280px side card: the race table's tighter cells, one line a
-   row (a long school still wraps); a wider board scrolls inside itself */
+/* the race table's tighter cells, one line a row (a long school still
+   wraps); a board wider than the page scrolls inside itself */
 main.rc.rankings-page table.rk th, main.rc.rankings-page table.rk td { padding: .45rem .5rem; white-space: nowrap; }
 main.rc.rankings-page table.rk td:nth-child(3) { white-space: normal; }
 main.rc.rankings-page #results { overflow-x: auto; }

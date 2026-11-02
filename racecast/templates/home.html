@@ -341,8 +341,19 @@
       </div>
     {% endif %}
 
-    {# ! NO "Rankings by state" BOX (owner, 2026-11-02). /rankings's "By state"
-         link and the state pages' own links keep them reachable. #}
+    {# the state ranking pages (landing.py): plain links, so a crawler and a
+       person both have a path into them from here. ★ KEPT ON THE HOME PAGE
+       (owner, 2026-11-02: removed from /rankings only) #}
+    <h2 class="hm-side-h2">Rankings by state <small>XC and track</small></h2>
+    <table class="rc-tscores rc-tscores-plain hm-states">
+      <tbody>
+      {% for words, slug in [("HS boys", "hs-boys"), ("HS girls", "hs-girls"), ("College men", "college-men"), ("College women", "college-women")] %}
+      <tr><td class="tn">{{ words }}</td>
+        <td class="n tpts"><a href="/rankings/xc/{{ slug }}">XC</a> · <a href="/rankings/tf/{{ slug }}">Track</a></td></tr>
+      {% endfor %}
+      <tr><td class="tn" colspan="2"><a href="/schools">Teams by state →</a></td></tr>
+      </tbody>
+    </table>
   </aside>
   </div>
 </section>
