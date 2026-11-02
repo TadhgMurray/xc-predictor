@@ -90,3 +90,16 @@ def test_wikipedia_titles():
     assert L.looksLikeConference("New England Small College Athletic Conference")
     assert L.looksLikeConference("Mountain East Conference")
     assert not L.looksLikeConference("Williams College")
+
+
+def test_logo_match_is_strict():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import unit_logos as L
+    assert L.matches("NEC", "Northeast Conference", "The Northeast Conference (NEC) is a collegiate")
+    assert L.matches("A-10", "Atlantic 10 Conference", "The Atlantic 10 Conference (A-10) is")
+    assert not L.matches("A-10", "Pac-12 Conference", "The Pac-12 Conference is")
+    assert not L.matches("MAC", "Great Midwest Athletic Conference", "The Great Midwest Athletic Conference (G-MAC) is")
+    assert not L.matches("EAST", "Big East Conference", "The Big East Conference is")
+    assert L.matches("IVY LEAGUE", "Ivy League", "")
+    assert L.matches("MIDDLE ATLANTIC", "Middle Atlantic Conferences", "")
+    assert not L.matches("EMPIRE 8", "Presidents' Athletic Conference", "The PAC is")

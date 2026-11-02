@@ -351,14 +351,18 @@ CANDIDATE_FACTOR = 40
 _NAME_LATERAL = """
     LEFT JOIN LATERAL (
         SELECT COALESCE(
-                 (SELECT NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), '')
+                 -- ★ "Unknown" IS NO NAME (owner, 2026-11-02: Matthew Meli,
+                 --   person 1009162084, "Unknown" on the board while his own
+                 --   rows say Matthew Meli): an athletes row a linker left with
+                 --   the placeholder sorted first as a name, and the result
+                 --   rows' real name below was never asked
+                 (SELECT NULLIF(NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), ''), 'Unknown')
                   FROM   athletes a
                   -- ⚠ every profile of the person, as the athlete page reads
                   --   them (2026-10-07): the profile whose id IS the person
                   --   id can be blank while another carries the name
                   WHERE  a.person_id = {alias}.person_id OR a.athlete_id = {alias}.person_id
-                  ORDER  BY (COALESCE(TRIM(a.first_name), '') <> ''
-                          OR COALESCE(TRIM(a.last_name),  '') <> '') DESC,
+                  ORDER  BY (COALESCE(NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), 'Unknown'), '') <> '') DESC,
                             (a.gender IN ('M', 'F')) DESC
                   LIMIT  1),
                  (SELECT NULLIF(TRIM(x.athlete_name), '') FROM results x

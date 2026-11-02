@@ -63,21 +63,55 @@ def _get(params):
         return json.loads(resp.read().decode("utf-8"))
 
 
+_GENERIC = {"conference", "conferences", "athletic", "athletics", "league", "association",
+            "intercollegiate", "collegiate", "the", "of", "and", "college", "girls", "boys"}
+
+
+def _tokens(text):
+    import re
+    text = re.sub(r"\([^)]*\)", " ", str(text or ""))          # "(athletic conference)"
+    return [t for t in re.findall(r"[a-z0-9]+", text.lower())]
+
+
+def matches(name, title, intro=""):
+    """Is this article the conference `name` names? Pure.
+
+    ★ STRICT, AFTER THE OWNER'S DRY RUN (2026-11-02: A-10 -> Pac-12, MAAC ->
+      Metro Conference, EAST -> Big East, MAC -> the Great Midwest). Either
+      the article's intro states the name as its abbreviation -- "(NEC)",
+      "(A-10)", which every conference article opens with -- or the two
+      names are the same words once the generic ones (Conference, Athletic,
+      League ...) are set aside: "Ivy League" / "Ivy League", "Middle
+      Atlantic" / "Middle Atlantic Conferences"."""
+    import re
+    raw = str(name or "").strip()
+    if raw and re.search(r"\(\s*" + re.escape(raw) + r"\s*\)", intro or "", re.I):
+        return True
+    a = {t.rstrip("s") for t in _tokens(raw)} - {g.rstrip("s") for g in _GENERIC}
+    b = {t.rstrip("s") for t in _tokens(title)} - {g.rstrip("s") for g in _GENERIC}
+    return bool(a) and a == b
+
+
 def wikiLogo(name, pause=1.0):
     """(article title, image url) for a conference name, or (None, why)."""
-    found = _get({"action": "query", "list": "search", "srlimit": 3,
-                  "srsearch": f"{name} athletic conference"})
+    found = _get({"action": "query", "list": "search", "srlimit": 5,
+                  "srsearch": f"{name} conference"})
     time.sleep(pause)
     titles = [h["title"] for h in (found.get("query") or {}).get("search", [])
               if looksLikeConference(h.get("title"))]
     if not titles:
         return None, "no conference article"
-    page = _get({"action": "query", "titles": titles[0], "prop": "pageimages",
-                 "piprop": "thumbnail", "pithumbsize": 512})
+    page = _get({"action": "query", "titles": "|".join(titles[:5]),
+                 "prop": "pageimages|extracts", "piprop": "thumbnail", "pithumbsize": 512,
+                 "exintro": 1, "explaintext": 1, "exchars": 600})
     time.sleep(pause)
-    pages = (page.get("query") or {}).get("pages") or []
-    thumb = (pages[0].get("thumbnail") or {}).get("source") if pages else None
-    return (titles[0], thumb) if thumb else (titles[0], None)
+    by_title = {p.get("title"): p for p in (page.get("query") or {}).get("pages") or []}
+    for t in titles[:5]:
+        p = by_title.get(t) or {}
+        if matches(name, t, p.get("extract") or ""):
+            thumb = (p.get("thumbnail") or {}).get("source")
+            return (t, thumb) if thumb else (t, None)
+    return None, f"no article matches (closest: {titles[0]})"
 
 
 def collegeConferences(cur, limit=None):
