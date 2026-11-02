@@ -83,3 +83,14 @@ def test_a_senior_racing_open_college_meets_unattached_is_still_a_senior():
     import link_freshmen as LF
     src = inspect.getsource(LF.seniors)
     assert src.count("r.source = 'tfrrs' AND {collegeSql('r')}") == 2
+
+
+def test_a_nickname_finds_the_senior_only_when_unique():
+    """2026-11-02: Chris Hovet (tfrrs, Tufts) and Christopher Hovet (his
+    high school senior year)."""
+    fresh = {201: ("Chris Hovet", "Tufts", "M", 3), 202: ("Will Burch", "Tufts", "M", 2)}
+    senior = {11: ("Christopher Hovet", "Somewhere HS", "M", False),
+              12: ("William Burch", "A HS", "M", False), 13: ("Bill Burch", "B HS", "M", False)}
+    pairs, skipped = L.pairsFor(fresh, senior)
+    assert [(t, a) for t, a, *_x in pairs] == [(201, 11)]
+    assert skipped.get("nickname not unique") == 1      # two Burch seniors

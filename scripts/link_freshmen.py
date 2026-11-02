@@ -353,6 +353,36 @@ def pairsFor(fresh, senior):
             skipped["gender differs"] += 1
             continue
         out.append((t, a, fresh[t][0], fresh[t][1], senior[a][1]))
+    # ★ AND A NICKNAME (owner, 2026-11-02: "the linker is too weak ...
+    #   Christopher Hovet on Tufts doesn't get linked to Chris Hovet"). A
+    #   first-year whose exact name has no senior is matched against the
+    #   seniors whose first name is another form of theirs (person_name.
+    #   NICKNAMES) -- only when that names exactly one senior, and that
+    #   senior's every form names exactly this one first-year, on every
+    #   guard above.
+    from person_name import nameVariants
+    for k, ts in t_by.items():
+        if k in a_by or len(ts) != 1:
+            continue
+        cands = sorted({a for v in nameVariants(k) for a in a_by.get(v, [])})
+        if len(cands) != 1:
+            if len(cands) > 1:
+                skipped["nickname not unique"] += 1
+            continue
+        t, a = ts[0], cands[0]
+        ka = normName(senior[a][0])
+        rivals = {x for v in ({ka} | nameVariants(ka)) for x in t_by.get(v, [])}
+        if rivals != {t}:
+            skipped["nickname not unique"] += 1
+            continue
+        if senior[a][3] or (len(senior[a]) > 4 and senior[a][4]):
+            skipped["nickname: senior on tfrrs or still in high school"] += 1
+            continue
+        gt, ga = _g(fresh[t][2]), _g(senior[a][2])
+        if gt and ga and gt != ga:
+            skipped["gender differs"] += 1
+            continue
+        out.append((t, a, fresh[t][0], fresh[t][1], senior[a][1]))
     return out, dict(skipped)
 
 
