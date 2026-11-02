@@ -80,7 +80,12 @@ RULES = (
      "cite": "2025-26 NCAA DIII Cross Country Pre-Championships Manual, section 2.1: "
              "10 regions; 1 team each; 22 at-large; top 7 not on a qualifying team"},
     {"key": "nxn", "source": "anet",
-     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b|nike cross regional",
+     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b.*regional|nike cross regional",
+     # ! A REGIONAL'S MEET ALSO HOLDS ITS COMMUNITY, CITIZENS, KIDS AND
+     #   MIDDLE SCHOOL RACES, and the NYS Federation runs "at NXR" (the
+     #   server's 2025 list)
+     "round_not": r"^(?!.*regional (champ|open)).*(community|citizen|kids|grade school|"
+                  r"middle school|\bms\b|federation)",
      "not": r"region|\bnxr\b", "window": 28,
      "teams_auto": 2, "teams_at_large": 4, "ind_auto": 5, "ind_at_large": 5,
      "team_size": 7,
@@ -103,7 +108,18 @@ def ruleFor(meet_name, source=None):
 
 def isRound(rule, meet_name):
     """Is this meet one of the rule's rounds? Pure."""
-    return bool(re.search(rule["round"], (meet_name or "").lower()))
+    nm = (meet_name or "").lower()
+    return bool(re.search(rule["round"], nm)) and not (
+        rule.get("round_not") and re.search(rule["round_not"], nm))
+
+
+def pickRace(races):
+    """The round's race among a meet's races of one gender: the one its
+    label calls the championship, else (in roundResults) the largest. Pure."""
+    champ = [r for r in races if re.search(r"champ", r.get("label") or "", re.I)
+             and not re.search(r"community|citizen|open|kids|\bms\b|middle", r.get("label") or "",
+                               re.I)]
+    return champ if len(champ) == 1 else races
 
 
 # ------------------------------------------------------------------ #
@@ -240,8 +256,8 @@ def roundResults(cur, rule, meet_id, gender, season=None):
     that gender (the largest, when it has several), or []. The rating is
     the season's (or the latest before it): never one made after."""
     import last_edition as LE
-    races = [r for r in LE.editionRaces(cur, meet_id, "XC", rule["source"])
-             if r.get("gender") == gender]
+    races = pickRace([r for r in LE.editionRaces(cur, meet_id, "XC", rule["source"])
+                      if r.get("gender") == gender])
     best = []
     for race in races:
         cur.execute("""
