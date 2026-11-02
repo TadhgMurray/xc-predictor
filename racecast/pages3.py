@@ -588,6 +588,10 @@ def unit_page(kind, name):
     if kind not in UB.KINDS:
         abort(404)
     college = UB.KINDS[kind][1]
+    # a high school "conference" (school_unit carries them: Delaware's New
+    # Castle County) is a high school unit -- its chips link with pool=hs_*
+    if college and (request.args.get("pool") or "").strip().lower().startswith("hs"):
+        college = False
     states, names = _stateNames()
     st = (request.args.get("state") or "").strip().upper() or None
     if st and st not in names:

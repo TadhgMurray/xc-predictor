@@ -427,6 +427,7 @@ app.jinja_env.globals["crest"] = school_logo.crestImg
 app.jinja_env.globals["school_href"] = school_identity.schoolHref
 import unit_board as _unit_board                                  # noqa: E402
 app.jinja_env.globals["unit_href"] = _unit_board.chipHref
+app.jinja_env.globals["unit_logo"] = _unit_board.chipLogo
 
 
 # ★ THE RACE'S GENDER WORD, AND ONLY WHEN THE NAME LACKS ONE (owner,
@@ -4907,6 +4908,21 @@ def race_xc(meet_id, div_id):
             print(f"race story titles: {type(exc).__name__}: {exc}", flush=True)
     story = race_story.raceStory(_fin, scores["teams"], story_titles)
 
+    # ★ A CONFERENCE CHAMPIONSHIP WEARS ITS CONFERENCE'S MARK (owner,
+    #   2026-11-02): unit_board.meetUnit -- the meet's name names the unit and
+    #   several of the race's schools are in it. Bounded, its own connection.
+    meet_unit = None
+    if header and header.get("meet_name"):
+        try:
+            with getConn() as _conn, _conn.cursor(
+                    cursor_factory=psycopg2.extras.RealDictCursor) as _cur:
+                _cur.execute("SET LOCAL statement_timeout = '2s'")
+                meet_unit = _unit_board.meetUnit(
+                    _cur, header.get("meet_name"), [r.get("school") for r in results], "XC")
+                _conn.rollback()
+        except Exception as exc:                                # noqa: BLE001
+            print(f"race meet unit: {type(exc).__name__}: {exc}", flush=True)
+
     import csv_export as _csv
     if _csv.wantsCsv(request.args):
         _csvAboveLevel("XC", results, header.get("distance") if header else None)
@@ -4918,7 +4934,7 @@ def race_xc(meet_id, div_id):
                            state_teams=school_identity.isStateTeamRace(
                                [r.get("school") for r in results],
                                [r.get("rating_pool") for r in results]),
-                           story=story, finishers=_fin,
+                           story=story, finishers=_fin, meet_unit=meet_unit,
                            above_spec=_aboveSpec("XC", results, header.get("distance") if header else None),
                            has_hs_view=has_hs_view,
                            equiv_pool=equiv_pool, equiv_lo=equiv_lo,

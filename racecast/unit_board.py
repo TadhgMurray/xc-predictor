@@ -210,7 +210,8 @@ def badgeSvg(name, size=28):
 def unitHref(kind, unit, state=None, pool=None, sport=None):
     """/unit/<kind>/<name>[?state=..&pool=..&sport=..]: a unit's own page."""
     from urllib.parse import quote, urlencode
-    q = {k: v for k, v in (("state", state if kind in KINDS and not KINDS[kind][1] else None),
+    hs = (kind in KINDS and not KINDS[kind][1]) or str(pool or "").startswith("hs")
+    q = {k: v for k, v in (("state", state if hs else None),
                            ("pool", pool), ("sport", (sport or "").lower() or None)) if v}
     return f"/unit/{kind}/{quote(str(unit), safe='')}" + (f"?{urlencode(q)}" if q else "")
 
@@ -221,10 +222,11 @@ def chipHref(kind, raw, state=None, college=None):
     no state."""
     if kind not in KINDS or not raw:
         return None
-    if not KINDS[kind][1] and not state:
+    is_college = KINDS[kind][1] if college is None else bool(college)
+    if not is_college and not state:
         return None
-    pool = "college_m" if KINDS[kind][1] else "hs_m"
-    return unitHref(kind, raw, state, pool)
+    pool = "college_m" if is_college else "hs_m"
+    return unitHref(kind, raw, state if not is_college else None, pool)
 
 
 def label(kind, value, state=None):
@@ -244,17 +246,68 @@ def logoKey(kind, name):
     return f"unit:{kind}:{str(name).strip().upper()}"
 
 
+_ALIAS = {"of": None, "map": {}}
+
+
+def _aliases():
+    """{(kind, normKey): stored name} for every unit logo the crest cache
+    holds, rebuilt when the cache is. A logo is stored under the spelling
+    unit_logos.py looked up ('BIG TEN'); a school row may carry another
+    ('BIG TEN CONFERENCE'), and both are the one unit."""
+    try:
+        from school_logo import _CRESTS
+        m = _CRESTS.get("map") or {}
+    except Exception:                                     # noqa: BLE001
+        return {}
+    if _ALIAS["of"] is not m:
+        out = {}
+        for key in m:
+            if str(key).startswith("unit:"):
+                _, kind, name = str(key).split(":", 2)
+                out.setdefault((kind, normKey(name)), name)
+        _ALIAS["of"], _ALIAS["map"] = m, out
+    return _ALIAS["map"]
+
+
+def storedLogoUrl(kind, name, state=None, px=64):
+    """The unit's own stored logo's URL, or None (no badge)."""
+    try:
+        from school_logo import crestUrl
+    except Exception:                                     # noqa: BLE001
+        return None
+    st = state if not KINDS.get(kind, ("", True))[1] else None
+    try:
+        url = crestUrl(logoKey(kind, name), st, px=px)
+        if not url:
+            alias = _aliases().get((kind, normKey(name)))
+            if alias and alias.upper() != str(name).strip().upper():
+                url = crestUrl(logoKey(kind, alias), st, px=px)
+        return url
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def chipLogo(kind, raw, state=None, size=16):
+    """The template global `unit_logo`: a unit chip's small logo -- only a
+    stored one. A drawn badge at chip size is three unreadable letters, so a
+    unit with no logo shows its name alone. Markup."""
+    import html
+    from markupsafe import Markup
+    if kind not in KINDS or not raw:
+        return Markup("")
+    url = storedLogoUrl(kind, raw, state, px=64)
+    if not url:
+        return Markup("")
+    return Markup(f'<img class="unit-chip-logo" src="{html.escape(url)}" alt="" '
+                  f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async">')
+
+
 def unitMark(kind, name, state=None, size=28, shown=None):
     """The unit's mark for a page: its own logo when scripts/unit_logos.py
     stored one (served like a school crest), else the generated badge.
     Markup."""
     import html
-    try:
-        from school_logo import crestUrl
-        url = crestUrl(logoKey(kind, name), state if not KINDS.get(kind, ("", True))[1] else None,
-                       px=128 if size > 32 else 64)
-    except Exception:                                     # noqa: BLE001
-        url = None
+    url = storedLogoUrl(kind, name, state, px=128 if size > 32 else 64)
     if url:
         return (f'<img class="unit-badge unit-logo" src="{html.escape(url)}" alt="" '
                 f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async" '
@@ -415,3 +468,78 @@ def sortBoard(units, sort="avg", direction=None):
     for i, u in enumerate(units, 1):
         u["rank"] = i
     return units
+
+
+# ====================================================================== #
+#  A CONFERENCE CHAMPIONSHIP'S OWN MARK ON ITS RACE PAGE (owner, 2026-11-02:
+#  "Should we put the conference logos ... maybe race pages?" -- yes, on the
+#  header of a race that is the conference's own meet). The meet's name has
+#  to name the unit AND several of the race's schools have to be in it.
+# ====================================================================== #
+MEET_UNIT_KINDS = ("conference", "league")
+MEET_UNIT_MIN = 3
+_MEET_WORDS = ("champ", "final", "conference", "league", "tournament")
+
+
+def meetUnitPick(meet_name, counts, n_schools):
+    """The (kind, value, state, college) the meet is the championship of, or
+    None. `counts` is {(kind, value, state, college): schools of the race in
+    it}. Pure.
+
+    The unit's words (normKey: 'SUNKIST' -> 'sunkist', 'BIG TEN CONFERENCE'
+    -> 'big ten') must all be words of the meet's name, at least
+    MEET_UNIT_MIN of the race's schools must be in it, and either the name
+    reads like a championship or the unit is most of the field."""
+    import re
+    words = set(re.findall(r"[a-z0-9]+", str(meet_name or "").lower()))
+    if not words:
+        return None
+    champ = any(w.startswith(_MEET_WORDS) for w in words)
+    best = None
+    for key, n in counts.items():
+        kind, value = key[0], key[1]
+        if kind not in MEET_UNIT_KINDS or n < MEET_UNIT_MIN:
+            continue
+        nk = normKey(value).split()
+        if not nk or not all(w in words for w in nk):
+            continue
+        if not champ and n < 0.6 * max(n_schools, 1):
+            continue
+        rank = (n, len(nk))
+        if best is None or rank > best[0]:
+            best = (rank, key)
+    return best[1] if best else None
+
+
+def meetUnit(cur, meet_name, schools, sport="XC"):
+    """{kind, unit, name, href, mark} for a race page's header, or None."""
+    schools = sorted({s for s in schools if s})
+    if not schools or not meet_name:
+        return None
+    cur.execute("""SELECT school, state, conference, league, is_college
+                   FROM   school_unit
+                   WHERE  school = ANY(%s) AND sport = %s""", (schools, sport))
+    seen, counts = set(), {}
+    for r in cur.fetchall():
+        school, state, conf, league, college = (
+            (r["school"], r["state"], r["conference"], r["league"], r["is_college"])
+            if isinstance(r, dict) else r)
+        for kind, v in (("conference", conf), ("league", league)):
+            v = (v or "").strip()
+            if not v:
+                continue
+            k = (kind, v, (state or "").upper() if not college else "", bool(college))
+            if (k, school) in seen:
+                continue
+            seen.add((k, school))
+            counts[k] = counts.get(k, 0) + 1
+    pick = meetUnitPick(meet_name, counts, len(schools))
+    if not pick:
+        return None
+    kind, value, state, college = pick
+    href = chipHref(kind, value, state or None, college)
+    if not href:
+        return None
+    shown = label(kind, value, state or None)
+    return {"kind": kind, "unit": value, "name": prettyName(shown), "href": href,
+            "mark": unitMark(kind, value, state or None, size=22, shown=shown)}

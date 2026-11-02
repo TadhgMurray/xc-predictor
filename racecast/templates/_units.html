@@ -6,5 +6,5 @@
    wears an amber "?" that says what else the latest season voted.
    ------------------------------------------------------------------ #}
 {% macro unit_chips(units) -%}
-{%- for u in units %}{% set uh = unit_href(u.kind, u.raw, u.state, u.college) %}<span class="unit">{% if uh %}<a href="{{ uh }}">{{ u.label }}</a>{% else %}{{ u.label }}{% endif %}{% if u.conflict %}<span class="unit-q" title="The most recent season ({{ u.asof }}) corroborated more than one unit here, so this is the best-supported answer rather than a certain one.">?</span>{% endif %}</span>{% endfor -%}
+{%- for u in units %}{% set uh = unit_href(u.kind, u.raw, u.state, u.college) %}<span class="unit">{% if uh %}<a href="{{ uh }}">{{ unit_logo(u.kind, u.raw, u.state) }}{{ u.label }}</a>{% else %}{{ u.label }}{% endif %}{% if u.conflict %}<span class="unit-q" title="The most recent season ({{ u.asof }}) corroborated more than one unit here, so this is the best-supported answer rather than a certain one.">?</span>{% endif %}</span>{% endfor -%}
 {%- endmacro %}

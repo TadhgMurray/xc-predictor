@@ -192,3 +192,35 @@ def test_an_event_label_filed_as_the_conference_is_that_conference():
     import unit_board as UB
     assert UB.normKey("GNAC COMBINED EVENTS") == UB.normKey("GNAC") == "gnac"
     assert UB.normKey("BIG EAST INDOOR") == UB.normKey("BIG EAST")
+
+
+def test_a_conference_championship_names_its_conference():
+    import unit_board as UB
+    counts = {("conference", "BIG TEN", "", True): 14, ("conference", "BIG EAST", "", True): 2,
+              ("league", "SUNKIST", "CA", False): 0}
+    assert UB.meetUnitPick("Big Ten Cross Country Championships", counts, 14) == \
+        ("conference", "BIG TEN", "", True)
+    # named but only two of its schools ran: not the championship
+    assert UB.meetUnitPick("Big East Championships", counts, 16) is None
+    # an invitational the conference happens to fill a third of is not its meet
+    assert UB.meetUnitPick("Big Ten Invitational", {("conference", "BIG TEN", "", True): 5}, 20) is None
+    hs = {("league", "SUNKIST", "CA", False): 6, ("conference", "CIF SS", "CA", False): 9}
+    assert UB.meetUnitPick("Sunkist League Finals", hs, 8) == ("league", "SUNKIST", "CA", False)
+    assert UB.meetUnitPick("", hs, 8) is None
+
+
+def test_chip_logo_is_only_a_stored_logo(monkeypatch):
+    import unit_board as UB
+    monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: None)
+    assert str(UB.chipLogo("conference", "BIG TEN")) == ""
+    monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: "/img/school/x.png")
+    assert 'class="unit-chip-logo"' in str(UB.chipLogo("conference", "BIG TEN"))
+    assert str(UB.chipLogo("county", "X")) == ""
+
+
+def test_a_logo_stored_under_another_spelling_is_found(monkeypatch):
+    import school_logo
+    import unit_board as UB
+    m = {"unit:conference:BIG TEN": [("", "abcd1234", "/x.png", "")]}
+    monkeypatch.setattr(school_logo, "_CRESTS", {"loaded": True, "map": m, "factory": None, "retry_at": 0})
+    assert UB._aliases()[("conference", "big ten")] == "BIG TEN"
