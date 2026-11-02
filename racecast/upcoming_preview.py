@@ -34,6 +34,7 @@ team, or one meet (owner, 2026-10-10, approved):
   edition, no model, a timed-out prediction -- the block stays hidden.
 """
 import datetime
+import os
 import re
 
 import ttlcache
@@ -238,6 +239,41 @@ def _target(meet_id, div_id, source):
     return t
 
 
+# ★ WHO RUNS WHICH RACE (owner, 2026-11-02; scripts/field_audit.py: in JV /
+#   frosh / open races we listed 3% of the finishers, and 4% of the runners
+#   we listed ran -- every race of a meet took each school's same fastest
+#   seven, so the varsity runners were the JV field too). For one race of a
+#   meet plan: list what each school brought to this race last time
+#   (predict.broughtCap), and in a race that is not the varsity one, leave
+#   out as many of each school's fastest as it ran in the same-gender
+#   varsity race(s). XCP_FIELD_RULES=0 turns it off.
+_OTHER_LEVEL = re.compile(r"middle|ms|elementary|youth|grade school", re.I)
+
+
+def fieldRules(plan, div_id):
+    """{"cap_rule", "varsity", "skip_by_school"} for one race of a meet
+    plan, or {} when the race is not in it. Pure."""
+    races = (plan or {}).get("races") or []
+    race = next((r for r in races if int(r["div_id"]) == int(div_id)), None)
+    if race is None:
+        return {}
+
+    def isVarsity(r):
+        lab = r.get("label") or ""
+        return not _NOT_VARSITY.search(lab) and not _OTHER_LEVEL.search(lab)
+    out = {"cap_rule": "brought", "varsity": isVarsity(race), "skip_by_school": {}}
+    if out["varsity"] or _OTHER_LEVEL.search(race.get("label") or ""):
+        return out
+    skip = {}
+    for r in races:
+        if r is race or not isVarsity(r) or r.get("gender") != race.get("gender"):
+            continue
+        for (school, _state), n in (r.get("schools") or {}).items():
+            skip[school] = skip.get(school, 0) + int(n)
+    out["skip_by_school"] = skip
+    return out
+
+
 def livePrediction(cur, meet_id, div_id, source=None):
     """predict.predictTeam for one race, now, uncached: {"available",
     "teams", "runners", "n_field"} or {"available": False, "reason"}. The
@@ -248,6 +284,8 @@ def livePrediction(cur, meet_id, div_id, source=None):
     try:
         cur.execute("SAVEPOINT up_pred")
         target = _withSource(cur, _target(meet_id, div_id, source))
+        if os.environ.get("XCP_FIELD_RULES", "1") != "0":
+            target.update(fieldRules(meetPlan(cur, meet_id, source), div_id))
         out = predictTeam(cur, [], target)
         cur.execute("RELEASE SAVEPOINT up_pred")
     except NotImplementedError:
