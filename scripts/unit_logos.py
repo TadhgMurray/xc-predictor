@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import sys
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -105,22 +106,61 @@ def matches(name, title, intro=""):
     return bool(a) and a == b
 
 
-def logoFile(files):
+# Wikipedia's own sister-project and maintenance icons -- "File:Commons-logo.svg"
+# sits at the foot of nearly every article (owner, 2026-11-02: the SEC was
+# pinned to the Wikimedia Commons logo).
+_WIKI_ICONS = ("commons", "wiki", "wiktionary", "mediawiki", "oojs", "ambox",
+               "question book", "edit-clear", "padlock", "symbol ", "portal",
+               "crystal clear", "nuvola", "folder hexagonal", "sports icon")
+_TITLE_FILLER = {"the", "of", "and", "conference", "athletic", "athletics",
+                 "association", "intercollegiate", "league", "collegiate"}
+
+
+def _words(s):
+    return [w for w in re.split(r"[^a-z0-9]+", str(s).lower()) if w]
+
+
+def logoFile(files, title=None):
     """The article's LOGO among its image files, or None. Pure.
 
     ★ NOT THE PAGE IMAGE (owner's --write run, 2026-11-02: A-10 was pinned to
       "Atlantic_10_Conference_map.svg"). A conference article's lead image
       is as often a map of its members as its mark; the file NAMED a logo is
-      the mark. Maps, locations and member charts are never taken."""
-    best = None
+      the mark. Maps, locations and member charts are never taken.
+    ★ NOT WIKIPEDIA'S OWN ICONS, AND THE ONE NAMING THE ARTICLE FIRST (SEC got
+      "Commons-logo.svg"; its own is "Southeastern Conference logo (2024).svg").
+      Member schools' logos sit in the same list, so with a title a file that
+      names it beats one that does not; failing that, only a lone candidate."""
+    picks = []
     for f in files or []:
         low = str(f).lower()
         if any(w in low for w in ("map", "location", "members", "locator", "flag")):
             continue
+        if any(w in low for w in _WIKI_ICONS):
+            continue
         if "logo" in low or "wordmark" in low:
-            if best is None or ("wordmark" in str(best).lower() and "logo" in low):
-                best = f
-    return best
+            picks.append(f)
+    if not picks:
+        return None
+
+    def rank(f):
+        low = str(f).lower()
+        return (0 if "logo" in low else 1,)        # a logo beats a wordmark
+
+    if title:
+        tw = [w for w in _words(title) if w not in _TITLE_FILLER]
+        full = " ".join(_words(title))
+        abbr = "".join(w[0] for w in _words(title) if w not in ("the", "of", "and"))
+        named = []
+        for f in picks:
+            fw = _words(f)
+            text = " ".join(fw)
+            if full in text or (tw and all(w in fw for w in tw)) or (len(abbr) > 1 and abbr in fw):
+                named.append(f)
+        if named:
+            return sorted(named, key=rank)[0]
+        return picks[0] if len(picks) == 1 else None
+    return sorted(picks, key=rank)[0]
 
 
 def wikiLogo(name, pause=1.0):
@@ -142,7 +182,7 @@ def wikiLogo(name, pause=1.0):
         p = by_title.get(t) or {}
         if not matches(name, t, p.get("extract") or ""):
             continue
-        f = logoFile([i.get("title") for i in p.get("images") or []])
+        f = logoFile([i.get("title") for i in p.get("images") or []], t)
         if not f:
             return t, None, "the article has no logo file"
         info = _get({"action": "query", "titles": f, "prop": "imageinfo",
@@ -194,7 +234,7 @@ def articleLogo(title, pause=1.0):
     page = _get({"action": "query", "titles": title, "prop": "images", "imlimit": 50})
     time.sleep(pause)
     pages = (page.get("query") or {}).get("pages") or []
-    f = logoFile([i.get("title") for i in (pages[0].get("images") or [])]) if pages else None
+    f = logoFile([i.get("title") for i in (pages[0].get("images") or [])], title) if pages else None
     if not f:
         return None
     info = _get({"action": "query", "titles": f, "prop": "imageinfo",

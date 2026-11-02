@@ -154,3 +154,19 @@ def test_division_bodies():
     assert L.orgFor("NCAA DIII") == "National Collegiate Athletic Association"
     assert L.orgFor("NAIA") and L.orgFor("NJCAA DII")
     assert L.orgFor("Mideast") is None
+
+
+def test_logo_file_skips_wikipedia_icons_and_member_logos():
+    """SEC was pinned to Wikimedia Commons' logo (owner, 2026-11-02)."""
+    import unit_logos as L
+    sec = ["File:Commons-logo.svg", "File:Alabama Crimson Tide logo.svg",
+           "File:Southeastern Conference logo (2024).svg"]
+    assert L.logoFile(sec, "Southeastern Conference") == "File:Southeastern Conference logo (2024).svg"
+    assert L.logoFile(sec) != "File:Commons-logo.svg"
+    assert L.logoFile(["File:Commons-logo.svg"], "Southeastern Conference") is None
+    assert L.logoFile(["File:Commons-logo.svg", "File:Alabama logo.svg", "File:Auburn logo.svg"],
+                      "Southeastern Conference") is None
+    assert L.logoFile(["File:Wiktionary-logo-en-v2.svg", "File:NCAA logo.svg"],
+                      "National Collegiate Athletic Association") == "File:NCAA logo.svg"
+    assert L.logoFile(["File:Big Ten Conference logo.svg", "File:Big Ten wordmark.svg"],
+                      "Big Ten Conference") == "File:Big Ten Conference logo.svg"
