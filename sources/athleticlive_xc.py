@@ -111,8 +111,9 @@ FASTEST_PACE = 0.160          # s per metre: a 13:20 5K; faster is not a runner
 SLOWEST_MEDIAN_PACE = 0.50    # s per metre: a 41:40 5K median
 
 
-_UNIT_M = {"meter": 1.0, "meters": 1.0, "m": 1.0, "kilometer": 1000.0, "km": 1000.0,
-           "k": 1000.0, "mile": 1609.344, "miles": 1609.344, "mi": 1609.344,
+_UNIT_M = {"meter": 1.0, "meters": 1.0, "metre": 1.0, "metres": 1.0, "m": 1.0,
+           "kilometer": 1000.0, "kilometers": 1000.0, "kilometre": 1000.0, "kilometres": 1000.0,
+           "km": 1000.0, "k": 1000.0, "mile": 1609.344, "miles": 1609.344, "mi": 1609.344,
            "yard": 0.9144, "yards": 0.9144, "yd": 0.9144}
 
 
@@ -239,32 +240,7 @@ def cmdDistances(a):
     return 0
 
 
-# ★ EACH RACE ON ITS OWN DAY (owner, 2026-11-02: Mt. SAC's Saturday). A
-#   two-day meet landed every race on the first day: meet_info carried the
-#   meet's first date. An event's start ('sd') is UTC; US races run between
-#   about 05:00 and 23:00 local, which is UTC - 4 to UTC - 10, so UTC -
-#   LOCAL_SHIFT_H names the local day for all of them. Kept inside the
-#   meet's own dates.
-LOCAL_SHIFT_H = 7
-
-
-def eventDay(ev, alive):
-    """The local date (ISO) a race was run, or None. Pure."""
-    sd = str(ev.get("start") or "")
-    if len(sd) < 13:
-        return None
-    try:
-        t = datetime.datetime.fromisoformat(sd.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    day = (t - datetime.timedelta(hours=LOCAL_SHIFT_H)).date().isoformat()
-    first = str(alive.get("meet_date") or "")[:10]
-    last = str(alive.get("date_end") or first)[:10]
-    if first and day < first:
-        return first
-    if last and day > last:
-        return last
-    return day
+eventDay = A.eventDay           # shared with the track lander (athleticlive.py)
 
 
 # ★ THE RACES ATHLETIC.NET DOES NOT HAVE (owner, 2026-11-02: Mt. SAC's

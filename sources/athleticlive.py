@@ -457,7 +457,35 @@ def resultRows(doc, ev):
     return results, athletes, skipped
 
 
-def buildSave(meet_info, events, slots, blobs, own_div_ids=None):
+# ★ EACH RACE ON ITS OWN DAY (owner, 2026-11-02: Mt. SAC's Saturday; track too, parser review). A
+#   two-day meet landed every race on the first day: meet_info carried the
+#   meet's first date. An event's start ('sd') is UTC; US races run between
+#   about 05:00 and 23:00 local, which is UTC - 4 to UTC - 10, so UTC -
+#   LOCAL_SHIFT_H names the local day for all of them. Kept inside the
+#   meet's own dates.
+LOCAL_SHIFT_H = 7
+
+
+def eventDay(ev, alive):
+    """The local date (ISO) a race was run, or None. Pure."""
+    sd = str(ev.get("start") or "")
+    if len(sd) < 13:
+        return None
+    try:
+        t = datetime.datetime.fromisoformat(sd.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    day = (t - datetime.timedelta(hours=LOCAL_SHIFT_H)).date().isoformat()
+    first = str(alive.get("meet_date") or "")[:10]
+    last = str(alive.get("date_end") or first)[:10]
+    if first and day < first:
+        return first
+    if last and day > last:
+        return last
+    return day
+
+
+def buildSave(meet_info, events, slots, blobs, own_div_ids=None, alive=None):
     """Everything _saveTFMeet takes, for the events that have a slot.
     blobs: {alive event id: blob doc}. -> (meets_to_save, athletes,
     results_to_save, Counter of what was left out and why)."""
@@ -484,8 +512,10 @@ def buildSave(meet_info, events, slots, blobs, own_div_ids=None):
             meets_to_save.append((meet_info, slot.div_id, slot.event_id, slot.event_short,
                                   dist, slot.division))
         athletes.extend(ath)
+        day = eventDay(ev, alive) if alive else None
+        ev_info = dict(meet_info, MeetDate=day) if day else meet_info
         for r in rows:
-            results_to_save.append((r, meet_info, slot.div_id, slot.event_id,
+            results_to_save.append((r, ev_info, slot.div_id, slot.event_id,
                                     slot.event_short, is_relay, r.get("TeamName") or "Unknown",
                                     is_field))
     return meets_to_save, athletes, results_to_save, left
@@ -967,7 +997,7 @@ def plan(meet_id, alive, events, blobs, slots, meta, catalogue=None):
         matched = {ev["id"]: ownSlot(ev, divs.get(ev["id"]), cat) for ev in events}
         why, own = {}, True
     meet_info = meta or metaFromAlive(alive, meet_id)
-    m2s, ath, res, left = buildSave(meet_info, events, matched, blobs)
+    m2s, ath, res, left = buildSave(meet_info, events, matched, blobs, alive=alive)
     for ev in events:
         if ev["id"] in matched and ev["id"] not in blobs:
             why[ev["id"]] = "results document missing"

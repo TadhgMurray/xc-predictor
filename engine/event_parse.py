@@ -118,7 +118,7 @@ _BARE_YARD_ONLY = frozenset({660, 880, 1320, 1760})
 #       2000m bucket, because 2007 is within the audit's +/-12m tolerance.
 _REJECT_WORDS = re.compile(
     r"hurdle|relay|medley|\bdmr\b|\bsmr\b|\bwalk\b|\bracewalk\b|"
-    r"sprintmed|distmed|midmed|med\d|swedish|shuttle|\brw\b|"
+    r"sprintmed|distmed|midmed|med\d|swedish|shuttle|\brw\b|\d\s?m?rw\b|"   # '1500mRW' glued (2026-11-02)
     r"steeple|"                       # <-- ADD THIS LINE
     r"\d+(?:st|nd|rd|th)\b|"
     r"\bshot\b|\bdiscus\b|\bjavelin\b|\bhammer\b|\bweight\b|\bvault\b|"

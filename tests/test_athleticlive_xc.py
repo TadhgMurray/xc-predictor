@@ -178,3 +178,21 @@ def test_document_distance_beats_a_bare_label():
     doc = _load("event_2906134.json")
     p = X.plan(276933, ALIVE, [ev], {ev["id"]: doc})
     assert round(p["meets_to_save"][0][3]["Meters"]) == 2736
+
+
+def test_track_rows_are_dated_by_their_race_too():
+    alive = {"meet_date": "2026-05-08", "date_end": "2026-05-09"}
+    ev = {"id": 1, "kind": "ind", "field": False, "round": None, "gender": "M",
+          "start": "2026-05-09T16:00:00Z"}
+
+    class _S:
+        div_id, event_id, event_short, division = 7, 3, "1600", "Varsity"
+    doc = _load("event_2906134.json")
+    m2s, _a, res, _l = A.buildSave({"MeetDate": "2026-05-08"}, [ev], {1: _S()}, {1: doc}, alive=alive)
+    assert res and all(t[1]["MeetDate"] == "2026-05-09" for t in res)
+    assert X.eventDay is A.eventDay
+
+
+def test_distance_units_spelled_out():
+    assert X.docMeters({"d": "8", "me": "kilometres"}) == 8000.0
+    assert X.docMeters({"d": "5000", "me": "metres"}) == 5000.0
