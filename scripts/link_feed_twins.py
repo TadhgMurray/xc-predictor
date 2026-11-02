@@ -185,6 +185,24 @@ def sameTime(a, b):
     return up(a, 1) == up(b, 1)
 
 
+# ★ THE VETO ALLOWS WHAT TWO FEEDS DISAGREE BY (owner, 2026-11-02: "that
+#   never different time one seems like it could backfire"). One race's time
+#   on two feeds can differ: chip against gun, a hand-timed correction, a
+#   rounding. sameTime stays the bar for PAIRING two rows (it is the
+#   evidence); the veto -- "two times on one day is two runners" -- only
+#   fires past VETO_SECONDS or VETO_SHARE, whichever is bigger.
+VETO_SECONDS = 3.0
+VETO_SHARE = 0.01
+
+
+def closeTime(a, b):
+    """Two times the veto reads as one run. Pure."""
+    if a is None or b is None:
+        return True
+    a, b = float(a), float(b)
+    return sameTime(a, b) or abs(a - b) <= max(VETO_SECONDS, VETO_SHARE * min(a, b))
+
+
 def _sameTimeSql(a, b):
     """sameTime in SQL, for real columns a and b."""
     wa = f"({a} = trunc({a}))"
@@ -244,6 +262,11 @@ def namesAgree(a, b):
     if a == b:
         return True
     pa, pb = a.split(), b.split()
+    # ★ A MIDDLE NAME ONE FEED KEEPS (2026-11-02): "Mary Kate Smith" and
+    #   "Mary Smith" -- the first and last parts agree (the first by
+    #   nickname too) and the longer name only adds parts in between
+    if len(pa) != len(pb) and min(len(pa), len(pb)) >= 2:
+        return pa[-1] == pb[-1] and sameFirstName(pa[0], pb[0])
     if len(pa) != len(pb):
         return False
     diff = [(i, x, y) for i, (x, y) in enumerate(zip(pa, pb)) if x != y]
@@ -277,7 +300,7 @@ def decideGroup(members):
         if len({p for p, _t in xs}) < 2:
             continue
         ts = [t for _p, t in xs if t is not None]
-        if any(not sameTime(ts[0], t) for t in ts[1:]):
+        if any(not closeTime(ts[0], t) for t in ts[1:]):
             return Verdict(None, (), "two times on one day: two runners")
 
     careers = [m for m in members if m.kind == CAREER]
@@ -406,6 +429,15 @@ def _normNameSql(col):
     return f"NULLIF(regexp_replace({n}, ' +', ' ', 'g'), '')"
 
 
+_FIRST_LAST_INSERT = """
+    INSERT INTO {t} (person_id, ay, nm, sw)
+    SELECT DISTINCT person_id, ay,
+           split_part(nm, ' ', 1) || ' ' || reverse(split_part(reverse(nm), ' ', 1)), sw
+    FROM   {t}
+    WHERE  array_length(string_to_array(nm, ' '), 1) >= 3
+"""
+
+
 def namePairs(cur, since):
     """[(None, minted pid, None, anet pid, 'name', None, None)]: one-partner
     same-name, same-school, same-season pairs (see above). Temp tables only."""
@@ -437,6 +469,9 @@ def namePairs(cur, since):
     cur.execute("DROP TABLE IF EXISTS fn_nick")
     cur.execute("CREATE TEMP TABLE fn_nick (f text, v text)")
     psycopg2.extras.execute_values(cur, "INSERT INTO fn_nick VALUES %s", nicknamePairs())
+    # ...and a three-part name also stands as its first and last parts (a
+    #   middle name one feed keeps), before the nickname forms are added
+    cur.execute(_FIRST_LAST_INSERT.format(t="fn_t"))
     cur.execute("""INSERT INTO fn_t (person_id, ay, nm, sw)
                    SELECT DISTINCT t.person_id, t.ay,
                           n.v || substr(t.nm, length(split_part(t.nm, ' ', 1)) + 1), t.sw
@@ -461,14 +496,17 @@ def namePairs(cur, since):
           --   person is a collegian; an anet row graded 9-12 is not.
           AND  COALESCE(btrim(r.grade), '') !~ '^(9|10|11|12)$'
     """, {"lo": MINT_LO, "since": since})
-    cur.execute("DELETE FROM fn_a WHERE nm IS NULL OR cardinality(sw) = 0 "
-                "OR nm NOT IN (SELECT nm FROM fn_t)")
+    cur.execute("DELETE FROM fn_a WHERE nm IS NULL OR cardinality(sw) = 0")
+    cur.execute(_FIRST_LAST_INSERT.format(t="fn_a"))
+    cur.execute("DELETE FROM fn_a WHERE nm NOT IN (SELECT nm FROM fn_t)")
     cur.execute("CREATE INDEX ON fn_a (nm, ay)")
     cur.execute("ANALYZE fn_a")
     cur.execute("""
         WITH c AS (
             SELECT DISTINCT t.person_id AS t_pid, a.person_id AS a_pid
-            FROM   fn_t t JOIN fn_a a ON a.nm = t.nm AND a.ay = t.ay
+            -- ★ THE SEASON EITHER SIDE TOO (2026-11-02): a runner's two
+            --   feeds can cover different years of one college career
+            FROM   fn_t t JOIN fn_a a ON a.nm = t.nm AND a.ay BETWEEN t.ay - 1 AND t.ay + 1
             WHERE  t.sw <@ a.sw OR a.sw <@ t.sw)
         SELECT t_pid, a_pid FROM (
             SELECT c.*, count(*) OVER (PARTITION BY t_pid) AS nt,

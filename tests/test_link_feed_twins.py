@@ -104,7 +104,8 @@ def test_names_agree_only_on_one_letter_in_one_long_part():
     assert not L.namesAgree("jon smith", "jan smith")           # short part
     assert not L.namesAgree("anna smith", "anne smith")
     assert not L.namesAgree("allen bonnessen", "alan bonnesen")  # two parts
-    assert not L.namesAgree("allen bonnessen", "allen b bonnessen")
+    # 2026-11-02: a middle name or initial one feed keeps now agrees
+    assert L.namesAgree("allen bonnessen", "allen b bonnessen")
 
 
 def test_sexes_that_disagree_are_refused():
@@ -322,3 +323,19 @@ def test_a_nickname_is_the_same_runner():
     assert L.namesAgree("will burch", "william burch")
     assert not L.namesAgree("chris hovet", "christopher smith")
     assert not L.namesAgree("liam burch", "william burch")
+
+
+def test_the_veto_allows_what_two_feeds_disagree_by():
+    """2026-11-02: chip against gun, hand timing, rounding are one run;
+    a different runner is far more than 1% away."""
+    import link_feed_twins as L
+    assert L.closeTime(1512.4, 1514.9)          # 2.5 s
+    assert L.closeTime(1800.0, 1815.0)          # 15 s, under 1% of 30 min
+    assert not L.closeTime(1512.0, 1560.0)      # 48 s: two runners
+
+
+def test_a_middle_name_one_feed_keeps():
+    import link_feed_twins as L
+    assert L.namesAgree("mary kate smith", "mary smith")
+    assert L.namesAgree("christopher james hovet", "chris hovet")
+    assert not L.namesAgree("mary kate smith", "mary jones")
