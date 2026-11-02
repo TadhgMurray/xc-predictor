@@ -79,8 +79,9 @@ LEAGUE = re.compile(r"conference|league|\bcity\b|county|\bcyo\b|\bisd\b|wpial", 
 #   BIIF, BCL, GFMSL, Bi-State MS, FCPS middle schools, MSHSL and Shenandoah
 #   sections, a Maine regional -- open meets, every team of the area). Only
 #   a name that says it is a level you qualify for passes at the ordinary
-#   bar; any other needs the league bar.
-QUALIFIED = re.compile(r"\bstate\b|federation|interscholastic|junior olympic|\bnational|"
+#   bar; any other needs the league bar. ! "Bi-State" / "Tri-State" are
+#   leagues, not a state meet (third review: Bi-State MS).
+QUALIFIED = re.compile(r"(?<![-\w])state\b|federation|interscholastic|junior olympic|\bnational|"
                        r"\bnaia\b|\bnjcaa\b|\bcif\b|uil region|3c2a", re.I)
 MIN_ROUNDS, LEAGUE_ROUNDS, MIN_OWN = 2, 4, 0.55
 

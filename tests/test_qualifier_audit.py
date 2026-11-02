@@ -70,3 +70,5 @@ def test_a_name_that_is_not_a_qualified_level_needs_the_league_bar():
     assert Q.keepRoute(r("UIL Region IV Championship XC25", n=7, f=0.71, p=0.82))
     assert Q.keepRoute(r("2025 3C2A SoCal XC Championships", n=3, f=0.77, p=0.73))
     assert not Q.keepRoute(r("2025 European XC Championships", n=8, f=0.91, p=0.9))
+    assert not Q.keepRoute(r("Bi-State MS 2025 XC Championship", n=3, f=0.83, p=0.69))
+    assert Q.keepRoute(r("New Mexico Cross Country State Championships", n=3, f=0.7, p=0.9))
