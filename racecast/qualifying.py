@@ -126,6 +126,18 @@ def pickRace(races):
 #  the engine (pure)
 # ------------------------------------------------------------------ #
 
+# ★ UNATTACHED IS NOT A TEAM (scripts/qualifying_check.py, NXN 2025: an
+#   NXR's "Unattached IL", "UNA-CO", "UNA-UT" each had five runners and were
+#   sent on as teams). meet_compile.isTeam, and the UNA-<state> spelling it
+#   does not know.
+_UNATTACHED = re.compile(r"^\s*una\b|^\s*una-|unattach|independent|\bunaff", re.I)
+
+
+def isTeam(school):
+    from meet_compile import isTeam as compiledTeam
+    return compiledTeam(school) and not _UNATTACHED.search(school or "")
+
+
 def teamOrder(rows):
     """Schools with five or more finishers, best first by the sum of their
     top five places among such schools' runners. rows: [(pid, school,
@@ -134,7 +146,7 @@ def teamOrder(rows):
     for r in rows:
         if r[1]:
             by[r[1]].append(r)
-    teams = {s for s, v in by.items() if len(v) >= 5}
+    teams = {s for s, v in by.items() if len(v) >= 5 and isTeam(s)}
     place, pts = 0, collections.defaultdict(list)
     for r in sorted((r for r in rows if r[1] in teams), key=lambda r: r[2]):
         place += 1
