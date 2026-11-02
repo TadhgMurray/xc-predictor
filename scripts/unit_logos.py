@@ -105,26 +105,54 @@ def matches(name, title, intro=""):
     return bool(a) and a == b
 
 
+def logoFile(files):
+    """The article's LOGO among its image files, or None. Pure.
+
+    ★ NOT THE PAGE IMAGE (owner's --write run, 2026-11-02: A-10 was pinned to
+      "Atlantic_10_Conference_map.svg"). A conference article's lead image
+      is as often a map of its members as its mark; the file NAMED a logo is
+      the mark. Maps, locations and member charts are never taken."""
+    best = None
+    for f in files or []:
+        low = str(f).lower()
+        if any(w in low for w in ("map", "location", "members", "locator", "flag")):
+            continue
+        if "logo" in low or "wordmark" in low:
+            if best is None or ("wordmark" in str(best).lower() and "logo" in low):
+                best = f
+    return best
+
+
 def wikiLogo(name, pause=1.0):
-    """(article title, image url) for a conference name, or (None, why)."""
+    """(article title, logo url, why) for a conference name: url None and
+    why set when there is none to take."""
     found = _get({"action": "query", "list": "search", "srlimit": 5,
                   "srsearch": f"{name} conference"})
     time.sleep(pause)
     titles = [h["title"] for h in (found.get("query") or {}).get("search", [])
               if looksLikeConference(h.get("title"))]
     if not titles:
-        return None, "no conference article"
+        return None, None, "no conference article"
     page = _get({"action": "query", "titles": "|".join(titles[:5]),
-                 "prop": "pageimages|extracts", "piprop": "thumbnail", "pithumbsize": 512,
+                 "prop": "extracts|images", "imlimit": 50,
                  "exintro": 1, "explaintext": 1, "exchars": 600})
     time.sleep(pause)
     by_title = {p.get("title"): p for p in (page.get("query") or {}).get("pages") or []}
     for t in titles[:5]:
         p = by_title.get(t) or {}
-        if matches(name, t, p.get("extract") or ""):
-            thumb = (p.get("thumbnail") or {}).get("source")
-            return (t, thumb) if thumb else (t, None)
-    return None, f"no article matches (closest: {titles[0]})"
+        if not matches(name, t, p.get("extract") or ""):
+            continue
+        f = logoFile([i.get("title") for i in p.get("images") or []])
+        if not f:
+            return t, None, "the article has no logo file"
+        info = _get({"action": "query", "titles": f, "prop": "imageinfo",
+                     "iiprop": "url", "iiurlwidth": 512})
+        time.sleep(pause)
+        pages = (info.get("query") or {}).get("pages") or []
+        ii = ((pages[0].get("imageinfo") or [{}])[0]) if pages else {}
+        url = ii.get("thumburl") or ii.get("url")
+        return (t, url, None) if url else (t, None, "no image url")
+    return None, None, f"no article matches (closest: {titles[0]})"
 
 
 def collegeConferences(cur, limit=None):
@@ -177,16 +205,19 @@ def main():
                 if not a.redo and haveLogo(cur, key):
                     continue
                 try:
-                    title, url = wikiLogo(name)
+                    title, url, why = wikiLogo(name)
                 except Exception as exc:                  # noqa: BLE001
                     print(f"  {name:<34} lookup failed ({type(exc).__name__})")
                     continue
                 if not url:
-                    print(f"  {name:<34} -- {title or 'nothing'}: no logo found")
+                    print(f"  {name:<34} -- {title or 'nothing'}: {why}")
                     continue
                 print(f"  {name:<34} -> {title}")
                 if a.write:
-                    S.setLogo(cur, manners, key, "", url, level="", write=True)
+                    try:
+                        S.setLogo(cur, manners, key, "", url, level="", write=True)
+                    except Exception as exc:              # noqa: BLE001 -- one bad image, not the run
+                        print(f"  {name:<34} not stored ({type(exc).__name__}: {exc})")
         if a.write:
             conn.commit()
             print("[unit logos] written; restart the site to show them")

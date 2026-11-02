@@ -92,3 +92,14 @@ def test_far_names():
     assert B.farName("harkness memorial state park")
     assert not B.farName("central park") and not B.farName("riverside park")
     assert not B.farName("veterans memorial park") and not B.farName("lincoln high school")
+
+
+def test_a_town_is_not_a_venue():
+    import build_course_canonical as B
+    from course_identity import normalizeCourseName
+    from course_name_rules import expandAbbreviations
+    for raw in ("Yankton, South Dakota", "Knoxville, TN", "BETHANY, WV",
+                "[www.finishedresults.com](https://www.finishedresults.com)"):
+        assert not B.farName(expandAbbreviations(normalizeCourseName(raw))), raw
+    assert B.farName(expandAbbreviations(normalizeCourseName("Harkness Memorial State Park")))
+    assert B.farName(expandAbbreviations(normalizeCourseName("Norris Dam State Park")))

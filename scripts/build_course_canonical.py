@@ -245,12 +245,40 @@ def distinctive(canonical):
 _SCHOOL_WORDS = frozenset({"high", "school", "middle", "elementary", "academy", "junior", "prep"})
 
 
+_STATES = ("alabama alaska arizona arkansas california colorado connecticut delaware florida "
+           "georgia hawaii idaho illinois indiana iowa kansas kentucky louisiana maine maryland "
+           "massachusetts michigan minnesota mississippi missouri montana nebraska nevada ohio "
+           "oklahoma oregon pennsylvania tennessee texas utah vermont virginia washington "
+           "wisconsin wyoming").split()
+_STATE_TAILS = set(_STATES) | {"hampshire", "jersey", "mexico", "york", "carolina", "dakota",
+                               "island"} | {
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id", "il", "in", "ia",
+    "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms", "mo", "mt", "ne", "nv", "nh", "nj",
+    "nm", "ny", "nc", "nd", "oh", "ok", "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut", "vt",
+    "va", "wa", "wv", "wi", "wy", "guam"}
+
+
+def townName(canonical):
+    """A name that is a PLACE, not a venue -- "Yankton, South Dakota",
+    "Knoxville, TN", "Bethany WV", a results-site link -- names every course
+    in that town, so it never gets the far radius (owner's merge list,
+    2026-11-02). Pure."""
+    words = str(canonical or "").split()
+    if not words:
+        return True
+    if any(w.startswith(("www", "http")) or ".com" in w for w in words):
+        return True
+    return words[-1] in _STATE_TAILS
+
+
 def farName(canonical):
     """Does this name pick out ONE place, so a geocode a town away is still
     it? Two distinctive words ("Lehigh Parkway"), or a long non-school name
     with one ("Harkness Memorial State Park"). "Central Park", "Riverside
     Park", "Lincoln High School" do not. Pure."""
     words = str(canonical or "").split()
+    if townName(canonical):
+        return False
     d = distinctive(canonical)
     if len(d) >= DISTINCTIVE_MIN:
         return not (_SCHOOL_WORDS & set(words))

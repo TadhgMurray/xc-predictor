@@ -138,3 +138,11 @@ def test_logo_match_second_dry_run():
     assert L.matches("SEC", "Southeastern Conference", "The Southeastern Conference (SEC) is")
     assert L.matches("PSAC", "Pennsylvania State Athletic Conference", "The Pennsylvania State Athletic Conference (PSAC) is")
     assert not L.matches("MIAC", "1962 Minnesota Intercollegiate Athletic Conference football season", "(MIAC)")
+
+
+def test_the_logo_file_not_the_map():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import unit_logos as L
+    assert L.logoFile(["File:Atlantic 10 Conference map.svg", "File:Atlantic 10 Conference logo.svg"]) \
+        == "File:Atlantic 10 Conference logo.svg"
+    assert L.logoFile(["File:Atlantic 10 Conference map.svg"]) is None
