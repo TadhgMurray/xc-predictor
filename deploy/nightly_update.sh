@@ -101,7 +101,12 @@ scrape() {
   name="$1"; shift
   if [ "$DRY" -eq 1 ]; then echo "  $name : timeout ${SCRAPE_MIN}m $*"; return 0; fi
   t0=$(date +%s)
-  NO_VPN=1 timeout "${SCRAPE_MIN}m" xvfb-run -a "$@" > "$LOGDIR/$name.log" 2>&1
+  # ! 9>&- : THE SCRAPER DOES NOT INHERIT THE PIPELINE LOCK (owner's server,
+  #   2026-11-02: an Xvfb left behind when systemd killed the Oct 31 night
+  #   held .pipeline.lock for a day and a half, and the full pipeline would
+  #   not start). This shell holds the lock for the night; a leftover
+  #   virtual screen must not.
+  NO_VPN=1 timeout "${SCRAPE_MIN}m" xvfb-run -a "$@" > "$LOGDIR/$name.log" 2>&1 9>&-
   rc=$?
   el=$(( $(date +%s) - t0 ))
   # ! run in the background: FAILED cannot be set from here, so the
