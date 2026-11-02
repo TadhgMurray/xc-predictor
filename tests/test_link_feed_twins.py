@@ -311,3 +311,14 @@ def test_same_name_school_and_season_without_a_shared_run_on_postgres():
         cur.execute("DROP SCHEMA IF EXISTS feed_twin_test CASCADE")
         conn.commit()
         conn.close()
+
+
+def test_a_nickname_is_the_same_runner():
+    """2026-11-02: tfrrs's Chris Hovet and athletic.net's Christopher
+    Hovet, Tufts. The first names are one nickname group; the surname must
+    still match."""
+    import link_feed_twins as L
+    assert L.namesAgree("christopher hovet", "chris hovet")
+    assert L.namesAgree("will burch", "william burch")
+    assert not L.namesAgree("chris hovet", "christopher smith")
+    assert not L.namesAgree("liam burch", "william burch")

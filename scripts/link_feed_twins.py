@@ -107,6 +107,7 @@ because athletic.net and tfrrs each carried her races, becomes one person.
   XCP_LINK_FEED_TWINS=0 turns it off. Read-only without --write / --undo.
 """
 import argparse
+import psycopg2.extras
 import datetime
 import math
 import os
@@ -234,17 +235,23 @@ def _oneEdit(a, b):
 
 
 def namesAgree(a, b):
-    """Two normName names that name one person: equal, or one long part
-    one letter apart and every other part equal."""
+    """Two normName names that name one person: equal; one long part one
+    letter apart and every other part equal; or the FIRST names one
+    nickname group (Christopher / Chris, person_name.NICKNAMES) and every
+    other part equal (owner, 2026-11-02: Christopher Hovet and Chris Hovet,
+    Tufts, never joined)."""
+    from person_name import sameFirstName
     if a == b:
         return True
     pa, pb = a.split(), b.split()
     if len(pa) != len(pb):
         return False
-    diff = [(x, y) for x, y in zip(pa, pb) if x != y]
+    diff = [(i, x, y) for i, (x, y) in enumerate(zip(pa, pb)) if x != y]
     if len(diff) != 1:
         return False
-    x, y = diff[0]
+    i, x, y = diff[0]
+    if i == 0 and sameFirstName(x, y):
+        return True
     return min(len(x), len(y)) >= NAME_TYPO_MIN and _oneEdit(x, y)
 
 
@@ -421,6 +428,20 @@ def namePairs(cur, since):
     """, {"lo": MINT_LO, "hi": MINT_HI, "since": since})
     cur.execute("DELETE FROM fn_t WHERE nm IS NULL OR position(' ' in nm) = 0 "
                 "OR cardinality(sw) = 0")
+    # ★ AND EVERY NICKNAME SPELLING OF THE FIRST NAME (2026-11-02: tfrrs's
+    #   "Chris Hovet" and athletic.net's "Christopher Hovet", Tufts). Each
+    #   tfrrs row also stands under its first name's other forms
+    #   (person_name.NICKNAMES), so the join below meets either spelling;
+    #   the one-partner rule still refuses a name two people could wear.
+    from person_name import nicknamePairs
+    cur.execute("DROP TABLE IF EXISTS fn_nick")
+    cur.execute("CREATE TEMP TABLE fn_nick (f text, v text)")
+    psycopg2.extras.execute_values(cur, "INSERT INTO fn_nick VALUES %s", nicknamePairs())
+    cur.execute("""INSERT INTO fn_t (person_id, ay, nm, sw)
+                   SELECT DISTINCT t.person_id, t.ay,
+                          n.v || substr(t.nm, length(split_part(t.nm, ' ', 1)) + 1), t.sw
+                   FROM   fn_t t JOIN fn_nick n ON n.f = split_part(t.nm, ' ', 1)
+                   WHERE  n.v <> n.f""")
     cur.execute("CREATE INDEX ON fn_t (nm, ay)")
     cur.execute("ANALYZE fn_t")
     cur.execute(f"""

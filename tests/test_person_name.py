@@ -58,3 +58,13 @@ def test_the_linkers_fold_accents_and_keep_suffixes():
     assert LF.normName("Peña, José") == "jose pena"
     assert LF.normName("John Smith Jr") == "john smith jr" != LF.normName("John Smith")
     assert LF.normName("Madonna") is None
+
+
+def test_nicknames_are_one_first_name():
+    """2026-11-02: Christopher Hovet and Chris Hovet, Tufts, never joined."""
+    import person_name as P
+    assert P.sameFirstName("christopher", "chris")
+    assert P.sameFirstName("steve", "stephen") and P.sameFirstName("steve", "steven")
+    assert not P.sameFirstName("steven", "stephen")
+    assert not P.sameFirstName("liam", "william")
+    assert ("chris", "christopher") in P.nicknamePairs()

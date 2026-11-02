@@ -95,3 +95,69 @@ def personKeyTextSql(col, keep_suffix=False):
                f"THEN substr({col}, position(',' in {col}) + 1) || ' ' || split_part({col}, ',', 1) "
                f"ELSE {col} END")
     return _keySql(swapped, keep_suffix)
+
+
+# ★ A NICKNAME IS THE SAME FIRST NAME (owner, 2026-10-24: the Tufts time
+#   trial's "William Burch" beside tfrrs's "Will Burch"; 2026-11-02: "the
+#   linker is too weak ... Christopher Hovet on Tufts doesn't get linked to
+#   Chris Hovet on Tufts"). The common short forms only; a name that is a
+#   name in its own right (Liam, Jack) is not folded in. A short form can sit
+#   in two groups (Steve: Steven and Stephen; Alex: Alexander and Alexandra);
+#   two first names agree when any group holds both.
+NICKNAMES = (
+    ("william", "will", "bill", "billy", "willy"), ("robert", "rob", "bob", "bobby", "robbie"),
+    ("james", "jim", "jimmy", "jamie"), ("michael", "mike", "mikey"), ("christopher", "chris"),
+    ("matthew", "matt"), ("nicholas", "nick", "nicky"), ("benjamin", "ben", "benny"),
+    ("alexander", "alex"), ("daniel", "dan", "danny"), ("joseph", "joe", "joey"),
+    ("thomas", "tom", "tommy"), ("andrew", "andy", "drew"), ("jonathan", "jon"),
+    ("samuel", "sam", "sammy"), ("zachary", "zach", "zack"), ("joshua", "josh"),
+    ("anthony", "tony"), ("edward", "ed", "eddie"), ("richard", "rick", "rich", "ricky"),
+    ("timothy", "tim", "timmy"), ("patrick", "pat"), ("steven", "steve"), ("stephen", "steve"),
+    ("jacob", "jake"), ("nathaniel", "nate", "nat"), ("nathan", "nate"), ("gregory", "greg"),
+    ("kenneth", "ken", "kenny"), ("charles", "charlie", "chuck"), ("peter", "pete"),
+    ("theodore", "theo", "ted"), ("gabriel", "gabe"), ("dominic", "dom"), ("maxwell", "max"),
+    ("elizabeth", "liz", "lizzy", "beth"), ("katherine", "kate", "katie", "kat"),
+    ("catherine", "cate", "cathy", "cat"), ("kathryn", "kate", "katie"), ("margaret", "maggie", "meg"),
+    ("jennifer", "jen", "jenny"), ("rebecca", "becca", "becky"), ("abigail", "abby"),
+    ("alexandra", "alex", "lexi"), ("samantha", "sam", "sammy"), ("victoria", "tori"),
+    ("madeline", "maddie", "maddy"), ("madeleine", "maddie"), ("isabella", "izzy", "bella"),
+    ("isabel", "izzy"), ("jessica", "jess", "jessie"), ("olivia", "liv"), ("natalie", "nat"),
+)
+
+
+def nameVariants(key):
+    """The other full name keys a name key could be written as (its first
+    name swapped within each group it is in); empty when none. Pure."""
+    if not key:
+        return set()
+    first, _sp, rest = key.partition(" ")
+    if not rest:
+        return set()
+    out = set()
+    for grp in NICKNAMES:
+        if first in grp:
+            out.update(f"{g} {rest}" for g in grp if g != first)
+    return out
+
+
+
+
+def sameFirstName(a, b):
+    """Two first names (lowercased) that name one person: equal, or both in
+    one nickname group. Pure."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return any(a in g and b in g for g in NICKNAMES)
+
+
+def nicknamePairs():
+    """[(name, variant)] for every pair within a group, the name itself
+    included -- the SQL side's join table."""
+    out = set()
+    for g in NICKNAMES:
+        for x in g:
+            for y in g:
+                out.add((x, y))
+    return sorted(out)
