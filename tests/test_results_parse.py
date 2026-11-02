@@ -300,3 +300,37 @@ def test_a_pasted_tab_table_reads_without_a_page():
     out = RP.parse("results.txt", text.encode())
     assert out["format"] == "tab_table"
     assert [(r["name"], r["time_seconds"]) for r in out["rows"]] == [("Owen Castellano", 912.4)]
+
+
+def test_milesplit_raw_bare_titles_bib_column_and_xc():
+    """2026-11-02, Shore Coaches: '#  Athlete  Yr Team  Mark  H#' under bare
+    race titles read as no results at all."""
+    p = os.path.join(os.path.dirname(__file__), "fixtures", "uploads", "milesplit_raw_shore.htm")
+    out = RP.parse("fetched.htm", open(p, "rb").read())
+    assert [e["title"] for e in out["events"]] == ["Boys JV-A 5K Run", "Girls JV-A 5K Run"]
+    assert out["sport"] == "XC" and all(e["distance_m"] == 5000.0 for e in out["events"])
+    r = out["rows"][0]
+    assert (r["place"], r["name"], r["grade"], r["school"], r["time_seconds"]) == \
+        (1, "Declan Avestro", "11", "Christian Brothers Academy", 1002.31)
+    assert sum(1 for r in out["rows"] if r["event"] == 2) == 5
+
+
+def test_a_pace_column_is_not_the_time():
+    """parser review 2026-11-02: 'Finals  Avg Mile  Points' stored the pace."""
+    text = ("Event 1  Boys 5000 Meter Run CC\n"
+            "    Name                    Year School                  Finals  Avg Mile  Points\n"
+            "=================================================================================\n"
+            "  1 Smith, John               11 Sunset                18:40.12      6:01       1\n"
+            "  2 Doe, Jim                  10 Westview              18:55.40      6:06       2\n")
+    out = RP.parseHytekText(text)
+    assert [r["time_seconds"] for r in out["rows"]] == [1120.12, 1135.4]
+    assert out["rows"][0]["school"] == "Sunset"
+
+
+def test_a_nickname_in_brackets_is_a_name():
+    """2026-11-02: 'Not a name: Edmund (Ned) IRELAND'."""
+    assert RP.normName("Edmund (Ned) IRELAND") == "Edmund Ireland"
+    assert RP.normName('Mary "Molly" Jones') == "Mary Jones"
+    assert RP.normName("O'NEIL, PAT") == "Pat O'Neil"
+    assert RP.normName("John Smith III") == "John Smith III"
+    assert RP.isName(RP.normName("Edmund (Ned) IRELAND"))

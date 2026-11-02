@@ -207,6 +207,9 @@ def isXcTitle(text):
     return bool(_XC_WORDS.search(text or ""))
 
 
+_K_RUN = re.compile(r"\b\d(?:\.\d)?\s?k\s+(?:run|race)\b", re.I)
+
+
 _NOT_A_NAME = re.compile(r"[=<>(){}\[\];|\\]|https?:|www\.")
 
 
@@ -215,15 +218,37 @@ def isName(s):
     return bool(re.search(r"[A-Za-z]", s or "")) and not _NOT_A_NAME.search(s or "")
 
 
+# ★ A NICKNAME IN BRACKETS OR QUOTES (owner, 2026-11-02: "Not a name:
+#   Edmund (Ned) IRELAND"). The bracket made isName refuse the whole row.
+#   The given name is the one the feeds carry, so the nickname goes; the
+#   linker's nickname table (scripts/person_name) still pairs Ned with Edmund.
+_NICKNAME = re.compile(r"\s*(?:\([^()]{1,24}\)|\[[^\[\]]{1,24}\]|\"[^\"]{1,24}\"|“[^”]{1,24}”)\s*")
+_SUFFIX = re.compile(r"(?:[IVX]+|JR\.?|SR\.?)", re.I)
+
+
+def _capWord(w):
+    """'IRELAND' -> 'Ireland', "O'NEIL" -> "O'Neil", 'SMITH-JONES' -> 'Smith-Jones';
+    a roman-numeral suffix stays as it is."""
+    if re.fullmatch(r"[IVX]+", w):
+        return w
+    return re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), w)
+
+
 def normName(raw):
-    """'Castellano, Owen' -> 'Owen Castellano'; all-caps names title-cased;
-    record markers and stray punctuation at the ends dropped."""
+    """'Castellano, Owen' -> 'Owen Castellano'; capitals title-cased (the
+    whole name, or a surname in capitals beside a mixed-case given name:
+    'Edmund IRELAND'); a bracketed or quoted nickname dropped; record markers
+    and stray punctuation at the ends dropped."""
     s = " ".join((raw or "").replace("\t", " ").split()).strip(" *#@$!+&%^")
+    s = " ".join(_NICKNAME.sub(" ", s).split())
     if "," in s:
         last, _c, first = s.partition(",")
         s = f"{first.strip()} {last.strip()}".strip()
-    if s and s.upper() == s and any(c.isalpha() for c in s):
-        s = " ".join(w.capitalize() if not re.fullmatch(r"[IVX]+", w) else w for w in s.split())
+    if s and any(c.isalpha() for c in s):
+        whole = s.upper() == s
+        s = " ".join(_capWord(w) if (whole or (len(w) > 2 and w.isupper()
+                                                and not _SUFFIX.fullmatch(w))) else w
+                     for w in s.split())
     return s
 
 
@@ -260,25 +285,51 @@ class _Cols:
         self.n_before = (sum(1 for w in after[:res] if w in ("seed", "prelims", "prelim", "semis"))
                          if res is not None else 0)
         self.round = "P" if (res is not None and after[res] in ("prelims", "prelim")) else "F"
+        # ★ A PACE COLUMN AFTER THE RESULT ('Finals  Avg Mile  Points'): its
+        #   time token sits to the right of the finish time, and _peelRight
+        #   took the rightmost time -- 18:40.12 stored as 6:01 (parser review,
+        #   2026-11-02). 'Avg Mile' is one column, 'Pace' one, a bare 'Mile' one.
+        n = 0
+        for j, w in enumerate(after[res + 1:] if res is not None else []):
+            prev = after[res + j] if res is not None else None
+            if w in ("avg", "pace") or (w == "mile" and prev != "avg"):
+                n += 1
+        self.n_after_times = n
+        # ★ A BIB COLUMN BEFORE THE NAME (MileSplit's raw results, owner
+        #   2026-11-02: '#  Athlete  Yr Team  Mark  H#', rows '1 2723 Declan
+        #   Avestro 11 ...'): the number after the place is the bib
+        first = re.match(r"^\s*((?:(?:#|pl|pl\.|place|pos)\s+)*)(name|athlete)\b", low)
+        self.has_bib = bool(first and "#" in first.group(1).split())
 
     @staticmethod
     def isHeader(line):
         low = line.lower()
-        return (re.match(r"^\s*(name|athlete)\b", low) is not None
+        return (re.match(r"^\s*(?:(?:#|pl|pl\.|place|pos)\s+)*(name|athlete)\b", low) is not None
                 and any(w in low for w in ("school", "team", "affiliation", "club")))
 
 
-def _peelRight(s):
-    """(middle, result_token, extras) from the right end of a line, or None."""
+def _peelRight(s, skip_times=0):
+    """(middle, result_token, extras) from the right end of a line, or None.
+    `skip_times` time tokens to the right of the result are pace columns
+    (_Cols.n_after_times), passed over and kept among the extras."""
     toks = s.split()
     if len(toks) < 2:
         return None
     idx = None
-    for i in range(len(toks) - 1, max(-1, len(toks) - 7), -1):
+    paces = []
+    for i in range(len(toks) - 1, max(-1, len(toks) - 7 - skip_times), -1):
         t = toks[i]
-        if _TIME_COLON.match(t) or _TIME_DEC2.match(t) or t.upper().rstrip(".") in STATUSES:
+        if t.upper().rstrip(".") in STATUSES:
             idx = i
             break
+        if _TIME_COLON.match(t) or _TIME_DEC2.match(t):
+            if len(paces) < skip_times:
+                paces.append(i)
+                continue
+            idx = i
+            break
+    if idx is None and paces and len(paces) == skip_times and skip_times:
+        idx = None                     # no finish time left of the pace: not a row
     if idx is None:
         for i in range(len(toks) - 1, max(-1, len(toks) - 4), -1):
             if _TIME_DEC1.match(toks[i]):
@@ -287,7 +338,9 @@ def _peelRight(s):
     if idx is None or idx == 0:
         return None
     extras = toks[idx + 1:]
-    if len(extras) > 4 or not all(_EXTRA.match(e) for e in extras):
+    if len(extras) > 4 + skip_times or not all(
+            _EXTRA.match(e) or (skip_times and (_TIME_COLON.match(e) or _TIME_DEC2.match(e)))
+            for e in extras):
         return None
     # cut the middle off the ORIGINAL string so its spacing survives
     pos = len(s)
@@ -367,8 +420,12 @@ def parseHytekText(text, fmt="hytek_text"):
     skipping = False                  # team scores, relays, field events
     rnd = "F"
     events_by_key = {}
+    last_text = None                  # the last line that was not a row: a bare race title
     whole = "\n".join(lines[:80])
-    sport_hint = "XC" if isXcTitle(whole) else None
+    # ★ '5K RUN' IS CROSS COUNTRY (MileSplit's raw Shore Coaches, owner
+    #   2026-11-02): Meet Manager titles a track 5000 '5000 Meter Run'; a race
+    #   in kilometres ('5K Run', '6k Run') is a course
+    sport_hint = "XC" if (isXcTitle(whole) or _K_RUN.search(whole)) else None
 
     for i, raw in enumerate(lines, start=1):
         line = raw.rstrip()
@@ -396,6 +453,7 @@ def parseHytekText(text, fmt="hytek_text"):
                 continue
         m = _EVENT.match(line)
         if m and not _PLACE.match(line):
+            last_text = None
             title = m.group("title")
             key = (m.group("num"), " ".join(title.split()).lower())
             if key in events_by_key:            # '(Event 3 ...)' continued on a new page
@@ -413,10 +471,29 @@ def parseHytekText(text, fmt="hytek_text"):
             continue
         if _TEAM_SCORES.match(line):
             skipping = True
+            last_text = None
             continue
         if _SEP.match(line):
             continue
         if _Cols.isHeader(line):
+            # ★ A RACE TITLED WITHOUT 'Event N' (MileSplit's raw results:
+            #   'Boys JV-A 5K Run', a rule, the header): the text line just
+            #   above the header's rule is the race
+            if (last_text and (ev is None or last_text != ev.title)
+                    and (distanceOf(last_text) or genderOf(last_text))):
+                key = (None, " ".join(last_text.split()).lower())
+                if key in events_by_key:
+                    ev = events_by_key[key]
+                else:
+                    ev = _Event(len(out["events"]) + 1, str(len(out["events"]) + 1), last_text,
+                                sport_hint)
+                    events_by_key[key] = ev
+                    out["events"].append(ev)
+                    if ev.kind != "running":
+                        warn.append({"line": i, "text": f"{ev.title}: "
+                                     f"{'relays' if ev.kind == 'relay' else 'field events'} are not imported"})
+                skipping = ev.kind != "running"
+            last_text = None
             cols = _Cols(line)
             rnd = cols.round
             if ev is not None and ev.kind == "running":
@@ -430,16 +507,18 @@ def parseHytekText(text, fmt="hytek_text"):
             elif w.startswith(("final", "timed")):
                 rnd = "F"
             continue
+        pm = _PLACE.match(line)
+        if not pm and not _peelRight(line):
+            last_text = line.strip()          # a title, a team-score line, a note
         if skipping or ev is None:
             continue
-        pm = _PLACE.match(line)
         if _RECORD.match(line) and not pm:
             continue
         if _SPLITS.match(line):
             continue
         if not pm:
             # an unplaced row ('   Smith, Kim  9 Jesuit   DNF') still has a status
-            got = _peelRight(line)
+            got = _peelRight(line, cols.n_after_times if cols else 0)
             if not got or not statusOf(got[1]):
                 continue
             place, rest = None, line.strip()
@@ -447,7 +526,9 @@ def parseHytekText(text, fmt="hytek_text"):
             place_tok = pm.group("place")
             place = int(place_tok) if place_tok.isdigit() else None
             rest = pm.group("rest")
-        got = _peelRight(rest)
+            if cols and cols.has_bib:
+                rest = re.sub(r"^\d{1,6}\s+", "", rest)
+        got = _peelRight(rest, cols.n_after_times if cols else 0)
         if not got:
             if pm and re.search(r"[A-Za-z]{2}", rest):
                 warn.append({"line": i, "text": f"Could not read a time: {line.strip()[:90]}"})
