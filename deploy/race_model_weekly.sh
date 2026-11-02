@@ -102,3 +102,32 @@ echo "[race model] swapped in $MODEL (the last one is $MODEL.prev)" | tee -a "$L
 "$PY" -u scripts/range_calibration.py > "$LOGDIR/range_calibration.log" 2>&1 \
   || echo "  range calibration failed: $LOGDIR/range_calibration.log"
 say "ranges: $(tail -1 "$LOGDIR/range_calibration.log")"
+
+# ★ THE QUALIFYING ROUTES, ONCE A SEASON (owner, 2026-11-02: "you can do
+#   those"). scripts/qualifier_audit.py --write-routes learns each
+#   championship race's rounds from the last COMPLETE season and keeps only
+#   the routes that rebuild their own field (keepRoute). When the file was
+#   learned from an older season, it is learned again; a failure keeps the
+#   old file. racecast/qualifying.py reads it on its next mtime.
+ROUTES="${XCP_QUALIFY_ROUTES:-$ROOT/model/data/qualifying_routes.json}"
+SEASON=$(( M >= 8 ? Y : Y - 1 ))
+FROM_SEASON="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1])).get('from_season', 0))" \
+               "$ROUTES" 2>/dev/null || echo 0)"
+if [ "${FROM_SEASON:-0}" -lt $(( SEASON - 1 )) ]; then
+  say "qualifying routes are from ${FROM_SEASON:-none}: learning them from $(( SEASON - 1 )) (about 20 min)"
+  exec 9>"$ROOT/.pipeline.lock"
+  if flock -w $(( WAIT_MIN * 60 )) 9; then
+    if "$PY" -u scripts/qualifier_audit.py --season "$SEASON" --max-races 3000 \
+         --write-routes "$ROUTES.new" > "$LOGDIR/qualifier_routes.log" 2>&1; then
+      mv -f "$ROUTES.new" "$ROUTES"
+      say "routes: $(grep -m1 '^wrote' "$LOGDIR/qualifier_routes.log")"
+    else
+      rm -f "$ROUTES.new"
+      say "qualifying routes failed, the old file kept: $LOGDIR/qualifier_routes.log"
+    fi
+    flock -u 9
+  else
+    say "the pipeline held the lock: qualifying routes next week"
+  fi
+  exec 9>&-
+fi
