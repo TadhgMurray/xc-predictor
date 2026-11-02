@@ -252,6 +252,7 @@ def parseSummary(summary):
             "field": v.get("peg") == "Field" or "Field" in (v.get("egs") or []),
             "xc": bool(v.get("xc")),
             "order": v.get("nu"),
+            "start": v.get("sd"),          # UTC start, '2026-10-24T14:20:00Z'
         })
     out.sort(key=lambda e: (e["order"] is None, e["order"] or 0, e["id"]))
     return out

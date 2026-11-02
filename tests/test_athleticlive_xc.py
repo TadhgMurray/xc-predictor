@@ -91,7 +91,10 @@ def test_athletic_net_short_of_athleticlive_is_requeued():
 def test_a_label_with_no_distance_takes_the_meets():
     evs = X.xcEvents(_load("summary_76201.json"))
     ev = dict(evs[0], ab="", name="Fastest JV Boys")
-    p = X.plan(276933, ALIVE, [ev, evs[1]], {ev["id"]: _load("event_2906134.json")})
+    doc = _load("event_2906134.json")
+    for k in ("d", "me", "mt"):
+        doc.get("_source", doc).pop(k, None)              # a document stating none
+    p = X.plan(276933, ALIVE, [ev, evs[1]], {ev["id"]: doc})
     assert round(p["meets_to_save"][0][3]["Meters"]) == round(X.metersOf(evs[1]["ab"] or evs[1]["name"]))
 
 
@@ -117,3 +120,61 @@ def test_times_must_fit_the_distance():
 def test_nightly_gives_distances_before_normalising():
     src = open(os.path.join(ROOT, "deploy", "nightly_update.sh"), encoding="utf-8").read()
     assert src.index("athleticlive_xc distances --write") < src.index("step 05_normalize_new")
+
+
+def test_each_race_on_its_own_day():
+    """2026-11-02, Mt. SAC: Friday and Saturday races, all landed on Friday."""
+    alive = {"meet_date": "2026-10-23", "date_end": "2026-10-24"}
+    assert X.eventDay({"start": "2026-10-24T00:51:00Z"}, alive) == "2026-10-23"   # 5:51 pm PDT
+    assert X.eventDay({"start": "2026-10-24T14:20:00Z"}, alive) == "2026-10-24"   # 7:20 am PDT
+    assert X.eventDay({"start": "2026-10-26T14:20:00Z"}, alive) == "2026-10-24"   # kept in range
+    assert X.eventDay({}, alive) is None
+
+
+def test_plan_dates_each_race_and_takes_anets_venue():
+    evs = X.xcEvents(_load("summary_76201.json"))
+    ev = dict(evs[0], start="2026-08-18T15:00:00Z")
+    alive = dict(ALIVE, date_end="2026-08-18")
+    meta = {"Location": {"ID": 9, "Name": "Anet Park", "Lat": 1.0, "Long": 2.0,
+                         "State": "IL", "Indoor": False}}
+    p = X.plan(276933, alive, [ev], {ev["id"]: _load("event_2906134.json")}, meta=meta)
+    mi = p["meets_to_save"][0][0]
+    assert mi["MeetDate"] == "2026-08-18" and mi["Location"]["Name"] == "Anet Park"
+    assert p["results_to_save"][0][1]["MeetDate"] == "2026-08-18"
+
+
+def test_races_athletic_net_has_are_not_landed_again():
+    evs = X.xcEvents(_load("summary_76201.json"))
+    p = X.plan(276933, ALIVE, evs[:1], {2906134: _load("event_2906134.json")})
+    ids = {int(t[0]["AthleteID"]) for t in p["results_to_save"] if t[0].get("AthleteID")}
+    assert X.dropCovered(p, set()) == 0 and p["results_to_save"]
+    assert X.dropCovered(p, ids) == 1
+    assert not p["results_to_save"] and not p["meets_to_save"]
+
+
+def test_athletic_nets_later_copy_wins():
+    assert X.anetCopied({1, 2, 3, 4, 5, 6, 7, 8, 9, 10}, set(range(1, 10)))
+    assert not X.anetCopied({1, 2, 3, 4}, {1, 2})
+    assert not X.anetCopied(set(), {1})
+
+
+def test_scrape_local_dedupes_after_recheck():
+    src = open(os.path.join(ROOT, "deploy", "scrape_local.sh"), encoding="utf-8").read()
+    assert src.index("athleticlive_xc recheck") < src.index("athleticlive_xc dedupe") \
+        < src.index("athleticlive cover")
+
+
+def test_distance_from_the_results_document():
+    assert X.docMeters({"_source": {"d": "5000", "me": "meter", "mt": "5000"}}) == 5000.0
+    assert X.docMeters({"d": "1.7", "me": "mile"}) == 2735.9
+    assert round(X.docMeters(_load("event_2906134.json"))) == 2736
+    assert X.docMeters({"mt": "4000"}) == 4000.0
+    assert X.docMeters({"d": "", "me": "meter"}) is None and X.docMeters(None) is None
+
+
+def test_document_distance_beats_a_bare_label():
+    evs = X.xcEvents(_load("summary_76201.json"))
+    ev = dict(evs[0], ab="", name="Fastest JV Boys")
+    doc = _load("event_2906134.json")
+    p = X.plan(276933, ALIVE, [ev], {ev["id"]: doc})
+    assert round(p["meets_to_save"][0][3]["Meters"]) == 2736

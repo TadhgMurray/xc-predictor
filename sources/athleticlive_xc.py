@@ -94,9 +94,10 @@ def mergedEvents(keysets):
 
 
 # ★ A RACE LABEL WITH NO DISTANCE (owner, 2026-11-02: JV Season Finale,
-#   "Fastest JV Boys", no ratings). The distance comes from the race's own
-#   label ('5K', '1.7 Mile'); a label that names none landed with no
+#   "Fastest JV Boys", no ratings). The distance came from the race's label
+#   alone ('5K', '1.7 Mile'); a label that names none landed with no
 #   distance, and a race with no distance is never normalised or rated.
+#   0. the results document's own distance (docMeters) -- nearly always there
 #   1. the meet's other races: when every label that names a distance names
 #      the SAME one (meetDistance / siblingDistance)
 #   2. else the venue's: the distance DOMINANT_SHARE of its meets at the
@@ -108,6 +109,35 @@ DOMINANT_SHARE = 0.8
 VENUE_MIN_MEETS = 3
 FASTEST_PACE = 0.160          # s per metre: a 13:20 5K; faster is not a runner
 SLOWEST_MEDIAN_PACE = 0.50    # s per metre: a 41:40 5K median
+
+
+_UNIT_M = {"meter": 1.0, "meters": 1.0, "m": 1.0, "kilometer": 1000.0, "km": 1000.0,
+           "k": 1000.0, "mile": 1609.344, "miles": 1609.344, "mi": 1609.344,
+           "yard": 0.9144, "yards": 0.9144, "yd": 0.9144}
+
+
+def docMeters(doc):
+    """The race's distance from its own results document: 'd' in the unit
+    'me', else 'mt' (metres, rounded down). None when it states none.
+
+    ★ THE DOCUMENT STATES IT (owner, 2026-11-02: "there's no way this is
+      true"). Fastest JV Boys' label names no distance, but its document
+      carries d '5000', me 'meter', mt '5000'; the lander read only the
+      label. This comes first; the label and the meet are the fallbacks.
+    Pure."""
+    src = (doc or {}).get("_source", doc) or {}
+    try:
+        d = float(src.get("d") or 0)
+    except (TypeError, ValueError):
+        d = 0.0
+    unit = _UNIT_M.get(str(src.get("me") or "").strip().lower())
+    if d > 0 and unit:
+        return round(d * unit, 1)                # 'mt' is rounded down: 2735 for 1.7 mile
+    try:
+        mt = float(src.get("mt") or 0)
+    except (TypeError, ValueError):
+        return None
+    return mt if mt > 0 else None
 
 
 def meetDistance(events):
@@ -157,11 +187,13 @@ def venueDistance(cur, course, state, level_mask, meet_id):
 
 
 def cmdDistances(a):
-    """Landed AthleticLIVE XC races with no distance: the meet's other
-    races', else the venue's (see the note above meetDistance). --write sets
+    """Landed AthleticLIVE XC races with no distance: their results
+    document's, else the meet's other races', else the venue's (see the note
+    above meetDistance). --write sets
     meets.distance; the night's normalisation (05_normalize_new, rows with
     no normalized_time) then prices them."""
     total = Counter()
+    fetcher = A.makeFetcher()
     with A._conn() as conn:
         cur = conn.cursor()
         cur.execute("""SELECT m.meet_id, m.div_id, m.course_name, m.state, m.level_mask,
@@ -169,8 +201,16 @@ def cmdDistances(a):
                        FROM meets m
                        WHERE m.source = 'anet' AND m.div_id >= %s
                          AND COALESCE(m.distance, 0) <= 0""", (A.DIV_BASE,))
-        for meet_id, div_id, course, state, mask, name, division in cur.fetchall():
-            d, how = siblingDistance(cur, meet_id, div_id), "the meet's other races"
+        todo = cur.fetchall()
+        # 0. the results document's own distance (docMeters)
+        evs = [{"kind": "ind", "id": int(r[1]) - A.DIV_BASE} for r in todo]
+        got = A._run(fetcher.fetchAll([A.eventUrl(e) for e in evs], max_age=A.MAX_AGE_SETTLED)) \
+            if evs else []
+        doc_m = {int(r[1]): docMeters(A._json(f)) for r, f in zip(todo, got)}
+        for meet_id, div_id, course, state, mask, name, division in todo:
+            d, how = doc_m.get(int(div_id)), "its results document"
+            if d is None:
+                d, how = siblingDistance(cur, meet_id, div_id), "the meet's other races"
             if d is None:
                 d, how = venueDistance(cur, course, state, mask, meet_id), "the venue's"
             if d is None:
@@ -199,10 +239,97 @@ def cmdDistances(a):
     return 0
 
 
-def plan(anet_meet_id, alive, events, blobs):
+# ★ EACH RACE ON ITS OWN DAY (owner, 2026-11-02: Mt. SAC's Saturday). A
+#   two-day meet landed every race on the first day: meet_info carried the
+#   meet's first date. An event's start ('sd') is UTC; US races run between
+#   about 05:00 and 23:00 local, which is UTC - 4 to UTC - 10, so UTC -
+#   LOCAL_SHIFT_H names the local day for all of them. Kept inside the
+#   meet's own dates.
+LOCAL_SHIFT_H = 7
+
+
+def eventDay(ev, alive):
+    """The local date (ISO) a race was run, or None. Pure."""
+    sd = str(ev.get("start") or "")
+    if len(sd) < 13:
+        return None
+    try:
+        t = datetime.datetime.fromisoformat(sd.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    day = (t - datetime.timedelta(hours=LOCAL_SHIFT_H)).date().isoformat()
+    first = str(alive.get("meet_date") or "")[:10]
+    last = str(alive.get("date_end") or first)[:10]
+    if first and day < first:
+        return first
+    if last and day > last:
+        return last
+    return day
+
+
+# ★ THE RACES ATHLETIC.NET DOES NOT HAVE (owner, 2026-11-02: Mt. SAC's
+#   Saturday, 46 races, never landed). A meet athletic.net already had rows
+#   for was left to athletic.net and requeued there -- and when athletic.net's
+#   re-scrape still lacked a day, nothing looked again. Now the races whose
+#   runners athletic.net's copy does not have land from here, beside its
+#   own: a race is athletic.net's when ANET_HAS_RACE of its runners with an
+#   athletic.net id are in athletic.net's rows for the meet (dropCovered).
+#   Its venue and meet name are athletic.net's (anetMeetInfo), so the course
+#   is the same course.
+ANET_HAS_RACE = 0.5
+
+
+def dropCovered(p, have, share=ANET_HAS_RACE):
+    """Drop from plan `p` every race athletic.net's athlete ids `have`
+    cover. -> races dropped. Pure (mutates p)."""
+    ids = {}
+    for t in p["results_to_save"]:
+        a = t[0].get("AthleteID")
+        if a and t[0].get("SortValue"):
+            ids.setdefault(t[2], []).append(int(a))
+    gone = {d for d, v in ids.items() if sum(1 for a in v if a in have) >= share * len(v)}
+    if gone:
+        p["results_to_save"] = [t for t in p["results_to_save"] if t[2] not in gone]
+        p["meets_to_save"] = [m for m in p["meets_to_save"] if m[1] not in gone]
+        p["skipped"]["athletic.net has this race"] += len(gone)
+    return len(gone)
+
+
+ANET_COPIED = 0.9
+
+
+def anetCopied(athletes, have, share=ANET_COPIED):
+    """Are this landed race's runners in athletic.net's own rows? Pure."""
+    a = {x for x in athletes if x}
+    return bool(a) and len(a & have) >= share * len(a)
+
+
+def anetAthletes(cur, meet_id):
+    cur.execute("""SELECT DISTINCT athlete_id FROM results WHERE meet_id = %s AND source = 'anet'
+                     AND result_id > 0 AND result_id < %s AND athlete_id IS NOT NULL""",
+                (meet_id, A.RESULT_BASE))
+    return {int(r[0]) for r in cur.fetchall()}
+
+
+def anetMeetInfo(cur, meet_id):
+    """athletic.net's own venue and name for this meet, as metaFromAlive's
+    keys, or {}."""
+    cur.execute("""SELECT meet_name, course_name, gps_lat, gps_long, state, location_id
+                   FROM meets WHERE meet_id = %s AND source = 'anet' AND div_id < %s
+                     AND course_name IS NOT NULL
+                   ORDER BY div_id LIMIT 1""", (meet_id, A.DIV_BASE))
+    r = cur.fetchone()
+    if not r:
+        return {}
+    return {"Name": r[0], "Location": {"ID": r[5], "Name": r[1], "Lat": r[2], "Long": r[3],
+                                       "State": r[4], "Indoor": False}}
+
+
+def plan(anet_meet_id, alive, events, blobs, meta=None):
     """Everything to save for one meet, in the track lander's plan shape so
-    applyIds / holdUnknown apply unchanged. Pure."""
-    meet_info = A.metaFromAlive(alive, anet_meet_id)
+    applyIds / holdUnknown apply unchanged. `meta` overrides the meet info
+    AthleticLIVE gives (anetMeetInfo). Pure."""
+    meet_info = dict(A.metaFromAlive(alive, anet_meet_id), **(meta or {}))
     p = {"results_to_save": [], "meets_to_save": [], "athletes": [], "own": True,
          "skipped": Counter(), "events": events}
     parsed = {}
@@ -225,14 +352,17 @@ def plan(anet_meet_id, alive, events, blobs):
         if not rows:
             continue
         div_id = A.DIV_BASE + int(ev["id"])
+        day = eventDay(ev, alive)
+        ev_info = dict(meet_info, MeetDate=day) if day else meet_info
         div = {"IDMeetDiv": div_id,
-               "Meters": metersOf(ev.get("ab") or ev.get("name") or "") or meet_m,
+               "Meters": (docMeters(blobs.get(ev["id"]))
+                          or metersOf(ev.get("ab") or ev.get("name") or "") or meet_m),
                "Division": _division(ev), "LevelMask": meet_info.get("LevelMask") or 4,
                "CourseId": 0}
-        p["meets_to_save"].append((meet_info, div_id, 0, div))
+        p["meets_to_save"].append((ev_info, div_id, 0, div))
         for r in rows:
             # the track lander's 8-tuple: (row, meet, div, event, short, relay, school, field)
-            p["results_to_save"].append((xcRow(r), meet_info, div_id, 0, "XC", False,
+            p["results_to_save"].append((xcRow(r), ev_info, div_id, 0, "XC", False,
                                          r.get("TeamName") or "Unknown", False))
         p["athletes"] += athletes
     return p
@@ -289,18 +419,37 @@ def requeueAnet(cur, meet_id):
                    DO UPDATE SET scraped = 0, priority = 1""", (meet_id,))
 
 
-def checkAnetCopy(cur, fetcher, meet_id, alive, write):
-    """athletic.net has rows for this meet: are they all of it? -> note."""
+def checkAnetCopy(cur, fetcher, meet_id, alive, write, requeue=True):
+    """athletic.net has rows for this meet: are they all of it? When they are
+    short, land the races athletic.net lacks (dropCovered); with none to land,
+    put the meet back in athletic.net's queue (requeue). -> (note, rows saved)."""
     anet_n = anetCount(cur, meet_id)
     events, blobs, note = A._run(fetchXC(fetcher, alive["alive_id"], alive["meet_date"]))
     alive_n = aliveCount(events, blobs) if events else 0
-    if events and anetShort(anet_n, alive_n):
+    if not (events and anetShort(anet_n, alive_n)):
+        return "anet has it; counted", 0
+    p = plan(meet_id, alive, events, blobs, meta=anetMeetInfo(cur, meet_id))
+    dropCovered(p, anetAthletes(cur, meet_id))
+    A.applyIds(p, A.resolveIds(cur, p["athletes"]))
+    A.holdUnknown(p)
+    races = len({t[2] for t in p["results_to_save"]})
+    if p["results_to_save"]:
         print(f"  meet {meet_id} ({str(alive['name'])[:40]}): athletic.net has {anet_n} of "
-              f"AthleticLIVE's {alive_n} -- back in athletic.net's queue")
-        if write:
-            requeueAnet(cur, meet_id)
-        return f"anet short {anet_n}/{alive_n}; requeued"
-    return "anet has it; counted"
+              f"AthleticLIVE's {alive_n} -- landing the {races} races it lacks "
+              f"({len(p['results_to_save'])} results)")
+        if not write:
+            return f"anet short {anet_n}/{alive_n}; {races} races to land", 0
+        n = save(meet_id, p, label="[alive xc fill]")
+        if n >= 0:
+            A.saveSide(cur, meet_id, p.get("side"))
+            return f"anet short {anet_n}/{alive_n}; landed {races} races it lacks", n
+    if not requeue:
+        return f"anet short {anet_n}/{alive_n}; requeued", 0
+    print(f"  meet {meet_id} ({str(alive['name'])[:40]}): athletic.net has {anet_n} of "
+          f"AthleticLIVE's {alive_n} -- back in athletic.net's queue")
+    if write:
+        requeueAnet(cur, meet_id)
+    return f"anet short {anet_n}/{alive_n}; requeued", 0
 
 
 def anetHasXC(cur, meet_id):
@@ -351,11 +500,13 @@ def cmdLand(a):
                 total["not on AthleticLIVE"] += 1
                 continue
             if anetHasXC(cur, meet_id):
-                why = checkAnetCopy(cur, fetcher, meet_id, alive, a.write)
-                total["athletic.net short: requeued" if why.startswith("anet short")
+                why, n = checkAnetCopy(cur, fetcher, meet_id, alive, a.write)
+                total["athletic.net short: races landed" if "land" in why
+                      else "athletic.net short: requeued" if why.startswith("anet short")
                       else "athletic.net already has it"] += 1
+                total["written"] += n
                 if a.write:
-                    A.noteLanded(cur, alive["alive_id"], 0, why)
+                    A.noteLanded(cur, alive["alive_id"], n, why)
                     conn.commit()
                 continue
             events, blobs, note = A._run(fetchXC(fetcher, alive["alive_id"], alive["meet_date"]))
@@ -416,9 +567,17 @@ def cmdDedupe(a):
             by[meet_id][div_id].add((ath, float(t)))
         n_div = n_rows = 0
         for meet_id, divs in sorted(by.items()):
-            for div_id in sorted(mergedEvents(divs)):
+            # ★ AND ATHLETIC.NET'S LATER COPY WINS (2026-11-02): a race landed
+            #   here because athletic.net lacked it (checkAnetCopy), once
+            #   athletic.net posts it, is the same runners twice
+            have = anetAthletes(cur, meet_id)
+            twice = {d for d, ks in divs.items()
+                     if anetCopied({a for a, _t in ks}, have)}
+            for div_id in sorted(twice | mergedEvents({d: v for d, v in divs.items()
+                                                       if d not in twice})):
                 n_div += 1
-                print(f"  meet {meet_id} div {div_id}: {len(divs[div_id])} runners all in its other races")
+                print(f"  meet {meet_id} div {div_id}: {len(divs[div_id])} runners "
+                      + ("athletic.net has too" if div_id in twice else "all in its other races"))
                 if a.write:
                     cur.execute("DELETE FROM results WHERE meet_id = %s AND div_id = %s AND source = 'anet'",
                                 (meet_id, div_id))
@@ -429,22 +588,24 @@ def cmdDedupe(a):
             conn.commit()
         else:
             conn.rollback()
-    print(f"[alive xc] {n_div} combined lists in {len(by)} landed meets"
+    print(f"[alive xc] {n_div} combined lists or athletic.net copies in {len(by)} landed meets"
           + (f"; {n_rows} rows deleted" if a.write else "  (dry run: --write deletes them)"))
     return 0
 
 
 def cmdRecheck(a):
-    """Meets this lander stood down for ("anet has it") in the last
-    --days: count both copies again (the check above, for the meets passed
-    before it existed)."""
+    """Meets this lander stood down for in the last --days ("anet has it",
+    or athletic.net short and requeued): count both copies again, and land
+    the races athletic.net still lacks (checkAnetCopy)."""
     fetcher = A.makeFetcher()
     total = Counter()
     with A._conn() as conn:
         cur = conn.cursor()
         cur.execute("""SELECT DISTINCT u.anet_id, am.alive_id
                        FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
-                       WHERE am.sport = 'XC' AND am.landed_note = 'anet has it'
+                       WHERE am.sport = 'XC' AND COALESCE(am.landed_n, 0) = 0
+                         AND (am.landed_note = 'anet has it'
+                              OR am.landed_note LIKE 'anet short%%requeued')
                          AND am.meet_date >= %s
                        ORDER BY 1 DESC""",
                     ((datetime.date.today() - datetime.timedelta(days=a.days)).isoformat(),))
@@ -452,10 +613,18 @@ def cmdRecheck(a):
             alive = A.aliveFor(cur, meet_id, sport="XC")
             if not alive:
                 continue
-            why = checkAnetCopy(cur, fetcher, meet_id, alive, a.write)
-            total["requeued" if why.startswith("anet short") else "complete"] += 1
+            # ! athletic.net is asked again ONCE: a meet already requeued and
+            #   still short gets only the races it lacks landed from here
+            cur.execute("SELECT landed_note FROM alive_meets WHERE alive_id = %s",
+                        (alive["alive_id"],))
+            prior = (cur.fetchone() or [""])[0] or ""
+            why, n = checkAnetCopy(cur, fetcher, meet_id, alive, a.write,
+                                   requeue=not prior.startswith("anet short"))
+            total["races landed" if "land" in why else
+                  "requeued" if why.startswith("anet short") else "complete"] += 1
+            total["written"] += n
             if a.write:
-                A.noteLanded(cur, alive["alive_id"], 0, why)     # counted: not asked again
+                A.noteLanded(cur, alive["alive_id"], n, why)
                 conn.commit()
     print(f"[alive xc] recheck: {dict(total)}  fetches {fetcher.stats}"
           + ("" if a.write else "  (dry run: --write requeues them)"))
