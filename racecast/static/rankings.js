@@ -410,6 +410,27 @@ function buildQuery() {
   /* ★ THE COURSE BOARD TAKES ALMOST NOTHING THE OTHERS DO. No pool, no
      sport, no scope, no season, no school -- a course has none of those. It
      keeps `state`, because a course is somewhere, and adds its own three. */
+  if (state.board === "units") {
+    syncUnitKinds();
+    const q3 = new URLSearchParams({ board: "units", pool: $("pool").value,
+                                     sport: $("sport").value,
+                                     unit_kind: $("unit_kind").value || "",
+                                     unit_n: $("unit_n").value || "5",
+                                     limit: PAGE_SIZE, offset: state.offset });
+    if (!q3.get("unit_kind")) q3.delete("unit_kind");
+    for (const k of UNIT_KEYS) {
+      if (q.get(k)) q3.set(k, q.get(k));
+    }
+    for (const field of ["state", "year"]) {
+      const vals = combos[field] ? combos[field].values() : [];
+      if (vals.length) q3.set(field, vals.join(","));
+    }
+    if (state.sort) q3.set("sort", state.sort);
+    if (state.dir) q3.set("dir", state.dir);
+    q3.set("scale", hsMode() ? "hs" : "pool");
+    return q3;
+  }
+
   if (state.board === "courses") {
     const q2 = new URLSearchParams({ limit: PAGE_SIZE, offset: state.offset });
     const st = combos.state ? combos.state.values() : [];
@@ -1077,6 +1098,19 @@ document.querySelectorAll(".combo").forEach(makeCombo);
  *   single performance.
  */
 const COLUMNS = {
+  /* ★ THE CONFERENCES TAB (owner, 2026-11-02): one row per conference,
+     league, section or division. The first column's word follows the kind
+     in view (renderUnits). */
+  units: [
+    { key: null,     label: "#" },
+    { key: "name",   label: "Conference" },
+    { key: "avg",    label: "Best-teams avg" },
+    { key: null,     label: "5K", fk: true },
+    { key: "top25",  label: "Top-25 teams" },
+    { key: "teams",  label: "Teams" },
+    { key: "best",   label: "Best team" },
+    { key: "runner", label: "Top runner" }
+  ],
   ability: [
     { key: null,     label: "#" },
     { key: "name",   label: "Athlete" },
@@ -1675,6 +1709,80 @@ function renderTeamsCourse(rows) {
 }
 
 
+/*
+ * The Conferences tab. Each row opens onto its teams (the triangle), and
+ * its name opens its own page. The mark is the conference's own logo where
+ * one is on file, the site's drawn badge otherwise -- both made on the
+ * server (unit_board.unitMark), so the markup is trusted here.
+ */
+function renderUnits(rows, data) {
+  const word = (data && data.kind_word) || "Conference";
+  const head = renderHead("units").replace(">Conference<", `>${esc(word)}<`);
+  const body = rows.map((u) => {
+    const runner = u.runner_id
+      ? `<a href="/athlete/${esc(u.runner_id)}">${esc(u.runner_name || "?")}</a>`
+        + ` <span class="state">${fmtRating(rval(u, "runner_rating"))}</span>`
+      : " - ";
+    const best = u.best_team
+      ? `${crestMark(u.best_crest)}<a href="${schoolHref(u.best_team, u.best_state)}">${esc(u.best_team)}</a>`
+        + ` <span class="state">${fmtRating(rval(u, "best_avg"))}</span>`
+      : " - ";
+    const few = u.top_n < ((data && data.n) || 5)
+      ? ` <span class="state" title="only ${u.top_n} rated team${u.top_n === 1 ? "" : "s"}">(${u.top_n})</span>` : "";
+    const members = (u.members || []).map((m) =>
+      `<span>${crestMark(m.crest)}<a href="${schoolHref(m.school, m.state)}">${esc(m.school)}</a>`
+      + `<span class="n">${fmtRating(rval(m, "top5_mean"))}${m.rank ? ` \u00b7 #${esc(m.rank)} nationally` : ""}</span></span>`
+    ).join("");
+    return `
+    <tr class="un-row">
+      <td class="rank${u.rank <= 3 ? " top3" : ""}">${u.rank}</td>
+      <td><button type="button" class="un-open" aria-expanded="false" title="Show its teams">\u25b8</button><span class="un-mark">${u.mark || ""}</span><a href="${esc(u.href)}">${esc(u.name)}</a>${u.state && !(combos.state && combos.state.values().length) ? ` <span class="state">${esc(u.state)}</span>` : ""}</td>
+      <td class="rating">${fmtRating(rval(u, "avg"))}${few}</td>
+      ${fkCell(u, "avg")}
+      <td>${u.top25}</td>
+      <td>${u.n_teams}</td>
+      <td>${best}</td>
+      <td>${runner}</td>
+    </tr>
+    <tr class="un-members" hidden><td colspan="8"><div class="un-team-list">${members}</div></td></tr>`;
+  }).join("");
+  return `<table class="rk">${head}<tbody>${body}</tbody></table>`;
+}
+
+/* the kinds a level ranks, until the first response says so itself */
+const UNIT_KINDS = {
+  college: [["conference", "Conferences"], ["division", "Divisions"], ["region", "Regions"]],
+  hs: [["league", "Leagues"], ["section", "Sections"], ["section_div", "Section divisions"],
+       ["state_div", "State divisions"], ["area", "Areas"]]
+};
+
+function syncUnitKinds(kinds, chosen) {
+  const sel = $("unit_kind");
+  if (!sel) return;
+  const level = ($("pool").value || "").split("_")[0];
+  const list = kinds || UNIT_KINDS[level] || UNIT_KINDS.college;
+  const want = chosen || sel.value;
+  const same = sel.options.length === list.length
+    && list.every(([k], i) => sel.options[i].value === k);
+  if (!same) {
+    sel.innerHTML = list.map(([k, w]) => `<option value="${esc(k)}">${esc(w)}</option>`).join("");
+  }
+  if (list.some(([k]) => k === want)) sel.value = want;
+}
+
+$("results").addEventListener("click", (e) => {
+  const btn = e.target.closest && e.target.closest(".un-open");
+  if (!btn) return;
+  const row = btn.closest("tr");
+  const more = row && row.nextElementSibling;
+  if (!more || !more.classList.contains("un-members")) return;
+  const open = more.hidden;
+  more.hidden = !open;
+  btn.setAttribute("aria-expanded", String(open));
+  btn.textContent = open ? "\u25be" : "\u25b8";
+});
+
+
 /* ------------------------------------------------------------------ *
  *  LOADING
  * ------------------------------------------------------------------ */
@@ -1791,7 +1899,8 @@ function paintBoard(rows, data) {
 /* ★ THE TABS' OWN WORDS (owner, 2026-10-10): "Athletes (season)", "Best
      races", "Fastest times" -- the heading says what the tab says. */
 const BOARD_WORD = { ability: "Athletes (season)", performance: "Best races",
-                     pr: "Fastest times", teams: "Teams", courses: "Courses" };
+                     pr: "Fastest times", teams: "Teams", courses: "Courses",
+                     units: "Conferences" };
 
 function syncBoardHeader(rows, data) {
   const kick = $("rk-kicker"), head = $("rk-board-h"), champs = $("rk-champs");
@@ -1810,7 +1919,7 @@ function syncBoardHeader(rows, data) {
       + (board === "courses" ? "" : ` · ${pool}`);
   }
   if (!champs) return;
-  const own = board === "pr" ? "time" : "rating";
+  const own = board === "pr" ? "time" : board === "units" ? "avg" : "rating";
   const natural = NATURAL_ASC.has(own) ? "asc" : "desc";
   const r = rows && rows[0];
   if (!r || board === "courses" || state.offset !== 0 || (data && data.course_mode)
@@ -1820,7 +1929,10 @@ function syncBoardHeader(rows, data) {
     return;
   }
   let who, num, school = "";
-  if (board === "teams") {
+  if (board === "units") {
+    who = `<a href="${esc(r.href)}">${esc(r.name)}</a>`;
+    num = fmtRating(rval(r, "avg"));
+  } else if (board === "teams") {
     who = `<a href="${schoolHref(r.school, r.state)}">${esc(r.school)}</a>`;
     num = `${esc(r.points)} pts`;
   } else {
@@ -1841,8 +1953,10 @@ function syncBoardHeader(rows, data) {
 }
 
 function renderBoard(rows, data) {
-  fkHead = fkLabelFor(rows, state.board === "teams" ? "top5_mean" : "rating");
+  fkHead = fkLabelFor(rows, state.board === "teams" ? "top5_mean"
+                          : state.board === "units" ? "avg" : "rating");
   return state.board === "ability"    ? renderAbility(rows)
+       : state.board === "units"      ? renderUnits(rows, data)
        : state.board === "pr"         ? renderPr(rows)
        : state.board === "courses"    ? renderCourses(rows)
        : state.board === "teams"      ? (data.course_mode
@@ -1994,6 +2108,7 @@ async function load() {
        /api/rankings would mean one route answering two questions. */
     const endpoint = state.board === "teams" ? "/api/teams"
                    : state.board === "courses" ? "/api/courses"
+                   : state.board === "units" ? "/api/rankings/units"
                    : "/api/rankings";
     const res = await fetch(endpoint + "?" + query.toString());
     const data = await readJson(res);
@@ -2050,6 +2165,14 @@ async function load() {
         : "Teams - every squad's top seven raced against each other, "
           + "scored the ordinary way.";
       teamsNote(data);
+    }
+
+    if (state.board === "units") {
+      syncUnitKinds(data.kinds, data.kind);
+      const note = $("units-note");
+      if (note && data.note) note.textContent = data.note;
+      else if (note) note.textContent = "Each one's number is the average of its best "
+        + (data.n || 5) + " teams' top-5 averages. Open a row for its teams; the name opens its page.";
     }
 
     /* The scale toggle earns its place only when this board's rows actually
@@ -2151,6 +2274,7 @@ function syncBoard(board) {
   if (!COLUMNS[board].some((c) => c.key === state.sort)
       || (board === "teams" && previous !== "teams")
       || (board === "courses" && previous !== "courses")
+      || (board === "units" && previous !== "units")
       /* ! pr TOO: "rating" is a legal sort there, so a sort carried over
            from the ability board survived the test above and the times
            board opened sorted by rating -- the one thing it exists NOT to
@@ -2162,6 +2286,7 @@ function syncBoard(board) {
     state.sort = board === "pr" ? "time"
                : board === "teams" ? "rating"
                : board === "courses" ? "difficulty"
+               : board === "units" ? "avg"
                : "rating";
     state.dir = "";
   }
@@ -2174,12 +2299,12 @@ function syncBoard(board) {
      select left on "Both" would 400 on arrival with no obvious cause, the
      same trap the hidden pool=all option sprang. */
   const sportSel = $("sport");
-  sportSel.querySelector('option[value="both"]').hidden = board === "teams";
+  sportSel.querySelector('option[value="both"]').hidden = board === "teams" || board === "units";
   // arriving at the times board: track, unless the reader picked a sport
   const toTrack = board === "pr" && previous !== "pr" && !state.sportTouched
                   && sportSel.value !== "TF";
   if (toTrack) sportSel.value = "TF";
-  if (board === "teams" && sportSel.value === "both") sportSel.value = "XC";
+  if ((board === "teams" || board === "units") && sportSel.value === "both") sportSel.value = "XC";
 
   /* ⚠ "Any distance" IS PERFORMANCE-ONLY. The times board RANKS the clock
      at one distance; an empty distance there is a 400. Same hidden-option
@@ -2215,12 +2340,19 @@ function syncBoard(board) {
   poolSel.querySelectorAll(".pr-only-opt").forEach((opt) => {
     opt.hidden = board !== "pr";
   });
+  /* conferences and leagues are college and high school things */
+  poolSel.querySelectorAll('option[value^="ms_"]').forEach((opt) => {
+    opt.hidden = board === "units";
+  });
+  if (board === "units" && poolSel.value.startsWith("ms_")) {
+    poolSel.value = poolSel.value.replace("ms_", "hs_");
+  }
   /* ⚠ RESET BEFORE ANYTHING ELSE READS IT. Hiding an <option> does not
        deselect it -- a hidden option that is still current keeps its value and
        buildQuery sends "all" to a board whose API rejects it, which is a 400
        on arrival with no obvious cause. */
   if (board !== "pr" && poolSel.value === "all") {
-    poolSel.value = "hs_m";
+    poolSel.value = board === "units" ? "college_m" : "hs_m";
   } else if (board === "pr" && !state.poolTouched) {
     /* ! ARRIVING AT THE TIMES BOARD DEFAULTS TO ALL POOLS. A time is one
          scale regardless of who ran it, so "the fastest 5000s" is the
@@ -2241,6 +2373,8 @@ function syncBoard(board) {
       ? "Teams - every squad's top seven raced against each other, scored the ordinary way."
       : board === "courses"
       ? "Courses - how much harder than average the ground is, measured from everyone who raced it."
+      : board === "units"
+      ? "Conferences and leagues - each ranked by how good its best teams are."
       : "Single performances - the best individual races, noise and all.";
 }
 
@@ -2471,6 +2605,12 @@ function syncUnitRows() {
 }
 
 $("pool").addEventListener("change", syncUnitRows);
+/* the Conferences tab's two: a new kind or count is a new board */
+["unit_kind", "unit_n"].forEach((id) => {
+  const el = $(id);
+  if (el) el.addEventListener("change", () => { state.offset = 0; applyNow(); });
+});
+$("pool").addEventListener("change", () => { if (state.board === "units") syncUnitKinds(); });
 /* the event window re-queries like any other filter, and resets paging:
    a 3000m+ board is a different board, not a page of the same one */
 if ($("events")) {
@@ -2701,6 +2841,13 @@ function applyUrlFilters(params) {
        a shared course link opens with the filters in the address bar and an
        unfiltered board under them, which is the one thing syncUrl's own note
        says a URL must never do. */
+  if (state.board === "units") {
+    syncUnitKinds();
+    if (params.get("unit_kind")) {
+      syncUnitKinds(null, params.get("unit_kind"));
+    }
+    setSelectFromUrl("unit_n", params.get("unit_n"));
+  }
   if (state.board === "courses") {
     setSelectFromUrl("course_distance", params.get("distance"));
     setInputFromUrl("course_name", params.get("name"));
@@ -2758,7 +2905,7 @@ function initFromUrl() {
        same URL, a pool only the pr board accepts, and the first request 400ed
        with a message about pools that had nothing to do with the cause. */
   const asked = params.get("board");
-  syncBoard(["performance", "pr", "ability", "teams", "courses"]
+  syncBoard(["performance", "pr", "ability", "teams", "courses", "units"]
               .includes(asked) ? asked : "ability");
   applyUrlFilters(params);
 

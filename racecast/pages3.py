@@ -437,68 +437,105 @@ UNIT_POOLS = (("college_m", "College men"), ("college_f", "College women"),
 
 @bp.route("/rankings/units")
 def units_page():
-    """Conferences, leagues, sections and divisions, ranked: unit_board.py."""
+    """The old standalone board: the Conferences tab of /rankings now
+    (owner, 2026-11-02), with the same filters carried over."""
+    from urllib.parse import urlencode
+    q = {k: v for k, v in request.args.items() if v}
+    q["board"] = "units"
+    if "kind" in q:
+        q["unit_kind"] = q.pop("kind")
+    return redirect("/rankings?" + urlencode(q), code=301)
+
+
+def _first(args, key):
+    v = (args.get(key) or "").strip()
+    return v.split(",")[0].strip() if v else ""
+
+
+@bp.route("/api/rankings/units")
+def api_units():
+    """The Conferences tab (unit_board.buildBoard): one row per conference,
+    league, section or division, ranked by the average of its best N teams;
+    each row carries its member teams for the expanded view."""
     import unit_board as UB
-    from rankings import boardYear
+    from rankings import boardYear, nameLateral
     from pool_view import stampBoardRows
+    from conversions import stampFiveK
+    from school_logo import stampCrests, crestUrl
     from school_identity import levelOf
-    states, names = _stateNames()
-    pool = (request.args.get("pool") or "college_m").strip().lower()
+    args = request.args
+    pool = (args.get("pool") or "college_m").strip().lower()
     if pool not in dict(UNIT_POOLS):
-        pool = "college_m"
+        return jsonify({"error": "Conferences and leagues rank college and high school "
+                                 "teams: pick a college or high school level."}), 400
     college = pool.startswith("college")
     kinds = [(k, v[0]) for k, v in UB.KINDS.items() if v[1] == college]
-    kind = (request.args.get("kind") or "").strip().lower()
+    kind = (args.get("unit_kind") or "").strip().lower()
     if kind not in dict(kinds):
         kind = kinds[0][0]
-    sport = "TF" if (request.args.get("sport") or "").strip().lower() in ("tf", "track") else "XC"
-    st = (request.args.get("state") or "").strip().upper() or None
-    if st and st not in names:
-        st = None
+    sport = "TF" if (args.get("sport") or "").strip().upper() == "TF" else "XC"
+    st = _first(args, "state").upper() or None
     try:
-        n = max(1, min(20, int(request.args.get("n") or UB.DEFAULT_N)))
+        n = max(1, min(20, int(args.get("unit_n") or UB.DEFAULT_N)))
     except ValueError:
         n = UB.DEFAULT_N
-    sort = "raced" if request.args.get("sort") == "raced" else "top"
-    # ★ INSIDE A PARENT: the best conference in NCAA DIII, the best league
-    #   in one section (unit_board.WITHIN)
-    within = {c: (request.args.get(c) or "").strip() for c in UB.WITHIN[college] if c != kind}
-    within = {c: v for c, v in within.items() if v}
-    needs_state = UB.KINDS[kind][2]
-    units, year, err, label, pickers = [], None, None, None, {}
+    within = {c: _first(args, c) for c in UB.WITHIN[college] if c != kind and _first(args, c)}
+    if UB.KINDS[kind][2] and not st:
+        return jsonify({"rows": [], "kind": kind, "kinds": kinds, "hs_movable": True,
+                        "note": f"{UB.KINDS[kind][0]} share names from state to state: "
+                                f"pick a state to rank them."})
     with getConn() as conn:
         with _cursor(conn) as cur:
             from app import _seasonYears
-            label = request.args.get("year") or (_seasonYears(cur) or {}).get(sport)
-            year = boardYear(sport, label) if label else None
-            if year is None:
-                err = "No current season is known for this sport."
-            elif needs_state and not st:
-                err = f"{UB.KINDS[kind][0]} share names across states: pick a state."
+            # ! the year filter carries the STORED academic year, as on every
+            #   board; with none, the season in progress (a label, converted)
+            asked = _first(args, "year")
+            if asked.isdigit():
+                year, ylab = int(asked), asked
             else:
-                try:
-                    for c in UB.WITHIN[college]:
-                        if c != kind:
-                            pickers[c] = UB.options(cur, c, pool, sport, year, st)
-                    rows = UB.load(cur, kind, pool, sport, year, st, within)
-                    units = UB.sortUnits(UB.rankUnits(rows, kind, n), sort)
-                except Exception as exc:                 # noqa: BLE001
-                    conn.rollback()
-                    err = f"The team board is not available right now ({type(exc).__name__})."
+                ylab = (_seasonYears(cur) or {}).get(sport)
+                year = boardYear(sport, ylab) if ylab else None
+            if year is None:
+                return jsonify({"error": "No current season is known for this sport."}), 400
+            try:
+                rows = UB.load(cur, kind, pool, sport, year, st, within)
+                valid = UB.validKeys(cur, kind, college)
+                units = UB.buildBoard(rows, kind, n, valid)
+                ids = sorted({u["runner_id"] for u in units if u.get("runner_id")})
+                names = {}
+                if ids:
+                    cur.execute(f"""SELECT s.person_id, a.name FROM unnest(%s::bigint[]) AS s(person_id)
+                                    {nameLateral("s")}""", (ids,))
+                    names = {r["person_id"]: r["name"] for r in cur.fetchall()}
+            except Exception as exc:                     # noqa: BLE001
+                conn.rollback()
+                return jsonify({"error": f"Conference rankings failed to load "
+                                         f"({type(exc).__name__})."}), 500
             conn.rollback()
-    # ★ THE SITE'S SCALE (owner, 2026-11-02: "the ratings are not
-    #   hs-equivalent"): hs_top_avg / hs_best_avg beside the pool's own
-    stampBoardRows(units, rating_keys=("top_avg", "best_avg"), pool=pool, sport=sport)
+    UB.sortBoard(units, (args.get("sort") or "avg").strip().lower(),
+                 (args.get("dir") or "").strip().lower() or None)
+    level = levelOf(pool)
     for u in units:
+        u["runner_name"] = names.get(u.get("runner_id"))
         u["href"] = UB.unitHref(kind, u["unit"], u["state"] or st, pool, sport)
-        u["name"] = UB.label(kind, u["unit"], u["state"] or st)
-        u["badge"] = UB.unitMark(kind, u["unit"], u["state"] or st, shown=u["name"])
-    return render_template("units.html", units=units, kind=kind, kinds=kinds, pool=pool,
-                           pools=UNIT_POOLS, sport=sport, state=st, states=states,
-                           state_name=names.get(st or "", ""), n=n, sort=sort,
-                           year=year, label=label, err=err, college=college,
-                           kind_label=UB.KINDS[kind][0], within=within, pickers=pickers,
-                           level=levelOf(pool), within_labels=_WITHIN_LABELS)
+        u["mark"] = UB.unitMark(kind, u["unit"], u["state"] or st, size=22, shown=u["name"])
+        u["best_crest"] = (crestUrl(u["best_team"], u["best_state"], px=64, level=level)
+                           if u.get("best_team") else None)
+        stampCrests(u["members"], pool=pool)
+        stampBoardRows(u["members"], rating_keys=("top5_mean",), pool=pool, sport=sport)
+    movable = stampBoardRows(units, rating_keys=("avg", "best_avg", "runner_rating"),
+                             pool=pool, sport=sport)
+    stampFiveK(units, "avg", pool=pool, sport=sport)
+    try:
+        off = max(0, int(args.get("offset") or 0))
+        lim = max(1, min(200, int(args.get("limit") or 100)))
+    except ValueError:
+        off, lim = 0, 100
+    total = len(units)
+    units = units[off:off + lim]
+    return jsonify({"rows": units, "kind": kind, "kinds": kinds, "n": n, "total": total,
+                    "hs_movable": movable, "season": ylab, "within": within,
+                    "kind_word": UB.KINDS[kind][0][:-1]})
 
 
 _WITHIN_LABELS = {"division": "Division", "region": "Region", "section": "Section",

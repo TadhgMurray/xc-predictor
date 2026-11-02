@@ -89,6 +89,9 @@
        season rating, scored with the ordinary rules -- so depth counts and a
        superstar is worth exactly one point, as in life. #}
     <button class="tab" role="tab" data-board="teams" aria-selected="false">Teams</button>
+    {# ★ CONFERENCES AND LEAGUES, RANKED (owner, 2026-11-02): a board of
+         its own, served by /api/rankings/units (pages3, unit_board) #}
+    <button class="tab" role="tab" data-board="units" aria-selected="false">Conferences</button>
     <button class="tab" role="tab" data-board="courses" aria-selected="false">Courses</button>
   </div>
     {# Breakouts is a board too (owner, 2026-10-05), on its own page: the
@@ -96,7 +99,7 @@
        opens the state ranking pages (landing.py) for the pool and sport in
        view; rankings.js keeps its href in step (owner, 2026-10-06). #}
     <nav class="rk-tablinks" aria-label="More rankings">
-      <a href="/breakouts">Breakouts</a><span class="sep" aria-hidden="true">·</span><a href="/rankings/units">Conferences &amp; leagues</a><span class="sep" aria-hidden="true">·</span><a class="tab-link" id="by-state-tab" href="/rankings/xc/hs-boys">By state</a>
+      <a href="/breakouts">Breakouts</a><span class="sep" aria-hidden="true">·</span><a class="tab-link" id="by-state-tab" href="/rankings/xc/hs-boys">By state</a>
     </nav>
   </div>
 
@@ -272,6 +275,26 @@
 
     </div>
 
+    {# ★ THE CONFERENCES TAB'S OWN TWO: what is ranked (the kinds for the
+         level in view, rankings.js syncUnitKinds) and how many of each
+         one's teams count. Division, region, section, state: the ordinary
+         filters, which narrow the list ("the best conference in DIII"). #}
+    <div class="field units-only">
+      <label for="unit_kind">Rank</label>
+      <select id="unit_kind"></select>
+    </div>
+    <div class="field units-only">
+      <label for="unit_n" title="A conference's number is the average of its best this-many teams' top-5 averages">Teams counted</label>
+      <select id="unit_n">
+        <option value="3">Best 3</option>
+        <option value="4">Best 4</option>
+        <option value="5" selected>Best 5</option>
+        <option value="6">Best 6</option>
+        <option value="8">Best 8</option>
+        <option value="10">Best 10</option>
+      </select>
+    </div>
+
     {# ★ COURSES ARE NOT ATHLETES, so almost none of the filter bar applies to
        them -- there is no pool, no sport, no season, no school. What is left
        is where the ground is, how far round it, and how much racing is behind
@@ -343,7 +366,7 @@
          ! IT NEEDS ONE SEASON, and now it picks one instead of refusing:
            teams.parseFilters fills the current season and the board says
            which one it used. #}
-    <div class="field not-courses">
+    <div class="field not-courses not-units">
       <label for="grade-input">Grade</label>
       <div class="combo" data-field="grade"></div>
     </div>
@@ -358,7 +381,7 @@
       <div class="combo" data-field="year"></div>
     </div>
 
-    <div class="field wide not-courses">
+    <div class="field wide not-courses not-units">
       <label for="school-input">School</label>
       <div class="combo" data-field="school"></div>
     </div>
@@ -554,6 +577,7 @@
        board falls back to each squad's place in its own season. Only the
        response knows which happened -- see teamsNote. The text below is what
        shows before the first response lands. #}
+    <p class="board-note units-only" id="units-note">Each conference's number is the average of its best teams' top-5 averages, on the high school scale. Open a row for its teams; the name opens its page.</p>
     <p class="board-note teams-only" id="teams-note">
       Ranked by racing every team's top seven in one hypothetical meet.
     </p>

@@ -260,3 +260,155 @@ def unitMark(kind, name, state=None, size=28, shown=None):
                 f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async" '
                 f'style="object-fit:contain">')
     return badgeSvg(shown or name, size=size)
+
+
+
+# ====================================================================== #
+#  THE CONFERENCES TAB (owner, 2026-11-02: "the entire thing is pretty bad,
+#  should probably rework" -- wrong units in the lists, the look, the
+#  numbers, too few units). A board inside /rankings, served by
+#  /api/rankings/units (pages3), drawn by rankings.js like the Teams tab.
+# ====================================================================== #
+
+_GENERIC_WORDS = {"conference", "conferences", "athletic", "athletics", "league", "association",
+                  "intercollegiate", "the", "of", "and", "girls", "boys", "men", "women"}
+
+
+def normKey(value):
+    """One unit under its spellings: 'HENLOPEN ATHLETIC' and 'HENLOPEN' are
+    'henlopen'; 'NIC-10 GIRLS' and 'NIC-10' are 'nic 10'. Pure."""
+    import re
+    toks = [t for t in re.findall(r"[a-z0-9]+", str(value or "").lower())
+            if t not in _GENERIC_WORDS]
+    return " ".join(toks) or str(value or "").strip().lower()
+
+
+_CODE_WORDS = {"ncaa", "naia", "njcaa", "nccaa", "uscaa", "di", "dii", "diii", "sec", "acc",
+               "aac", "mac", "wac", "cia", "cif", "ucs", "ihsa", "osaa", "uil", "khsaa"}
+
+
+def prettyName(value):
+    """How a stored (shouting) unit name is shown. Codes stay as stored --
+    NESCAC, PSAC, NCAA DIII, A-10 -- and words read as words: 'MOUNTAIN EAST'
+    -> 'Mountain East', 'IVY LEAGUE' -> 'Ivy League', 'CENTENNIAL' ->
+    'Centennial'. A word of six letters or fewer standing alone is taken
+    for a code; with other words beside it, a word with a vowel is a word.
+    Pure."""
+    import re
+    raw = str(value or "").strip()
+    if not raw or raw != raw.upper():
+        return raw                                   # already mixed case: as written
+    words = raw.split()
+
+    def word(w, alone):
+        core = re.sub(r"[^A-Za-z]", "", w)
+        if not core or w.lower() in _CODE_WORDS or any(c.isdigit() for c in w):
+            return w if not core or w.lower() in _CODE_WORDS else \
+                re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize()
+                       if len(m.group(0)) > 3 else m.group(0), w)
+        if alone and len(core) <= 6:
+            return w
+        if not alone and (len(core) <= 2 or not re.search(r"[AEIOUY]", core)):
+            return w
+        return re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), w)
+    return " ".join(word(w, len(words) == 1) for w in words)
+
+
+def validKeys(cur, kind, college):
+    """{normKey: True} for the units whose schools are mostly of this level
+    (school_unit.is_college): a college board lists no high school league
+    filed as a conference, and the reverse. A unit needs two schools of the
+    level and no more than a quarter of its schools of the other."""
+    if kind not in KINDS:
+        return {}
+    cur.execute(f"""SELECT {kind} AS v,
+                           count(DISTINCT (school, state)) FILTER (WHERE is_college) AS c,
+                           count(DISTINCT (school, state)) FILTER (WHERE NOT is_college) AS h
+                    FROM   school_unit
+                    WHERE  NULLIF(btrim({kind}), '') IS NOT NULL
+                    GROUP  BY 1""")
+    by = {}
+    for r in cur.fetchall():
+        v, c, h = (r["v"], r["c"], r["h"]) if isinstance(r, dict) else r
+        k = normKey(v)
+        cc, hh = by.get(k, (0, 0))
+        by[k] = (cc + int(c or 0), hh + int(h or 0))
+    out = {}
+    for k, (c, h) in by.items():
+        mine, other = (c, h) if college else (h, c)
+        if mine >= 2 and other <= 0.25 * (c + h):
+            out[k] = True
+    return out
+
+
+TOP_TEAMS = 25
+
+
+def buildBoard(rows, kind, n=DEFAULT_N, valid=None):
+    """team_season rows -> one row per unit, ranked by the average of its
+    best n teams' top-5 averages. Spellings merge (normKey); units the level
+    test rejects (valid) are left out; a unit needs MIN_TEAMS teams. Pure.
+
+    Each unit row: unit (the stored spelling most of its teams carry), name
+    (prettyName), key, state, n_teams, avg, top_n, top25 (teams in the
+    national top TOP_TEAMS), best team (school, state, avg), top runner
+    (person_id, rating, school) and members (every team, best first)."""
+    from collections import Counter
+    groups = {}
+    for r in rows:
+        raw = (r.get(kind) or "").strip()
+        if not raw:
+            continue
+        k = normKey(raw)
+        if valid is not None and k not in valid:
+            continue
+        st = None if KINDS[kind][1] else r.get("state")
+        groups.setdefault((k, st), []).append(r)
+    out = []
+    for (k, st), teams in groups.items():
+        if len(teams) < MIN_TEAMS:
+            continue
+        spelled = Counter((t.get(kind) or "").strip() for t in teams).most_common(1)[0][0]
+        rated = sorted((t for t in teams if t.get("top5_mean") is not None),
+                       key=lambda t: -float(t["top5_mean"]))
+        top = rated[:n]
+        runner = max((t for t in teams if t.get("best_rating") is not None),
+                     key=lambda t: float(t["best_rating"]), default=None)
+        out.append({
+            "unit": spelled, "name": prettyName(spelled), "key": k, "state": st,
+            "n_teams": len(teams), "top_n": len(top),
+            "avg": round(sum(float(t["top5_mean"]) for t in top) / len(top), 2) if top else None,
+            "top25": sum(1 for t in teams if t.get("rank") and int(t["rank"]) <= TOP_TEAMS),
+            "best_team": top[0]["school"] if top else None,
+            "best_state": top[0].get("state") if top else None,
+            "best_avg": round(float(top[0]["top5_mean"]), 2) if top else None,
+            "runner_id": runner.get("best_person_id") if runner else None,
+            "runner_rating": round(float(runner["best_rating"]), 2) if runner else None,
+            "runner_school": runner.get("school") if runner else None,
+            "runner_state": runner.get("state") if runner else None,
+            "members": [{"school": t["school"], "state": t.get("state"),
+                         "top5_mean": round(float(t["top5_mean"]), 2)
+                                      if t.get("top5_mean") is not None else None,
+                         "rank": t.get("rank")} for t in rated],
+        })
+    return out
+
+
+SORTS = {"avg": ("avg", True), "top25": ("top25", True), "teams": ("n_teams", True),
+         "name": ("name", False), "best": ("best_avg", True), "runner": ("runner_rating", True)}
+
+
+def sortBoard(units, sort="avg", direction=None):
+    """In place, by one of SORTS; `direction` 'asc'/'desc' overrides the
+    column's natural one. Ranks follow the order. Pure."""
+    key, desc = SORTS.get(sort, SORTS["avg"])
+    if direction in ("asc", "desc"):
+        desc = direction == "desc"
+    present = [u for u in units if u.get(key) is not None]
+    missing = [u for u in units if u.get(key) is None]
+    present.sort(key=lambda u: (u[key].lower() if isinstance(u[key], str) else u[key]),
+                 reverse=desc)
+    units[:] = present + sorted(missing, key=lambda u: u["name"])
+    for i, u in enumerate(units, 1):
+        u["rank"] = i
+    return units

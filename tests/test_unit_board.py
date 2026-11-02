@@ -103,3 +103,27 @@ def test_logo_match_is_strict():
     assert L.matches("IVY LEAGUE", "Ivy League", "")
     assert L.matches("MIDDLE ATLANTIC", "Middle Atlantic Conferences", "")
     assert not L.matches("EMPIRE 8", "Presidents' Athletic Conference", "The PAC is")
+
+
+def test_names_and_spellings():
+    assert U.prettyName("MOUNTAIN EAST") == "Mountain East"
+    assert U.prettyName("IVY LEAGUE") == "Ivy League"
+    assert U.prettyName("NESCAC") == "NESCAC" and U.prettyName("NCAA DIII") == "NCAA DIII"
+    assert U.prettyName("CENTENNIAL") == "Centennial" and U.prettyName("A-10") == "A-10"
+    assert U.normKey("HENLOPEN ATHLETIC") == U.normKey("HENLOPEN") == "henlopen"
+    assert U.normKey("NIC-10 GIRLS") == U.normKey("NIC-10")
+
+
+def test_board_merges_spellings_and_drops_the_other_level():
+    rows = [_t("Hopkins", "MD", "CENTENNIAL", 113.0, [113] * 7),
+            _t("Haverford", "PA", "CENTENNIAL ATHLETIC", 117.0, [117] * 7),
+            _t("Del Val", "DE", "NEW CASTLE COUNTY", 90.0, [90] * 7),
+            _t("Wilm", "DE", "NEW CASTLE COUNTY", 88.0, [88] * 7)]
+    rows[0]["rank"], rows[1]["rank"] = 15, 6
+    got = U.buildBoard(rows, "conference", 5, valid={"centennial": True})
+    assert [u["name"] for u in got] == ["Centennial"] or [u["name"] for u in got] == ["Centennial Athletic"]
+    u = got[0]
+    assert u["n_teams"] == 2 and u["avg"] == 115.0 and u["top25"] == 2
+    assert [m["school"] for m in u["members"]] == ["Haverford", "Hopkins"]
+    U.sortBoard(got, "name")
+    assert got[0]["rank"] == 1

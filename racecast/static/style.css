@@ -1077,6 +1077,28 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .rankings-page[data-board="courses"] .findme     { display: none; }
 .rankings-page[data-board="courses"] .wip        { display: none; }
 
+/* ---- the Conferences tab (2026-11-02) ------------------------------ *
+ * A board of conferences and leagues: its two controls, the unit filters
+ * that narrow it, and nothing that describes one athlete or one race. */
+.rankings-page .units-only { display: none; }
+.rankings-page[data-board="units"] .units-only   { display: flex; }
+.rankings-page[data-board="units"] p.board-note.units-only { display: block; }
+.rankings-page[data-board="units"] .ability-only,
+.rankings-page[data-board="units"] .perf-only,
+.rankings-page[data-board="units"] .perfpr-only,
+.rankings-page[data-board="units"] .pr-only,
+.rankings-page[data-board="units"] .teams-only,
+.rankings-page[data-board="units"] .courses-only,
+.rankings-page[data-board="units"] .findme,
+.rankings-page[data-board="units"] .not-units,
+.rankings-page[data-board="units"] .scope-field { display: none; }
+.rk .un-mark { display: inline-flex; vertical-align: middle; margin-right: .4rem; }
+.rk .un-mark svg, .rk .un-mark img { width: 22px; height: 22px; object-fit: contain; }
+.rk .un-open { border: 0; background: none; cursor: pointer; padding: 0 .3rem 0 0; color: inherit; font-size: .8rem; }
+.rk tr.un-members > td { padding: .2rem 0 .7rem 2.2rem; background: var(--bg-soft, #f7f7f5); }
+.rk .un-team-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .15rem 1.2rem; font-size: .88rem; }
+.rk .un-team-list span.n { color: #777; margin-left: .3rem; }
+
 .rankings-page .teams-only { display: none; }
 .rankings-page[data-board="teams"] .teams-only   { display: flex; }
 .rankings-page[data-board="teams"] .ability-only { display: none; }
