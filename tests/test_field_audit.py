@@ -29,3 +29,26 @@ def test_each_missed_finisher_gets_one_cause():
     assert got == {"listed": 3, "school not in our field": 1, "team ran more than we had": 1,
                    "the wrong runners": 1, "no school": 1}
     assert prec == {"listed_n": 4, "listed_ran": 3}
+
+
+def test_field_rules_per_race():
+    import upcoming_preview as U
+    plan = {"races": [
+        {"div_id": 1, "label": "Varsity Boys 5K", "gender": "M",
+         "schools": {("A", "NY"): 7, ("B", "NY"): 3}},
+        {"div_id": 2, "label": "JV Boys 5K", "gender": "M",
+         "schools": {("A", "NY"): 12, ("C", "NY"): 4}},
+        {"div_id": 3, "label": "Varsity Girls 5K", "gender": "F", "schools": {("A", "NY"): 7}},
+        {"div_id": 4, "label": "Middle School Boys", "gender": "M", "schools": {("D", "NY"): 9}}]}
+    assert U.fieldRules(plan, 1) == {"cap_rule": "brought", "varsity": True, "skip_by_school": {}}
+    jv = U.fieldRules(plan, 2)
+    assert jv["varsity"] is False and jv["skip_by_school"] == {"A": 7, "B": 3}
+    assert U.fieldRules(plan, 4)["skip_by_school"] == {}          # another level, not a JV
+    assert U.fieldRules(plan, 9) == {} and U.fieldRules(None, 1) == {}
+
+
+def test_as_many_as_they_brought():
+    import predict as P
+    assert P.broughtCap(0) == P.MAX_PER_TEAM
+    assert P.broughtCap(3) == 3 and P.broughtCap(6) == 7 and P.broughtCap(10) == 10
+    assert P.broughtCap(15, varsity=False) == 15 and P.broughtCap(2, varsity=False) == 2

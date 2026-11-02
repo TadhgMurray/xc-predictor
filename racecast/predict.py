@@ -3225,6 +3225,24 @@ def squadCap(n_at_meet, per_team=None):
     return MAX_PER_TEAM
 
 
+# ★ AS MANY AS THEY BROUGHT (owner, 2026-11-02: "the amount of ppl who
+#   ran"; scripts/field_audit.py: 63-69% of JV / open finishers were from
+#   teams that ran more than we listed). With target["cap_rule"] ==
+#   "brought" (the meet previews, upcoming_preview.fieldRules) a school
+#   lists what it ran at the last edition of THIS race: a JV or open race
+#   takes all of them, a varsity race keeps squadCap's small-squad rule
+#   below six and otherwise seven or more if more ran. Scoring still counts
+#   seven (_score).
+def broughtCap(n_at_meet, varsity=True):
+    if n_at_meet <= 0:
+        return MAX_PER_TEAM
+    if not varsity:
+        return n_at_meet
+    if n_at_meet <= SMALL_SQUAD_MAX:
+        return n_at_meet
+    return max(MAX_PER_TEAM, n_at_meet)
+
+
 # Purpose:   how many runners each school actually had at the original meet.
 # ! Rows with no school are not counted: they are individuals who share the
 #   absence of a school, not a squad. Same reasoning as meet_compile.isTeam.
@@ -4577,21 +4595,28 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                     squads, _rest = _tfEventSquads(cur, squads, track_m, year)
             # ★ AND THE SAME ORDER AS meetField'S (byPrediction)
             at_meet_counts = countsBySchool(originals)
+            # ★ THE MEET PREVIEWS' FIELD RULES (upcoming_preview.fieldRules):
+            #   as many as each school brought to this race, and in a JV /
+            #   open race each school's varsity runners left out (skip)
+            brought = target.get("cap_rule") == "brought" and not track_m
+            skips = target.get("skip_by_school") or {}
+
+            def capOf(sch):
+                n_in = at_meet_counts.get(sch, 0)
+                if track_m:
+                    return tfEntryCap(n_in, target.get("per_team"))
+                if brought:
+                    return broughtCap(n_in, target.get("varsity", True))
+                return squadCap(n_in, target.get("per_team"))
             if target.get("pick") == "predicted":
-                caps = {sch: (tfEntryCap(at_meet_counts.get(sch, 0),
-                                         target.get("per_team")) if track_m
-                              else squadCap(at_meet_counts.get(sch, 0),
-                                            target.get("per_team")))
-                        for sch in squads}
+                caps = {sch: capOf(sch) + int(skips.get(sch, 0)) for sch in squads}
                 squads, _note = byPrediction(cur, squads, caps, target)
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             entries = []
             for sch in sorted(squads):
-                n_in = at_meet_counts.get(sch, 0)
-                cap = (tfEntryCap(n_in, target.get("per_team")) if track_m
-                       else squadCap(n_in, target.get("per_team")))
-                for e in squads[sch][:cap]:
+                cap, skip = capOf(sch), int(skips.get(sch, 0))
+                for e in squads[sch][skip:skip + cap]:
                     # ! WHAT THE SCHOOL ENTERED, carried on every runner so
                     #   _score can tell a team from a lone qualifier. The cap
                     #   above already keeps the lineup honest; `add` is what
