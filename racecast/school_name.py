@@ -93,6 +93,7 @@ _AP_STATE = {
     "virginia": "VA", "wash": "WA", "washington": "WA", "wva": "WV",
     "westvirginia": "WV", "wis": "WI", "wisc": "WI", "wisconsin": "WI",
     "wyo": "WY", "wyoming": "WY",
+    "nmex": "NM", "sdak": "SD", "ndak": "ND", "wvirginia": "WV",
 }
 _BRACKET_TAIL = re.compile(r"\s*[\(\[]\s*([A-Za-z. ]{2,20})\s*[\)\]]\s*$")
 
@@ -102,7 +103,15 @@ def _bracketState(name):
     m = _BRACKET_TAIL.search(name)
     if not m:
         return None
-    code = _AP_STATE.get(re.sub(r"[^a-z]", "", m.group(1).lower()))
+    key = re.sub(r"[^a-z]", "", m.group(1).lower())
+    code = _AP_STATE.get(key)
+    # ★ ANY STATE'S TWO LETTERS, DOTTED OR NOT (owner, 2026-11-02: tfrrs's
+    #   "Charleston (W.V.)" was a second school beside anet's "Charleston
+    #   (W.Va.)", and its runners second people -- one of them #5 in the
+    #   country off one race). The table only had the few codes AP style
+    #   writes as letters; "(W.V.)" is "wv".
+    if code is None and len(key) == 2 and key.upper() in STATE_CODES:
+        code = key.upper()
     base = name[:m.start()].strip(" \t,-–—")
     return (base, code) if code and base else None
 

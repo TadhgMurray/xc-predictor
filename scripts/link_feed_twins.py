@@ -148,10 +148,18 @@ SCHOOL_ABBR = {"hs": ("high", "school"), "ms": ("middle", "school"),
                "co": ("county",), "cnty": ("county",)}
 
 
+# ★ THE STATE IN BRACKETS IS NOT THE SCHOOL'S NAME (owner, 2026-11-02:
+#   tfrrs's "Charleston (W.V.)" and anet's "Charleston (W.Va.)" -- {w, v}
+#   is not inside {w, va}, so every Charleston runner of the Thundering Herd
+#   race stayed two people, and one of them ranked #5 in the country off one
+#   race). The day, the time and the name still have to agree.
+_TAIL_PAREN = re.compile(r"\s*\([^()]*\)\s*$")
+
+
 def schoolWords(school):
     """'Middle Tennessee State University' -> {'middle', 'tennessee',
     'state'}; blank -> empty."""
-    words = re.split(r"[^a-z0-9]+", str(school or "").lower())
+    words = re.split(r"[^a-z0-9]+", _TAIL_PAREN.sub("", str(school or "")).lower())
     out = []
     for w in words:
         out.extend(SCHOOL_ABBR.get(w, (w,)))
@@ -215,7 +223,8 @@ def _sameTimeSql(a, b):
 
 def _schoolWordsSql(col):
     stop = ", ".join(f"'{w}'" for w in SCHOOL_STOP)
-    return (f"ARRAY(SELECT DISTINCT w FROM regexp_split_to_table(lower(COALESCE({col}, '')), "
+    return (f"ARRAY(SELECT DISTINCT w FROM regexp_split_to_table(lower("
+            f"regexp_replace(COALESCE({col}, ''), '\\s*\\([^()]*\\)\\s*$', '')), "
             f"'[^a-z0-9]+') w WHERE w <> '' AND w NOT IN ({stop}))")
 
 
