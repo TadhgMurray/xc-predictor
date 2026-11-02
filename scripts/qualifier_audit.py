@@ -21,9 +21,14 @@ year"? Measured on a finished season. READ ONLY.
   schools with four or more of their feeder runners in R) and m individuals
   (R's other runners from that feeder).
 
-★ APPLIED A YEAR LATER, AS THE SITE WOULD. This year's edition of R and of
-  each feeder are found by name (last_edition.editionName) and race
-  (last_edition.mapRace), never by who ran them. The field: each feeder's
+★ ONLY MEETS NAMED AS A ROUND (race_rows.meetType 4+: conference, district,
+  sectional, regional, state, national). The first run took invitationals
+  too: good runners top their small meets, so those passed the feeder test.
+
+★ APPLIED A YEAR LATER, AS THE SITE WOULD. This year's edition of R is found
+  by name (last_edition.editionName) and race (last_edition.mapRace); each
+  feeder's by name, else by the most of last year's feeder runners who came
+  back to one race within ten days of its date. Never by who ran R. The field: each feeder's
   top k teams by team score (all of their runners there, at most seven) and
   its top m individuals off those teams.
 
@@ -189,16 +194,37 @@ def main():
                 conn.rollback()
             return races_of[(src, mid)]
 
-        def nextYear(src, mid, div, near):
-            """This season's edition of last season's race (src, mid, div),
-            dated within three weeks of `near` (a date a year on)."""
-            nm = LE.editionName(names.get((src, mid)))
-            if not nm:
+        by_person_this = collections.defaultdict(list)
+        for key, rows in this.items():
+            for pid, _s, _t in rows:
+                by_person_this[pid].append(key)
+
+        def byReturners(F, near):
+            """★ OR BY WHO CAME BACK (owner's run, 2026-11-02: most feeders
+            were "not found" by name). This season's race, within ten days
+            of `near`, that the most of last season's race's runners ran --
+            at least a quarter of them. Last season's runners only: nothing
+            of the race being guessed."""
+            votes = collections.Counter()
+            for pid, _s, _t in prev[F]:
+                for k in by_person_this.get(pid, ()):
+                    if k[0] == F[0] and abs((datetime.date.fromisoformat(dthis[k])
+                                             - near).days) <= 10:
+                        votes[k] += 1
+            if not votes:
                 return None
-            old = racesOf(src, mid)
+            k, n = votes.most_common(1)[0]
+            return k if n >= max(5, 0.25 * len(prev[F])) else None
+
+        def nextYear(src, mid, div, near, returners=False):
+            """This season's edition of last season's race (src, mid, div),
+            dated within three weeks of `near` (a date a year on): by name
+            and race, else (returners=True) by who came back."""
+            nm = LE.editionName(names.get((src, mid)))
+            old = racesOf(src, mid) if nm else []
             me = next((r for r in old if int(r["div_id"]) == div), None)
             if me is None:
-                return None
+                return byReturners((src, mid, div), near) if returners else None
             for m2 in ed_this.get((src, nm), ()):
                 if m2 == mid:
                     continue
@@ -211,7 +237,7 @@ def main():
                     ids, how = LE.mapRace(r, new, old)
                     if how == "race" and ids and div in ids:
                         return key
-            return None
+            return byReturners((src, mid, div), near) if returners else None
 
         found = collections.defaultdict(lambda: [0, 0, 0, 0, 0])
         shown = []
@@ -222,6 +248,10 @@ def main():
                 continue
             if done >= a.max_races:
                 break
+            # ★ ONLY A MEET NAMED AS A ROUND (owner's run: invitationals passed
+            #   the feeder test -- good runners top their small meets too)
+            if RR.meetType(names.get((R[0], R[1]))) < 4:
+                continue
             rday = datetime.date.fromisoformat(dprev[R])
             feeders = collections.Counter()
             for pid, _s, _t in rrows:
@@ -250,7 +280,8 @@ def main():
             ok = True
             for F, (k, m) in rules.items():
                 F2 = nextYear(F[0], F[1], F[2],
-                              datetime.date.fromisoformat(dprev[F]) + datetime.timedelta(days=364))
+                              datetime.date.fromisoformat(dprev[F]) + datetime.timedelta(days=364),
+                              returners=True)
                 if F2 is None or dthis[F2] >= dthis[R2]:
                     ok = False
                     continue
@@ -260,7 +291,7 @@ def main():
             school_ok = sum(1 for _p, s, _t in this[R2] if s in last_schools)
             kind = {6: "national", 5: "state", 4: "conf / region"}.get(
                 int(RR.meetType(names.get((R2[0], R2[1])))), "other")
-            for g in (kind, "ALL"):
+            for g in (kind, "ALL", "ALL, every round found" if ok else "ALL, a round missing"):
                 f = found[g]
                 f[0] += 1
                 f[1] += len(actual)
@@ -274,11 +305,12 @@ def main():
 
     print(f"\n{n_qual:,} qualifying races in {a.season - 1}, the largest {a.max_races} (feeders hold "
           f"{100 * MIN_COVER:.0f}%+ of the field); scored on their {a.season} editions:")
-    print(f"  {'':16} {'races':>6} {'finishers':>10} {'found':>7} {'precise':>8} {'last year':>10}")
-    for g in ("national", "state", "conf / region", "other", "ALL"):
+    print(f"  {'':24} {'races':>6} {'finishers':>10} {'found':>7} {'precise':>8} {'last year':>10}")
+    for g in ("national", "state", "conf / region", "other", "ALL",
+              "ALL, every round found", "ALL, a round missing"):
         f = found.get(g)
         if f and f[0]:
-            print(f"  {g:16} {f[0]:>6} {f[1]:>10,} {100 * f[2] / max(f[1], 1):>6.0f}% "
+            print(f"  {g:24} {f[0]:>6} {f[1]:>10,} {100 * f[2] / max(f[1], 1):>6.0f}% "
                   f"{100 * f[2] / max(f[3], 1):>7.0f}% {100 * f[4] / max(f[1], 1):>9.0f}%")
     print("  (found: of the finishers, in the qualifiers' field; precise: of that field, "
           "finished; last year: of the finishers, school ran it last year)")
