@@ -117,7 +117,9 @@ class Meet:
     events: list = field(default_factory=list)
 
 
-_HEADER = re.compile(r"hy-tek'?s\s+meet\s+manager", re.I)
+# ★ TEAM MANAGER TOO (parser review, 2026-11-02): only "Meet Manager" was a
+#   header, so a Team Manager report had no meet name, date or venue
+_HEADER = re.compile(r"hy-tek'?s\s+(?:meet|team)\s+manager", re.I)
 _EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*(.*)$", re.I)
 # ★ THE GENDER CAN COME LAST (2026-10-23, LiveTrackResults' youth meets:
 #   "Event 1  2000 Meter Run CC 8 & Under Division Girls"): the first pattern
@@ -131,11 +133,15 @@ _GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b", re.I)
 #   gender word, names a race, and a Name ... Time header follows.
 _BARE_EVENT = re.compile(r"^\s*(Girls|Boys|Women|Men|Mixed|Coed)\s+(\S.*\b(Run|Meters?|Mile|Dash|Hurdles|"
                          r"Steeplechase|Walk|\d+(?:\.\d+)?\s*k)\b.*?)\s*$", re.I)
-_TITLE_DATE = re.compile(r"^(.*?)\s+-\s+(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+to\s+\S+)?\s*$")
-_MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,2})?|\d{2,3}\.\d{1,2}"
-_ROW_TAIL = re.compile(rf"\s+(?P<mark>{_MARK}|DNF|DQ|DNS|NT|SCR)\s*(?:[*#xXqQ]\s*)?(?P<pts>\d+)?\s*$")
+_TITLE_DATE = re.compile(r"^(.*?)\s+-\s+(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})(?:\s+to\s+\S+)?\s*$")
+# ★ SPRINTS UNDER TEN SECONDS AND THOUSANDTHS (parser review, 2026-11-02):
+#   '6.95' and '16:40.123' matched nothing, and the row was dropped
+_MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,3})?|\d{1,3}\.\d{1,3}"
+# a heat number and a wind reading may follow the mark ('10.95q  2  +1.2')
+_ROW_TAIL = re.compile(rf"\s+(?P<mark>{_MARK}|DNF|DQ|DNS|NT|SCR)\s*(?:[*#xXqQ]\s*)?(?P<pts>\d+)?"
+                       rf"(?:\s+(?:[+-]\d{{1,2}}\.\d|NWI))?\s*$")
 _PLACE = re.compile(r"^\s*(\d+|--|-)\s+")
-_GRADE_WORD = r"\d{1,2}|FR|SO|JR|SR|R?FR|R?SO|R?JR|R?SR|GR|M?\d"
+_GRADE_WORD = r"(?:FR|SO|JR|SR)-\d|\d{1,2}|FR|SO|JR|SR|R?FR|R?SO|R?JR|R?SR|GR|M?\d"
 _GENDER = {"girls": "F", "women": "F", "boys": "M", "men": "M"}
 
 
@@ -164,6 +170,8 @@ def metersOf(title):
     m = re.search(r"\b(one|two|three)\s+mile", t)
     if m:
         return round({"one": 1, "two": 2, "three": 3}[m.group(1)] * 1609.344, 1)
+    if re.search(r"\bmile\b", t):                 # 'Boys Mile Run'
+        return 1609.3
     return None
 
 
@@ -179,6 +187,23 @@ def _columns(header):
             if m:
                 cols[name] = m.start()
                 break
+    # ★ THE COLUMNS AROUND THE RESULT (parser review, 2026-11-02): a Seed or
+    #   Prelims column before it was read into the school ('Sunset 5:01.22'),
+    #   a pace column after it was taken as the time (18:40.12 stored as 6:01)
+    res = None
+    for k in ("Finals", "Time", "Mark", "Results", "Prelims"):
+        m = re.search(rf"(?<!\S){k}(?!\S)", header, re.I)
+        if m:
+            res = m
+            break
+    if res is not None:
+        cols["result_end"] = res.end()
+        before = [m for m in re.finditer(r"(?<!\S)(Seed|Prelims)(?!\S)", header, re.I)
+                  if m.start() < res.start()]
+        if before and "school" in cols and before[0].start() > cols["school"]:
+            cols["seed"] = before[0].start()
+        if re.search(r"(?<!\S)(Avg|Pace|Mile)(?!\S)", header[res.end():], re.I):
+            cols["pace"] = True
     return cols
 
 
@@ -202,14 +227,44 @@ def _parseRow(line, cols):
         if cm:
             start += cm.end()
     tail = _ROW_TAIL.search(line)
-    if not tail:
+    mark = tail.group("mark") if tail else None
+    pts = tail.group("pts") if tail else None
+    cut = tail.start() if tail else None
+    if cols.get("pace"):
+        # the time under the result header, not the pace beside it
+        marks = [m for m in re.finditer(rf"(?<!\S)({_MARK}|DNF|DQ|DNS|NT|SCR)(?=[*#xXqQ]?(?:\s|$))", line)]
+        if marks:
+            best = min(marks, key=lambda m: abs(m.end() - cols["result_end"]))
+            mark, cut = best.group(1), best.start()
+            after = re.match(r"\s*[*#xXqQ]?\s*(?:\S+\s+)?(\d+)\s*$", line[best.end():])
+            pts = after.group(1) if after else None
+    if mark is None:
         return None
     place = int(pm.group(1)) if pm.group(1).isdigit() else None
-    body = line[:tail.start()]
-    if "grade" in cols and "school" in cols and cols["grade"] < cols["school"] <= len(body):
+    body = line[:cut]
+    if "seed" in cols:
+        # the seed or prelim mark sits just before the result, right-aligned
+        # under its header (it starts left of the header word)
+        body = re.sub(rf"\s+(?:{_MARK}|NT|NR|NH|SCR|--)[*#xXqQ]?\s*$", "", body)
+    # ★ A ROW THAT DOES NOT LINE UP WITH ITS HEADER (Team Manager's single-
+    #   spaced reports, parser review 2026-11-02: name 'Ayh', grade 'AN, K'):
+    #   a word cut in two at the grade column. Read by its words instead --
+    #   when they read; a long name run into its grade ('Maximilian12') is
+    #   the column reading's own case.
+    g0 = cols.get("grade")
+    tokens = None
+    if g0 and 0 < g0 < len(body) and body[g0 - 1:g0].isalpha() and body[g0:g0 + 1].isalpha():
+        tokens = re.match(rf"^(?P<name>.+?)\s+(?P<grade>{_GRADE_WORD})\s+(?P<school>\S.*)$",
+                          body[start:], re.I)
+    if tokens:
+        name, grade, school = tokens.group("name"), tokens.group("grade"), tokens.group("school")
+    elif "grade" in cols and "school" in cols and cols["grade"] < cols["school"] <= len(body):
         name = body[start:cols["grade"]]
         grade = body[cols["grade"]:cols["school"]].strip()
         school = body[cols["school"]:].strip()
+        # 'SO-2' longer than its column: 'SO-' | '2 Sunset'
+        if grade.endswith("-") and re.match(r"^\d\s", school):
+            grade, school = grade + school[0], school[1:].strip()
         # a long name runs into the grade column ("Maximilian12"): take the
         # grade back from the end of the two together
         if grade and not re.fullmatch(_GRADE_WORD, grade, re.I):
@@ -225,10 +280,9 @@ def _parseRow(line, cols):
     last, first = _splitName(name)
     if not last or not school.strip():
         return None
-    mark = tail.group("mark")
     return Row(place=place, last=last, first=first, grade=grade.upper(),
                school=re.sub(r"\s+", " ", school).strip(), seconds=secondsOf(mark),
-               mark=mark, points=int(tail.group("pts")) if tail.group("pts") else None)
+               mark=mark, points=int(pts) if pts else None)
 
 
 def parseReport(text):
@@ -249,7 +303,8 @@ def parseReport(text):
                 t = _TITLE_DATE.match(nxt[0])
                 if t:
                     meet.name = t.group(1).strip()
-                    meet.date = f"{t.group(4)}-{int(t.group(2)):02d}-{int(t.group(3)):02d}"
+                    yr = t.group(4) if len(t.group(4)) == 4 else f"20{t.group(4)}"
+                    meet.date = f"{yr}-{int(t.group(2)):02d}-{int(t.group(3)):02d}"
                 else:
                     meet.name = nxt[0]
                 if len(nxt) > 1 and not _EVENT.match(nxt[1]) and nxt[1].lower() not in (

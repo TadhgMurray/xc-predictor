@@ -29,13 +29,17 @@ from sources.hytek import Event, Meet, Row, metersOf, secondsOf, _splitName
 
 _RACE = re.compile(r"^\s*Race\s*#?\s*(\d+)\b\s*[-:]?\s*(.*?)\s*$", re.I)
 _HEADER_NAME = re.compile(r"\b(Name|Athlete)\b")
-_MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,2})?"
+_MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,3})?"
 # after the time: team points (Monroe), and/or a gap behind the winner
 # ('---', '11.4', '4:25.1': Hero's Dan Conway report) -- the time is the
 # FIRST mark, so a gap that looks like a time is never read as one
 _GAP = r"(?:-{1,3}|\+?(?:\d{1,2}:)?\d{1,2}\.\d{0,2})"         # '10:28.' when the page cut it
+# ★ AND A PACE (parser review, 2026-11-02): '24:00.3  7:43' -- a pace with no
+#   decimal failed the gap, the row matched with the PACE as its time, and
+#   24:00.3 went into the school. One or two trailing columns, gap or pace.
+_PACE = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{0,3})?"
 _ROW = re.compile(rf"^(?P<mid>.+?)\s+(?P<mark>{_MARK}|DNF|DNS|DQ)\b\s*(?P<pts>\(?\d+\)?|-)?"
-                  rf"(?:\s+{_GAP})?\s*$")
+                  rf"(?:\s+(?:{_GAP}|{_PACE})){{0,2}}\s*$")
 _SCORE = re.compile(r"^(\(?\d+\)?|-)$")
 _GRADE = re.compile(r"^(\d{1,2}|FR|SO|JR|SR|GR|R?FR|R?SO|R?JR|R?SR)$", re.I)
 _GRADE_LEAD = re.compile(r"^(\d{1,2}|FR|SO|JR|SR|GR)\s+(\S.*)$", re.I)

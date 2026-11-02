@@ -153,3 +153,39 @@ def test_a_rankings_report_has_no_event_line_and_a_bib_column():
     a, b = m.events[0].rows
     assert (a.place, a.last, a.first, a.grade, a.school, a.seconds) == (1, "Alder", "Aaron", "8", "Northfield", 669.0)
     assert (b.last, b.grade, b.school, b.seconds, b.points) == ("Birch", "9", "South Harbor", 689.4, 1)
+
+
+# ---- parser review, 2026-11-02 ------------------------------------------------
+
+def _fx(name):
+    import os
+    return open(os.path.join(os.path.dirname(__file__), "fixtures", "hytek", name)).read()
+
+
+def test_seed_column_stays_out_of_the_school():
+    ev = [e for e in H.parseReport(_fx("mm_track_county.txt")).events if e.number == 3][0]
+    assert [r.school for r in ev.rows[:2]] == ["Sunset", "Lincoln"]
+    assert ev.rows[0].seconds == 298.31
+
+
+def test_sprints_thousandths_and_a_bare_mile():
+    assert H.secondsOf("6.95") == 6.95 and H.secondsOf("16:40.123") == 1000.123
+    assert H.metersOf("Boys Mile Run") == 1609.3
+
+
+def test_a_pace_column_is_not_the_time():
+    cols = H._columns("    Name                    Year School                  Finals  Avg Mile  Points")
+    row = H._parseRow("  1 Smith, John               11 Sunset                18:40.12      6:01       1", cols)
+    assert (row.seconds, row.school, row.points) == (1120.12, "Sunset", 1)
+
+
+def test_team_manager_single_spaced():
+    m = H.parseReport(_fx("tm_xc_collapsed.txt"))
+    assert (m.name, m.date, m.venue) == ("Riverside Twilight XC", "2025-09-20", "Riverside Golf Course")
+    r = m.events[0].rows[0]
+    assert (r.last, r.first, r.grade, r.school) == ("Ayhan", "Kerem", "SO-2", "Lehigh")
+
+
+def test_meetreport_pace_after_the_time():
+    from sources import meetreport as M
+    assert M.parseRow("36 MACHO, Isabella  JR Ely  30  24:00.3  7:43").seconds == 1440.3
