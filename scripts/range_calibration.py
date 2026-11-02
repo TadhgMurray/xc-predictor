@@ -13,12 +13,15 @@ pre-race recorder) against what happened.
   hold 68%. The ranges are fitted on the held-out season; the served trees
   are then refit on every season (race_trees --refit-all) and miss less.
 
-★ THE FACTOR. For every runner we listed who finished: z = |ln(actual /
+★ THE FACTORS. For every runner we listed who finished: z = |ln(actual /
   predicted)| over the UNSCALED half-width (the stored range divided by the
   factor that was in force the day it was made, race_model.scaleOn). The
-  68.27th percentile of z is the factor that makes +-1 sigma cover 68%. It
-  is appended to race_model.CAL_PATH as {"from": today, "k": ...}; every
-  range made from today is scaled by it (race_model.rangeScale).
+  68.27th percentile of z is the factor that makes +-1 sigma cover 68%: "k"
+  for the time range (lo/hi), and "k_place" for the place spread
+  (sigma_pct, against the miss with the race's own median taken out) once
+  enough stored forecasts carry it. Appended to race_model.CAL_PATH as
+  {"from": today, "k": ..., "k_place": ...}; every range made from today is
+  scaled by them (race_model.rangeScale).
 
 ! ONLY ON ENOUGH: at least MIN_RACES races and MIN_RUNNERS runners in the
   window, and the factor is kept within [K_MIN, K_MAX]. Otherwise it says so
@@ -42,21 +45,31 @@ K_MIN, K_MAX = 0.5, 1.5
 
 
 def zScores(fc, finishers, history):
-    """|ln(actual / predicted)| over the unscaled half-width, for each runner
-    of one frozen race who finished. Pure."""
+    """(time z, place z) for the runners of one frozen race who finished.
+    time: |ln(actual / predicted)| over the unscaled time half-width; place:
+    the same miss with the race's median taken out, over the unscaled place
+    spread (sigma_pct; none for forecasts stored before it was). Pure."""
+    import statistics
     import race_model as M
-    k0 = M.scaleOn(history, str(fc.get("made_on"))[:10])
+    made = str(fc.get("made_on"))[:10]
+    k0, kp0 = M.scaleOn(history, made), M.scaleOn(history, made, "k_place")
     act = {}
     for f in finishers:
         if f.get("person_id") is not None and f["person_id"] not in act:
             act[f["person_id"]] = float(f["time_seconds"])
-    out = []
+    rows = []
     for r in fc.get("runners") or []:
         a, s, hi = act.get(r.get("person_id")), r.get("seconds"), r.get("hi")
         if a and s and hi and float(hi) > float(s) > 0:
-            w = math.log(float(hi) / float(s)) / k0
-            out.append(abs(math.log(a / float(s))) / w)
-    return out
+            rows.append((math.log(a / float(s)), math.log(float(hi) / float(s)) / k0,
+                         r.get("sigma_pct")))
+    if not rows:
+        return [], []
+    med = statistics.median(d for d, _w, _p in rows)
+    time_z = [abs(d) / w for d, w, _p in rows]
+    place_z = [abs(d - med) / (float(p) / 100.0 / kp0) for d, _w, p in rows
+               if p and float(p) > 0]
+    return time_z, place_z
 
 
 def factor(zs):
@@ -89,7 +102,7 @@ def main():
         cal = {"history": []}
     today = datetime.date.today()
     lo = (today - datetime.timedelta(days=a.days)).isoformat()
-    zs, races = [], 0
+    zs, pzs, races = [], [], 0
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
@@ -110,9 +123,10 @@ def main():
                 print(f"  {src}:{mid}: {exc}")
                 continue
             for fc in fcs:
-                z = zScores(fc, actual.get(int(fc["div_id"])) or [], cal.get("history"))
+                z, pz = zScores(fc, actual.get(int(fc["div_id"])) or [], cal.get("history"))
                 if len(z) >= 8:
                     zs += z
+                    pzs += pz
                     races += 1
         conn.rollback()
 
@@ -125,16 +139,28 @@ def main():
     print(f"  unscaled +-1 sigma holds {100 * inside:.0f}% (honest = 68%); "
           f"the factor that makes it 68%: {k:.3f} "
           f"(in force now: {M.scaleOn(cal.get('history'), today.isoformat()):.3f})")
+    k_place = None
+    if len(pzs) >= MIN_RUNNERS:
+        k_place = factor(pzs)
+        print(f"  place spread: unscaled +-1 sigma holds "
+              f"{100 * sum(z <= 1.0 for z in pzs) / len(pzs):.0f}%; factor {k_place:.3f} "
+              f"({len(pzs):,} runners)")
+    else:
+        print(f"  place spread: {len(pzs):,} runners carry it so far (need {MIN_RUNNERS:,}); "
+              f"left as it is")
     if a.dry_run:
         return
-    cal.setdefault("history", []).append({"from": today.isoformat(), "k": round(k, 4),
-                                          "races": races, "runners": len(zs),
-                                          "window_from": lo})
+    entry = {"from": today.isoformat(), "k": round(k, 4), "races": races,
+             "runners": len(zs), "window_from": lo}
+    if k_place is not None:
+        entry["k_place"] = round(k_place, 4)
+    cal.setdefault("history", []).append(entry)
     tmp = M.CAL_PATH + ".new"
     with open(tmp, "w") as fh:
         json.dump(cal, fh, indent=1)
     os.replace(tmp, M.CAL_PATH)
-    print(f"  wrote {M.CAL_PATH}: ranges made from {today} are scaled by {k:.3f}")
+    print(f"  wrote {M.CAL_PATH}: time ranges made from {today} are scaled by {k:.3f}"
+          + (f", the place spread by {k_place:.3f}" if k_place is not None else ""))
 
 
 if __name__ == "__main__":
