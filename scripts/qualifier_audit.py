@@ -75,6 +75,13 @@ NOT_A_ROUTE = re.compile(r"\bnxr\b|nike cross regional|\btop\s*\d+|seeded|invit|
 #   it). Such a name needs LEAGUE_ROUNDS rounds and a strong own field to be
 #   a route; every route needs MIN_ROUNDS and own found x precise MIN_OWN.
 LEAGUE = re.compile(r"conference|league|\bcity\b|county|\bcyo\b|\bisd\b|wpial", re.I)
+# ★ AND THE REVERSE, BECAUSE LEAGUES GO BY INITIALS (second review: NAIC,
+#   BIIF, BCL, GFMSL, Bi-State MS, FCPS middle schools, MSHSL and Shenandoah
+#   sections, a Maine regional -- open meets, every team of the area). Only
+#   a name that says it is a level you qualify for passes at the ordinary
+#   bar; any other needs the league bar.
+QUALIFIED = re.compile(r"\bstate\b|federation|interscholastic|junior olympic|\bnational|"
+                       r"\bnaia\b|\bnjcaa\b|\bcif\b|uil region|3c2a", re.I)
 MIN_ROUNDS, LEAGUE_ROUNDS, MIN_OWN = 2, 4, 0.55
 
 
@@ -86,8 +93,10 @@ def keepRoute(r):
     n = len(r.get("rounds") or [])
     if n < MIN_ROUNDS or r["own_found"] * r["own_precise"] < MIN_OWN:
         return False
-    if LEAGUE.search(r.get("meet_name") or ""):
-        return n >= LEAGUE_ROUNDS and r["own_found"] >= 0.85 and r["own_precise"] >= 0.8
+    meet = r.get("meet_name") or ""
+    if LEAGUE.search(meet) or not QUALIFIED.search(meet) or re.search(r"europe", meet, re.I):
+        return n >= LEAGUE_ROUNDS and r["own_found"] >= 0.85 and r["own_precise"] >= 0.8 \
+            and not re.search(r"europe", meet, re.I)
     return True
 
 
