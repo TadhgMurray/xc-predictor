@@ -159,12 +159,18 @@ def recruitSql(season_units):
         firsts AS (
             SELECT person_id, min(year) AS first_year FROM college GROUP BY person_id
         ),
+        -- ★ ONE ROW PER PERSON AND SPORT (2026-11-02, the full run:
+        --   duplicate key (32770491, XC)). A first college year can hold
+        --   two seasons -- the men's and the women's pool for a person
+        --   whose gender reads both ways, or two schools after a merge;
+        --   the one with the most races is the recruit.
         pick AS (
-            SELECT c.*
+            SELECT DISTINCT ON (c.person_id, c.sport) c.*
             FROM   college c
             JOIN   firsts f ON f.person_id = c.person_id AND c.year = f.first_year
             WHERE  c.year >= %(since)s
               AND  {floorSql(False, 'c')}
+            ORDER  BY c.person_id, c.sport, c.n_races DESC, c.mean_rating DESC, c.pool
         ),
         hs AS (
             SELECT h.person_id, h.sport, h.year, h.mean_rating, h.school, h.state,
@@ -717,6 +723,17 @@ def main():
                 print("  NOTHING TO WRITE -- college_recruit left as it was.")
             return
 
+        # ! AND NEVER A SECOND ROW FOR ONE KEY, whatever produced it: the
+        #   first one (the query's order) stands
+        seen, uniq = set(), []
+        for r in rows:
+            k = (r["person_id"], r["sport"])
+            if k not in seen:
+                seen.add(k)
+                uniq.append(r)
+        if len(uniq) < len(rows):
+            print(f"  {len(rows) - len(uniq):,} duplicate (person, sport) rows dropped")
+        rows = uniq
         with conn.cursor() as cur:
             cur.execute(_DDL)
             psycopg2.extras.execute_values(
