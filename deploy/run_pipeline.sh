@@ -1497,7 +1497,15 @@ fi
 # ★ THE FILL BESIDE THE SCHOOL NAMES (2026-10-25): 09b updates speed_rating
 #   rows, which 09c does not read; 09c reads school, person and team columns
 #   and writes only school_name_alias, which 09b does not read. 09d follows both.
-stepsN 09b_fill "$PY -u engine/fill_ratings.py" \
+# ★ CROSS COUNTRY AT ITS OWN COURSE (owner, 2026-11-02: BCL Meet #3 2023,
+#   listed 3218 m and corrected to 5000 m, read 130.2 beside 124.6 at the
+#   same park eleven days later). A corrected or novote division votes on
+#   no course, so the solve leaves it unrated and this fill prices it --
+#   and K_pool / nt is the pool's MEDIAN course, not the +2.9% park it ran
+#   at, which then also read as a fake "Day fast". --venue prices it at its
+#   course and corrected distance, as the nightly always has. Track as
+#   before (its no-venue rows have no course to look up).
+stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue && $PY -u engine/fill_ratings.py --sport TF" \
        09c_school_names "$PY -u scripts/merge_school_names.py --write"
 
 
