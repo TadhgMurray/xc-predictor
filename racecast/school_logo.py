@@ -88,7 +88,15 @@ def hasLevelColumn(cur, force=False):
 #   worse than no tag. One query at start-up answers all of them: which
 #   (school, state) rows serve. A few hundred kilobytes, loaded like the
 #   labels, refreshed by a restart after the scraper runs.
-_CRESTS = {"loaded": False, "map": {}}
+_CRESTS = {"loaded": False, "map": {}, "factory": None, "retry_at": 0.0}
+# ⚠ A FAILED LOAD IS RETRIED, NOT KEPT (owner, 2026-11-02: "All logos on the
+#   site are gone"). scripts/unit_logos.py held school_logo locked (its
+#   ensureTable ALTER) for a whole run; the site restarted under it, the read
+#   failed, and the EMPTY map was cached as loaded until the next restart.
+#   Now a failure keeps whatever map it had, waits RETRY_S, and the next
+#   mention after that tries again.
+RETRY_S = 60
+LOCK_WAIT = "5s"
 
 
 # ★ AND A LEVEL IN THE KEY (owner, 2026-09-16: "The anet pools should match
@@ -147,10 +155,13 @@ def loadCrests(conn_factory, force=False):
     and no page draws a crest."""
     if _CRESTS["loaded"] and not force:
         return
+    _CRESTS["factory"] = conn_factory
     got = {}
     try:
         with conn_factory() as conn:
             with conn.cursor() as cur:
+                # never queue behind a writer's lock: fail fast and retry
+                cur.execute(f"SET LOCAL lock_timeout = '{LOCK_WAIT}'")
                 if tableExists(cur, force=True):
                     lv = ("COALESCE(level, '')" if hasLevelColumn(cur, True)
                           else "''")
@@ -175,9 +186,19 @@ def loadCrests(conn_factory, force=False):
                             ((state or "").upper(), (sha or "")[:8], full,
                              (level or "").lower()))
     except Exception:                              # noqa: BLE001 -- optional
-        got = {}
+        _CRESTS["retry_at"] = time.time() + RETRY_S
+        return
     _CRESTS["map"] = got
     _CRESTS["loaded"] = True
+
+
+def _retryCrests():
+    """A load that failed tries again once RETRY_S has passed."""
+    if (_CRESTS["loaded"] or _CRESTS["factory"] is None
+            or time.time() < _CRESTS["retry_at"]):
+        return
+    _CRESTS["retry_at"] = time.time() + RETRY_S
+    loadCrests(_CRESTS["factory"])
 
 
 def crestPath(school, state=None, level=None):
@@ -204,6 +225,7 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
       states) and contextState otherwise -- and the crest is looked up
       under whatever that says.
     """
+    _retryCrests()
     rows = _CRESTS["map"].get(school)
     if not rows:
         return None

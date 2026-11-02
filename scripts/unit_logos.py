@@ -232,8 +232,23 @@ def main():
     import scrape_school_logos as S
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
+        # ⚠ THE TABLE SET-UP IS ITS OWN SHORT TRANSACTION (owner, 2026-11-02:
+        #   "All logos on the site are gone"). ensureTable's ALTER takes an
+        #   ACCESS EXCLUSIVE lock; held for the whole run it blocked every
+        #   crest read, and a site restart cached an empty map. Commit it now,
+        #   and commit each logo as it is pinned.
+        cur.execute("SET lock_timeout = '10s'")
         S.ensureTable(cur, S.DDL)
         S.ensureLevelKey(cur)
+        conn.commit()
+
+        def pin(label, key, url):
+            try:
+                S.setLogo(cur, manners, key, "", url, level="", write=True)
+                conn.commit()
+            except Exception as exc:              # noqa: BLE001 -- one bad image, not the run
+                conn.rollback()
+                print(f"  {label:<34} not stored ({type(exc).__name__}: {exc})")
         manners = S.Manners(rate=1.0)
         if a.set:
             if not a.url:
@@ -262,10 +277,7 @@ def main():
                     continue
                 print(f"  {d:<20} -> {org}")
                 if a.write:
-                    try:
-                        S.setLogo(cur, manners, key, "", url, level="", write=True)
-                    except Exception as exc:              # noqa: BLE001
-                        print(f"  {d:<20} not stored ({type(exc).__name__}: {exc})")
+                    pin(d, key, url)
         else:
             todo = collegeConferences(cur, a.limit)
             print(f"[unit logos] {len(todo)} college conferences on record")
@@ -283,10 +295,7 @@ def main():
                     continue
                 print(f"  {name:<34} -> {title}")
                 if a.write:
-                    try:
-                        S.setLogo(cur, manners, key, "", url, level="", write=True)
-                    except Exception as exc:              # noqa: BLE001 -- one bad image, not the run
-                        print(f"  {name:<34} not stored ({type(exc).__name__}: {exc})")
+                    pin(name, key, url)
         if a.write:
             conn.commit()
             print("[unit logos] written; restart the site to show them")
