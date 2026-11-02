@@ -4615,6 +4615,11 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             #   open race each school's varsity runners left out (skip)
             brought = target.get("cap_rule") == "brought" and not track_m
             skips = target.get("skip_by_school") or {}
+            grades = {int(g) for g in target.get("grades") or ()}
+
+            def inGrade(e):
+                g = str(e.get("grade") or "").strip()
+                return g.isdigit() and int(g) in grades
 
             def capOf(sch):
                 n_in = at_meet_counts.get(sch, 0)
@@ -4624,14 +4629,22 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                     return broughtCap(n_in, target.get("varsity", True))
                 return squadCap(n_in, target.get("per_team"))
             if target.get("pick") == "predicted":
-                caps = {sch: capOf(sch) + int(skips.get(sch, 0)) for sch in squads}
+                # a grade race orders the whole squad: its runners can sit
+                # anywhere in it
+                caps = {sch: (len(squads[sch]) if grades
+                              else capOf(sch) + int(skips.get(sch, 0))) for sch in squads}
                 squads, _note = byPrediction(cur, squads, caps, target)
             # ★ SAME PER-SCHOOL CAP AS meetField. These two must agree or the
             #   page shows one lineup and the model scores another.
             entries = []
             for sch in sorted(squads):
                 cap, skip = capOf(sch), int(skips.get(sch, 0))
-                for e in squads[sch][skip:skip + cap]:
+                # the varsity's runners out first (a ninth grader on varsity
+                # runs varsity), then the race's grades
+                rest = squads[sch][skip:]
+                if grades:
+                    rest = [e for e in rest if inGrade(e)]
+                for e in rest[:cap]:
                     # ! WHAT THE SCHOOL ENTERED, carried on every runner so
                     #   _score can tell a team from a lone qualifier. The cap
                     #   above already keeps the lineup honest; `add` is what
