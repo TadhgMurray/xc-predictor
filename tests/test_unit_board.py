@@ -170,3 +170,25 @@ def test_logo_file_skips_wikipedia_icons_and_member_logos():
                       "National Collegiate Athletic Association") == "File:NCAA logo.svg"
     assert L.logoFile(["File:Big Ten Conference logo.svg", "File:Big Ten wordmark.svg"],
                       "Big Ten Conference") == "File:Big Ten Conference logo.svg"
+
+
+def test_infobox_logo_is_the_articles_own_answer():
+    """Big Ten has a former, a 2012 and a current logo; ASUN's file is not
+    named a logo at all. The infobox says which one it uses."""
+    import unit_logos as L
+    big10 = "{{Infobox collegiate athletic conference\n| name = Big Ten\n| logo = Big Ten Conference logo (2012).svg\n| logo_size = 200px\n| map = New Big 10 map.svg\n}}"
+    assert L.infoboxLogo(big10) == "File:Big Ten Conference logo (2012).svg"
+    assert L.infoboxLogo("| image = [[File:ASUN Primary Mark.png|200px]]") == "File:ASUN Primary Mark.png"
+    assert L.infoboxLogo("| image = Atlantic 10 Conference map.svg") is None
+    assert L.infoboxLogo("| logo = \n| image = Commons-logo.svg") is None
+    assert L.infoboxLogo("no infobox") is None
+    files = ["File:Big Ten Conference former logo.svg", "File:Big Ten Conference logo.svg",
+             "File:Big Ten Conference logo (2012).svg"]
+    assert L.logoFile(files, "Big Ten Conference") == "File:Big Ten Conference logo.svg"
+    assert L.logoFile(["File:Open Access logo PLoS transparent.svg"], "ASUN Conference") is None
+
+
+def test_an_event_label_filed_as_the_conference_is_that_conference():
+    import unit_board as UB
+    assert UB.normKey("GNAC COMBINED EVENTS") == UB.normKey("GNAC") == "gnac"
+    assert UB.normKey("BIG EAST INDOOR") == UB.normKey("BIG EAST")

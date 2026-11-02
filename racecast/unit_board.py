@@ -271,7 +271,10 @@ def unitMark(kind, name, state=None, size=28, shown=None):
 # ====================================================================== #
 
 _GENERIC_WORDS = {"conference", "conferences", "athletic", "athletics", "league", "association",
-                  "intercollegiate", "the", "of", "and", "girls", "boys", "men", "women"}
+                  "intercollegiate", "the", "of", "and", "girls", "boys", "men", "women",
+                  # a meet's event label filed as the conference (owner's board,
+                  # 2026-11-02: "Gnac Combined Events" beside GNAC)
+                  "combined", "events", "indoor", "outdoor", "championship", "championships"}
 
 
 def normKey(value):

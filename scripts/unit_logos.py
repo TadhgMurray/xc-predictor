@@ -33,6 +33,7 @@ import os
 import sys
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -57,11 +58,24 @@ def looksLikeConference(title):
     return any(w in t for w in CONF_WORDS)
 
 
-def _get(params):
+RETRY_WAITS = (15, 45, 120)
+
+
+def _get(params, waits=RETRY_WAITS):
+    """One API call. ⚠ Wikipedia answers "You are making too many requests"
+    as plain text (or a 429); that is waited out, not counted as no logo."""
     q = urllib.parse.urlencode(dict(params, format="json", formatversion=2))
     req = urllib.request.Request(f"{API}?{q}", headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    for wait in tuple(waits) + (None,):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (ValueError, urllib.error.HTTPError) as exc:
+            if wait is None or (isinstance(exc, urllib.error.HTTPError)
+                                and exc.code not in (429, 503)):
+                raise
+            print(f"  (Wikipedia is rate-limiting; waiting {wait}s)")
+            time.sleep(wait)
 
 
 _GENERIC = {"conference", "conferences", "athletic", "athletics", "league", "association",
@@ -111,7 +125,11 @@ def matches(name, title, intro=""):
 # pinned to the Wikimedia Commons logo).
 _WIKI_ICONS = ("commons", "wiki", "wiktionary", "mediawiki", "oojs", "ambox",
                "question book", "edit-clear", "padlock", "symbol ", "portal",
-               "crystal clear", "nuvola", "folder hexagonal", "sports icon")
+               "crystal clear", "nuvola", "folder hexagonal", "sports icon",
+               "open access", "transparent.svg", "transparent square", " pog",
+               "increase2", "decrease2")
+_OLD_WORDS = ("former", "old ", "_old", "previous", "historic", "retired",
+              "alternate", "secondary", "academic", "1990", "200", "198", "197")
 _TITLE_FILLER = {"the", "of", "and", "conference", "athletic", "athletics",
                  "association", "intercollegiate", "league", "collegiate"}
 
@@ -130,7 +148,7 @@ def logoFile(files, title=None):
     ★ NOT WIKIPEDIA'S OWN ICONS, AND THE ONE NAMING THE ARTICLE FIRST (SEC got
       "Commons-logo.svg"; its own is "Southeastern Conference logo (2024).svg").
       Member schools' logos sit in the same list, so with a title a file that
-      names it beats one that does not; failing that, only a lone candidate."""
+      names it beats one that does not, and with none naming it nothing is taken."""
     picks = []
     for f in files or []:
         low = str(f).lower()
@@ -144,8 +162,12 @@ def logoFile(files, title=None):
         return None
 
     def rank(f):
+        # the current mark: not a "former"/"old" one, a logo before a
+        # wordmark, then the plainest name ("Big Ten Conference logo.svg"
+        # before "... logo (2012).svg")
         low = str(f).lower()
-        return (0 if "logo" in low else 1,)        # a logo beats a wordmark
+        old = any(w in low for w in _OLD_WORDS)
+        return (old, 0 if "logo" in low else 1, len(low))
 
     if title:
         tw = [w for w in _words(title) if w not in _TITLE_FILLER]
@@ -159,8 +181,43 @@ def logoFile(files, title=None):
                 named.append(f)
         if named:
             return sorted(named, key=rank)[0]
-        return picks[0] if len(picks) == 1 else None
+        return None          # a lone unnamed file is as often a member's logo
     return sorted(picks, key=rank)[0]
+
+
+_INFOBOX_LOGO = re.compile(r"^\s*\|\s*(?:logo|image)\s*=\s*(?:\[\[)?(?:File:|Image:)?([^|\]\n<{]+)",
+                           re.I | re.M)
+
+
+def infoboxLogo(wikitext):
+    """The file the article's infobox shows as its logo, or None. Pure.
+
+    ★ THE INFOBOX IS THE ARTICLE'S OWN ANSWER (owner, 2026-11-02: Big Ten got
+      no logo, ASUN got the Open Access padlock). File names are a guess --
+      Big Ten has a "former logo", a "(2012)" one and the current one, ASUN's
+      is not named a logo at all -- but `| logo = ...` is the one it uses."""
+    for m in _INFOBOX_LOGO.finditer(wikitext or ""):
+        f = m.group(1).strip()
+        low = f.lower()
+        if not f or not re.search(r"\.(svg|png|gif|jpe?g|webp)$", low):
+            continue
+        if any(w in low for w in ("map", "location", "locator", "flag")):
+            continue
+        if any(w in low for w in _WIKI_ICONS):
+            continue
+        return "File:" + f
+    return None
+
+
+def _lead(title, pause):
+    """The infobox logo file of one article, or None."""
+    try:
+        got = _get({"action": "parse", "page": title, "prop": "wikitext",
+                    "section": 0, "redirects": 1})
+    except Exception:                                  # noqa: BLE001
+        return None
+    time.sleep(pause)
+    return infoboxLogo((got.get("parse") or {}).get("wikitext") or "")
 
 
 def wikiLogo(name, pause=1.0):
@@ -182,7 +239,7 @@ def wikiLogo(name, pause=1.0):
         p = by_title.get(t) or {}
         if not matches(name, t, p.get("extract") or ""):
             continue
-        f = logoFile([i.get("title") for i in p.get("images") or []], t)
+        f = _lead(t, pause) or logoFile([i.get("title") for i in p.get("images") or []], t)
         if not f:
             return t, None, "the article has no logo file"
         info = _get({"action": "query", "titles": f, "prop": "imageinfo",
@@ -234,7 +291,8 @@ def articleLogo(title, pause=1.0):
     page = _get({"action": "query", "titles": title, "prop": "images", "imlimit": 50})
     time.sleep(pause)
     pages = (page.get("query") or {}).get("pages") or []
-    f = logoFile([i.get("title") for i in (pages[0].get("images") or [])], title) if pages else None
+    f = _lead(title, pause) or (
+        logoFile([i.get("title") for i in (pages[0].get("images") or [])], title) if pages else None)
     if not f:
         return None
     info = _get({"action": "query", "titles": f, "prop": "imageinfo",
