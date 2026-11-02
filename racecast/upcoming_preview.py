@@ -301,6 +301,30 @@ def fieldRules(plan, div_id):
     return out
 
 
+# ★ A MEET YOU QUALIFY FOR TAKES ITS QUALIFIERS (racecast/qualifying.py:
+#   NCAA DI/DII/DIII, NXN), once this season's rounds have run. Its own
+#   savepoint: a failure keeps the last-edition field.
+def qualifiedField(cur, plan, div_id):
+    """{person_id: school} or None for one race of a meet plan."""
+    import qualifying as Q
+    if not plan:
+        return None
+    rule = Q.ruleFor(plan.get("name"), plan.get("source"))
+    race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
+    if rule is None or race is None or not plan.get("date"):
+        return None
+    try:
+        cur.execute("SAVEPOINT up_qual")
+        field = Q.fieldFor(cur, rule, str(plan["date"])[:10], race.get("gender"))
+        cur.execute("RELEASE SAVEPOINT up_qual")
+    except Exception as exc:                            # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT up_qual")
+        print(f"qualified field {plan.get('meet_id')}/{div_id}: {type(exc).__name__}: {exc}",
+              flush=True)
+        return None
+    return field
+
+
 def livePrediction(cur, meet_id, div_id, source=None):
     """predict.predictTeam for one race, now, uncached: {"available",
     "teams", "runners", "n_field"} or {"available": False, "reason"}. The
@@ -312,7 +336,11 @@ def livePrediction(cur, meet_id, div_id, source=None):
         cur.execute("SAVEPOINT up_pred")
         target = _withSource(cur, _target(meet_id, div_id, source))
         if os.environ.get("XCP_FIELD_RULES", "1") != "0":
-            target.update(fieldRules(meetPlan(cur, meet_id, source), div_id))
+            plan = meetPlan(cur, meet_id, source)
+            target.update(fieldRules(plan, div_id))
+            field = qualifiedField(cur, plan, div_id)
+            if field:
+                target["field_ids"] = field
         out = predictTeam(cur, [], target)
         cur.execute("RELEASE SAVEPOINT up_pred")
     except NotImplementedError:

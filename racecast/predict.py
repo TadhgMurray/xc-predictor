@@ -32,6 +32,7 @@ TEAM SCORING IS NOT A SEPARATE MODEL
     place is a position among everyone present.
 """
 
+import collections
 import datetime
 import functools
 import json
@@ -4565,7 +4566,17 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
     #   union, not a different way of choosing runners.
     div_ids = [d for d in (target.get("div_ids") or []) if d]
     originals = None
-    if target.get("meet_id") and len(div_ids) > 1:
+    if target.get("field_ids"):
+        # ★ A MEET YOU QUALIFY FOR: THE QUALIFIERS (racecast/qualifying.py,
+        #   through upcoming_preview.livePrediction), each with the school
+        #   they qualified for and that school's count as what it entered
+        field = {int(k): v for k, v in target["field_ids"].items()}
+        entries = _athleteEntries(cur, set(field), sport, _currentSeason(cur, sport))
+        entered = collections.Counter(field.values())
+        for e in entries:
+            e["school"] = field.get(e["person_id"]) or e.get("school")
+            e["entered"] = entered.get(e["school"], 0)
+    elif target.get("meet_id") and len(div_ids) > 1:
         entries = _combinedRoster(cur, target, div_ids, sport, mode)
     elif target.get("meet_id"):
         # ★ A MEET NOT YET RUN BORROWS ITS LAST EDITION'S TEAMS, as
