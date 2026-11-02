@@ -140,3 +140,12 @@ def test_nxr_rounds_are_the_regional_championships_only():
     assert Q.pickRace(races) == [races[0]]
     assert Q.pickRace([{"label": "Men 10k"}, {"label": "Men 8k"}]) == [{"label": "Men 10k"},
                                                                           {"label": "Men 8k"}]
+
+
+def test_unattached_runners_are_never_a_team():
+    for s in ("Unattached", "Unattached IL", "UNA-CO", "UNA-UT", "Independent"):
+        assert not Q.isTeam(s), s
+    assert Q.isTeam("American Fork") and Q.isTeam("Christ School")
+    rows = [(i, "UNA-CO", 900.0 + i, None) for i in range(6)] + \
+        [(10 + i, "Lone Peak", 950.0 + i, None) for i in range(5)]
+    assert Q.teamOrder(rows) == ["Lone Peak"]

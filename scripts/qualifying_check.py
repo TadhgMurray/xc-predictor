@@ -32,10 +32,13 @@ for sub in ("racecast", "scripts", "engine", "model"):
 def score(field, finishers):
     """(found, precise, teams found, teams run, missed teams, extra teams).
     field: {pid: school}; finishers: [(pid, school)]. Pure."""
+    import qualifying as Q
     ran = {p for p, _s in finishers}
     got = set(field)
-    t_ran = {s for s, n in collections.Counter(s for _p, s in finishers if s).items() if n >= 5}
-    t_had = {s for s, n in collections.Counter(field.values()).items() if s and n >= 5}
+    t_ran = {s for s, n in collections.Counter(s for _p, s in finishers if s).items()
+             if n >= 5 and Q.isTeam(s)}
+    t_had = {s for s, n in collections.Counter(field.values()).items()
+             if s and n >= 5 and Q.isTeam(s)}
     return (len(got & ran) / max(len(ran), 1), len(got & ran) / max(len(got), 1),
             len(t_ran & t_had), len(t_ran), sorted(t_ran - t_had), sorted(t_had - t_ran))
 
@@ -99,8 +102,12 @@ def main():
                     print(f"  {m['meet_name'][:50]} {g}: fewer than {Q.MIN_ROUNDS} rounds found")
                     continue
                 f, p, th, tr, miss, extra = score(field, fin)
+                rounds = Q._roundMeets(cur, rule, str(m["d"])[:10], rule.get("window", 21))
                 print(f"  {rule['key']:8} {m['meet_name'][:44]:44} {g}  {len(fin):>4} ran: "
-                      f"found {100 * f:.0f}%, precise {100 * p:.0f}%, teams {th}/{tr}")
+                      f"found {100 * f:.0f}%, precise {100 * p:.0f}%, teams {th}/{tr}; "
+                      f"{len(rounds)} rounds")
+                if rule["key"] == "nxn":
+                    print("      rounds: " + "; ".join(f"{nm} ({d})" for _mid, nm, d in rounds))
                 if miss or extra:
                     print(f"      missed {', '.join(miss[:8]) or '-'}"
                           f"{' ...' if len(miss) > 8 else ''}; had but not there "
