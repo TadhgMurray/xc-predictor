@@ -31,3 +31,16 @@ def test_no_template_names_who_decided():
     for f in os.listdir(os.path.join(_ROOT, "racecast", "templates")):
         s = open(os.path.join(_ROOT, "racecast", "templates", f), encoding="utf-8").read()
         assert "decided_by" not in s, f
+
+
+def test_visitors_counted_once_a_day_and_never_the_admin():
+    import sys
+    sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+    import usage as U
+    rows = U.parseBeacon({"k": "v", "t": "/", "s": "d", "u": 1}, {"/"})
+    assert ("(site)", "visitor", "desktop") in rows or any(r[1] == "visitor" for r in rows)
+    assert not any(r[1] == "visitor" for r in U.parseBeacon({"k": "v", "t": "/", "s": "d", "u": 0}, {"/"}))
+    js = open(os.path.join(_ROOT, "racecast", "static", "usage.js")).read()
+    assert "rc_seen" in js
+    mon = open(os.path.join(_ROOT, "racecast", "monitor.py")).read()
+    assert "accounts.isAdmin(" in mon[mon.index("def beacon"):]

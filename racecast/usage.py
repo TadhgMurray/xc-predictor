@@ -54,6 +54,7 @@ EVENTS = {
     "share:click",          # share.js -- a Share button
 }
 VIEW = "view"
+VISITOR = "visitor"          # the day's first view in a browser (usage.js firstToday)
 REF_PREFIX = "ref:"
 SCREENS = {"p": "phone", "d": "desktop"}
 UNKNOWN_TPL = "(no route)"   # a 404, or a page rendered outside a route
@@ -167,6 +168,8 @@ def parseBeacon(payload, known, own_host=""):
     kind = payload.get("k")
     if kind == "v":
         out = [(tpl, VIEW, screen)]
+        if payload.get("u") in (1, "1", True):
+            out.append(("(site)", VISITOR, screen))
         host = refHost(payload.get("r"), own_host)
         if host:
             out.append((tpl, REF_PREFIX + host, screen))
@@ -283,7 +286,7 @@ def report(cur, days=7, today=None):
                  WHERE day >= %s AND event = 'view'
                  GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 25""")
     events = q("""SELECT event, sum(n) FROM usage_daily
-                  WHERE day >= %s AND event <> 'view' AND event NOT LIKE 'ref:%%'
+                  WHERE day >= %s AND event NOT IN ('view', 'visitor') AND event NOT LIKE 'ref:%%'
                   GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 40""")
     screens = dict(q("""SELECT screen, sum(n) FROM usage_daily
                         WHERE day >= %s AND event = 'view' GROUP BY 1"""))
@@ -295,6 +298,9 @@ def report(cur, days=7, today=None):
     daily = [(since + datetime.timedelta(days=i),
               int(by_day.get(since + datetime.timedelta(days=i), 0)))
              for i in range(days)]
+    vis_day = dict(q("""SELECT day, sum(n) FROM usage_daily
+                        WHERE day >= %s AND event = 'visitor' GROUP BY 1"""))
+    visitors_daily = [(d, int(vis_day.get(d, 0))) for d, _ in daily]
     views = sum(n for _, n in daily)
     phone = int(screens.get("phone", 0))
     return {"days": days, "since": since, "views": views,
@@ -303,4 +309,6 @@ def report(cur, days=7, today=None):
             "phone": phone, "desktop": int(screens.get("desktop", 0)),
             "phone_pct": round(100 * phone / views) if views else 0,
             "refs": [(h, int(n)) for h, n in refs],
-            "daily": daily, "peak": max([n for _, n in daily] + [1])}
+            "daily": daily, "peak": max([n for _, n in daily] + [1]),
+            "visitors_daily": visitors_daily,
+            "visitors": sum(n for _, n in visitors_daily)}

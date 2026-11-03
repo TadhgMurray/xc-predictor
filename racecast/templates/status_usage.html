@@ -64,10 +64,11 @@
     {% endfor %}
     <text x="0" y="10">peak {{ n(rep.peak) }}</text>
   </svg>
-  <p class="meta">{{ n(rep.views) }} views since {{ rep.since.strftime("%b ") ~ rep.since.day }}.</p>
+  <p class="meta">{{ n(rep.views) }} views since {{ rep.since.strftime("%b ") ~ rep.since.day }}{% if rep.visitors %}, from {{ n(rep.visitors) }} daily visitors (a browser counts once a day; yours, signed in as admin, not at all){% endif %}.</p>
   <details class="st-steps"><summary>As a table</summary>
-    <table><thead><tr><th>Day</th><th class="n">Views</th></tr></thead><tbody>
-    {% for day, v in rep.daily|reverse %}<tr><td>{{ day.strftime("%a %b ") ~ day.day }}</td><td class="n">{{ n(v) }}</td></tr>{% endfor %}
+    {% set vis = dict(rep.visitors_daily or []) %}
+    <table><thead><tr><th>Day</th><th class="n">Visitors</th><th class="n">Views</th></tr></thead><tbody>
+    {% for day, v in rep.daily|reverse %}<tr><td>{{ day.strftime("%a %b ") ~ day.day }}</td><td class="n">{{ n(vis.get(day, 0)) }}</td><td class="n">{{ n(v) }}</td></tr>{% endfor %}
     </tbody></table>
   </details>
 

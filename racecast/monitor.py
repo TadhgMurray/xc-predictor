@@ -219,6 +219,14 @@ def beacon():
             return resp
         if U.beaconOptedOut(request.headers) or U.isBot(request.headers.get("User-Agent")):
             return resp
+        # ★ THE OWNER IS NOT A READER (2026-11-03: "so we don't count me a
+        #   billion times"): a signed-in admin's views count nothing
+        try:
+            sess = accounts.currentSession()
+            if sess and accounts.isAdmin(sess.get("account")):
+                return resp
+        except Exception:                                 # noqa: BLE001
+            pass
         payload = json.loads(request.get_data(cache=False)[:U.MAX_BODY] or b"null")
         rows = U.parseBeacon(payload, _known(), request.host)
         if rows:

@@ -9,9 +9,10 @@
  *   (rcUse('predict:run')) go in one batched beacon a few seconds later or
  *   when the tab is hidden. A JS error sends its message, the same-origin
  *   script's path and the line -- nothing else.
- * ! NO COOKIE, NO STORAGE, NO ID. Nothing is written in the browser, so
- *   nothing ties one beacon to the next. The server only adds 1 to a daily
- *   count (racecast/usage.py).
+ * ! NO COOKIE, NO ID. The browser keeps one thing: today's date (rc_seen),
+ *   so the day's first view can say "a new visitor today". Nothing ties one
+ *   beacon or one day to the next. The server only adds 1 to daily counts
+ *   (racecast/usage.py).
  * ! DO NOT TRACK / GLOBAL PRIVACY CONTROL: NOTHING AT ALL is sent, errors
  *   included, and rcUse becomes a no-op. So does an automated browser
  *   (navigator.webdriver).
@@ -99,7 +100,20 @@
 
   if (OFF) return;
 
-  function view() { send({ k: "v", r: refHost() }); }
+  /* ★ VISITORS, NOT ONLY PAGE LOADS (owner, 2026-11-03: "Can this be
+     viewers rather than page loads? Just so we don't count me a billion
+     times"). The browser keeps TODAY'S DATE -- nothing else, no ID -- and
+     the first view of each day says so (u: 1). The server adds one to the
+     day's visitor count; nothing ties one day's flag to the next. */
+  function firstToday() {
+    try {
+      var t = new Date(), day = t.getFullYear() + "-" + (t.getMonth() + 1) + "-" + t.getDate();
+      if (w.localStorage.getItem("rc_seen") === day) return 0;
+      w.localStorage.setItem("rc_seen", day);
+      return 1;
+    } catch (e) { return 0; }
+  }
+  function view() { send({ k: "v", r: refHost(), u: firstToday() }); }
   if (d.readyState === "complete") setTimeout(view, 0);
   else w.addEventListener("load", function () { setTimeout(view, 0); });
 
