@@ -410,15 +410,11 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
 #   genders from its results) and name, dated `day`, in meetPlan's shape.
 def pastPlan(cur, meet_id, source, day):
     import last_edition as LE
+    import qualifying as Q
     try:
         cur.execute("SAVEPOINT up_past")
-        cur.execute("""SELECT min(date) FROM results WHERE meet_id = %s AND source = %s
-                         AND date ~ '^(19|20)[0-9]{2}-'""", (int(meet_id), source))
-        row = cur.fetchone()
-        ran_on = (row["min"] if isinstance(row, dict) else row[0]) if row else None
-        if not ran_on or str(ran_on)[:10] >= str(day)[:10]:
-            cur.execute("RELEASE SAVEPOINT up_past")
-            return None
+        # ! THE NAME FIRST, AND OUT AT ONCE FOR A MEET NO RULE OR ROUTE
+        #   COVERS: every "this year" field asks with a date now
         if source == "tfrrs":
             cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s LIMIT 1",
                         (int(meet_id),))
@@ -426,6 +422,17 @@ def pastPlan(cur, meet_id, source, day):
             cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1", (int(meet_id),))
         row = cur.fetchone()
         name = (row["meet_name"] if isinstance(row, dict) else row[0]) if row else None
+        if Q.ruleFor(name, source) is None and \
+                (source, LE.editionName(name)) not in Q._loadRoutes():
+            cur.execute("RELEASE SAVEPOINT up_past")
+            return None
+        cur.execute("""SELECT min(date) FROM results WHERE meet_id = %s AND source = %s
+                         AND date ~ '^(19|20)[0-9]{2}-'""", (int(meet_id), source))
+        row = cur.fetchone()
+        ran_on = (row["min"] if isinstance(row, dict) else row[0]) if row else None
+        if not ran_on or str(ran_on)[:10] >= str(day)[:10]:
+            cur.execute("RELEASE SAVEPOINT up_past")
+            return None
         races = LE.editionRaces(cur, int(meet_id), "XC", source)
         cur.execute("RELEASE SAVEPOINT up_past")
     except Exception:                                   # noqa: BLE001
@@ -448,25 +455,27 @@ def upcomingChampionships(cur, today=None):
     today = today or datetime.date.today()
     season = today.year if today.month >= 8 else today.year - 1
     lo, hi = f"{season - 1}-08-01", f"{season}-07-31"
-    cur.execute("""SELECT 'tfrrs' AS src, m.meet_id, min(m.meet_name) AS name, min(r.date) AS d
-                   FROM   meets_tfrrs m JOIN results r
-                          ON r.source = 'tfrrs' AND r.meet_id = m.meet_id
-                   WHERE  m.sport = 'XC' AND r.date ~ '^(19|20)[0-9]{2}-'
-                     AND  r.date BETWEEN %s AND %s
-                   GROUP  BY m.meet_id
+    # ! THE META TABLES' DATES, NOT A SEASON OF RESULTS (owner, 2026-11-03:
+    #   "you just slowed down the site so much" -- a join over a season's
+    #   results, per worker, retried on every timeout)
+    cur.execute("""SELECT 'tfrrs' AS src, meet_id, meet_name AS name, date AS d
+                   FROM   meets_tfrrs
+                   WHERE  sport = 'XC' AND date ~ '^(19|20)[0-9]{2}-' AND date BETWEEN %s AND %s
                    UNION ALL
-                   SELECT 'anet', m.meet_id, min(m.meet_name), min(r.date)
-                   FROM   meets m JOIN results r
-                          ON r.source = 'anet' AND r.meet_id = m.meet_id
-                   WHERE  r.date ~ '^(19|20)[0-9]{2}-' AND r.date BETWEEN %s AND %s
-                     AND  m.meet_name ~* 'state|champ|nation|region|section|district|federation|'
-                                         'interscholastic|olympic|naia|njcaa|cif|uil|nxn|nike'
-                   GROUP  BY m.meet_id""", (lo, hi, lo, hi))
+                   SELECT DISTINCT 'anet', meet_id, meet_name, meet_date
+                   FROM   meets
+                   WHERE  meet_date ~ '^(19|20)[0-9]{2}-' AND meet_date BETWEEN %s AND %s
+                     AND  meet_name ~* 'state|champ|nation|region|section|district|federation|'
+                                       'interscholastic|olympic|naia|njcaa|cif|uil|nxn|nike'""",
+                (lo, hi, lo, hi))
     routes = Q._loadRoutes()
-    out = []
+    out, seen = [], set()
     for row in cur.fetchall():
         row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
         src, mid, name, d = row[0], int(row[1]), row[2], str(row[3])[:10]
+        if (src, mid) in seen:
+            continue
+        seen.add((src, mid))
         rule = Q.ruleFor(name, src)
         route = (src, LE.editionName(name)) in routes
         if rule is None and not route:
@@ -495,9 +504,24 @@ def predictedRound(cur, meet_id, gender, source):
 
 
 def predictedDiv(cur, meet_id, div_id, source):
-    """One race that has not run, as we predict it (predictedRound)."""
-    pred = racePrediction(cur, meet_id, div_id, source)
-    if not pred.get("available"):
+    """One race that has not run, as we predict it (predictedRound).
+    ! STORED OR ALREADY CACHED ONLY, NEVER RUN HERE (owner, 2026-11-03: "you
+      just slowed down the site so much"): a championship's preview asking
+      for a live prediction of each of its rounds, on every page that names
+      the meet, was the model run a dozen times per view. The forecast step
+      (build_meet_forecasts.py, soonest meet first) stores the rounds; until
+      then the round is not counted."""
+    import meet_forecast as MF
+    pred = ttlcache.peek(("up_pred", source, int(meet_id), div_id))
+    if pred is None:
+        try:
+            cur.execute("SAVEPOINT up_pdiv")
+            pred = MF.loadRace(cur, meet_id, div_id, source)
+            cur.execute("RELEASE SAVEPOINT up_pdiv")
+        except Exception:                               # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT up_pdiv")
+            pred = None
+    if not pred or not pred.get("available"):
         return []
     return [(int(r["person_id"]), r.get("school"), float(r["seconds"]),
              float(r["rating"]) if r.get("rating") is not None else None)
