@@ -387,8 +387,12 @@ def validKeys(cur, kind, college):
                     WHERE  NULLIF(btrim({kind}), '') IS NOT NULL
                     GROUP  BY 1""")
     by = {}
+    from unit_names import notAConference
     for r in cur.fetchall():
         v, c, h = (r["v"], r["c"], r["h"]) if isinstance(r, dict) else r
+        # a meet or a region numeral filed as a conference never ranks
+        if kind == "conference" and notAConference(v):
+            continue
         k = normKey(v)
         cc, hh = by.get(k, (0, 0))
         by[k] = (cc + int(c or 0), hh + int(h or 0))

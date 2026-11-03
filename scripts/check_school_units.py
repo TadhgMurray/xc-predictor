@@ -268,6 +268,18 @@ def _hostNotConference(unit):
                 or _STATE_NAME_RX.search(unit))
 
 
+def _notAConference(unit):
+    """racecast/unit_names.notAConference: a meet, a region numeral or a
+    bare word is never voted a conference (owner's board, 2026-11-03)."""
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "racecast"))
+        from unit_names import notAConference
+    except Exception:                                  # noqa: BLE001
+        return False
+    return notAConference(unit)
+
+
 def _collegeUnits(name):
     facts = []
 
@@ -304,7 +316,8 @@ def _collegeUnits(name):
             # calling it a region loses the hierarchy the owner set.
             if _ASSOC_RX.search(unit) or re.search(
                     r"\b(?:ASSOCIATION|CONFERENCE)$", unit):
-                facts.append(("conference", unit))
+                if not _notAConference(unit):
+                    facts.append(("conference", unit))
             else:
                 facts.append(("region", unit))
     for kind, rx, grp in _UNIT_RULES:
@@ -316,7 +329,7 @@ def _collegeUnits(name):
         unit = _cleanUnit("league", m.group(grp).strip().upper())
         if not unit or unit in _NOT_A_LEAGUE or _ASSOC_RX.search(unit) \
                 or re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit) \
-                or _hostNotConference(unit):
+                or _hostNotConference(unit) or _notAConference(unit):
             continue
         facts.append(("conference", unit))
         break
@@ -344,7 +357,7 @@ def _collegeUnits(name):
                     and not _COLLEGE_ORG_RX.search(unit) \
                     and not re.fullmatch(r"D?(?:I{1,3}|[1-3])", unit) \
                     and "REGION" not in unit and "DIVISION" not in unit \
-                    and not _hostNotConference(unit):
+                    and not _hostNotConference(unit) and not _notAConference(unit):
                 facts.append(("conference", unit))
     return facts
 
