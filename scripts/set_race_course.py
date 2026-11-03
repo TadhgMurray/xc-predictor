@@ -48,8 +48,12 @@ CREATE TABLE IF NOT EXISTS race_course_pin (
 
 
 def parseRace(text):
-    """(meet_id, div_id) from '278515/3000002940809' or a race URL. Pure."""
+    """(meet_id, div_id) from '278515/3000002940809' or a race URL; a bare
+    meet id ('278515') is (meet_id, None): every race of the meet. Pure."""
     import re
+    bare = re.fullmatch(r"\s*(\d+)\s*", str(text or ""))
+    if bare:
+        return int(bare.group(1)), None
     m = re.search(r"(\d+)/(\d+)\s*$", str(text or "").split("?")[0].split("#")[0].rstrip("/"))
     if not m:
         raise SystemExit(f"--race wants MEET/DIV or a race link, not {text!r}")
@@ -124,67 +128,84 @@ def main():
         if not a.race:
             ap.error("--race, --list or --apply")
         meet_id, div_id = parseRace(a.race)
-        cur.execute("SELECT meet_name, course_name, gps_lat, gps_long FROM meets "
-                    "WHERE meet_id = %s AND div_id = %s LIMIT 1", (meet_id, div_id))
-        row = cur.fetchone()
-        if not row:
-            raise SystemExit(f"no race {meet_id}/{div_id} in meets")
-        name, old_course, old_lat, old_lon = row
-        if a.undo:
-            cur.execute("SELECT old_course, old_lat, old_long FROM race_course_pin "
-                        "WHERE meet_id = %s AND div_id = %s", (meet_id, div_id))
-            pin = cur.fetchone()
-            if not pin:
-                raise SystemExit("that race has no pin")
-            print(f"  {name}: {old_course} -> {pin[0]} (the course before the pin)")
-            if a.write:
-                cur.execute("DELETE FROM race_course_pin WHERE meet_id = %s AND div_id = %s",
-                            (meet_id, div_id))
-                cur.execute("UPDATE meets SET course_name = %s, gps_lat = %s, gps_long = %s "
-                            "WHERE meet_id = %s AND div_id = %s",
-                            (pin[0], pin[1], pin[2], meet_id, div_id))
-                cur.execute("UPDATE results SET normalized_time = NULL "
-                            "WHERE meet_id = %s AND div_id = %s", (meet_id, div_id))
-                conn.commit()
-            else:
-                conn.rollback()
-            return 0
-        if a.like:
-            lm, ld = parseRace(a.like)
-            cur.execute("SELECT course_name, gps_lat, gps_long FROM meets WHERE meet_id = %s "
-                        "AND div_id = %s LIMIT 1", (lm, ld))
-            like = cur.fetchone()
-            if not like or not like[0]:
-                raise SystemExit(f"race {lm}/{ld} has no course to copy")
-            course, lat, lon, n = like[0], like[1], like[2], None
-        elif a.course:
-            course = a.course.strip()
-            lat, lon, n = placeOf(cur, course)
-            if a.lat is not None and a.lon is not None:
-                lat, lon = a.lat, a.lon
-            if lat is None:
-                raise SystemExit(f"no race is filed under {course!r}: check the spelling on its "
-                                 f"course page, or give --lat and --lon")
-        else:
-            raise SystemExit("--course NAME or --like MEET/DIV")
-        print(f"  {name} (/race/xc/{meet_id}/{div_id})")
-        print(f"    now:  {old_course or '-'}  ({old_lat}, {old_lon})")
-        print(f"    pin:  {course}  ({lat}, {lon})" + (f"  -- the place {n} races there carry" if n else ""))
-        if not a.write:
+        if div_id is None:
+            # a whole meet: every race of it, one pin each
+            cur.execute("SELECT DISTINCT div_id FROM meets WHERE meet_id = %s ORDER BY 1", (meet_id,))
+            divs = [r[0] for r in cur.fetchall()]
+            if not divs:
+                raise SystemExit(f"no meet {meet_id} in meets")
             conn.rollback()
-            print("  DRY RUN -- --write pins it")
-            return 0
-        cur.execute("""INSERT INTO race_course_pin (meet_id, div_id, course_name, gps_lat, gps_long,
-                                                    old_course, old_lat, old_long, note)
-                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                       ON CONFLICT (meet_id, div_id) DO UPDATE SET course_name = EXCLUDED.course_name,
-                           gps_lat = EXCLUDED.gps_lat, gps_long = EXCLUDED.gps_long,
-                           note = EXCLUDED.note, pinned_at = now()""",
-                    (meet_id, div_id, course, lat, lon, old_course, old_lat, old_lon, a.note or None))
-        apply(cur, only=(meet_id, div_id))
-        conn.commit()
-        print("  pinned. Tonight's nightly re-prices its rows on that course; a full pipeline "
-              "refits the course and its race-day term.")
+            rc = 0
+            for d in divs:
+                rc = rc or pinOne(conn, cur, meet_id, d, a)
+            return rc
+        return pinOne(conn, cur, meet_id, div_id, a)
+    return 0
+
+
+def pinOne(conn, cur, meet_id, div_id, a):
+    """Pin (or with --undo, unpin) one race; the dry run unless --write."""
+    cur.execute("SELECT meet_name, course_name, gps_lat, gps_long FROM meets "
+                "WHERE meet_id = %s AND div_id = %s LIMIT 1", (meet_id, div_id))
+    row = cur.fetchone()
+    if not row:
+        raise SystemExit(f"no race {meet_id}/{div_id} in meets")
+    name, old_course, old_lat, old_lon = row
+    if a.undo:
+        cur.execute("SELECT old_course, old_lat, old_long FROM race_course_pin "
+                    "WHERE meet_id = %s AND div_id = %s", (meet_id, div_id))
+        pin = cur.fetchone()
+        if not pin:
+            raise SystemExit("that race has no pin")
+        print(f"  {name}: {old_course} -> {pin[0]} (the course before the pin)")
+        if a.write:
+            cur.execute("DELETE FROM race_course_pin WHERE meet_id = %s AND div_id = %s",
+                        (meet_id, div_id))
+            cur.execute("UPDATE meets SET course_name = %s, gps_lat = %s, gps_long = %s "
+                        "WHERE meet_id = %s AND div_id = %s",
+                        (pin[0], pin[1], pin[2], meet_id, div_id))
+            cur.execute("UPDATE results SET normalized_time = NULL "
+                        "WHERE meet_id = %s AND div_id = %s", (meet_id, div_id))
+            conn.commit()
+        else:
+            conn.rollback()
+        return 0
+    if a.like:
+        lm, ld = parseRace(a.like)
+        cur.execute("SELECT course_name, gps_lat, gps_long FROM meets WHERE meet_id = %s "
+                    "AND div_id = %s LIMIT 1", (lm, ld))
+        like = cur.fetchone()
+        if not like or not like[0]:
+            raise SystemExit(f"race {lm}/{ld} has no course to copy")
+        course, lat, lon, n = like[0], like[1], like[2], None
+    elif a.course:
+        course = a.course.strip()
+        lat, lon, n = placeOf(cur, course)
+        if a.lat is not None and a.lon is not None:
+            lat, lon = a.lat, a.lon
+        if lat is None:
+            raise SystemExit(f"no race is filed under {course!r}: check the spelling on its "
+                             f"course page, or give --lat and --lon")
+    else:
+        raise SystemExit("--course NAME or --like MEET/DIV")
+    print(f"  {name} (/race/xc/{meet_id}/{div_id})")
+    print(f"    now:  {old_course or '-'}  ({old_lat}, {old_lon})")
+    print(f"    pin:  {course}  ({lat}, {lon})" + (f"  -- the place {n} races there carry" if n else ""))
+    if not a.write:
+        conn.rollback()
+        print("  DRY RUN -- --write pins it")
+        return 0
+    cur.execute("""INSERT INTO race_course_pin (meet_id, div_id, course_name, gps_lat, gps_long,
+                                                old_course, old_lat, old_long, note)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (meet_id, div_id) DO UPDATE SET course_name = EXCLUDED.course_name,
+                       gps_lat = EXCLUDED.gps_lat, gps_long = EXCLUDED.gps_long,
+                       note = EXCLUDED.note, pinned_at = now()""",
+                (meet_id, div_id, course, lat, lon, old_course, old_lat, old_lon, a.note or None))
+    apply(cur, only=(meet_id, div_id))
+    conn.commit()
+    print("  pinned. Tonight's nightly re-prices its rows on that course; a full pipeline "
+          "refits the course and its race-day term.")
     return 0
 
 

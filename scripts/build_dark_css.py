@@ -178,6 +178,11 @@ def darkColor(tok, prop=""):
         got = _tier(l, LINE_TIERS)
         return _fmt(*(got or (0x55, 0x5b, 0x63)), a)
     # a colour with a hue: links, accents, badges, tints
+    if role == "text" and 0.53 <= h <= 0.72 and l < 0.45:
+        # ★ NO BLUE TYPE (owner, 2026-11-03: "Stop trying to make blue ish"):
+        #   a navy word in the light sheets is a link or a selected label;
+        #   here it is ink, and the underline says it is a link
+        return _fmt(*TEXT_TIERS[0][1], a)
     if role == "text":
         # light, but in the same ORDER as the light sheet's: a ramp (the
         # field's five rating tiers) stays five steps, the navy link is one
@@ -421,9 +426,9 @@ BASE = f"""{PREFIX} {{ color-scheme: dark; background: {_fmt(*GROUND, 1)}; color
 #   colour"): the browser's own dark field shade moved on focus and hover;
 #   every input is one fixed dark ground, the border alone answers focus.
 LINKS = f"""
-{PREFIX} {{ --link: #f1f1f1; --accent: #8ab4f8; }}
+{PREFIX} {{ --link: #f1f1f1; --accent: #d6d6d6; }}
 {PREFIX} a {{ color: #f1f1f1; text-decoration-color: rgba(241, 241, 241, 0.4); }}
-{PREFIX} a:hover {{ color: #8ab4f8; text-decoration-color: #8ab4f8; }}
+{PREFIX} a:hover {{ color: #ffffff; text-decoration-color: #ffffff; text-decoration-thickness: 2px; }}
 {PREFIX} input, {PREFIX} select, {PREFIX} textarea,
 {PREFIX} input:focus, {PREFIX} select:focus, {PREFIX} textarea:focus,
 {PREFIX} input:hover, {PREFIX} select:hover {{ background-color: #212121; color: #f1f1f1; }}
