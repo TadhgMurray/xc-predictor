@@ -150,6 +150,12 @@ def darkColor(tok, prop=""):
         return _fmt(0, 0, 0, min(1.0, a * 1.6))
     h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
     neutral = s < 0.18 or max(r, g, b) - min(r, g, b) < 24
+    if neutral and prop in ("fill", "stroke") and l > 0.7:
+        # SVG: a pale fill is shading (a chart band) and a pale stroke a rule
+        # or a label's halo; a dark one is drawn ink, read as text below
+        if prop == "stroke" and l > 0.98:
+            return _fmt(*GROUND_TIERS[0][1], a)          # a halo: the page
+        role = "ground" if prop == "fill" else "line"
     if neutral:
         if role == "text":
             rgb = _tier(l, TEXT_TIERS, lo_first=True)
@@ -316,7 +322,7 @@ def darkDecls(body):
     out, any_change = [], False
     for prop, val in decls:
         if _role(prop) == "text" and not prop.startswith("--"):
-            if badge or (not grounds and _lightNeutral(val)):
+            if badge or (prop.lower() == "color" and not grounds and _lightNeutral(val)):
                 out.append(f"{prop}: {val}")
                 continue
             if dark_ground and _lightNeutral(val):

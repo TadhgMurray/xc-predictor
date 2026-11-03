@@ -6127,22 +6127,20 @@ th.fk.fk-l, td.fk.fk-l { text-align: left !important; }
 }
 
 
-/* ★ THE THEME SWITCH (owner, 2026-11-03: "dark mode"), beside the account
-   control: a moon in light mode, a sun in dark. dark.css is generated from
-   these sheets (scripts/build_dark_css.py) -- rerun it after a colour change. */
-.topbar .theme-toggle {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 2.1rem; height: 2.1rem; margin-left: 0.5rem; padding: 0;
-  border: 1px solid #d8dbe0; border-radius: 6px; background: transparent;
-  color: #444; cursor: pointer;
+/* ★ THE THEME SWITCH (owner, 2026-11-03: "dark mode"; then "just keep
+   bottom right"): a small round button fixed to the bottom-right corner of
+   every page, out of the bar. A moon in light mode, a sun in dark. dark.css
+   is generated from these sheets (scripts/build_dark_css.py) -- rerun it
+   after a colour change. */
+.theme-toggle {
+  position: fixed; right: 16px; bottom: 16px; z-index: 900;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; padding: 0;
+  border: 1px solid #d8dbe0; border-radius: 50%; background: #ffffff;
+  color: #444; cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
-.topbar .theme-toggle:hover { color: #111; border-color: #999; }
-.topbar .theme-toggle .tt-sun { display: none; }
-html[data-theme="dark"] .topbar .theme-toggle .tt-sun { display: block; }
-html[data-theme="dark"] .topbar .theme-toggle .tt-moon { display: none; }
-/* on the two-row and phone bars the switch sits just before the account
-   control, which keeps the push to the right edge */
-@media (max-width: 1200px) {
-  .topbar .theme-toggle { order: 2; margin-left: auto; }
-  .topbar .theme-toggle + .topbar-account { margin-left: 0.4rem; }
-}
+.theme-toggle:hover { color: #111; border-color: #999; }
+.theme-toggle .tt-sun { display: none; }
+html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
+html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
+@media print { .theme-toggle { display: none; } }

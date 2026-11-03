@@ -1879,7 +1879,10 @@ def buildRankLine(cur, person_id, season):
                 q = "&".join(f"{k}={v}" for k, v
                              in unitArgs(u["kind"], u["raw"]).items())
                 entries.append({"label": u["label"], "rank": r,
-                                "href": f"/rankings?{q}&jump={person_id}"})
+                                "href": f"/rankings?{q}&jump={person_id}",
+                                # the unit's logo beside its name (owner,
+                                # 2026-11-03: "logos everywhere it can be")
+                                "kind": u["kind"], "raw": u["raw"], "state": u.get("state")})
         elif scope == "nation":
             r = boardRank(False)
             if r:

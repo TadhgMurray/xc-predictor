@@ -471,6 +471,35 @@ def main():
                 print(f"  {d:<20} -> {org}")
                 if a.write:
                     pin(d, key, url)
+            # ★ A REGION WEARS ITS DIVISION'S MARK (owner, 2026-11-03: "Really
+            #   need to be logos everywhere it can be" -- EAST beside NCAA DIII
+            #   had none). An NCAA DIII region is the NCAA's; the image is the
+            #   one its division wears now (a hand pin included), taken from
+            #   the division most of the region's schools are in.
+            cur.execute("""SELECT region, division, count(DISTINCT (school, state)) AS n
+                           FROM school_unit
+                           WHERE is_college AND NULLIF(btrim(region), '') IS NOT NULL
+                             AND NULLIF(btrim(division), '') IS NOT NULL
+                           GROUP BY 1, 2""")
+            best = {}
+            for region, div, n in cur.fetchall():
+                if region not in best or n > best[region][1]:
+                    best[region] = (div, n)
+            for region, (div, _n) in sorted(best.items()):
+                key = unitKey("region", region)
+                if not a.redo and haveLogo(cur, key):
+                    continue
+                cur.execute("SELECT override FROM school_logo WHERE school = %s "
+                            "AND override IS NOT NULL AND lower(override) <> 'none' LIMIT 1",
+                            (unitKey("division", div),))
+                row = cur.fetchone()
+                url = row[0] if row else logos.get(orgFor(div) or "")
+                if not url:
+                    print(f"  region {region:<14} -- {div}: no logo to borrow")
+                    continue
+                print(f"  region {region:<14} -> {div}'s")
+                if a.write:
+                    pin(f"region {region}", key, url)
         else:
             todo = collegeConferences(cur, a.limit)
             print(f"[unit logos] {len(todo)} college conferences on record")

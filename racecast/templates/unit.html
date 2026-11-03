@@ -40,7 +40,7 @@
   <div class="rc-left">
     <div class="rc-sport"><span class="sport-tag sport-tag--{{ sport|lower }}">{{ pool_words }} {{ sport_words }}</span></div>
     <h1>{{ mark|safe }}{{ unit }}{% if state %} <span class="dist-note">{{ state }}</span>{% endif %}</h1>
-    <div class="rc-meta"><span class="unit">{{ kind_label }}</span>{% for c, v in parent.items() %}{% set ph = unit_href(c, v, state, college) %}<span class="unit">{% if ph %}<a href="{{ ph }}">{{ v }}</a>{% else %}{{ v }}{% endif %}</span>{% endfor %}</div>
+    <div class="rc-meta"><span class="unit">{{ kind_label }}</span>{% for c, v in parent.items() %}{% set ph = unit_href(c, v, state, college) %}<span class="unit">{% if ph %}<a href="{{ ph }}">{{ unit_logo(c, v, state) }}{{ v }}</a>{% else %}{{ unit_logo(c, v, state) }}{{ v }}{% endif %}</span>{% endfor %}</div>
     <div class="rc-facts">
       <span>Teams <b>{{ teams|length }}</b></span>
       {% if n_runners %}<span>Rated runners <b>{{ n_runners }}</b></span>{% endif %}
