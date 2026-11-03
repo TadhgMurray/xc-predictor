@@ -275,7 +275,7 @@ def test_known_conferences_are_named_outright():
 def test_series_meets():
     import unit_board as UB
     assert UB.seriesOf("NXN Nike Cross Nationals") == "NXN"
-    assert UB.seriesOf("NXR South Regional Championships") == "NXR"
+    assert UB.seriesOf("NXR South Regional Championships") == "NXR SOUTH"
     assert UB.seriesOf("Foot Locker Cross Country South Regional Championships") == "FOOT LOCKER"
     assert UB.seriesOf("Footlocker Nationals") == "FOOT LOCKER"
     assert UB.seriesOf("Dallas Jesuit Classic") is None
@@ -288,3 +288,14 @@ def test_one_conference_under_its_spellings():
     assert UB.normKey("C-USA") == UB.normKey("USA") == UB.normKey("Conference USA")
     assert UB.normKey("A10 XC") == UB.normKey("A-10")
     assert UB.normKey("NE10") == UB.normKey("NORTHEAST-10")
+
+
+def test_nxr_regions_and_the_repo_marks():
+    import unit_board as UB
+    import unit_logos as L
+    assert UB.seriesOf("NXR Southeast Regional Championships") == "NXR SOUTHEAST"
+    assert UB.seriesOf("NXR South Regional Championships") == "NXR SOUTH"
+    assert UB.seriesOf("Nike Cross Regionals New York") == "NXR NEW YORK"
+    assert UB.seriesOf("NXR Heartland") == "NXR HEARTLAND"
+    files = L.seriesFiles()
+    assert "NXN" in files and "NXR NEW YORK" in files

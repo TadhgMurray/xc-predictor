@@ -625,12 +625,36 @@ SERIES = (
 )
 
 
+# NXR's nine regions since 2023 (New York split from the Northeast): a
+# regional's own mark is "NXR <REGION>", falling back to NXR's, then NXN's
+NXR_REGIONS = ("SOUTHEAST", "SOUTHWEST", "NORTHEAST", "NORTHWEST", "NEW YORK",
+               "CALIFORNIA", "HEARTLAND", "MIDWEST", "SOUTH")
+
+
 def seriesOf(meet_name):
-    """The SERIES key a meet's name belongs to, or None. Pure."""
+    """The SERIES key a meet's name belongs to, or None; an NXR meet that
+    names its region is 'NXR <REGION>'. Pure."""
     import re
+    name = str(meet_name or "")
     for key, rx in SERIES:
-        if re.search(rx, str(meet_name or ""), re.I):
+        if re.search(rx, name, re.I):
+            if key == "NXR":
+                for reg in NXR_REGIONS:
+                    if re.search(r"\b" + reg.replace(" ", r"\s+") + r"\b", name, re.I):
+                        return f"NXR {reg}"
             return key
+    return None
+
+
+def seriesLogoUrl(key, px=64):
+    """The stored mark for a series key, walking NXR <REGION> -> NXR -> NXN."""
+    chain = [key]
+    if key.startswith("NXR"):
+        chain += ["NXR", "NXN"]
+    for k in chain:
+        url = storedLogoUrl("series", k, None, px=px)
+        if url:
+            return url
     return None
 
 
@@ -649,10 +673,7 @@ def meetLogo(meet_name, college=None, size=16):
     cache = _MEET_LOGO["cache"]
     if ck not in cache and seriesOf(meet_name):
         sk = seriesOf(meet_name)
-        url = storedLogoUrl("series", sk, None, px=64)
-        if not url and sk == "NXR":
-            url = storedLogoUrl("series", "NXN", None, px=64)
-        cache[ck] = (url, ("series", sk))
+        cache[ck] = (seriesLogoUrl(sk), ("series", sk))
     if ck not in cache:
         sub = keys
         if college is not None:

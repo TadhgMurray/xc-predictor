@@ -290,6 +290,21 @@ DIVISION_ORGS = {
 
 SERIES_ARTICLES = (("NXN", "Nike Cross Nationals"),
                    ("FOOT LOCKER", "Foot Locker Cross Country Championships"))
+# ★ THE MARKS THE OWNER SUPPLIED (2026-11-03), kept in the repo so every
+#   server has them: racecast/static/series/<key>.png. A file here wins over
+#   Wikipedia's (the NXN article only carries Nike's swoosh).
+SERIES_DIR = os.path.join(_ROOT, "racecast", "static", "series")
+
+
+def seriesFiles():
+    """{series key: path} for the marks in SERIES_DIR: nxr-new-york.png is
+    'NXR NEW YORK'. Pure but for the listing."""
+    out = {}
+    if os.path.isdir(SERIES_DIR):
+        for f in sorted(os.listdir(SERIES_DIR)):
+            if f.lower().endswith((".png", ".svg", ".jpg", ".jpeg", ".webp")):
+                out[os.path.splitext(f)[0].replace("-", " ").upper()] = os.path.join(SERIES_DIR, f)
+    return out
 
 
 def orgFor(division):
@@ -500,9 +515,15 @@ def main():
         elif a.series:
             # the series' own Wikipedia articles; NXR wears NXN's mark
             # (unit_board.meetLogo falls back to it)
+            files = seriesFiles()
+            for key, path in files.items():
+                k = unitKey("series", key)
+                print(f"  {key:<14} -> {os.path.basename(path)}")
+                if a.write:
+                    pin(key, k, path)
             for key, title in SERIES_ARTICLES:
                 k = unitKey("series", key)
-                if not a.redo and haveLogo(cur, k):
+                if key in files or (not a.redo and haveLogo(cur, k)):
                     continue
                 url = articleLogo(title)
                 if not url:
