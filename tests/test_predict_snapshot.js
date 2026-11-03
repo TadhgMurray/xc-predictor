@@ -61,6 +61,7 @@ function page(share) {
     const normalizeGroups = (d, g) => g;
     const syncPerTeam = () => {};
     const syncPick = () => {};
+    const syncQualify = () => {};
     const loadRaces = async () => {};
     const loadField = async () => { log.fieldLoaded++; };
     const applySharedField = () => { log.applied++; };

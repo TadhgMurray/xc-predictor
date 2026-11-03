@@ -51,6 +51,12 @@ const state = {
      before the cut (predict.byPrediction); "rating" is the season rating,
      the old way. Only "this year". */
   pick: "predicted",
+  /* ★ A MEET YOU QUALIFY FOR, AS ITS QUALIFIERS (owner, 2026-11-03: "a
+     setting for predictions that is on by default"): the field is this
+     season's qualifiers from its rounds -- predicted where a round has not
+     run (upcoming_preview.qualifiedMeetField). Off is the last edition's
+     teams. Only "this year"; sent as qualify=0 when off. */
+  qualify: true,
   // Which picked divisions are scored as ONE race. A partition of divs; see
   // normalizeGroups. The two presets are groupings, not a separate mode.
   groups: [],
@@ -518,6 +524,7 @@ function writeState() {
       groups: state.groups,
       coalesce: state.coalesce, course: state.course,
       perTeam: state.perTeam, pick: state.pick, skipTop: state.skipTop,
+      qualify: state.qualify,
       athletes: state.athletes,
       date: $("t-date") ? $("t-date").value : null,
       labels: [..._divLabels], edits,
@@ -551,6 +558,8 @@ function showWhen(when) {
   if (pb) pb.hidden = when !== "thisyear";
   const sk = $("skip-top-box");
   if (sk) sk.hidden = when !== "thisyear";
+  const qb = $("qualify-box");
+  if (qb) qb.hidden = when !== "thisyear";
 }
 
 /* "10" -> 10; blank, junk or 7 and under -> null (the rulebook seven).
@@ -578,6 +587,10 @@ function syncPerTeam() {
 function syncPick() {
   const el = $("pick-by");
   if (el) el.value = state.pick;
+}
+function syncQualify() {
+  const el = $("qualify");
+  if (el) el.checked = state.qualify;
 }
 
 function showWho(who) {
@@ -641,6 +654,8 @@ async function restoreFromQuery(p, names, snap) {
   // a link without pick= is a lineup chosen by rating (made before, or asked)
   state.pick = p.get("pick") === "predicted" ? "predicted" : "rating";
   syncPick();
+  state.qualify = p.get("qualify") !== "0";
+  syncQualify();
   await loadRaces();
   // ! AFTER loadRaces, which re-proposes a date of its own
   const proposed = $("t-date") ? $("t-date").value : "";
@@ -820,6 +835,8 @@ function restoreState() {
   syncSkip();
   state.pick = saved.pick === "rating" ? "rating" : "predicted";
   syncPick();
+  state.qualify = saved.qualify !== false;
+  syncQualify();
   /* ★ AND THE TOGGLE SAYS SO (owner, 2026-10-15: "it goes as as it ran even
        though it doesn't show it's on as it ran"). state.when came back from
        the save, but the buttons kept the template's "this year" lit -- the
@@ -2053,7 +2070,15 @@ function showBasis(blocks) {
   const miss = state.when === "thisyear" && state.pick === "predicted"
     && fields.find((f) => f.pick_note);
   const parts = [];
-  if (b) parts.push(b.kind === "last_edition"
+  if (b && b.kind === "qualified") {
+    /* ★ THE QUALIFIERS, AND HOW MANY ROUNDS ARE STILL OUR FORECAST */
+    const pred = b.predicted
+      ? ` \u2014 ${b.predicted} of its ${b.rounds} qualifying rounds have not run, so their `
+        + `qualifiers are our prediction of them`
+      : ` from its ${b.rounds} qualifying rounds`;
+    parts.push(`The field is this season's qualifiers${pred}. `
+      + `Untick "Qualifiers" in the options for last year's teams. Edit it below.`);
+  } else if (b) parts.push(b.kind === "last_edition"
     ? `No entries posted yet \u2014 the field is the teams from the last `
       + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`
     : `No entries posted yet and no earlier edition to borrow teams from `
@@ -2081,6 +2106,7 @@ function fieldQuery(div) {
   if (state.meet.src) q.set("src", state.meet.src);
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
   if (state.when === "thisyear" && state.skipTop) q.set("skip_top", state.skipTop);
+  if (state.when === "thisyear" && !state.qualify) q.set("qualify", "0");
   /* the squads ordered at this race: its date and course go with the ask */
   if (state.when === "thisyear" && state.pick === "predicted") {
     q.set("pick", "predicted");
@@ -2592,6 +2618,8 @@ function buildQuery(div) {
   if (state.when === "thisyear" && state.skipTop) q.set("skip_top", state.skipTop);
   // and how each team's top N was chosen (the field's own order)
   if (state.when === "thisyear" && state.pick === "predicted") q.set("pick", "predicted");
+  // and whether a qualifying meet's field was its qualifiers
+  if (state.when === "thisyear" && !state.qualify) q.set("qualify", "0");
 
   if (state.who === "individual") {
     // One parameter, one or many values -- the endpoint splits it.
@@ -5002,6 +5030,21 @@ document.addEventListener("change", (e) => {
     el.value = v ? String(v) : "";
     if (v === state.skipTop) return;
     state.skipTop = v;
+    if (!state.meet) { saveState(); return; }
+    for (const e of _edits.values()) e.field = null;
+    clearOutput();
+    loadField().then(() => { renderSquadBoxes(); saveState(); });
+  });
+})();
+
+/* ★ QUALIFIERS ON OR OFF: a new field, read again like a new size; the
+   hand edits are kept. */
+(function () {
+  const el = $("qualify");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    if (el.checked === state.qualify) return;
+    state.qualify = el.checked;
     if (!state.meet) { saveState(); return; }
     for (const e of _edits.values()) e.field = null;
     clearOutput();
