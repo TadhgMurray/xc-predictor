@@ -3557,14 +3557,26 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         div_ids = getattr(D, "subrace", None)
         if js.dayDivisionShrinkOn() and div_ids is not None:
             out["race_effect_row_venue"] = out["race_effect_row_bracket"]
-            u_div, dinfo = js.divisionDayRow(
-                r_pre, w, h, D.race, div_ids, out["race_effect_row_bracket"],
+            # ★ AND THE LOOP BETWEEN THEM (js.dayDistanceLayerOn): both
+            #   versions kept, the report prints them side by side
+            u_dist, u_div, linfo = js.layeredDayRow(
+                r_pre, w, h, D.race, D.cell, div_ids, out["race_effect_row_bracket"],
                 float(out["sigma2"]), keep=kept)
-            out["race_effect_row_bracket"] = u_div
+            dinfo = linfo["division"]
+            out["race_effect_row_nodist"] = u_div
+            out["race_effect_row_dist"] = u_dist
+            out["race_effect_row_bracket"] = u_dist if js.dayDistanceLayerOn() else u_div
             print(f"[joint] bracket: division days -- sd of a division's day "
                   f"about its venue-day {100 * dinfo['sigma_v']:.2f}%; "
                   f"{dinfo['rows_moved']:,} rows lean toward their own "
                   f"division (median weight {dinfo['k_median']:.2f})", flush=True)
+            li, ni = linfo["distance"], linfo["division_in_loop"]
+            print(f"[joint] bracket: loop days -- sd of a loop's day about its "
+                  f"venue-day {100 * li['sigma_v']:.2f}% ({li['rows_moved']:,} rows lean, "
+                  f"median weight {li['k_median']:.2f}); then divisions about their "
+                  f"loop {100 * ni['sigma_v']:.2f}% ({ni['rows_moved']:,} rows); "
+                  f"{'PUBLISHED' if js.dayDistanceLayerOn() else 'report only'} "
+                  f"(XCP_DAY_DISTANCE)", flush=True)
         out["race_day_div_bracket"] = dd
         out["race_day_div_table_bracket"] = js.divisionTable(dd)
         out["race_day_div_flag_bracket"] = (None if dd["flag"] is None
@@ -3624,6 +3636,11 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
                                  dtype=np.int64)[D.cell]
             u_new, shift_row = centreDaysBySeason(u_new, D, season_row, sport_row)
             out["race_effect_row_bracket"] = out["race_effect_row_bracket"] - shift_row
+            # the loop layer's two versions, centred alike (the report
+            # compares them with what publishes)
+            for _k in ("race_effect_row_nodist", "race_effect_row_dist"):
+                if out.get(_k) is not None:
+                    out[_k] = out[_k] - shift_row
             if mix_row is not None:
                 # the same season level out of the mixture's days, so the two
                 # differ only in how each day is shrunk

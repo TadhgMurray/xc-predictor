@@ -145,8 +145,8 @@ def test_golive_failures_2026_09_08():
     #   Step 07 runs with --cache, which reuses packed_XC_TF.npz when the file
     #   exists -- so the clear must fire whenever 07 is going to run, or `--from
     #   7` is a step that rebuilds nothing.
-    ok("_chairFilter()" in SRDB.split("def _chairFilter(")[-1] or
-       SRDB.count("_chairFilter()") >= 3,
+    # (since 2026-11-02 it takes the sport: _chairFilter('XC') / ('TF'))
+    ok(len(re.findall(r"_chairFilter\((?:'XC'|'TF'|\))", SRDB)) >= 2,
        "_chairFilter must still be interpolated into the pack queries")
     # the gate line immediately above the 06_clear_cache block
     _clear = PIPE.rindex('if [ "$FROM" -le ', 0, PIPE.index("06_clear_cache"))

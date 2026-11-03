@@ -468,6 +468,48 @@ def dayDivisionShrinkOn():
         "0", "false", "off", "no")
 
 
+# ★★ A DISTANCE LAYER BETWEEN THE VENUE AND THE DIVISION (owner, 2026-11-03:
+#    "Should we keep the race day term separate for each different distance
+#    run?" -- "sure build that"). Under --race-key venue one day is shared by
+#    every race run there that afternoon, and the division lean below only
+#    looks at divisions. A 6K and an 8K are two loops -- the course numbers
+#    are already per (course, distance) -- so a long JV loop still moved the
+#    other loop's day before any division was looked at. Not split outright:
+#    a 40-runner middle school 2-mile would lose the afternoon's weather. A
+#    hierarchy instead, the same rule twice: the venue-day leans toward the
+#    loop's own day (distanceIds: race x cell), then each division toward its
+#    own inside that loop -- each lean sized by the measured spread at its
+#    level, each only ever taking credit away.
+#  XCP_DAY_DISTANCE=1 publishes it; both versions are always computed and
+#  joint_golive.dayConsistencyReport prints them side by side, so a run says
+#  whether it makes an athlete's races agree before it is switched on.
+def dayDistanceLayerOn():
+    return os.environ.get("XCP_DAY_DISTANCE", "0").strip().lower() in (
+        "1", "true", "on", "yes")
+
+
+def distanceIds(race, cell):
+    """Dense id per (race, cell): one venue-day's one loop. Under a race key
+    that already sits in one cell every race is one id. Pure."""
+    race = np.asarray(race, dtype=np.int64)
+    cell = np.asarray(cell, dtype=np.int64)
+    if race.size == 0:
+        return np.zeros(0, dtype=np.int64)
+    key = race * (int(cell.max()) + 1) + cell
+    _, ids = np.unique(key, return_inverse=True)
+    return ids.astype(np.int64)
+
+
+def layeredDayRow(r_pre, w, h, race, cell, sub, u_row, sigma2, keep=None):
+    """(u_row through venue -> loop -> division, u_row through venue ->
+    division as before, info). See dayDistanceLayerOn."""
+    dist = distanceIds(race, cell)
+    u_dist, dinfo = divisionDayRow(r_pre, w, h, race, dist, u_row, sigma2, keep=keep)
+    u_old, oinfo = divisionDayRow(r_pre, w, h, race, sub, u_row, sigma2, keep=keep)
+    u_new, ninfo = divisionDayRow(r_pre, w, h, dist, sub, u_dist, sigma2, keep=keep)
+    return u_new, u_old, {"distance": dinfo, "division": oinfo, "division_in_loop": ninfo}
+
+
 def divisionDayRow(r_pre, w, h, race, sub, u_row, sigma2, keep=None,
                    min_rows=5, credit_only_down=True):
     """Per row, the applied day leaned toward the row's own division.

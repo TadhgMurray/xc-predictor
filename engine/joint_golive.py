@@ -373,6 +373,15 @@ def dayConsistencyReport(y, eff_pre, out, D, u_row, u_applied, day_on,
                 uv = np.clip(np.asarray(ven, dtype=np.float64), -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
                 uv = np.where(fast_only, np.minimum(uv, 0.0), uv)
                 variants.append(("day in, venue-day only", z_off - np.where(day_on, h * uv, 0.0)))
+            # ★ THE LOOP LAYER, BOTH WAYS (js.dayDistanceLayerOn): venue ->
+            #   division as before, and venue -> loop -> division
+            for key, lab in (("race_effect_row_nodist", "day in, venue > division"),
+                             ("race_effect_row_dist", "day in, venue > loop > division")):
+                alt = out.get(key)
+                if alt is not None and np.asarray(alt).size == z_off.size:
+                    ua = np.clip(np.asarray(alt, dtype=np.float64), -js.RACE_DAY_CAP, js.RACE_DAY_CAP)
+                    ua = np.where(fast_only, np.minimum(ua, 0.0), ua)
+                    variants.append((lab, z_off - np.where(day_on, h * ua, 0.0)))
             mix = out.get("race_effect_row_mix")
             if mix is not None and np.asarray(mix).size == z_off.size:
                 # the heavy-tailed prior's leave-self-out day (js.dayMixtureFit)

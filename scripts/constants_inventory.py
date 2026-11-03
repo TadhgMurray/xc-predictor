@@ -383,7 +383,7 @@ RULES = {
         **_all("_SKIP_ORDER _RESULT_TABLE _ONLY_CHANGED _NEW_ONLY _WRITE_PAGE _STAGING "
                "_INDEX_JOBS _INDEX_MEM _INDEX_WORKERS SWAP_LOCK_TIMEOUT SWAP_ATTEMPTS "
                "SWAP_BACKOFF _REWRITE_MAX_ROWS _REWRITE_SAMPLE_PCT _CHANGED _TOP_N "
-               "_RESERVOIR_CAP _PCTS _WX_CACHE_VERSION",
+               "_RESERVOIR_CAP _PCTS _WX_CACHE_VERSION _ONLY_MEETS",
                "INFRA", "plumbing: table swap, paging, census printout, caches"),
         **_all("_ID _SRC _MEET _DIV _EVENT_ID _EVENT_SHORT _TIME _GRADE _AID _DATE "
                "_PERSON _CANON _SCHOOL _RATING_POOL", "INFRA", "row tuple positions"),
@@ -676,6 +676,9 @@ RULES = {
                "the pool constant an unsolved row is priced at (the pool's median course); a display "
                "anchor while ratings keep the pool scale"),
         **_all("_TABLE _MARK _MIN_SAMPLE _VENUE_ROWS _UNRATED _TEAM_ANCHOR", "INFRA", "SQL and sampling"),
+        **_all("FIELD_MIN FIELD_BASE_MIN FIELD_CAP", "STATED",
+               "a race with no course anchored to its own field: runners needed, runners with a "
+               "rating elsewhere, and the largest shift taken (owner, 2026-11-02)"),
     },
     # ------------------------------------------------ build_ranking_results
     "racecast/build_ranking_results.py": {
@@ -804,6 +807,8 @@ ENV_RULES = {
     **_all("XCP_RACE_KEY XCP_RACE_EFFECT_OWN XCP_DAY_DIVISION_GUARD XCP_DAY_DIVISION_SHRINK XCP_DAY_SOFT "
            "XCP_DAY_PRIOR", "REMOVED", RACE),
     "XCP_DAY_GUARD_NEAR_ZERO": ("REMOVED", RACE + " (ablation switch for the day guard's tie-break)"),
+    "XCP_DAY_DISTANCE": ("REMOVED", RACE + " (the loop layer between venue and division; off until the "
+                                           "day-term consistency report says it helps)"),
     "XCP_RACE_EFFECT_SPORTS": ("FITTED", "whether the track race day is credited: cross-validated on the "
                                          "forward scorecard (§4.7); the XC day is " + RACE),
     "XCP_OWN_SHIFT_SINCE": ("DATA", DISTSEP + " (the season own_race_shift starts judging from)"),
