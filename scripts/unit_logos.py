@@ -288,6 +288,23 @@ DIVISION_ORGS = {
 }
 
 
+_STATE_NAMES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida",
+    "GA": "Georgia (U.S. state)", "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois",
+    "IN": "Indiana", "IA": "Iowa", "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana",
+    "ME": "Maine", "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan",
+    "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri", "MT": "Montana",
+    "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire", "NJ": "New Jersey",
+    "NM": "New Mexico", "NY": "New York", "NC": "North Carolina", "ND": "North Dakota",
+    "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee",
+    "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming",
+    "DC": "the District of Columbia",
+}
+STATE_FLAGS = {c: f"Flag of {n}.svg" for c, n in _STATE_NAMES.items()}
+
 SERIES_ARTICLES = (("NXN", "Nike Cross Nationals"),
                    ("FOOT LOCKER", "Foot Locker Cross Country Championships"))
 # ★ THE MARKS THE OWNER SUPPLIED (2026-11-03), kept in the repo so every
@@ -461,6 +478,8 @@ def main():
     ap.add_argument("--find", help="list Wikimedia files matching words ('Foot Locker logo'), with "
                                    "each one's image link, and stop")
     ap.add_argument("--state", default="", help="a high school unit's state")
+    ap.add_argument("--flags", action="store_true",
+                    help="every state's flag, from Wikimedia (public domain): unit:state:XX")
     ap.add_argument("--series", action="store_true",
                     help="the national series' marks: NXN, NXR, Foot Locker (unit_board.SERIES)")
     ap.add_argument("--auto", action="store_true",
@@ -482,7 +501,7 @@ def main():
         a.url = fileUrl(a.file)
         if not a.url:
             raise SystemExit(f"no Wikimedia file {a.file!r}")
-    if not a.set and not a.auto and not a.divisions and not a.series:
+    if not a.set and not a.auto and not a.divisions and not a.series and not a.flags:
         ap.error("--set KIND NAME --url URL, --auto, or --divisions")
 
     import scrape_school_logos as S
@@ -512,6 +531,25 @@ def main():
             kind, name = a.set
             S.setLogo(cur, manners, unitKey(kind, name), (a.state or "").upper(), a.url,
                       level="", write=a.write, shape=UNIT_SHAPE)
+        elif a.flags:
+            # ★ STATE FLAGS (owner, 2026-11-03: "Should we get flags for
+            #   states"). Every US state flag on Wikimedia is public domain.
+            for code, name in sorted(STATE_FLAGS.items()):
+                k = unitKey("state", code)
+                if not a.redo and haveLogo(cur, k):
+                    continue
+                try:
+                    url = fileUrl(name)
+                except Exception as exc:                  # noqa: BLE001
+                    print(f"  {code} lookup failed ({type(exc).__name__})")
+                    continue
+                if not url:
+                    print(f"  {code} -- no file {name!r}")
+                    continue
+                print(f"  {code} -> {name}")
+                if a.write:
+                    pin(code, k, url)
+                time.sleep(1.0)
         elif a.series:
             # the series' own Wikipedia articles; NXR wears NXN's mark
             # (unit_board.meetLogo falls back to it)

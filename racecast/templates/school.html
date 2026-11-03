@@ -83,7 +83,7 @@
        header with the counts set to None rather than 404-ing a school that
        plainly has results, so the line prints what it was given. #}
     <div class="rc-facts">
-      {% if header.state %}<span>State <b>{{ header.state }}</b></span>{% endif %}
+      {% if header.state %}<span>State <b>{{ unit_logo("state", header.state) }}{{ header.state }}</b></span>{% endif %}
       {% if header.athletes %}<span>Athletes <b>{{ header.athletes }}</b></span>{% endif %}
       {% if header.first_year and header.last_year %}<span>Racing <b>{{ header.first_year }} to {{ header.last_year }}</b></span>{% endif %}
     </div>

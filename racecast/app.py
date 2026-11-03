@@ -1896,7 +1896,9 @@ def buildRankLine(cur, person_id, season):
             r = boardRank(True)
             if r:
                 entries.append({"label": state, "rank": r,
-                                "href": boardHref(True)})
+                                "href": boardHref(True),
+                                # the state's flag beside it (unit_logos --flags)
+                                "kind": "state", "raw": state})
         elif scope == "team" and school and season.get("mean_rating") is not None:
             if pre is not None:
                 row = {"place": pre["team"]} if pre.get("team") else None

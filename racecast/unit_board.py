@@ -296,9 +296,10 @@ def chipLogo(kind, raw, state=None, size=16):
     unit with no logo shows its name alone. Markup."""
     import html
     from markupsafe import Markup
-    if kind not in KINDS or not raw:
+    if (kind not in KINDS and kind != "state") or not raw:
         return Markup("")
-    url = storedLogoUrl(kind, raw, state, px=64)
+    # a state wears its flag (unit_logos --flags: unit:state:MA)
+    url = storedLogoUrl(kind, str(raw).upper() if kind == "state" else raw, state, px=64)
     if not url:
         return Markup("")
     return Markup(f'<img class="unit-chip-logo" src="{html.escape(url)}" alt="" '

@@ -299,3 +299,10 @@ def test_nxr_regions_and_the_repo_marks():
     assert UB.seriesOf("NXR Heartland") == "NXR HEARTLAND"
     files = L.seriesFiles()
     assert "NXN" in files and "NXR NEW YORK" in files
+
+
+def test_state_flags():
+    import unit_board as UB
+    import unit_logos as L
+    assert len(L.STATE_FLAGS) == 51 and L.STATE_FLAGS["GA"] == "Flag of Georgia (U.S. state).svg"
+    assert UB.logoKey("state", "ma") == "unit:state:MA"
