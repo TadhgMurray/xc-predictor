@@ -2189,7 +2189,13 @@ def setLogo(cur, manners, school, state, url, level=None, directory=None,
         out(f"  {school} ({state or '-'}{'/' + level if level else ''}): crest "
             f"{'hidden' if write else 'would be hidden'}")
         return True
-    raw, why = manners.get(url)
+    if os.path.isfile(url):
+        # ★ A FILE ON THE SERVER (owner, 2026-11-03: NXN's own logo is on no
+        #   site the fetcher may read): an image put there by hand
+        raw = open(url, "rb").read()
+        why = "image/svg+xml" if url.lower().endswith(".svg") else ""
+    else:
+        raw, why = manners.get(url)
     if raw is None:
         out(f"  could not fetch {url}: {why}")
         return False
