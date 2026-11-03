@@ -129,6 +129,7 @@
     <script>(function(){var b=document.getElementById("theme-toggle"),h=document.documentElement;
     function lab(){var d=h.getAttribute("data-theme")==="dark";b.setAttribute("aria-label",d?"Switch to light mode":"Switch to dark mode");b.title=d?"Light mode":"Dark mode";}
     lab();b.addEventListener("click",function(){var t=h.getAttribute("data-theme")==="dark"?"light":"dark";
+    if(t==="dark"&&!document.getElementById("rc-dark-css")&&window.rcDarkCss){var l=document.createElement("link");l.rel="stylesheet";l.id="rc-dark-css";l.href=window.rcDarkCss;document.head.appendChild(l);}
     h.setAttribute("data-theme",t);try{localStorage.setItem("rc-theme",t);}catch(e){}lab();});})();</script>
     <span id="topbar-account" class="topbar-account">{% if not (here == '/login' or here.startswith('/login/')) %}<a href="/login" class="tb-signin">Sign in</a>{% endif %}</span>
 </header>

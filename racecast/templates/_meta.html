@@ -48,10 +48,13 @@
    localStorage 'rc-theme'), else their system's. dark.css is generated from
    the light sheets by scripts/build_dark_css.py and only applies under
    html[data-theme="dark"]. #}
+{# ★ ONLY A DARK PAGE LOADS dark.css (130 KB): written before first paint
+   when the theme is dark; the switch (_topbar.html) adds it when pressed. #}
 <script>(function(){var t=null;try{t=localStorage.getItem("rc-theme");}catch(e){}
 if(t!=="dark"&&t!=="light"){t=(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}
-document.documentElement.setAttribute("data-theme",t);})();</script>
-<link rel="stylesheet" href="{{ static_v('dark.css') }}">
+document.documentElement.setAttribute("data-theme",t);
+window.rcDarkCss="{{ static_v('dark.css') }}";
+if(t==="dark"){document.write('<link rel="stylesheet" id="rc-dark-css" href="'+window.rcDarkCss+'">');}})();</script>
 
 {# The line Google shows under the blue link. Roughly 155 characters before
    it gets truncated with an ellipsis, so the first sentence has to stand
