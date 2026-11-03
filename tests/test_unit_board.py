@@ -260,3 +260,13 @@ def test_a_college_chip_links_to_the_college_board():
     src = open(os.path.join(os.path.dirname(__file__), "..", "racecast", "school_units.py")).read()
     body = src[src.index("def unitsForPerson"):]
     assert '"college": is_college' in body[:6000]
+
+
+def test_known_conferences_are_named_outright():
+    import unit_logos as L
+    assert L.knownTitle("ACC") == "Atlantic Coast Conference"
+    assert L.knownTitle("A10 XC") == L.knownTitle("A-10") == "Atlantic 10 Conference"
+    assert L.knownTitle("MTN WEST") == "Mountain West Conference"
+    assert L.knownTitle("NORTHEAST-10") == L.knownTitle("NE10") == "Northeast-10 Conference"
+    assert L.knownTitle("CONFERENCE USA") == "Conference USA"
+    assert L.knownTitle("PAC") is None and L.knownTitle("MIDWEST") is None

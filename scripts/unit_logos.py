@@ -294,6 +294,93 @@ def orgFor(division):
     return DIVISION_ORGS.get(head)
 
 
+# ★ THE CONFERENCES EVERY BOARD SHOWS, BY THEIR ARTICLE (owner, 2026-11-03:
+#   "conferences are better, but still a lot missing" -- ACC, CAA, A-10, Big
+#   East, NEC, MAAC, NESCAC among them). The feeds store a code or a
+#   shortening ("A10 XC", "MTN WEST", "USA" for Conference USA) that a search
+#   cannot be sure of, and a wrong guess pins another conference's mark. For
+#   these the article is named outright -- keyed by unit_board.normKey, so
+#   every spelling of one conference finds it. Only names that are ONE
+#   conference: "PAC", "MCC", "METRO", "MIDWEST" are several and stay out.
+KNOWN_TITLES = {
+    "acc": "Atlantic Coast Conference", "sec": "Southeastern Conference",
+    "big ten": "Big Ten Conference", "big 10": "Big Ten Conference",
+    "big 12": "Big 12 Conference", "big east": "Big East Conference",
+    "summit": "Summit League", "caa": "Coastal Athletic Association",
+    "southland": "Southland Conference", "slc": "Southland Conference",
+    "c usa": "Conference USA", "usa": "Conference USA",
+    "a 10": "Atlantic 10 Conference", "a10": "Atlantic 10 Conference",
+    "a10 xc": "Atlantic 10 Conference", "atlantic 10": "Atlantic 10 Conference",
+    "mvc": "Missouri Valley Conference", "missouri valley": "Missouri Valley Conference",
+    "asun": "ASUN Conference", "nescac": "New England Small College Athletic Conference",
+    "maac": "Metro Atlantic Athletic Conference", "pacwest": "Pacific West Conference",
+    "mtn west": "Mountain West Conference", "mountain west": "Mountain West Conference",
+    "mw": "Mountain West Conference", "ssc": "Sunshine State Conference",
+    "nec": "Northeast Conference", "scenic west": "Scenic West Athletic Conference",
+    "big south": "Big South Conference", "miac": "Minnesota Intercollegiate Athletic Conference",
+    "liberty": "Liberty League", "newmac": "New England Women's and Men's Athletic Conference",
+    "saa": "Southern Athletic Association", "swac": "Southwestern Athletic Conference",
+    "nwac": "Northwest Athletic Conference", "ne10": "Northeast-10 Conference",
+    "northeast 10": "Northeast-10 Conference", "mpsf": "Mountain Pacific Sports Federation",
+    "meac": "Mid-Eastern Athletic Conference",
+    "nccaa": "National Christian College Athletic Association",
+    "ciaa": "Central Intercollegiate Athletic Association",
+    "cacc": "Central Atlantic Collegiate Conference", "empire 8": "Empire 8",
+    "cunyac": "City University of New York Athletic Conference",
+    "united east": "United East Conference", "atlantic east": "Atlantic East Conference",
+    "aac": "American Athletic Conference", "american": "American Athletic Conference",
+    "wcc": "West Coast Conference", "wac": "Western Athletic Conference",
+    "big west": "Big West Conference", "big sky": "Big Sky Conference",
+    "ovc": "Ohio Valley Conference", "socon": "Southern Conference",
+    "sun belt": "Sun Belt Conference", "patriot": "Patriot League",
+    "ivy": "Ivy League", "horizon": "Horizon League", "mac": "Mid-American Conference",
+    "america east": "America East Conference", "uaa": "University Athletic Association",
+    "centennial": "Centennial Conference", "gnac": "Great Northwest Athletic Conference",
+    "rmac": "Rocky Mountain Athletic Conference", "psac": "Pennsylvania State Athletic Conference",
+    "gliac": "Great Lakes Intercollegiate Athletic Conference",
+    "glvc": "Great Lakes Valley Conference", "miaa": "Mid-America Intercollegiate Athletics Association",
+    "nsic": "Northern Sun Intercollegiate Conference", "ccaa": "California Collegiate Athletic Association",
+    "sac": "South Atlantic Conference", "gac": "Great American Conference",
+    "gsc": "Gulf South Conference", "lsc": "Lone Star Conference", "peach belt": "Peach Belt Conference",
+    "cciw": "College Conference of Illinois and Wisconsin", "iiac": "American Rivers Conference",
+    "american rivers": "American Rivers Conference", "nacc": "Northern Athletics Collegiate Conference",
+    "odac": "Old Dominion Athletic Conference", "usa south": "USA South Athletic Conference",
+    "nac": "North Atlantic Conference", "little east": "Little East Conference",
+    "mascac": "Massachusetts State Collegiate Athletic Conference",
+    "sunyac": "State University of New York Athletic Conference",
+    "njac": "New Jersey Athletic Conference", "mac commonwealth": "Middle Atlantic Conferences",
+    "mac freedom": "Middle Atlantic Conferences", "landmark": "Landmark Conference",
+    "nwc": "Northwest Conference", "scac": "Southern Collegiate Athletic Conference",
+    "sciac": "Southern California Intercollegiate Athletic Conference",
+    "wiac": "Wisconsin Intercollegiate Athletic Conference", "hcac": "Heartland Collegiate Athletic Conference",
+    "ncac": "North Coast Athletic Conference", "oac": "Ohio Athletic Conference",
+    "mwc": "Midwest Conference", "kccac": "Kansas Collegiate Athletic Conference",
+    "kcac": "Kansas Collegiate Athletic Conference", "haac": "Heart of America Athletic Conference",
+    "heart": "Heart of America Athletic Conference", "gpac": "Great Plains Athletic Conference",
+    "crossroads": "Crossroads League", "mid south": "Mid-South Conference",
+    "sun": "Sun Conference", "ssac": "Southern States Athletic Conference",
+    "appalachian": "Appalachian Athletic Conference", "frontier": "Frontier Conference",
+    "cascade": "Cascade Collegiate Conference", "ccc": "Cascade Collegiate Conference",
+    "wolverine hoosier": "Wolverine–Hoosier Athletic Conference", "whac": "Wolverine–Hoosier Athletic Conference",
+    "chicagoland": "Chicagoland Collegiate Athletic Conference", "ccac": "Chicagoland Collegiate Athletic Conference",
+    "red river": "Red River Athletic Conference", "rrac": "Red River Athletic Conference",
+    "sooner": "Sooner Athletic Conference",
+    "river states": "River States Conference", "rsc": "River States Conference",
+    "golden state": "Golden State Athletic Conference", "gsac": "Golden State Athletic Conference",
+    "ne8": "Northeast 8 Athletic Conference", "ecc": "East Coast Conference",
+    "mec": "Mountain East Conference", "mountain east": "Mountain East Conference",
+    "g mac": "Great Midwest Athletic Conference", "gmac": "Great Midwest Athletic Conference",
+    "conference carolinas": "Conference Carolinas", "carolinas": "Conference Carolinas",
+    "lone star": "Lone Star Conference", "pac 12": "Pac-12 Conference",
+}
+
+
+def knownTitle(name):
+    """The article for a conference every board shows, or None. Pure."""
+    import unit_board as UB
+    return KNOWN_TITLES.get(UB.normKey(name))
+
+
 def articleLogo(title, pause=1.0):
     """The logo url of one named article, or None."""
     page = _get({"action": "query", "titles": title, "prop": "images", "imlimit": 50})
@@ -392,7 +479,12 @@ def main():
                 if not a.redo and haveLogo(cur, key):
                     continue
                 try:
-                    title, url, why = wikiLogo(name)
+                    known = knownTitle(name)
+                    if known:
+                        url = articleLogo(known)
+                        title, why = known, (None if url else "the article has no logo file")
+                    else:
+                        title, url, why = wikiLogo(name)
                 except Exception as exc:                  # noqa: BLE001
                     print(f"  {name:<34} lookup failed ({type(exc).__name__})")
                     continue
