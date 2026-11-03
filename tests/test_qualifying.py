@@ -164,3 +164,29 @@ def test_at_large_teams_can_come_from_another_meet():
     # a school already in automatically is not picked twice
     got = Q.atLargeTeams({"a": ["x", "y"], "b": ["x", "z"]}, 2, lambda k, s: 1, taken={"x"})
     assert sorted(s for _k, s in got) == ["y", "z"]
+
+
+def test_the_predictions_field_from_qualifiers(monkeypatch):
+    import predict as P
+    import upcoming_preview as U
+
+    class Cur:
+        def execute(self, *a, **k):
+            pass
+    monkeypatch.setattr(P, "_exactField", lambda *a, **k: [])
+    monkeypatch.setattr(U, "meetPlan", lambda *a, **k: {"name": "x"})
+    monkeypatch.setattr(U, "qualifiedFieldInfo", lambda cur, plan, div: (
+        {1: "A", 2: "A", 3: "B"}, {"rule": "ncaa_d1", "rounds": 9, "predicted": 9}))
+    monkeypatch.setattr(P, "_currentSeason", lambda cur, s: 2026)
+    monkeypatch.setattr(P, "_athleteEntries", lambda cur, ids, s, y: [
+        {"person_id": i, "school": "Z", "name": f"n{i}", "grade": "SR", "pool": "college_m",
+         "rating": 100.0 + i} for i in sorted(ids)])
+    monkeypatch.setattr(P, "_teamStates", lambda cur, rows, st: {})
+    monkeypatch.setattr(P, "_stampCrests", lambda *a, **k: None)
+    out = U.qualifiedMeetField(Cur(), 5, 2, "tfrrs")
+    assert out["basis"] == {"rule": "ncaa_d1", "rounds": 9, "predicted": 9, "kind": "qualified"}
+    a, b = out["teams"]
+    assert (a["school"], [r["person_id"] for r in a["runners"]], a["entered"]) == ("A", [2, 1], 2)
+    assert b["school"] == "B"                                 # the school they qualified for
+    monkeypatch.setattr(P, "_exactField", lambda *a, **k: [{"person_id": 1}])
+    assert U.qualifiedMeetField(Cur(), 5, 2, "tfrrs") is None   # it has run: the field that ran
