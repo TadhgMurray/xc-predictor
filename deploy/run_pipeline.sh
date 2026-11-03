@@ -614,7 +614,11 @@ if [ -x "$WXPY" ]; then
   #   stopped at 2026-06-30 -- the free store runs 3-4 months behind). The
   #   CDS's ERA5T, ~5 days behind, for the days after the store's last one;
   #   no CDSAPI_KEY in the env file and it says so and exits 0.
-  bgstep 04e2_weather_recent "$WXPY" -u backfill/era5_cds_recent.py
+  # ! BOUNDED (2026-11-03: it sat in the CDS queue for 10 hours, the run
+  #   waited for it at bgwait, held .pipeline.lock all that time, and the
+  #   nightly skipped two nights). Whatever it fetched in time is kept; the
+  #   next run asks for the rest.
+  bgstep 04e2_weather_recent timeout -k 60 "${XCP_WX_RECENT_MIN:-90}m" "$WXPY" -u backfill/era5_cds_recent.py
 else
   echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
 fi

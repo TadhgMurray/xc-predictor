@@ -413,17 +413,24 @@ BASE = f"""{PREFIX} {{ color-scheme: dark; background: {_fmt(*GROUND, 1)}; color
 """
 
 # ★ LINKS, LAST, SO NOTHING ABOVE OVERRIDES THEM (owner, 2026-11-03: "the
-#   links especially don't work with the black background"). One light blue
-#   for a link in a sentence -- Google's own dark-mode link colour -- and the
-#   names that fill every table (athletes, schools, meets) in plain ink, the
-#   blue only on hover: a page of blue names on black was the glare.
+#   links especially don't work with the black background", then "still a
+#   ton of blue links"). Every link is ink -- the underline says it is one,
+#   as it does in light mode -- and turns blue on hover. --link is ink too,
+#   so the rules that colour a link through the token follow.
+# ★ AND A FIELD KEEPS ITS COLOUR ("I don't like how the search bar changes
+#   colour"): the browser's own dark field shade moved on focus and hover;
+#   every input is one fixed dark ground, the border alone answers focus.
 LINKS = f"""
-{PREFIX} {{ --link: #8ab4f8; --accent: #8ab4f8; }}
-{PREFIX} a {{ color: #8ab4f8; }}
-{PREFIX} table a, {PREFIX} .board-grid a, {PREFIX} .bests-panel a, {PREFIX} .pr-panel a,
-{PREFIX} .rc-crow a, {PREFIX} .topnav a {{ color: #f1f1f1; text-decoration-color: rgba(241, 241, 241, 0.35); }}
-{PREFIX} table a:hover, {PREFIX} .board-grid a:hover, {PREFIX} .bests-panel a:hover,
-{PREFIX} .pr-panel a:hover, {PREFIX} .rc-crow a:hover {{ color: #8ab4f8; }}
+{PREFIX} {{ --link: #f1f1f1; --accent: #8ab4f8; }}
+{PREFIX} a {{ color: #f1f1f1; text-decoration-color: rgba(241, 241, 241, 0.4); }}
+{PREFIX} a:hover {{ color: #8ab4f8; text-decoration-color: #8ab4f8; }}
+{PREFIX} input, {PREFIX} select, {PREFIX} textarea,
+{PREFIX} input:focus, {PREFIX} select:focus, {PREFIX} textarea:focus,
+{PREFIX} input:hover, {PREFIX} select:hover {{ background-color: #212121; color: #f1f1f1; }}
+{PREFIX} input::placeholder, {PREFIX} textarea::placeholder {{ color: #8a8a8a; }}
+{PREFIX} #search-input, {PREFIX} #search-input:focus, {PREFIX} #search-input:hover {{
+  background-color: #212121; border-color: #3f3f3f; color: #f1f1f1; }}
+{PREFIX} #search-input:focus {{ border-color: #6a6a6a; outline: none; }}
 """
 
 
