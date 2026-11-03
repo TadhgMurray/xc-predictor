@@ -108,10 +108,14 @@ TEXT_TIERS = ((0.30, (0xe6, 0xe8, 0xeb)),    # ink: #111 .. #444
               (0.75, (0x8d, 0x93, 0x9b)),    # muted: #999 .. #bbb
               (1.01, (0x63, 0x69, 0x71)))    # faint: #ccc and lighter
 GROUND_TIERS = ((0.985, (0x14, 0x16, 0x1a)),  # white: the page itself
-                (0.95, (0x1b, 0x1e, 0x23)),   # zebra, hover, pale panel
+                (0.95, (0x19, 0x1c, 0x20)),   # zebra, hover, pale panel
                 (0.88, (0x23, 0x27, 0x2d)),   # a grey panel or chip
                 (0.70, (0x2e, 0x33, 0x3a)))   # a strong grey ground
-LINE_TIERS = ((0.85, (0x2b, 0x30, 0x36)),     # hairlines
+SELECTED = (0x34, 0x3a, 0x43)                 # a selected tab or chip, a black button
+# the light sheets' tokens that are DARK colours: a ground of var(--ink) or
+# var(--sel) is a selected state, read like a literal dark ground
+DARK_TOKENS = ("--ink", "--sel", "--accent")
+LINE_TIERS = ((0.85, (0x26, 0x2a, 0x30)),     # hairlines
               (0.60, (0x3d, 0x43, 0x4b)))     # firm lines
 
 
@@ -164,16 +168,17 @@ def darkColor(tok, prop=""):
             got = _tier(l, GROUND_TIERS)
             if got:
                 return _fmt(*got, a)
-            # a dark ground (a black button, a selected chip) turns light:
-            # in dark mode the selected state reads as ink, as it does now
-            return _fmt(*TEXT_TIERS[0][1], a) if l < 0.3 else _fmt(*GROUND_TIERS[-1][1], a)
+            # ★ A DARK GROUND (a selected tab, a black button) IS A RAISED
+            #   SURFACE, NOT A WHITE SLAB (owner, 2026-11-03: "dark mode still
+            #   looks terrible" -- every selected tab was a bright block)
+            return _fmt(*SELECTED, a) if l < 0.3 else _fmt(*GROUND_TIERS[-1][1], a)
         got = _tier(l, LINE_TIERS)
         return _fmt(*(got or (0x55, 0x5b, 0x63)), a)
     # a colour with a hue: links, accents, badges, tints
     if role == "text":
         # light, but in the same ORDER as the light sheet's: a ramp (the
         # field's five rating tiers) stays five steps, the navy link is one
-        l2, s2 = max(0.56, min(0.86, 0.92 - 0.6 * l)), min(s, 0.75)
+        l2, s2 = max(0.58, min(0.86, 0.93 - 0.6 * l)), min(s, 0.55)
     elif role == "ground":
         if l > 0.85:
             l2, s2 = 0.17, s * 0.45           # a pale tint: a dark one of its hue
@@ -199,6 +204,14 @@ def _neutralL(val):
             return l
         return None
     return None
+
+
+_TOKEN_RX = re.compile(r"var\(\s*(?:" + "|".join(re.escape(t) for t in DARK_TOKENS) + r")\b[^)]*\)")
+
+
+def _darkToken(val):
+    """Does a value use one of the dark tokens (a selected ground)? Pure."""
+    return bool(_TOKEN_RX.search(val or ""))
 
 
 def _lightNeutral(val):
@@ -318,17 +331,22 @@ def darkDecls(body):
     # ! WHITE TYPE SITS ON A GROUND: with no ground in its own rule it is on a
     #   badge or a photo set elsewhere and stays white; on a token or dark
     #   ground (a selected chip, which turns light here) it turns dark
-    dark_ground = any("var(" in v or _darkNeutral(v) for v in grounds)
+    token_ground = any(_darkToken(v) for v in grounds)
+    dark_ground = token_ground or any(_darkNeutral(v) for v in grounds)
     out, any_change = [], False
     for prop, val in decls:
+        lp = prop.lower()
         if _role(prop) == "text" and not prop.startswith("--"):
-            if badge or (prop.lower() == "color" and not grounds and _lightNeutral(val)):
-                out.append(f"{prop}: {val}")
-                continue
-            if dark_ground and _lightNeutral(val):
-                out.append(f"{prop}: {_COLOR.sub(lambda m: _fmt(*GROUND_TIERS[0][1], (_parse(m.group(0)) or (0, 0, 0, 1))[3]), val)}")
-                any_change = True
-                continue
+            # white type keeps white: on a badge, on a photo (no ground in
+            # its rule), and on a selected surface, which stays dark here
+            if badge or dark_ground or (lp == "color" and not grounds and _lightNeutral(val)):
+                if _lightNeutral(val) or badge or lp != "color":
+                    out.append(f"{prop}: {val}")
+                    continue
+        if token_ground and (lp.startswith("background") or lp.startswith("border")) and _darkToken(val):
+            out.append(f"{prop}: {_TOKEN_RX.sub(_fmt(*SELECTED, 1), val)}")
+            any_change = True
+            continue
         new, changed = mapValue(val, prop.lower())
         any_change = any_change or changed
         out.append(f"{prop}: {new}")
