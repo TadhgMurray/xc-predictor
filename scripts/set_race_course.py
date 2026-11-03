@@ -113,6 +113,7 @@ def main():
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
         cur.execute(DDL)
+        conn.commit()          # the table stays even when a dry run rolls back
         if a.list:
             cur.execute("SELECT meet_id, div_id, course_name, old_course, note, pinned_at::date "
                         "FROM race_course_pin ORDER BY pinned_at DESC")
