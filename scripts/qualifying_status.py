@@ -35,6 +35,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--meet", type=int, action="append", help="only this meet id")
+    ap.add_argument("--diff", action="store_true",
+                    help="per race, the teams the qualifiers list that last year's field did "
+                         "not, and the reverse: what to look for on the predictions page")
     a = ap.parse_args()
 
     import psycopg2.extras
@@ -101,7 +104,17 @@ def main():
                     teams = sum(1 for _s, n in collections.Counter(field.values()).items() if n >= 5)
                     print(f"    {race['label'][:28]:28} {race.get('gender') or '?'}  {how}: "
                           f"{len(field)} runners, {teams} teams, from {n_round} rounds "
-                          f"({n_pred} predicted)")
+                          f"({n_pred} predicted)   predictions page: div {race['div_id']}")
+                    if a.diff:
+                        now = {s for s, n in collections.Counter(field.values()).items()
+                               if n >= 5 and Q.isTeam(s)}
+                        last = {sch for (sch, _st), n in (race.get("schools") or {}).items()
+                                if n >= 5 and Q.isTeam(sch)}
+                        new, gone = sorted(now - last), sorted(last - now)
+                        print(f"        qualified, not there last year: "
+                              f"{', '.join(new[:10]) or '-'}{' ...' if len(new) > 10 else ''}")
+                        print(f"        last year, not qualified now:   "
+                              f"{', '.join(gone[:10]) or '-'}{' ...' if len(gone) > 10 else ''}")
                 else:
                     print(f"    {race['label'][:28]:28} {race.get('gender') or '?'}  {how}: "
                           f"not enough rounds yet -- last edition's teams")
