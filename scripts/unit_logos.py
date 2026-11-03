@@ -313,6 +313,24 @@ SERIES_ARTICLES = (("NXN", "Nike Cross Nationals"),
 SERIES_DIR = os.path.join(_ROOT, "racecast", "static", "series")
 
 
+UNITS_DIR = os.path.join(_ROOT, "racecast", "static", "units")
+
+
+def repoFiles():
+    """[(kind, NAME, path)] for racecast/static/units/<kind>/<NAME>.png: the
+    file's name is the unit's stored name. Pure but for the listing."""
+    out = []
+    if os.path.isdir(UNITS_DIR):
+        for kind in sorted(os.listdir(UNITS_DIR)):
+            d = os.path.join(UNITS_DIR, kind)
+            if not os.path.isdir(d):
+                continue
+            for f in sorted(os.listdir(d)):
+                if f.lower().endswith((".png", ".svg", ".jpg", ".jpeg", ".webp")):
+                    out.append((kind, os.path.splitext(f)[0].upper(), os.path.join(d, f)))
+    return out
+
+
 def seriesFiles():
     """{series key: path} for the marks in SERIES_DIR: nxr-new-york.png is
     'NXR NEW YORK'. Pure but for the listing."""
@@ -478,6 +496,8 @@ def main():
     ap.add_argument("--find", help="list Wikimedia files matching words ('Foot Locker logo'), with "
                                    "each one's image link, and stop")
     ap.add_argument("--state", default="", help="a high school unit's state")
+    ap.add_argument("--repo", action="store_true",
+                    help="the logos kept in the repo: racecast/static/units/<kind>/<NAME>.png")
     ap.add_argument("--flags", action="store_true",
                     help="every state's flag, from Wikimedia (public domain): unit:state:XX")
     ap.add_argument("--series", action="store_true",
@@ -501,7 +521,7 @@ def main():
         a.url = fileUrl(a.file)
         if not a.url:
             raise SystemExit(f"no Wikimedia file {a.file!r}")
-    if not a.set and not a.auto and not a.divisions and not a.series and not a.flags:
+    if not a.set and not a.auto and not a.divisions and not a.series and not a.flags and not a.repo:
         ap.error("--set KIND NAME --url URL, --auto, or --divisions")
 
     import scrape_school_logos as S
@@ -531,6 +551,14 @@ def main():
             kind, name = a.set
             S.setLogo(cur, manners, unitKey(kind, name), (a.state or "").upper(), a.url,
                       level="", write=a.write, shape=UNIT_SHAPE)
+        elif a.repo:
+            # ★ LOGOS KEPT IN THE REPO (owner, 2026-11-03: "fill in the
+            #   notable ones yourself, same as the static thing"): found by
+            #   hand where Wikipedia had none we could take
+            for kind, name, path in repoFiles():
+                print(f"  {kind:<10} {name:<24} -> {os.path.relpath(path, _ROOT)}")
+                if a.write:
+                    pin(name, unitKey(kind, name), path)
         elif a.flags:
             # ★ STATE FLAGS (owner, 2026-11-03: "Should we get flags for
             #   states"). Every US state flag on Wikimedia is public domain.

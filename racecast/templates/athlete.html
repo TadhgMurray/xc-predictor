@@ -401,7 +401,7 @@
             {%- if e.wip -%}
                 <span class="wip" title="Coming soon">{{ e.label }} soon</span>
             {%- else -%}
-                <span class="rk"><span class="scope">{% if e.kind %}{{ unit_logo(e.kind, e.raw, e.state) }}{% endif %}{{ e.label }}</span> <a href="{{ e.href }}">#{{ e.rank }}</a></span>
+                {% set _uh = unit_href(e.kind, e.raw, e.state, e.college) if e.kind and e.kind != 'state' else none %}<span class="rk"><span class="scope">{% if e.kind %}{{ unit_logo(e.kind, e.raw, e.state) }}{% endif %}{% if _uh %}<a class="rl-unit" href="{{ _uh }}">{{ e.label }}</a>{% else %}{{ e.label }}{% endif %}</span> <a href="{{ e.href }}">#{{ e.rank }}</a></span>
             {%- endif -%}
         {%- endfor %}
         {# The floor the line is held to. Empty for open seasons, which have

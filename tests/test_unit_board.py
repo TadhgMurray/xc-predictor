@@ -306,3 +306,9 @@ def test_state_flags():
     import unit_logos as L
     assert len(L.STATE_FLAGS) == 51 and L.STATE_FLAGS["GA"] == "Flag of Georgia (U.S. state).svg"
     assert UB.logoKey("state", "ma") == "unit:state:MA"
+
+
+def test_repo_logos_are_listed():
+    import unit_logos as L
+    got = {(k, n) for k, n, _ in L.repoFiles()}
+    assert ("conference", "BIG EAST") in got and ("conference", "C-USA") in got

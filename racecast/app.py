@@ -1882,7 +1882,8 @@ def buildRankLine(cur, person_id, season):
                                 "href": f"/rankings?{q}&jump={person_id}",
                                 # the unit's logo beside its name (owner,
                                 # 2026-11-03: "logos everywhere it can be")
-                                "kind": u["kind"], "raw": u["raw"], "state": u.get("state")})
+                                "kind": u["kind"], "raw": u["raw"], "state": u.get("state"),
+                                "college": u.get("college")})
         elif scope == "nation":
             r = boardRank(False)
             if r:
