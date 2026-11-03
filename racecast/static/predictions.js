@@ -2108,10 +2108,14 @@ function fieldQuery(div) {
   if (state.when === "thisyear" && state.perTeam) q.set("per_team", state.perTeam);
   if (state.when === "thisyear" && state.skipTop) q.set("skip_top", state.skipTop);
   if (state.when === "thisyear" && !state.qualify) q.set("qualify", "0");
-  /* the squads ordered at this race: its date and course go with the ask */
+  /* ★ THE DATE, ALWAYS IN "THIS YEAR" (owner, 2026-11-03): last year's meet
+     asked for on this year's date is this year's edition, its field the
+     qualifiers where they apply (upcoming_preview.pastPlan); and the
+     squads are ordered at this race's date and course */
+  if (state.when === "thisyear" && $("t-date") && $("t-date").value)
+    q.set("date", $("t-date").value);
   if (state.when === "thisyear" && state.pick === "predicted") {
     q.set("pick", "predicted");
-    if ($("t-date") && $("t-date").value) q.set("date", $("t-date").value);
     if (state.course && !isTrack()) q.set("course", state.course);
   }
   return q;
@@ -2120,7 +2124,9 @@ function fieldQuery(div) {
 async function fetchField(div, quick) {
   const q = fieldQuery(div);
   /* the fast first look: by season rating, no model (loadField) */
-  if (quick) { q.delete("pick"); q.delete("date"); q.delete("course"); }
+  /* ! the date stays: it decides whether the field is this year's
+       qualifiers, which the first look must already show */
+  if (quick) { q.delete("pick"); q.delete("course"); }
   try {
     const res = await fetch("/api/predict/field?" + q.toString());
     const data = await readJson(res);

@@ -34,8 +34,11 @@ const fieldQuery = eval(`(${grab("fieldQuery")})`);
 ok(!fieldQuery(5).has("qualify"), "on: nothing extra is sent (the server's default)");
 state.qualify = false;
 ok(fieldQuery(5).get("qualify") === "0", "off: qualify=0");
+ok(fieldQuery(5).get("date") === "2026-11-21",
+   "the date goes with every 'this year' field ask (last year's meet on this year's date)");
 state.when = "asran";
 ok(!fieldQuery(5).has("qualify"), "as it ran: never sent");
+ok(!fieldQuery(5).has("date"), "...nor the date");
 
 state = { when: "thisyear", pick: "rating", qualify: true };
 const fmtDate = (d) => d;
