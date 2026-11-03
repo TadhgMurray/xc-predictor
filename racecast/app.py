@@ -11686,11 +11686,17 @@ def _upcomingChampsCached():
     from upcoming_preview import upcomingChampionships
 
     def compute():
-        with getConn() as conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute("SET statement_timeout = '120s'")
-                out = upcomingChampionships(cur)
-                conn.rollback()
+        # ! A FAILURE IS KEPT TOO (ttl_of below), so a slow database is
+        #   asked once per worker every ten minutes, not on every visit
+        try:
+            with getConn() as conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute("SET statement_timeout = '20s'")
+                    out = upcomingChampionships(cur)
+                    conn.rollback()
+        except Exception:                               # noqa: BLE001
+            app.logger.exception("upcoming championships failed")
+            return None
         for m in out:
             day = _dt.date.fromisoformat(m["date"])
             m["when"] = day.strftime("%a %b ") + str(day.day)
@@ -11702,11 +11708,12 @@ def _upcomingChampsCached():
         return out
     try:
         rows, _ = ttlcache.get(("predict_upcoming", _dt.date.today().isoformat()),
-                               compute, ttl=6 * 3600)
+                               compute, ttl=6 * 3600,
+                               ttl_of=lambda v: 6 * 3600 if v is not None else 600)
     except Exception:                                   # noqa: BLE001
         app.logger.exception("upcoming championships failed")
         rows = []
-    return rows
+    return rows or []
 
 
 @app.route("/api/predict/races")

@@ -33,6 +33,7 @@ team, or one meet (owner, 2026-10-10, approved):
 ! NEVER A 500. Each piece degrades to "nothing to say": no posted meet, no
   edition, no model, a timed-out prediction -- the block stays hidden.
 """
+import collections
 import datetime
 import os
 import re
@@ -309,6 +310,41 @@ def qualifiedField(cur, plan, div_id):
     return qualifiedFieldInfo(cur, plan, div_id)[0]
 
 
+def lastYearGender(cur, plan, race):
+    """★ THE GENDER OF WHO RAN IT LAST YEAR (owner, 2026-11-03: "Just look at
+    the gender of who ran it last year?"). A race whose label says no gender
+    ("Division I" twice, AIA and CIF Southern Section) is paired with last
+    edition's race of the same label in the same place among its namesakes
+    (div_id order), and that race's runners vote by their season pools
+    (predict._fieldGender). None when there is no such race."""
+    import last_edition as LE
+    import predict as P
+    ed = (plan or {}).get("edition") or {}
+    src = (plan or {}).get("source")
+    lab = LE.editionName(race.get("label"))
+    if not ed.get("meet_id") or not lab:
+        return None
+    try:
+        cur.execute("SAVEPOINT up_gender")
+        mine = sorted(int(r["div_id"]) for r in plan.get("races") or []
+                      if LE.editionName(r.get("label")) == lab)
+        theirs = sorted(int(r["div_id"]) for r in LE.editionRaces(cur, int(ed["meet_id"]), "XC", src)
+                        if LE.editionName(r.get("label")) == lab)
+        g = None
+        if len(mine) == len(theirs) and int(race["div_id"]) in mine:
+            div = theirs[mine.index(int(race["div_id"]))]
+            cur.execute("SELECT DISTINCT person_id FROM results WHERE meet_id = %s AND div_id = %s "
+                        "AND source = %s AND person_id IS NOT NULL",
+                        (int(ed["meet_id"]), div, src))
+            ids = [tuple(r.values())[0] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+            g = P._fieldGender(cur, ids, "XC")
+        cur.execute("RELEASE SAVEPOINT up_gender")
+        return g
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT up_gender")
+        return None
+
+
 def qualifiedFieldInfo(cur, plan, div_id):
     """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
     for one race of a meet plan: where the field came from, for the page
@@ -320,6 +356,8 @@ def qualifiedFieldInfo(cur, plan, div_id):
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
     if race is None or not plan.get("date"):
         return None, None
+    if not race.get("gender"):
+        race = dict(race, gender=lastYearGender(cur, plan, race))
     # ★ ELSE A LEARNED ROUTE (high school state / section / district, NAIA):
     #   Q.learnedRoute, from scripts/qualifier_audit.py --write-routes
     route = None if rule is not None else Q.learnedRoute(
@@ -399,6 +437,11 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
     for t in teams:
         t["runners"].sort(key=lambda r: -(r["rating"] or 0))
         t["entered"] = len(t["runners"])
+        # ★ THE TEAM'S LEVEL FOR ITS CREST (owner, 2026-11-03: Washington St.
+        #   with no logo): a college's name resolves through its pool
+        #   (school_logo.crestState), so the runners' commonest pool goes on
+        pools = collections.Counter(r["pool"] for r in t["runners"] if r.get("pool"))
+        t["pool"] = pools.most_common(1)[0][0] if pools else None
     P._stampCrests(teams, "school", "state")
     return {"season_year": season, "when": "thisyear", "teams": teams,
             "basis": dict(info, kind="qualified")}
@@ -410,15 +453,11 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
 #   genders from its results) and name, dated `day`, in meetPlan's shape.
 def pastPlan(cur, meet_id, source, day):
     import last_edition as LE
+    import qualifying as Q
     try:
         cur.execute("SAVEPOINT up_past")
-        cur.execute("""SELECT min(date) FROM results WHERE meet_id = %s AND source = %s
-                         AND date ~ '^(19|20)[0-9]{2}-'""", (int(meet_id), source))
-        row = cur.fetchone()
-        ran_on = (row["min"] if isinstance(row, dict) else row[0]) if row else None
-        if not ran_on or str(ran_on)[:10] >= str(day)[:10]:
-            cur.execute("RELEASE SAVEPOINT up_past")
-            return None
+        # ! THE NAME FIRST, AND OUT AT ONCE FOR A MEET NO RULE OR ROUTE
+        #   COVERS: every "this year" field asks with a date now
         if source == "tfrrs":
             cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s LIMIT 1",
                         (int(meet_id),))
@@ -426,13 +465,25 @@ def pastPlan(cur, meet_id, source, day):
             cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1", (int(meet_id),))
         row = cur.fetchone()
         name = (row["meet_name"] if isinstance(row, dict) else row[0]) if row else None
+        if Q.ruleFor(name, source) is None and \
+                (source, LE.editionName(name)) not in Q._loadRoutes():
+            cur.execute("RELEASE SAVEPOINT up_past")
+            return None
+        cur.execute("""SELECT min(date) FROM results WHERE meet_id = %s AND source = %s
+                         AND date ~ '^(19|20)[0-9]{2}-'""", (int(meet_id), source))
+        row = cur.fetchone()
+        ran_on = (row["min"] if isinstance(row, dict) else row[0]) if row else None
+        if not ran_on or str(ran_on)[:10] >= str(day)[:10]:
+            cur.execute("RELEASE SAVEPOINT up_past")
+            return None
         races = LE.editionRaces(cur, int(meet_id), "XC", source)
         cur.execute("RELEASE SAVEPOINT up_past")
     except Exception:                                   # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT up_past")
         return None
+    # the meet is its own last edition: lastYearGender reads its runners
     return {"meet_id": int(meet_id), "source": source, "name": name,
-            "date": str(day)[:10], "races": races}
+            "date": str(day)[:10], "races": races, "edition": {"meet_id": int(meet_id)}}
 
 
 # ★ THE UPCOMING CHAMPIONSHIPS, FROM LAST YEAR (owner, 2026-11-03: "change
@@ -451,25 +502,27 @@ def upcomingChampionships(cur, today=None):
     season = seasonYearFor("XC", today)
     lo = seasonStart(season - 1).isoformat()
     hi = (seasonStart(season) - datetime.timedelta(days=1)).isoformat()
-    cur.execute("""SELECT 'tfrrs' AS src, m.meet_id, min(m.meet_name) AS name, min(r.date) AS d
-                   FROM   meets_tfrrs m JOIN results r
-                          ON r.source = 'tfrrs' AND r.meet_id = m.meet_id
-                   WHERE  m.sport = 'XC' AND r.date ~ '^(19|20)[0-9]{2}-'
-                     AND  r.date BETWEEN %s AND %s
-                   GROUP  BY m.meet_id
+    # ! THE META TABLES' DATES, NOT A SEASON OF RESULTS (owner, 2026-11-03:
+    #   "you just slowed down the site so much" -- a join over a season's
+    #   results, per worker, retried on every timeout)
+    cur.execute("""SELECT 'tfrrs' AS src, meet_id, meet_name AS name, date AS d
+                   FROM   meets_tfrrs
+                   WHERE  sport = 'XC' AND date ~ '^(19|20)[0-9]{2}-' AND date BETWEEN %s AND %s
                    UNION ALL
-                   SELECT 'anet', m.meet_id, min(m.meet_name), min(r.date)
-                   FROM   meets m JOIN results r
-                          ON r.source = 'anet' AND r.meet_id = m.meet_id
-                   WHERE  r.date ~ '^(19|20)[0-9]{2}-' AND r.date BETWEEN %s AND %s
-                     AND  m.meet_name ~* 'state|champ|nation|region|section|district|federation|'
-                                         'interscholastic|olympic|naia|njcaa|cif|uil|nxn|nike'
-                   GROUP  BY m.meet_id""", (lo, hi, lo, hi))
+                   SELECT DISTINCT 'anet', meet_id, meet_name, meet_date
+                   FROM   meets
+                   WHERE  meet_date ~ '^(19|20)[0-9]{2}-' AND meet_date BETWEEN %s AND %s
+                     AND  meet_name ~* 'state|champ|nation|region|section|district|federation|'
+                                       'interscholastic|olympic|naia|njcaa|cif|uil|nxn|nike'""",
+                (lo, hi, lo, hi))
     routes = Q._loadRoutes()
-    out = []
+    out, seen = [], set()
     for row in cur.fetchall():
         row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
         src, mid, name, d = row[0], int(row[1]), row[2], str(row[3])[:10]
+        if (src, mid) in seen:
+            continue
+        seen.add((src, mid))
         rule = Q.ruleFor(name, src)
         route = (src, LE.editionName(name)) in routes
         if rule is None and not route:
@@ -498,9 +551,24 @@ def predictedRound(cur, meet_id, gender, source):
 
 
 def predictedDiv(cur, meet_id, div_id, source):
-    """One race that has not run, as we predict it (predictedRound)."""
-    pred = racePrediction(cur, meet_id, div_id, source)
-    if not pred.get("available"):
+    """One race that has not run, as we predict it (predictedRound).
+    ! STORED OR ALREADY CACHED ONLY, NEVER RUN HERE (owner, 2026-11-03: "you
+      just slowed down the site so much"): a championship's preview asking
+      for a live prediction of each of its rounds, on every page that names
+      the meet, was the model run a dozen times per view. The forecast step
+      (build_meet_forecasts.py, soonest meet first) stores the rounds; until
+      then the round is not counted."""
+    import meet_forecast as MF
+    pred = ttlcache.peek(("up_pred", source, int(meet_id), div_id))
+    if pred is None:
+        try:
+            cur.execute("SAVEPOINT up_pdiv")
+            pred = MF.loadRace(cur, meet_id, div_id, source)
+            cur.execute("RELEASE SAVEPOINT up_pdiv")
+        except Exception:                               # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT up_pdiv")
+            pred = None
+    if not pred or not pred.get("available"):
         return []
     return [(int(r["person_id"]), r.get("school"), float(r["seconds"]),
              float(r["rating"]) if r.get("rating") is not None else None)

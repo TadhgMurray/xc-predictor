@@ -78,6 +78,8 @@ def main():
                 print("    no meet plan (no races posted, or no last edition)")
                 continue
             for race in plan.get("races") or []:
+                if not race.get("gender"):          # the gender of who ran it last year
+                    race = dict(race, gender=U.lastYearGender(cur, plan, race))
                 route = None if rule else Q.learnedRoute(m["meet_name"], m["src"],
                                                          race.get("label"), race.get("gender"))
                 how = f"rule {rule['key']}" if rule else ("route" if route else "-")
