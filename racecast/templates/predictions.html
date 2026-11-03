@@ -259,11 +259,14 @@
          setting for predictions that is on by default"): NCAA, NXN and the
          learned state / regional routes (racecast/qualifying.py). Unticked is
          the last edition's teams. #}
+      {# ! A SELECT LIKE "Pick runners by", NOT A BARE CHECKBOX (owner,
+         2026-11-03: "awful ui and does not explain what it does") #}
       <div class="pred-opt" id="qualify-box">
-      <label class="per-team" for="qualify"><span>Qualifiers</span>
-        <input type="checkbox" id="qualify" checked
-               title="For a meet you qualify for (state, regionals, NCAA, NXN): this season's qualifiers from the rounds before, our prediction for a round not yet run. Untick for last year's teams.">
-      </label>
+      <label for="qualify">Field for qualifying meets</label>
+      <select id="qualify" title="For a meet you qualify for (state, regionals, NCAA, NXN): who earned a spot at this season's earlier rounds -- our prediction for a round that has not run yet -- or the teams that ran this meet last year. Other meets are not affected.">
+        <option value="1" selected>This season's qualifiers</option>
+        <option value="0">Last year's teams</option>
+      </select>
       </div>
 
       <div class="pred-opt" id="pick-by-box">

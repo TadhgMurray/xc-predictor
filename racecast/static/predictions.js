@@ -590,7 +590,7 @@ function syncPick() {
 }
 function syncQualify() {
   const el = $("qualify");
-  if (el) el.checked = state.qualify;
+  if (el) el.value = state.qualify ? "1" : "0";
 }
 
 function showWho(who) {
@@ -2075,9 +2075,10 @@ function showBasis(blocks) {
     const pred = b.predicted
       ? ` \u2014 ${b.predicted} of its ${b.rounds} qualifying rounds have not run, so their `
         + `qualifiers are our prediction of them`
-      : ` from its ${b.rounds} qualifying rounds`;
-    parts.push(`The field is this season's qualifiers${pred}. `
-      + `Untick "Qualifiers" in the options for last year's teams. Edit it below.`);
+      : ` (all ${b.rounds} have run)`;
+    parts.push(`This meet is one you qualify for, so the field is who earned a spot `
+      + `at this season's earlier rounds${pred}. Set "Field for qualifying meets" in the `
+      + `options to "Last year's teams" for the old field. Edit it below.`);
   } else if (b) parts.push(b.kind === "last_edition"
     ? `No entries posted yet \u2014 the field is the teams from the last `
       + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`
@@ -5037,14 +5038,15 @@ document.addEventListener("change", (e) => {
   });
 })();
 
-/* ★ QUALIFIERS ON OR OFF: a new field, read again like a new size; the
-   hand edits are kept. */
+/* ★ FIELD FOR QUALIFYING MEETS: a new field, read again like a new size;
+   the hand edits are kept. */
 (function () {
   const el = $("qualify");
   if (!el) return;
   el.addEventListener("change", () => {
-    if (el.checked === state.qualify) return;
-    state.qualify = el.checked;
+    const v = el.value !== "0";
+    if (v === state.qualify) return;
+    state.qualify = v;
     if (!state.meet) { saveState(); return; }
     for (const e of _edits.values()) e.field = null;
     clearOutput();
