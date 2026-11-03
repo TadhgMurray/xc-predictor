@@ -2168,7 +2168,7 @@ def rekeyAll(cur, manners, directory=None, write=False, limit=None, only=None,
 
 
 def setLogo(cur, manners, school, state, url, level=None, directory=None,
-            write=False, out=print):
+            write=False, out=print, shape="override"):
     """Pin one school's crest to an image URL (owner, 2026-09-26: "Some
     logos still wrong Oregon (OR). idk what to do anymore"). The image is
     fetched and normalised like any other, stored, and the URL written to
@@ -2189,7 +2189,10 @@ def setLogo(cur, manners, school, state, url, level=None, directory=None,
     if raw is None:
         out(f"  could not fetch {url}: {why}")
         return False
-    data, sha, size = normalise(raw, ctype=why, kind="override")
+    # `shape`: how wide a mark may be. A school's crest is near square; a
+    # conference's mark is often a wordmark (unit_logos passes "override:icon",
+    # the icon cap, 3:1 -- 106 conference logos were refused as banners)
+    data, sha, size = normalise(raw, ctype=why, kind=shape or "override")
     if data is None:
         out(f"  {url} is not a usable crest ({size})")
         return False

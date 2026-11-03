@@ -49,6 +49,9 @@ UA = ("racecast/1.0 (https://racecast.co/about; contact: tadhg.a.murray@gmail.co
 CONF_WORDS = ("conference", "league", "association", "athletic", "collegiate")
 
 
+# a conference's mark may be a wordmark up to 3:1 (scrape_school_logos.acceptable)
+UNIT_SHAPE = "override:icon"
+
 from unit_board import logoKey as unitKey                      # noqa: E402  the one definition
 
 
@@ -342,7 +345,7 @@ def main():
 
         def pin(label, key, url):
             try:
-                S.setLogo(cur, manners, key, "", url, level="", write=True)
+                S.setLogo(cur, manners, key, "", url, level="", write=True, shape=UNIT_SHAPE)
                 conn.commit()
             except Exception as exc:              # noqa: BLE001 -- one bad image, not the run
                 conn.rollback()
@@ -353,7 +356,7 @@ def main():
                 raise SystemExit("--set needs --url")
             kind, name = a.set
             S.setLogo(cur, manners, unitKey(kind, name), (a.state or "").upper(), a.url,
-                      level="", write=a.write)
+                      level="", write=a.write, shape=UNIT_SHAPE)
         elif a.divisions:
             cur.execute("""SELECT DISTINCT division FROM school_unit
                            WHERE is_college AND NULLIF(btrim(division), '') IS NOT NULL""")
