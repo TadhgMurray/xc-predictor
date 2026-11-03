@@ -446,8 +446,11 @@ def upcomingChampionships(cur, today=None):
     import last_edition as LE
     import qualifying as Q
     today = today or datetime.date.today()
-    season = today.year if today.month >= 8 else today.year - 1
-    lo, hi = f"{season - 1}-08-01", f"{season}-07-31"
+    # the one season seam (season_year: Aug 15), last season's span
+    from season_year import seasonStart, seasonYearFor
+    season = seasonYearFor("XC", today)
+    lo = seasonStart(season - 1).isoformat()
+    hi = (seasonStart(season) - datetime.timedelta(days=1)).isoformat()
     cur.execute("""SELECT 'tfrrs' AS src, m.meet_id, min(m.meet_name) AS name, min(r.date) AS d
                    FROM   meets_tfrrs m JOIN results r
                           ON r.source = 'tfrrs' AND r.meet_id = m.meet_id
