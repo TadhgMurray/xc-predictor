@@ -103,3 +103,16 @@ def test_a_town_is_not_a_venue():
         assert not B.farName(expandAbbreviations(normalizeCourseName(raw))), raw
     assert B.farName(expandAbbreviations(normalizeCourseName("Harkness Memorial State Park")))
     assert B.farName(expandAbbreviations(normalizeCourseName("Norris Dam State Park")))
+
+
+def test_one_park_under_a_spelling_and_an_event_word():
+    """Owner, 2026-11-03: LaVern Gibson three times in search."""
+    import build_course_canonical as B
+    vs = [_v(0, "laverne gibson course", 39.4426, -87.3361),
+          _v(1, "lavern gibson championship xc course", 39.4431, -87.3352),
+          _v(2, "lavern gibson championship course", 39.4428, -87.3358),
+          _v(3, "laverne park", 39.4427, -87.3360)]
+    pairs = {(a, b) for a, b, _d, _s in B.coreNamePairs(vs)}
+    assert {(0, 1), (0, 2)} <= pairs     # 1 and 2 normalise alike: sameNamePairs joins them
+    assert not any(3 in p for p in pairs)
+    assert B.coreKey("central park") is None and B.coreKey("lincoln high school") is None

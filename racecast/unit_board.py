@@ -458,6 +458,32 @@ def validKeys(cur, kind, college):
 TOP_TEAMS = 25
 
 
+# ★ A CONFERENCE IS ONE DIVISION (owner's Big 12 board, 2026-11-03: "Andrew
+#   (GA) 90.0" fourteenth, below Texas Tech). A team filed under a conference
+#   whose other teams are another division is a name collision or a stray
+#   vote, not a member: when ODD_SHARE of a conference's teams that carry a
+#   division agree on it, a team carrying a different one is left out of
+#   its board and its page. A team with no division stays.
+ODD_SHARE = 0.75
+
+
+def dropOddDivision(teams, kind="conference"):
+    """The teams of one unit less those in a division most of it is not. Pure."""
+    from collections import Counter
+    if kind != "conference":
+        return list(teams)
+    divs = Counter((t.get("division") or "").strip().upper() for t in teams
+                   if (t.get("division") or "").strip())
+    if not divs:
+        return list(teams)
+    top, n = divs.most_common(1)[0]
+    if n < ODD_SHARE * sum(divs.values()) or n < 3:
+        return list(teams)
+    return [t for t in teams
+            if not (t.get("division") or "").strip()
+            or (t.get("division") or "").strip().upper() == top]
+
+
 def buildBoard(rows, kind, n=DEFAULT_N, valid=None):
     """team_season rows -> one row per unit, ranked by the average of its
     best n teams' top-5 averages. Spellings merge (normKey); units the level
@@ -480,6 +506,7 @@ def buildBoard(rows, kind, n=DEFAULT_N, valid=None):
         groups.setdefault((k, st), []).append(r)
     out = []
     for (k, st), teams in groups.items():
+        teams = dropOddDivision(teams, kind)
         if len(teams) < MIN_TEAMS:
             continue
         spelled = Counter((t.get(kind) or "").strip() for t in teams).most_common(1)[0][0]

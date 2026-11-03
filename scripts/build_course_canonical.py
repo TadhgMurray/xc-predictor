@@ -311,6 +311,68 @@ def sameNamePairs(venues):
     return out
 
 
+# ★ ONE PARK UNDER A SPELLING AND AN EVENT WORD (owner, 2026-11-03: search
+#   listed "Laverne Gibson Course", "LaVern Gibson Championship XC Course"
+#   and "LaVern Gibson Championship Course" -- the NCAA course, three ids).
+#   The names differ by a letter and by "Championship", so neither the
+#   exact-name rule above nor the similarity threshold joins them. The
+#   CORE of a name is its distinctive words less the event words a feed
+#   adds ("Championship", "Invitational"), each folded for spelling
+#   (a final e: Laverne/LaVern). Two venues with the same core of at least
+#   two words, inside SAME_NAME_RADIUS, are one. "Laverne Park" (one word)
+#   never joins; a protected split still vetoes.
+_EVENT_WORDS = frozenset("""
+    championship championships champs invitational invite meet loop run race races
+    classic open relays
+""".split())
+
+
+def coreKey(canonical):
+    """The spelling-folded distinctive words of a venue name, less event
+    words, as a sorted tuple; None under two words or for a town. Pure."""
+    import re as _re
+    if townName(canonical):
+        return None
+    words = str(canonical or "").split()
+    if _SCHOOL_WORDS & set(words):
+        return None
+    core = set()
+    for w in distinctive(canonical):
+        if w in _EVENT_WORDS:
+            continue
+        w = _re.sub(r"[^a-z0-9]", "", w.lower())
+        if len(w) > 4 and w.endswith("e"):
+            w = w[:-1]
+        if w:
+            core.add(w)
+    return tuple(sorted(core)) if len(core) >= DISTINCTIVE_MIN else None
+
+
+def coreNamePairs(venues):
+    """[(idxA, idxB, metres, 1.0)] for venues whose names share a core
+    (coreKey) inside SAME_NAME_RADIUS. Pure."""
+    from course_identity import haversineMeters
+    by = {}
+    for v in venues:
+        k = coreKey(v.get("canonical"))
+        if k:
+            by.setdefault(k, []).append(v)
+    out = []
+    for group in by.values():
+        if len(group) < 2 or len({v.get("canonical") for v in group}) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a, b = group[i], group[j]
+                if a.get("canonical") == b.get("canonical") or protectedSplit(a, b):
+                    continue
+                d = haversineMeters(float(a["gps_lat"]), float(a["gps_long"]),
+                                    float(b["gps_lat"]), float(b["gps_long"]))
+                if d <= SAME_NAME_RADIUS:
+                    out.append((min(a["idx"], b["idx"]), max(a["idx"], b["idx"]), d, 1.0))
+    return out
+
+
 def buildMapping(venues, radiusMeters, minNameSimilarity):
     """
     Cluster the venues and flatten to insertable rows.
@@ -328,7 +390,7 @@ def buildMapping(venues, radiusMeters, minNameSimilarity):
     """
     pairs = findMergePairs(venues, radiusMeters, minNameSimilarity,
                            blockFn=blocksMerge, venueBlockFn=protectedSplit)
-    pairs = pairs + sameNamePairs(venues)
+    pairs = pairs + sameNamePairs(venues) + coreNamePairs(venues)
     clusters = buildClusters(len(venues), pairs)
 
     rows = []

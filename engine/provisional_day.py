@@ -285,6 +285,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--show", type=int, default=15)
+    ap.add_argument("--race", action="append", default=[],
+                    help="MEET/DIV: say how this race was classified, and why")
     args = ap.parse_args()
     t0 = time.time()
 
@@ -357,6 +359,29 @@ def main():
         #   rated carries its own numbers (era, form, day); one 09b priced
         #   sits at the venue price to the rounding (nightlyPriced), or
         #   carries last night's provisional day.
+        # --race: why a race was (not) given a provisional day
+        for want in args.race:
+            try:
+                wm, wd = (int(x) for x in want.strip("/").split("/")[-2:])
+            except ValueError:
+                print(f"  --race {want!r}: want MEET/DIV")
+                continue
+            hits = [(k, g) for k, g in by_race.items() if (wm, wd) in g["races"]]
+            if not hits:
+                inwin = [r for r in rows if r.meet_id == wm and r.div_id == wd]
+                print(f"  race {wm}/{wd}: {len(inwin)} rated rows in the window, but no fitted "
+                      f"course found for them (venueMap/course_difficulties)" if inwin else
+                      f"  race {wm}/{wd}: no rated rows in the last {WINDOW_DAYS} days")
+            for k, g in hits:
+                hit = days.get(k)
+                price(g)
+                stored = [(float(r.speed_rating), rv) for rv, r in g["priced"].values()]
+                same = sum(abs(a / b - 1) <= NIGHTLY_TOL for a, b in stored if a and b)
+                print(f"  race {wm}/{wd}: course-day key {k}, difficulty {g['d']:+.4f}, "
+                      f"{len(g['rows'])} rows over {len(g['races'])} race(s)")
+                print(f"    race_day_effect: {('provisional ' if hit[2] else 'SOLVED ') + f'{hit[0]:+.4f}' if hit else 'no row'}"
+                      f"; stored ratings at the nightly's venue price: {same}/{len(stored)}"
+                      + (f" (e.g. stored {stored[0][0]:.2f} vs venue {stored[0][1]:.2f})" if stored else ""))
         solved, new = [], []
         for key, g in by_race.items():
             hit = days.get(key)

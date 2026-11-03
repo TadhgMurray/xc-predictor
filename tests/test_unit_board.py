@@ -340,3 +340,17 @@ def test_recruiting_rows_get_unit_pages_and_only_stored_logos(monkeypatch):
     assert rows[0]["conference_href"].startswith("/unit/conference/NESCAC")
     assert rows[0]["division_href"].startswith("/unit/division/")
     assert rows[1] == {"division": None}
+
+
+def test_a_team_in_another_division_is_not_a_conference_member():
+    """Owner's Big 12 board, 2026-11-03: Andrew (GA) fourteenth at 90.0."""
+    import unit_board as U
+    big12 = [{"school": s, "division": "NCAA DI", "conference": "BIG 12", "top5_mean": 145.0}
+             for s in ("Oklahoma State", "Colorado", "BYU", "Iowa State", "Arizona")]
+    andrew = {"school": "Andrew", "division": "NJCAA", "conference": "BIG 12", "top5_mean": 90.0}
+    nodiv = {"school": "X", "division": None, "conference": "BIG 12", "top5_mean": 140.0}
+    kept = U.dropOddDivision(big12 + [andrew, nodiv])
+    assert andrew not in kept and nodiv in kept and len(kept) == 6
+    mixed = [dict(t, division=d) for t, d in zip(big12, ("NCAA DI", "NCAA DI", "NAIA", "NAIA", "NCAA DI"))]
+    assert len(U.dropOddDivision(mixed)) == 5          # no clear majority: nothing dropped
+    assert U.dropOddDivision(big12 + [andrew], "league") == big12 + [andrew]

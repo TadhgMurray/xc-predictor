@@ -60,3 +60,14 @@ def test_extension_and_in_app_browser_noise_is_dropped():
         assert AE.recordJs(msg, "(inline)", 1, "/", buf=b) is False, msg
     assert b.got == []
     assert AE.recordJs("TypeError: x is undefined", "/static/a.js", 3, "/", buf=b) is True
+
+
+def test_in_app_browser_bridges_are_not_ours():
+    import app_errors as E
+    assert not E.recordJs("ReferenceError: Can't find variable: SCDynimacBridge", "(inline)", 1, "/recruiting", buf=_NoBuf())
+    assert not E.recordJs("TypeError: browser.$references[9] is not a function.", "(inline)", 1, "/race", buf=_NoBuf())
+
+
+class _NoBuf:
+    def add(self, *a):
+        raise AssertionError("noise reached the buffer")

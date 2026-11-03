@@ -9434,10 +9434,16 @@ _ORDER_HEAD = """
               DESC,
 """
 
+# ★ ATHLETES BY WHO RACED MOST RECENTLY (owner, 2026-11-03: "most recently
+#   raced"), then by how much: the namesake racing this season above the one
+#   with a long career that ended in 2015. Meets the same way (the recent
+#   edition). Schools by athletes, courses and venues by results, and
+#   conferences by how fast they are (search_index.unitRows: the median of
+#   their teams' top-5 averages).
 _ORDER_TAIL = """
-          (CASE WHEN kind = 'meet' THEN sort_year  ELSE sort_count END)
+          (CASE WHEN kind IN ('meet', 'athlete') THEN sort_year  ELSE sort_count END)
               DESC NULLS LAST,
-          (CASE WHEN kind = 'meet' THEN sort_count ELSE sort_year  END)
+          (CASE WHEN kind IN ('meet', 'athlete') THEN sort_count ELSE sort_year  END)
               DESC NULLS LAST,
           (search_text LIKE %({p}_first)s) DESC,
           length(search_text)

@@ -23,11 +23,11 @@ def test_one_row_per_conference_whatever_its_spelling():
     ])
     by = {r[1].upper(): r for r in rows}
     assert len(rows) == 3, rows
-    assert by["GNAC"][7] == 3
+    assert "3 schools" in by["GNAC"][2]
     mw = next(r for r in rows if "mountain" in r[4].lower())
     assert mw[0] == "unit" and mw[3].startswith("/unit/conference/MOUNTAIN%20WEST")
     assert "mtn west" in mw[4].lower()              # the other spelling finds it
-    assert mw[7] == 3 and "3 schools" in mw[2]
+    assert mw[7] == 0 and "3 schools" in mw[2]          # no speeds: sorts by nothing
     assert "NESCAC" in by and by["NESCAC"][3].startswith("/unit/conference/NESCAC")
 
 
@@ -58,3 +58,15 @@ def test_the_page_and_the_dropdown_know_units():
     assert "('unit','Conferences')" in t
     js = open(os.path.join(ROOT, "racecast", "static", "topbar-search.js"), encoding="utf-8").read()
     assert "sr-mark" in js
+
+
+def test_conferences_rank_by_how_fast_their_teams_are():
+    rows = [("FAST", "MA", "A"), ("FAST", "MA", "B"), ("SLOW", "MA", "C")]
+    speed = {"a": 140.0, "b": 150.0, "c": 120.0}
+    got = {r[1]: r[7] for r in SI.unitRows("conference", True, rows, speed)}
+    assert got["FAST"] == 1450 and got["SLOW"] == 1200
+
+
+def test_athletes_rank_by_their_latest_race():
+    a = open(os.path.join(ROOT, "racecast", "app.py"), encoding="utf-8").read()
+    assert "CASE WHEN kind IN ('meet', 'athlete') THEN sort_year" in a

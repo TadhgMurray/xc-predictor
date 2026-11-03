@@ -618,7 +618,8 @@ def unit_page(kind, name):
             if year is not None:
                 try:
                     every_rows = UB.load(cur, kind, pool, sport, year, st if not college else None)
-                    teams = [t for t in every_rows if UB.normKey(t.get(kind)) == key]
+                    teams = UB.dropOddDivision(
+                        [t for t in every_rows if UB.normKey(t.get(kind)) == key], kind)
                     spell = sorted({(t.get(kind) or "").strip().upper() for t in teams} | {name.upper()})
                     teams.sort(key=lambda t: (t["top5_mean"] is None, -(t["top5_mean"] or 0)))
                     for c in UB.WITHIN[college]:

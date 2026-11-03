@@ -318,9 +318,14 @@ def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
 #   to its own background page, and "_AutofillCallbackHandler" is a script
 #   iOS in-app browsers (Facebook, Instagram) inject for autofill. Neither
 #   is code this site ships.
+#   ★ 2026-11-03, two more: "Can't find variable: SCDynimacBridge" (a
+#   Snapchat in-app browser bridge) and "browser.$references[N] is not a
+#   function" (a WebExtension polyfill's message plumbing, JSPlugin) --
+#   both inline scripts injected into the page, neither ours.
 _JS_NOISE_RX = re.compile(r"^ResizeObserver loop (completed|limit exceeded)"
                           r"|runtime\.sendMessage\(\)|_AutofillCallbackHandler"
-                          r"|^(Unhandled rejection: )?Extension context invalidated")
+                          r"|^(Unhandled rejection: )?Extension context invalidated"
+                          r"|SCDynimacBridge|browser\.\$references\[")
 
 
 def recordJs(message, script, line, path, buf=None):

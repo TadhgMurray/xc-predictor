@@ -5,6 +5,7 @@ from urllib.parse import quote
 
 import psycopg2.errors
 import psycopg2.extras
+import statistics
 import time
 
 sys.path.insert(0, "scripts")
@@ -723,7 +724,7 @@ def unitLink(kind, unit, state, college):
     return q
 
 
-def unitRows(kind, college, rows):
+def unitRows(kind, college, rows, speed=None):
     """The search rows for one unit kind, from (unit, state, school) triples.
     Pure, so tests/test_search_units.py pins it without a database.
 
@@ -764,7 +765,13 @@ def unitRows(kind, college, rows):
         sub = f"{kind}{' · ' + state if state and not college else ''}"
         sub += f" · {n} school{'s' if n != 1 else ''}"
         text = " ".join(dict.fromkeys([label, raw] + sorted(g["spell"])))
-        out.append(("unit", label, sub, link, text, label, 0, int(n)))
+        # ★ RANKED BY HOW FAST, NOT HOW BIG (owner, 2026-11-03: "Fastest?"):
+        #   the median of its teams' top-5 averages this season, x10 so the
+        #   integer column keeps a decimal; a unit with no rated team sorts
+        #   last, by its size
+        sp = sorted(v for v in (speed.get(f) for f in g["schools"]) if v) if speed else []
+        rank_key = int(round(10 * statistics.median(sp))) if sp else 0
+        out.append(("unit", label, sub, link, text, label, 0, rank_key or 0))
     return out
 
 
@@ -779,6 +786,19 @@ def _load_units(conn):
     have = {r[0] for r in cur.fetchall()}
     wr = conn.cursor()
     out = []
+    # each school's fastest top-5 average this season and last (team_season)
+    speed = {}
+    try:
+        cur.execute("""SELECT school, max(top5_mean) FROM team_season
+                       WHERE top5_mean IS NOT NULL
+                         AND year >= (SELECT max(year) - 1 FROM team_season)
+                       GROUP BY school""")
+        for school, v in cur.fetchall():
+            f = schoolFold(school)
+            speed[f] = max(speed.get(f) or 0.0, float(v))
+    except Exception as exc:                              # noqa: BLE001
+        conn.rollback()
+        print(f"  units: no team speeds ({type(exc).__name__}); ranked by size")
     for college, kinds in ((False, _UNIT_KINDS_HS), (True, _UNIT_KINDS_COLLEGE)):
         for kind in kinds:
             if kind not in have:
@@ -791,7 +811,7 @@ def _load_units(conn):
                 FROM   school_unit
                 WHERE  "{kind}" IS NOT NULL AND is_college = %s
             """, (college,))
-            out.extend(unitRows(kind, college, cur.fetchall()))
+            out.extend(unitRows(kind, college, cur.fetchall(), speed))
     _flush(wr, out); conn.commit()
     print(f"  units: {len(out):,}")
 
