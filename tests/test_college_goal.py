@@ -69,15 +69,28 @@ def test_a_college_goal_renders(monkeypatch):
         def __exit__(self, *a): pass
 
     monkeypatch.setattr(database, "getConn", lambda: Conn())
+    monkeypatch.setitem(goal._CHOICES, "at", 0.0)
     monkeypatch.setattr(goal.CG, "unitChoices", lambda cur: (["NESCAC", "UAA"], ["NCAA DIII"]))
     monkeypatch.setattr(goal.CG, "collegeGoal", lambda cur, rung, g, c, d: (
         {"rating": 120.0, "n": 21, "years": [2026, 2025, 2024], "thin": False, "places": 7,
          "where": "NESCAC", "kind": "conference", "whose": "the top 7 at the NESCAC championship",
-         "href": "/unit/conference/NESCAC?pool=college_m"}, None))
-    monkeypatch.setattr(goal, "clocks", lambda *a, **k: {"typical": 1480.0, "t1600": 250.0, "t3200": 530.0})
+         "href": "/unit/conference/NESCAC?pool=college_m", "distance": 8000.0,
+         "venue": {"course_name": "Middlebury College", "distance": 8000.0, "year": 2026,
+                   "canonical_id": 7, "difficulty": 0.068}}, None))
+    monkeypatch.setattr(goal, "clocks", lambda *a, **k: {"course": 1500.0, "typical": 1480.0, "t1600": 250.0, "t3200": 530.0})
     monkeypatch.setitem(app.app.jinja_env.filters, "hs", lambda v, pool, sport=None: v)
     monkeypatch.setitem(app.app.jinja_env.globals, "hs_delta", lambda d, r, p, s=None: d)
     html = app.app.test_client().get("/goal?goal=conf7&g=boys&conf=NESCAC").get_data(as_text=True)
     assert "College men&#39;s cross country" in html or "College men's cross country" in html
     assert "Top 7 at my conference meet" in html and "NESCAC" in html
     assert "2026, 2025, 2024 championships" in html
+    assert "8K at Middlebury College (the 2026 NESCAC championship" in html
+    assert 'value="10000"' in html and 'value="NCAA DIII"' in html
+
+
+def test_the_championship_venue_is_its_course_and_distance():
+    race = [{"course_name": "Middlebury College", "distance": 8000.0, "day": "2026-10-31"},
+            {"course_name": "Middlebury College", "distance": 8046.0, "day": "2026-10-31"},
+            {"course_name": None, "distance": 8000.0, "day": "2026-10-31"}]
+    assert CG.raceVenue(race) == {"course_name": "Middlebury College", "distance": 8000.0,
+                                  "day": "2026-10-31"}

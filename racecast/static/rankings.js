@@ -423,7 +423,10 @@ function buildQuery() {
     for (const k of UNIT_KEYS) {
       if (q.get(k)) q3.set(k, q.get(k));
     }
-    for (const field of ["state", "year"]) {
+    /* ★ GRADE BUILDS THE SQUADS here too (owner, 2026-11-03: "make it
+       work there"): tick 9 and every conference is ranked by its schools'
+       freshman teams (pages3.gradeSquads) */
+    for (const field of ["state", "year", "grade"]) {
       const vals = combos[field] ? combos[field].values() : [];
       if (vals.length) q3.set(field, vals.join(","));
     }
@@ -1748,7 +1751,10 @@ function renderUnits(rows, data) {
     </tr>
     <tr class="un-members" hidden><td colspan="8"><div class="un-team-list">${members}</div></td></tr>`;
   }).join("");
-  return `<table class="rk">${head}<tbody>${body}</tbody></table>`;
+  // a board raced from squads of some grades says so above itself
+  const g = (data && data.grades && data.grades.length)
+    ? `<p class="meta">Every school's squad of grade ${esc(data.grades.join(", ").replace(/,(?=\S)/g, ", "))} only, raced from this season's ratings.</p>` : "";
+  return `${g}<table class="rk">${head}<tbody>${body}</tbody></table>`;
 }
 
 /* the kinds a level ranks, until the first response says so itself */

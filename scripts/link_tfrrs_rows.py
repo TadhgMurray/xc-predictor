@@ -122,20 +122,38 @@ def fanout(cur, apply):
     sk = _skips(cur)
     cur.execute("SET LOCAL work_mem = '1GB'")
     cur.execute("DROP TABLE IF EXISTS tl_nat")
+    # ★ THE ID'S OWN MINTED PERSON IS A PLACEHOLDER, NOT A RIVAL (owner,
+    #   2026-11-03: the 2026 UAA meet, 315 runners whose tfrrs id already
+    #   had a person and were left unlinked). Pass 3 mints base + native_id
+    #   for an id nobody had; when a later link gives the same id its real
+    #   person on some rows, the id carries TWO persons and the guard below
+    #   read it as a collision, so every new row of that runner stayed bare.
+    #   The minted one is the id's own stand-in: one real person beside it is
+    #   still exactly one person. Two real persons remain a collision.
+    minted = ("x.person_id = CASE x.sys " + " ".join(f"WHEN '{k}' THEN {v}"
+                                                     for k, v in MINT_BASE.items())
+              + " END + x.native_id")
     _step(cur, "tfrrs ids and the ONE person their stamped rows agree on", f"""
         CREATE TEMP TABLE tl_nat AS
-        SELECT sys, native_id, min(person_id) AS person_id
+        SELECT sys, native_id,
+               COALESCE(min(person_id) FILTER (WHERE NOT minted),
+                        min(person_id)) AS person_id
         FROM (
-            SELECT {_sys('XC')} AS sys, r.native_id, r.person_id FROM results r
-            WHERE  r.source = 'tfrrs' AND r.native_id IS NOT NULL
-              AND  r.person_id IS NOT NULL {sk['XC']}
-            UNION ALL
-            SELECT {_sys('TF')}, r.native_id, r.person_id FROM results_tf r
-            WHERE  r.source = 'tfrrs' AND r.native_id IS NOT NULL
-              AND  r.person_id IS NOT NULL {sk['TF']}
-        ) x
+            SELECT x.*, COALESCE({minted}, false) AS minted FROM (
+                SELECT {_sys('XC')} AS sys, r.native_id, r.person_id FROM results r
+                WHERE  r.source = 'tfrrs' AND r.native_id IS NOT NULL
+                  AND  r.person_id IS NOT NULL {sk['XC']}
+                UNION ALL
+                SELECT {_sys('TF')}, r.native_id, r.person_id FROM results_tf r
+                WHERE  r.source = 'tfrrs' AND r.native_id IS NOT NULL
+                  AND  r.person_id IS NOT NULL {sk['TF']}
+            ) x
+        ) y
         GROUP  BY sys, native_id
-        HAVING count(DISTINCT person_id) = 1
+        HAVING count(DISTINCT person_id) FILTER (WHERE NOT minted) <= 1
+           AND count(DISTINCT person_id) >= 1
+           AND (count(DISTINCT person_id) FILTER (WHERE NOT minted) = 1
+                OR count(DISTINCT person_id) = 1)
     """)
     cur.execute("CREATE INDEX ON tl_nat (native_id, sys)")
     total = 0

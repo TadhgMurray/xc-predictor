@@ -137,14 +137,53 @@ def _meetsFor(cur, kind, unit):
 
 _ROWS = """
     SELECT k.year, r.meet_id, r.source, r.div_id, r.person_id,
-           r.time_seconds AS time, s.mean_rating AS rating
+           r.time_seconds AS time, s.mean_rating AS rating, k.distance,
+           left(r.date, 10) AS day,
+           COALESCE(m.course_name, mt.venue_name) AS course_name
     FROM   results r
     JOIN   ranking_results k ON k.result_id = r.result_id AND k.sport = 'XC'
     LEFT   JOIN athlete_season s ON s.person_id = r.person_id AND s.sport = 'XC'
                                 AND s.year = k.year AND s.pool = k.pool
+    LEFT   JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id AND m.source = r.source
+    LEFT   JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id AND mt.sport = 'XC'
     WHERE  r.meet_id = ANY(%(ids)s) AND split_part(k.pool, '|', 1) = %(pool)s
       AND  r.time_seconds > 0
 """
+
+
+def raceVenue(race):
+    """{course_name, distance, day} of a championship race: the course and
+    the distance most of its rows carry. Pure."""
+    from collections import Counter
+    if not race:
+        return None
+    course = Counter(r.get("course_name") for r in race if r.get("course_name")).most_common(1)
+    dist = Counter(int(round(float(r["distance"]) / 100.0)) * 100 for r in race
+                   if r.get("distance")).most_common(1)
+    if not dist:
+        return None
+    return {"course_name": course[0][0] if course else None, "distance": float(dist[0][0]),
+            "day": max((r.get("day") or "") for r in race) or None}
+
+
+def venueFor(cur, venue, year):
+    """The venue with its canonical id and difficulty at its distance, the
+    way the state goal resolves the state meet's course (cuts._stateVenue)."""
+    out = dict(venue)
+    out["difficulty"] = out["canonical_id"] = None
+    if not out.get("course_name"):
+        return out
+    try:
+        import projections as P
+        spec = P._courseSpec(cur, out, year)
+        if spec and spec.get("canonical_id"):
+            import conversions as C
+            out["canonical_id"] = spec["canonical_id"]
+            out["difficulty"] = C.venue_difficulty(
+                "XC", canonical_id=spec["canonical_id"], distance_meters=float(out["distance"]))
+    except Exception:                                   # noqa: BLE001
+        cur.connection.rollback()
+    return out
 
 
 def collegeGoal(cur, rung, gender, conference=None, division=None):
@@ -167,7 +206,8 @@ def collegeGoal(cur, rung, gender, conference=None, division=None):
     cur.execute(_ROWS, {"ids": sorted({m for m, _s in meets}), "pool": pool})
     rows = [dict(r) for r in cur.fetchall()]
     rows = [r for r in rows if (r["meet_id"], r["source"]) in meets]
-    got = markFrom(championshipRaces(rows), places)
+    races = championshipRaces(rows)
+    got = markFrom(races, places)
     if not got:
         return None, f"No rated {WORDS[gender].lower()}'s results at the {unit} championship yet."
     import unit_board as UB
@@ -175,6 +215,16 @@ def collegeGoal(cur, rung, gender, conference=None, division=None):
                whose=(f"the top {places} at the {unit} championship" if kind == "conference"
                       else f"the top {places} at the {unit} nationals"),
                href=UB.chipHref(kind, unit, None, True))
+    # ★ AT THE CHAMPIONSHIP'S OWN COURSE (owner, 2026-11-03: "or even what
+    #   the conference race is gonna be?"): the newest edition's course and
+    #   distance, as the state goal reads the state meet's
+    newest = max(races) if races else None
+    v = raceVenue(races.get(newest)) if newest else None
+    if v:
+        v = venueFor(cur, v, newest)
+        v["year"] = newest
+        got["venue"] = v
+        got["distance"] = v["distance"]
     return got, None
 
 

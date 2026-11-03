@@ -117,7 +117,7 @@
     <div class="field">
       <label for="goal-dist">Distance</label>
       <select id="goal-dist" name="dist" data-have="{{ (course.distances if course and not course.state_course else [])|join(',') }}">
-        {% set opts = (course.distances if course and course.distances and not course.state_course else [3000, 4000, 4800, 5000, 6000, 8000]) %}
+        {% set opts = (course.distances if course and course.distances and not course.state_course else ([5000, 6000, 8000, 10000] if is_college else [3000, 4000, 4800, 5000, 6000, 8000, 10000])) %}
         {% if (dist|int) not in opts %}{% set opts = (opts + [dist|int])|sort %}{% endif %}
         {% for m in opts %}<option value="{{ m }}"{% if m == dist|int %} selected{% endif %}>{{ (m)|goal_dist }}</option>{% endfor %}
       </select>
@@ -136,7 +136,7 @@
       <thead><tr><th>Where</th><th class="num">The goal</th>{% if athlete and athlete.times %}<th class="num">{{ athlete.name or "Athlete" }} now</th>{% endif %}</tr></thead>
       <tbody>
         {% set rows = [] %}
-        {% if times.course %}{% set _ = rows.append(((dist)|goal_dist ~ " at " ~ course.name ~ (" (the state meet's course)" if course.state_course else ""), "course")) %}{% endif %}
+        {% if times.course %}{% set _ = rows.append(((dist)|goal_dist ~ " at " ~ course.name ~ ((" (" ~ (course.whose or "the state meet's course") ~ ")") if course.state_course else ""), "course")) %}{% endif %}
         {% set _ = rows.append(((dist)|goal_dist ~ " on a typical course", "typical")) %}
         {% set _ = rows.append(("1600 on a typical track", "t1600")) %}
         {% set _ = rows.append(("3200 on a typical track", "t3200")) %}

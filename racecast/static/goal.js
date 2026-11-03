@@ -32,7 +32,9 @@
       o.textContent = college ? o.dataset.college : o.dataset.hs;
     });
   }
-  goal.addEventListener("change", sync);
+  // a new goal is a new answer -- its own lists, distances and championship
+  // course come from the server -- so the form goes back for it
+  goal.addEventListener("change", function () { sync(); form.submit(); });
   sync();
 
   // a new state is a new list of divisions: ask the server for it

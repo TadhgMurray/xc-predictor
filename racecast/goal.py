@@ -163,6 +163,19 @@ def _states():
     return [(c, STATE_NAMES[c]) for c in US_STATES if c in STATE_NAMES], STATE_NAMES
 
 
+_CHOICES = {"at": 0.0, "val": ([], [])}
+
+
+def _collegeChoices(cur, ttl=3600):
+    """CG.unitChoices, kept an hour: two GROUP BYs over school_unit, the
+    same answer for every visitor until the nightly rebuilds it."""
+    import time
+    if time.time() - _CHOICES["at"] > ttl or not _CHOICES["val"][0]:
+        _CHOICES["val"] = CG.unitChoices(cur)
+        _CHOICES["at"] = time.time()
+    return _CHOICES["val"]
+
+
 @bp.route("/goal")
 def goal_page():
     import psycopg2.extras
@@ -248,11 +261,19 @@ def goal_page():
                        state_name=names.get(state))
 
             target = None
+            # ★ THE COLLEGE PICKERS ARE ALWAYS FILLED (owner, 2026-11-03: "in
+            #   division dropdown it just says pick a division"): the goal
+            #   select switches fields in the browser without a reload, so
+            #   lists filled only for a college goal were empty after a switch
+            try:
+                ctx["conferences"], ctx["cdivisions"] = _collegeChoices(cur)
+            except Exception as exc:                    # noqa: BLE001
+                conn.rollback()
+                print(f"goal: college choices failed ({type(exc).__name__}: {exc})", flush=True)
+            ctx["college_words"] = CG.WORDS[gender]
             if is_college:
-                ctx.update(conference=conference, cdiv=cdiv,
-                           college_words=CG.WORDS[gender])
+                ctx.update(conference=conference, cdiv=cdiv)
                 try:
-                    ctx["conferences"], ctx["cdivisions"] = CG.unitChoices(cur)
                     target, why = CG.collegeGoal(cur, goal, gender, conference, cdiv)
                 except Exception as exc:                # noqa: BLE001
                     conn.rollback()
@@ -260,8 +281,6 @@ def goal_page():
                     target, why = None, "College marks are not available right now."
                 if target is None and (conference or cdiv):
                     ctx["error"] = why
-                if target:
-                    target["distance"] = None
             elif goal == "recruit":
                 rows = R.schoolTable(cur, _RECRUIT_GENDER[gender], "XC")
                 ctx["colleges"] = [r["label"] for r in rows if r.get("label")]
@@ -313,7 +332,10 @@ def goal_page():
                     course = {"canonical_id": v.get("canonical_id"),
                               "name": v.get("course_name"),
                               "distances": [int(v["distance"])] if v.get("distance") else [],
-                              "difficulty": v["difficulty"], "state_course": True}
+                              "difficulty": v["difficulty"], "state_course": True,
+                              # whose course it is, for the table's label
+                              "whose": (f"the {v['year']} {target.get('where')} championship's course"
+                                        if is_college else "the state meet's course")}
             dist = float(want or (CG.DEFAULT_DIST.get(pool) if is_college else None)
                          or targetFor(pool, "XC") or 5000.0)
             ctx.update(course=course, dist=dist, target=target)

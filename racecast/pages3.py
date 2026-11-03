@@ -497,8 +497,16 @@ def api_units():
                 year = boardYear(sport, ylab) if ylab else None
             if year is None:
                 return jsonify({"error": "No current season is known for this sport."}), 400
+            grades = [g for g in args.getlist("grade") if g.strip()] if hasattr(args, "getlist") else []
             try:
-                rows = UB.load(cur, kind, pool, sport, year, st, within)
+                if grades:
+                    rows = gradeSquads(cur, args, pool, sport, year, kind, st, within)
+                    if rows is None:
+                        return jsonify({"error": "Too many runners in those grades to race "
+                                                 "this board: narrow it with a division "
+                                                 "or a state."}), 200
+                else:
+                    rows = UB.load(cur, kind, pool, sport, year, st, within)
                 valid = UB.validKeys(cur, kind, college)
                 units = UB.buildBoard(rows, kind, n, valid)
                 ids = sorted({u["runner_id"] for u in units if u.get("runner_id")})
@@ -535,7 +543,39 @@ def api_units():
     units = units[off:off + lim]
     return jsonify({"rows": units, "kind": kind, "kinds": kinds, "n": n, "total": total,
                     "hs_movable": movable, "season": ylab, "within": within,
+                    "grades": grades,
                     "kind_word": UB.KINDS[kind][0][:-1]})
+
+
+def gradeSquads(cur, args, pool, sport, year, kind, state, within):
+    """The Conferences board built from SQUADS OF THE PICKED GRADES (owner,
+    2026-11-03: "make it work there", the grade filter): every school's team
+    of just those grades, raced from athlete_season by the Teams tab's own
+    code (teams.raceReturning), each carrying its units, then narrowed to
+    the `within` units and the state as UB.load narrows the stored board.
+    None when the field is too big to race."""
+    from werkzeug.datastructures import MultiDict
+    import teams as T
+    q = MultiDict([("sport", sport), ("pool", pool), ("year", str(year))]
+                  + [("grade", g) for g in args.getlist("grade") if g.strip()])
+    f, err = T.parseFilters(q)
+    if err:
+        raise ValueError(err)
+    rows, _n = T.raceReturning(cur, f)
+    if rows is None:
+        return None
+    out = []
+    for r in rows:
+        r = dict(r)
+        r.update({k: v for k, v in (r.pop("units", None) or {}).items()})
+        if not r.get(kind):
+            continue
+        if state and (r.get("state") or "").upper() != state:
+            continue
+        if any((r.get(c) or "") != v for c, v in (within or {}).items()):
+            continue
+        out.append(r)
+    return out
 
 
 _WITHIN_LABELS = {"division": "Division", "region": "Region", "section": "Section",

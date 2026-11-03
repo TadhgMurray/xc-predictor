@@ -369,9 +369,25 @@ def main():
             hits = [(k, g) for k, g in by_race.items() if (wm, wd) in g["races"]]
             if not hits:
                 inwin = [r for r in rows if r.meet_id == wm and r.div_id == wd]
-                print(f"  race {wm}/{wd}: {len(inwin)} rated rows in the window, but no fitted "
-                      f"course found for them (venueMap/course_difficulties)" if inwin else
-                      f"  race {wm}/{wd}: no rated rows in the last {WINDOW_DAYS} days")
+                if inwin:
+                    print(f"  race {wm}/{wd}: {len(inwin)} rated rows in the window, but no "
+                          f"fitted course found for them (venueMap/course_difficulties)")
+                    continue
+                # which of the row query's conditions drops this race
+                with conn.cursor() as c2:
+                    c2.execute("""
+                        SELECT r.source, count(*), count(*) FILTER (WHERE r.normalized_time > 0),
+                               count(*) FILTER (WHERE r.speed_rating > 0), count(k.result_id),
+                               min(k.race_date)::text, max(k.race_date)::text, min(left(r.date, 10))
+                        FROM   results r
+                        LEFT   JOIN ranking_results k ON k.result_id = r.result_id AND k.sport = 'XC'
+                        WHERE  r.meet_id = %s AND r.div_id = %s GROUP BY 1""", (wm, wd))
+                    got = c2.fetchall()
+                conn.commit()
+                print(f"  race {wm}/{wd}: no rated rows in the last {WINDOW_DAYS} days")
+                for src, n, nt, sr, kb, d0, d1, rd in got:
+                    print(f"    {src}: {n} rows, {nt} normalised, {sr} rated, {kb} on the boards"
+                          f" (board date {d0}..{d1}, results date {rd})")
             for k, g in hits:
                 hit = days.get(k)
                 price(g)
