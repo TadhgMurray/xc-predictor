@@ -328,3 +328,15 @@ def test_the_high_school_nationals_under_every_name():
                         "racecast", "static", "series")
     for f in ("foot-locker.png", "brooks-xc.png", "champs-sports.png"):
         assert os.path.exists(os.path.join(here, f))
+
+
+def test_recruiting_rows_get_unit_pages_and_only_stored_logos(monkeypatch):
+    import unit_board as U
+    monkeypatch.setattr(U, "storedLogoUrl",
+                        lambda k, v, st=None, px=64: "/img/x.png" if v == "NESCAC" else None)
+    rows = [{"division": "NCAA DIII", "conference": "NESCAC"}, {"division": None}]
+    U.stampUnitMarks(rows)
+    assert rows[0]["conference_logo"] == "/img/x.png" and "division_logo" not in rows[0]
+    assert rows[0]["conference_href"].startswith("/unit/conference/NESCAC")
+    assert rows[0]["division_href"].startswith("/unit/division/")
+    assert rows[1] == {"division": None}

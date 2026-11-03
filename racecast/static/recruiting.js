@@ -217,6 +217,19 @@
                + ` width="18" height="18" loading="lazy" decoding="async">` : "";
   }
 
+  /* ★ A DIVISION OR CONFERENCE WITH ITS LOGO, LINKED TO ITS PAGE (owner,
+     2026-11-03): the API stamps r.division_logo / r.conference_logo only
+     where a logo is stored (unit_board.stampUnitMarks), and the href where
+     the unit has a page. */
+  function unitBit(r, kind) {
+    const v = r[kind];
+    if (!v) return "";
+    const logo = r[kind + "_logo"], href = r[kind + "_href"];
+    const img = logo ? `<img class="unit-chip-logo" src="${esc(logo)}" alt=""`
+      + ` width="14" height="14" loading="lazy" decoding="async">` : "";
+    return href ? `<a class="rc-unit" href="${esc(href)}">${img}${esc(v)}</a>` : img + esc(v);
+  }
+
   /* ★ "5K EQUIV" WITH ITS ⓘ (owner, 2026-10-11): _scale.html's fk_th, in JS --
      the same markup, so a board the browser draws reads exactly as the
      server's. The ⓘ is the CSS .flag tooltip (data-title / data-blurb in a
@@ -244,7 +257,7 @@
   function boardRow(r, ev, ax, you) {
     const t = r.times || {}, tm = (k) => fmtTime((t[k] || {})[ev]);
     const x = (v) => (((ax.hi - v) / (ax.hi - ax.lo)) * 100).toFixed(1);
-    const sub = [r.division, r.conference].filter(Boolean).map(esc).join(" · ");
+    const sub = ["division", "conference"].map((k) => unitBit(r, k)).filter(Boolean).join(" · ");
     const bar = (r.max != null && r.min != null) ? `
       <div class="rc-rb"><i style="left:${x(r.max)}%;width:${(x(r.min) - x(r.max)).toFixed(1)}%"></i>
         <b style="left:${x(r.median)}%"></b>${you != null ? `<u style="left:${x(you)}%"></u>` : ""}</div>
@@ -319,8 +332,8 @@
     const href = schoolHref(r) + "#transfers";
     return `<tr>
       <td class="rc-school">${crestMark(r.crest)}<a href="${href}">${esc(r.label || r.school)}</a></td>
-      <td class="rc-dim">${esc(r.division || "")}</td>
-      <td class="rc-dim">${esc(r.conference || "")}</td>
+      <td class="rc-dim">${unitBit(r, "division")}</td>
+      <td class="rc-dim">${unitBit(r, "conference")}</td>
       <td class="num">${r.n || 0}</td>
       <td class="num rc-dim">${r.n_out || 0}</td>
       <td class="num rc-dim">${num(r.before)}</td>

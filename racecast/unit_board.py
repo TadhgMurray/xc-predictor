@@ -321,6 +321,26 @@ def logoForLink(link, px=64):
     return storedLogoUrl(bits[0], unquote(bits[1]), state, px=px)
 
 
+def stampUnitMarks(rows, kinds=("division", "conference")):
+    """Each row's units' logos and pages, for the boards the browser draws
+    (recruiting.js): row[kind + "_logo"] and row[kind + "_href"] where the
+    row names one -- a logo only where one is stored, so no broken image.
+    College units (the recruiting boards' rows are colleges)."""
+    memo = {}
+    for r in rows or ():
+        for k in kinds:
+            v = r.get(k)
+            if not v:
+                continue
+            if (k, v) not in memo:
+                memo[(k, v)] = (storedLogoUrl(k, v, None, px=64), chipHref(k, v, None, True))
+            logo, href = memo[(k, v)]
+            if logo:
+                r[k + "_logo"] = logo
+            if href:
+                r[k + "_href"] = href
+
+
 def unitMark(kind, name, state=None, size=28, shown=None):
     """The unit's mark for a page: its own logo when scripts/unit_logos.py
     stored one (served like a school crest), else the generated badge.

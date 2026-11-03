@@ -12543,6 +12543,10 @@ def api_recruiting_schools():
     # ★ the crest before each college's name (owner, 2026-10-11), as the
     #   other JS boards draw it; stamped before the suggestions copy the rows
     stampCrests(rows, pool="college_" + f["gender"])
+    # and each college's division and conference wear their logos and link
+    # to their pages (owner, 2026-11-03: "you know what to add to this")
+    import unit_board as _UB
+    _UB.stampUnitMarks(rows)
     return jsonify({
         "rows": rows, "gender": f["gender"], "sport": f["sport"], "sort": f["sort"],
         "built": built, "total": len(every),
@@ -12591,6 +12595,8 @@ def api_recruiting_transfers():
     from conversions import stampFiveK
     stampFiveK(rows, "median", pool="hs_" + f["gender"], sport=f["sport"])
     stampCrests(rows, pool="college_" + f["gender"])
+    import unit_board as _UB
+    _UB.stampUnitMarks(rows)
     return jsonify({"rows": rows, "gender": f["gender"], "sport": f["sport"],
                     "sort": f["sort"], "built": built, "total": len(every),
                     "divisions": R.distinctUnits(every, "division"),
