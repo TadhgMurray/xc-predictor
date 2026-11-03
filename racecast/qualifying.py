@@ -45,6 +45,7 @@ import math
 import re
 
 MIN_ROUNDS = 3
+ROUTE_FOUND = 0.8        # a learned route needs this share of its rounds found
 
 # ------------------------------------------------------------------ #
 #  the rules
@@ -491,6 +492,10 @@ def learnedField(cur, route, day, predict_div=None):
         found += 1
         field.update(simpleQualifiers(rows, int(rnd.get("teams") or 0),
                                       int(rnd.get("individuals") or 0)))
-    if found * 2 < len(route.get("rounds") or []) or not field:
+    # ! MOST OF THE ROUNDS OR NONE (qualifying_status, 2026-11-03: Oregon 6A
+    #   listed without Jesuit, Central Catholic and Sunset -- a district not
+    #   found is a district's teams missing, so a route that finds under
+    #   ROUTE_FOUND of its rounds keeps the last-edition field instead)
+    if found < ROUTE_FOUND * len(route.get("rounds") or []) or not field:
         return None, 0
     return field, n_pred
