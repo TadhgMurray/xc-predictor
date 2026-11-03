@@ -9,3 +9,7 @@
   enforces this on every template.
 - **Emails never name who approved or declined something.** Decision mails
   (racecast/decision_email.py) come from the site's sender address only.
+- **No page, email or outbound request carries the owner's own address.**
+  Decision mails come from the site's sender; admin pages say "Approved" /
+  "Rejected", not by whom; scrapers' User-Agents give racecast@racecast.co.
+  tests/test_no_owner_address.py enforces it.

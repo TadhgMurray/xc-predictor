@@ -44,7 +44,7 @@ for _p in (_HERE, os.path.join(_ROOT, "racecast")):
         sys.path.insert(0, _p)
 
 API = "https://en.wikipedia.org/w/api.php"
-UA = ("racecast/1.0 (https://racecast.co/about; contact: tadhg.a.murray@gmail.com) "
+UA = ("racecast/1.0 (https://racecast.co/about; contact: racecast@racecast.co) "
       "unit_logos.py")
 CONF_WORDS = ("conference", "league", "association", "athletic", "collegiate")
 

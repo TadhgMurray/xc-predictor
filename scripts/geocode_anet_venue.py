@@ -59,7 +59,7 @@ from database import getConn, initPool
 _VENUES_CSV = "geocode_anet_venues.csv"
 _CACHE = "geocode_anet_cache.json"
 _MINT_BASE = 800_000_000                      # anet-geocoded; tfrrs uses 900M
-_NOMINATIM_UA = "xc-predictor-anet-venue-backfill (contact: tadhg)"
+_NOMINATIM_UA = "xc-predictor-anet-venue-backfill (contact: racecast@racecast.co)"
 _NOMINATIM_SLEEP = 1.1
 
 

@@ -36,7 +36,7 @@ from database import initPool, closePool, getConn
 
 API_KEY = os.environ.get("OPENMETEO_KEY", "").strip()
 GEO_CACHE = "atmos_geocode_cache.json"
-UA = "xc-predictor-atmos (contact: tadhg)"
+UA = "xc-predictor-atmos (contact: racecast@racecast.co)"
 
 # Self-hosted Open-Meteo (see setup). Override with env OM_ARCHIVE if needed.
 WX_ARCHIVE  = os.environ.get("OM_ARCHIVE",  "http://127.0.0.1:8080/v1/archive")

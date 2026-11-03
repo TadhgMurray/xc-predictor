@@ -45,6 +45,6 @@ def test_season_outlier_rule_is_one_number_in_two_places():
     y = float(re.search(r"^SEASON_OUTLIER_PTS = ([0-9.]+)", a, re.M).group(1))
     assert x == y == 20.0
     assert "WITH season_med AS" in b and "speed_rating >= sm.med - {_SEASON_OUTLIER_PTS}" in b
-    assert 'r["season_outlier"] = (sr is not None' in a
+    assert 'r["season_outlier"] = (r.get("speed_rating") is not None' in a
     t = _src("racecast", "templates", "athlete.html")
     assert "race.season_outlier" in t

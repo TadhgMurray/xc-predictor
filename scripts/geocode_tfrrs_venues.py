@@ -51,7 +51,7 @@ from database import getConn, initPool
 _VENUES_CSV = "geocode_venues.csv"
 _CACHE = "geocode_cache.json"
 _MINT_BASE = 900_000_000
-_NOMINATIM_UA = "xc-predictor-venue-backfill (contact: tadhg)"
+_NOMINATIM_UA = "xc-predictor-venue-backfill (contact: racecast@racecast.co)"
 _NOMINATIM_SLEEP = 1.1
 _NOMINATIM_RETRIES = 3
 

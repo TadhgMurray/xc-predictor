@@ -18,7 +18,7 @@ from database import getConn, initPool
 from audit_gps_sanity import _BBOX
 
 _CACHE = "refix_gps_cache.json"
-_UA = "xc-predictor-refix-gps (contact: tadhg)"
+_UA = "xc-predictor-refix-gps (contact: racecast@racecast.co)"
 _SLEEP = 1.1
 _MARGIN = 0.4          # ~44km box buffer so correct border venues don't flag
 _AGREE_KM = 25.0

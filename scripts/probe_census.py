@@ -13,7 +13,7 @@ from database import getConn, initPool
 
 CENSUS = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 NOMIN  = "https://nominatim.openstreetmap.org/search"
-UA = "xc-predictor-probe (contact: tadhg)"
+UA = "xc-predictor-probe (contact: racecast@racecast.co)"
 
 
 def probe(venue, city, state, raw):

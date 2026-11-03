@@ -101,7 +101,7 @@
     <h2>Decided lately</h2>
     {% if not decided %}<p class="ct-muted">None yet.</p>{% else %}
     <ul class="ct-list">{% for f in decided %}
-      <li>#{{ f.id }} <b>{{ kind_words.get(f.kind, f.kind) }}</b> <span class="ct-muted">{{ f.summary }} · <a href="/athlete/{{ f.person_id }}">page</a> · {{ f.decided_by or "?" }}</span>
+      <li>#{{ f.id }} <b>{{ kind_words.get(f.kind, f.kind) }}</b> <span class="ct-muted">{{ f.summary }} · <a href="/athlete/{{ f.person_id }}">page</a></span>
         <span class="ct-pill s-{{ f.status }}">{{ f.status }}</span>
         <span class="ct-when">{{ f.decided_at.strftime("%b %-d") if f.decided_at else "" }}</span>
         {% set ap = (f.applied or {}) %}{% if ap.missing_support %}<span class="ct-muted" style="flex-basis:100%">Recorded only: {{ ap.missing_support }}</span>

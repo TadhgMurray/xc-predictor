@@ -23,7 +23,7 @@ sys.path.insert(0, "scripts")
 from database import getConn, initPool
 
 _CACHE = "finish_gps_cache.json"
-_UA = "xc-predictor-finish-gps (contact: tadhg)"
+_UA = "xc-predictor-finish-gps (contact: racecast@racecast.co)"
 _SLEEP = 1.1
 _GPS_TABLES = ("meets_tf", "meets_tf_meta", "meets")   # all key on location_id
 

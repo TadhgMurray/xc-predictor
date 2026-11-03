@@ -352,7 +352,10 @@ _ABBR_WORDS = {"mtn": "mountain", "mt": "mountain", "intl": "international",
                "assn": "association", "conf": "conference"}
 _KEY_ALIAS = {"c usa": "usa", "cusa": "usa", "mw": "mountain west",
               "ne10": "northeast 10", "a10": "a 10", "atlantic 10": "a 10",
-              "big 10": "big ten", "socon": "southern", "metro atlantic": "maac"}
+              "big 10": "big ten", "socon": "southern", "metro atlantic": "maac",
+              # the feeds file half the Big East as "EAST" (Villanova, DePaul,
+              # Creighton, Seton Hall, UConn; owner checked, 2026-11-03)
+              "east": "big east"}
 
 
 _CODE_WORDS = {"ncaa", "naia", "njcaa", "nccaa", "uscaa", "di", "dii", "diii", "sec", "acc",

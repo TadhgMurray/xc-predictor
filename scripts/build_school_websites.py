@@ -62,7 +62,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "scripts"))
 
 UA = ("racecast school directory (https://racecast.co; "
-      "contact: tadhg.a.murray@gmail.com)")
+      "contact: racecast@racecast.co)")
 
 STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI",

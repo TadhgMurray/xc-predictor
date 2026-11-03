@@ -18,7 +18,7 @@ from database import getConn, initPool
 from audit_gps_sanity import _BBOX
 
 _CACHE = "recover_cache.json"          # hits only
-_UA = "xc-predictor-recover (contact: tadhg)"
+_UA = "xc-predictor-recover (contact: racecast@racecast.co)"
 _SLEEP = 1.1
 _MARGIN = 0.4
 

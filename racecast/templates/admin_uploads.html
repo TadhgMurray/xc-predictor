@@ -60,7 +60,7 @@
     <ul class="ct-list">
       {% for u in decided %}
       <li><a href="/account/admin/uploads/{{ u.id }}">{{ u.meet_name or "Untitled" }}</a>
-        <span class="ct-muted">{{ u.meet_date }} · {{ u.sport }} · {{ u.n_rows }} results · by {{ u.decided_by or "?" }}</span>
+        <span class="ct-muted">{{ u.meet_date }} · {{ u.sport }} · {{ u.n_rows }} results</span>
         <span class="ct-pill s-{{ u.status }}">{{ status_words.get(u.status, u.status) }}</span>
         <span class="ct-when">{{ u.decided_at.strftime("%b %-d") if u.decided_at else "" }}</span></li>
       {% endfor %}
@@ -138,12 +138,12 @@
         <button type="submit" name="action" value="reject" class="go no">Reject</button>
       </form>
     {% elif up.status == "approved" and (up.applied or {}).mechanism == "meet_queue" %}
-      <p class="ct-warn ct-ok">Queued by {{ up.decided_by }} for the nightly scrape: {{ up.applied.source }} {{ up.applied.sport }} meet {{ up.applied.meet_id }}.</p>
+      <p class="ct-warn ct-ok">Queued for the nightly scrape: {{ up.applied.source }} {{ up.applied.sport }} meet {{ up.applied.meet_id }}.</p>
     {% elif up.status == "approved" %}
-      <p class="ct-warn ct-ok">Approved by {{ up.decided_by }}{% if up.decided_at %} on {{ up.decided_at.strftime("%b %-d %H:%M") }}{% endif %}:
+      <p class="ct-warn ct-ok">Approved{% if up.decided_at %} on {{ up.decided_at.strftime("%b %-d %H:%M") }}{% endif %}:
         {% set a = up.applied or {} %}{{ a.races }} races and {{ a.results }} results written as meet {{ a.meet_id }} ({{ a.sport }}, source 'upload'){% if a.forced %}, inserted over a duplicate warning{% endif %}.</p>
     {% elif up.status == "rejected" %}
-      <p class="ct-warn ct-bad">Rejected by {{ up.decided_by }}.{% if up.decision_note %} {{ up.decision_note }}{% endif %}</p>
+      <p class="ct-warn ct-bad">Rejected.{% if up.decision_note %} {{ up.decision_note }}{% endif %}</p>
     {% else %}
       <p class="ct-muted">The uploader has not sent this yet.</p>
     {% endif %}

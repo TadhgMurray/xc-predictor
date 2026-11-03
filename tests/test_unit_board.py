@@ -288,6 +288,7 @@ def test_one_conference_under_its_spellings():
     assert UB.normKey("C-USA") == UB.normKey("USA") == UB.normKey("Conference USA")
     assert UB.normKey("A10 XC") == UB.normKey("A-10")
     assert UB.normKey("NE10") == UB.normKey("NORTHEAST-10")
+    assert UB.normKey("EAST") == UB.normKey("BIG EAST")
 
 
 def test_nxr_regions_and_the_repo_marks():

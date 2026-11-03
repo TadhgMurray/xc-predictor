@@ -70,7 +70,7 @@ from school_logo import LOGO_DIR, LOGO_PX, fileFor          # noqa: E402
 #   that way -- 487 of them in the first run. It still names us and still
 #   carries a contact address, which is the part that matters.
 UA = ("Mozilla/5.0 (compatible; racecast/1.0; +https://racecast.co/about; "
-      "contact: tadhg.a.murray@gmail.com)")
+      "contact: racecast@racecast.co)")
 
 # ! THE FLOOR IS FOR A MARK, NOT A POSTER (owner: "coverage is atrocious").
 #   96 px and 1.6:1 threw away most of what school sites actually publish:
