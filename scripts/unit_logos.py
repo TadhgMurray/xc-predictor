@@ -288,6 +288,10 @@ DIVISION_ORGS = {
 }
 
 
+SERIES_ARTICLES = (("NXN", "Nike Cross Nationals"),
+                   ("FOOT LOCKER", "Foot Locker Cross Country Championships"))
+
+
 def orgFor(division):
     """The governing body's article for a division value, or None. Pure."""
     head = str(division or "").strip().upper().split(" ")[0] if division else ""
@@ -410,6 +414,8 @@ def main():
                     help="pin this unit's logo to --url (conference, league, section ...)")
     ap.add_argument("--url", help="the image for --set (or 'none' to hide it)")
     ap.add_argument("--state", default="", help="a high school unit's state")
+    ap.add_argument("--series", action="store_true",
+                    help="the national series' marks: NXN, NXR, Foot Locker (unit_board.SERIES)")
     ap.add_argument("--auto", action="store_true",
                     help="look up every college conference on Wikipedia")
     ap.add_argument("--divisions", action="store_true",
@@ -419,7 +425,7 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
-    if not a.set and not a.auto and not a.divisions:
+    if not a.set and not a.auto and not a.divisions and not a.series:
         ap.error("--set KIND NAME --url URL, --auto, or --divisions")
 
     import scrape_school_logos as S
@@ -449,6 +455,20 @@ def main():
             kind, name = a.set
             S.setLogo(cur, manners, unitKey(kind, name), (a.state or "").upper(), a.url,
                       level="", write=a.write, shape=UNIT_SHAPE)
+        elif a.series:
+            # the series' own Wikipedia articles; NXR wears NXN's mark
+            # (unit_board.meetLogo falls back to it)
+            for key, title in SERIES_ARTICLES:
+                k = unitKey("series", key)
+                if not a.redo and haveLogo(cur, k):
+                    continue
+                url = articleLogo(title)
+                if not url:
+                    print(f"  {key:<14} -- {title}: no logo file")
+                    continue
+                print(f"  {key:<14} -> {title}")
+                if a.write:
+                    pin(key, k, url)
         elif a.divisions:
             cur.execute("""SELECT DISTINCT division FROM school_unit
                            WHERE is_college AND NULLIF(btrim(division), '') IS NOT NULL""")

@@ -51,7 +51,7 @@ _URL = re.compile(r"url\([^)]*\)", re.I)
 KEEP_AS_IS = re.compile(r"\.hm-(?:band|text|search|what|facts)\b")
 # ...but lifted off the page by a shade, so the band still reads as a band
 
-GROUND = (0x18, 0x18, 0x18)
+GROUND = (0x0f, 0x0f, 0x0f)
 INK = (0xf1, 0xf1, 0xf1)
 
 
@@ -103,22 +103,23 @@ def _fmt(r, g, b, a):
 #   greys into a dozen visibly different ones. A neutral now lands on one of
 #   a few fixed shades by what it is doing: text (ink, secondary, muted,
 #   faint), ground (page, raised, sunk, strong), line (hair, firm).
-# ★ THE NEUTRAL CHARCOAL (owner, 2026-11-03, of four schemes: "B or C, but
-#   still kind of bad ... the links especially"). Greys with no blue in them,
-#   the way YouTube and Google draw dark pages; the blue is kept for links.
+# ★ YOUTUBE'S DARK GREYS (owner, 2026-11-03: "just steal the types of other
+#   sites"; "Stop trying to make blue ish"). Its page #0f0f0f, its raised
+#   #181818 / #212121, its text #f1f1f1 / #aaaaaa / #717171 -- no blue in
+#   any of them; links are ink with an underline.
 TEXT_TIERS = ((0.30, (0xf1, 0xf1, 0xf1)),    # ink: #111 .. #444
-              (0.55, (0xc8, 0xc8, 0xc8)),    # secondary: #555 .. #888
-              (0.75, (0x9a, 0x9a, 0x9a)),    # muted: #999 .. #bbb
-              (1.01, (0x6e, 0x6e, 0x6e)))    # faint: #ccc and lighter
-GROUND_TIERS = ((0.985, (0x18, 0x18, 0x18)),  # white: the page itself
-                (0.95, (0x1f, 0x1f, 0x1f)),   # zebra, hover, pale panel
-                (0.88, (0x27, 0x27, 0x27)),   # a grey panel or chip
-                (0.70, (0x30, 0x30, 0x30)))   # a strong grey ground
+              (0.55, (0xcf, 0xcf, 0xcf)),    # secondary: #555 .. #888
+              (0.75, (0xaa, 0xaa, 0xaa)),    # muted: #999 .. #bbb
+              (1.01, (0x71, 0x71, 0x71)))    # faint: #ccc and lighter
+GROUND_TIERS = ((0.985, (0x0f, 0x0f, 0x0f)),  # white: the page itself
+                (0.95, (0x18, 0x18, 0x18)),   # zebra, hover, pale panel
+                (0.88, (0x21, 0x21, 0x21)),   # a grey panel or chip
+                (0.70, (0x27, 0x27, 0x27)))   # a strong grey ground
 SELECTED = (0x3a, 0x3a, 0x3a)                 # a selected tab or chip, a black button
 # the light sheets' tokens that are DARK colours: a ground of var(--ink) or
 # var(--sel) is a selected state, read like a literal dark ground
-DARK_TOKENS = ("--ink", "--sel", "--accent")
-LINE_TIERS = ((0.85, (0x2c, 0x2c, 0x2c)),     # hairlines
+DARK_TOKENS = ("--ink", "--sel", "--accent", "--rk-accent")   # --rk-accent is var(--sel)
+LINE_TIERS = ((0.85, (0x2a, 0x2a, 0x2a)),     # hairlines
               (0.60, (0x3f, 0x3f, 0x3f)))     # firm lines
 
 
@@ -412,8 +413,8 @@ BASE = f"""{PREFIX} {{ color-scheme: dark; background: {_fmt(*GROUND, 1)}; color
 {PREFIX} body {{ background: {_fmt(*GROUND, 1)}; color: {_fmt(*INK, 1)}; }}
 {PREFIX} img.school-crest, {PREFIX} img.unit-logo, {PREFIX} img.unit-chip-logo,
 {PREFIX} img.crest, {PREFIX} .crest img {{ background: rgba(255, 255, 255, 0.9); border-radius: 4px; }}
-{PREFIX} .hm-band {{ background: #1f1f1f; }}
-{PREFIX} main.rc .rc-follow {{ background: #272727; }}
+{PREFIX} .hm-band {{ background: #181818; }}
+{PREFIX} main.rc .rc-follow {{ background: #212121; }}
 {PREFIX} main.rc .rc-follow.is-on {{ background: #3a3a3a; color: #f1f1f1; }}
 """
 
@@ -427,14 +428,15 @@ BASE = f"""{PREFIX} {{ color-scheme: dark; background: {_fmt(*GROUND, 1)}; color
 #   every input is one fixed dark ground, the border alone answers focus.
 LINKS = f"""
 {PREFIX} {{ --link: #f1f1f1; --accent: #d6d6d6; }}
+{PREFIX} .rankings-page {{ --rk-accent: {_fmt(*SELECTED, 1)}; }}
 {PREFIX} a {{ color: #f1f1f1; text-decoration-color: rgba(241, 241, 241, 0.4); }}
 {PREFIX} a:hover {{ color: #ffffff; text-decoration-color: #ffffff; text-decoration-thickness: 2px; }}
 {PREFIX} input, {PREFIX} select, {PREFIX} textarea,
 {PREFIX} input:focus, {PREFIX} select:focus, {PREFIX} textarea:focus,
-{PREFIX} input:hover, {PREFIX} select:hover {{ background-color: #212121; color: #f1f1f1; }}
+{PREFIX} input:hover, {PREFIX} select:hover {{ background-color: #181818; color: #f1f1f1; }}
 {PREFIX} input::placeholder, {PREFIX} textarea::placeholder {{ color: #8a8a8a; }}
 {PREFIX} #search-input, {PREFIX} #search-input:focus, {PREFIX} #search-input:hover {{
-  background-color: #212121; border-color: #3f3f3f; color: #f1f1f1; }}
+  background-color: #181818; border-color: #3f3f3f; color: #f1f1f1; }}
 {PREFIX} #search-input:focus {{ border-color: #6a6a6a; outline: none; }}
 """
 

@@ -602,6 +602,26 @@ def meetLogoPick(meet_name, keys):
     return None if best is None or tie else best[1]
 
 
+# ★ THE NATIONAL SERIES WEAR THEIR OWN MARK (owner, 2026-11-03: "can we get
+#   logos for NXN/NXR and footlocker?"). Not a conference: a meet that
+#   belongs to one of these series by its name. Stored under
+#   unit:series:<KEY> by scripts/unit_logos.py --series.
+SERIES = (
+    ("NXN", r"\bNXN\b|nike\s+cross\s+nationals"),
+    ("NXR", r"\bNXR\b|nike\s+cross\s+regional"),
+    ("FOOT LOCKER", r"foot\s*locker|eastbay\s+cross\s+country|kinney\s+cross\s+country"),
+)
+
+
+def seriesOf(meet_name):
+    """The SERIES key a meet's name belongs to, or None. Pure."""
+    import re
+    for key, rx in SERIES:
+        if re.search(rx, str(meet_name or ""), re.I):
+            return key
+    return None
+
+
 def meetLogo(meet_name, college=None, size=16):
     """The template global `meet_logo`: a meet link's small conference logo
     -- only a stored one, else nothing. `college` narrows to conferences
@@ -615,6 +635,12 @@ def meetLogo(meet_name, college=None, size=16):
         _MEET_LOGO["of"], _MEET_LOGO["cache"] = keys, {}
     ck = (str(meet_name), college)
     cache = _MEET_LOGO["cache"]
+    if ck not in cache and seriesOf(meet_name):
+        sk = seriesOf(meet_name)
+        url = storedLogoUrl("series", sk, None, px=64)
+        if not url and sk == "NXR":
+            url = storedLogoUrl("series", "NXN", None, px=64)
+        cache[ck] = (url, ("series", sk))
     if ck not in cache:
         sub = keys
         if college is not None:

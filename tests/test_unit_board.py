@@ -270,3 +270,12 @@ def test_known_conferences_are_named_outright():
     assert L.knownTitle("NORTHEAST-10") == L.knownTitle("NE10") == "Northeast-10 Conference"
     assert L.knownTitle("CONFERENCE USA") == "Conference USA"
     assert L.knownTitle("PAC") is None and L.knownTitle("MIDWEST") is None
+
+
+def test_series_meets():
+    import unit_board as UB
+    assert UB.seriesOf("NXN Nike Cross Nationals") == "NXN"
+    assert UB.seriesOf("NXR South Regional Championships") == "NXR"
+    assert UB.seriesOf("Foot Locker Cross Country South Regional Championships") == "FOOT LOCKER"
+    assert UB.seriesOf("Footlocker Nationals") == "FOOT LOCKER"
+    assert UB.seriesOf("Dallas Jesuit Classic") is None

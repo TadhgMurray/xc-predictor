@@ -3556,14 +3556,22 @@ def enrich_seasons(seasons, board_seasons=None):
         # ★ THE SAME OUTLIER RULE AS athlete_season (build_ranking_results.
         #   _SEASON_OUTLIER_PTS): a race twenty points under the season's
         #   median is marked and left out of this page's averages.
-        rated = sorted(r["speed_rating"] for r in races
-                       if r.get("speed_rating") is not None)
+        # ! ON ONE SCALE (owner, 2026-11-03: a girl's Foot Locker final and
+        #   South regional, 152.3 and 150.6 in a 160 season, marked "out").
+        #   A season can hold rows rated in different pools -- an all-star
+        #   or a national final is priced in its own -- and their own-pool
+        #   numbers are not comparable; the HS-equivalent ones are.
+        def _pub(r):
+            # an HS row's own number IS the public one (pool_view leaves its
+            # hs_rating None); every other row's hs_rating where it has one
+            v = r.get("hs_rating")
+            return float(v if v is not None else r["speed_rating"])
+        rated = sorted(_pub(r) for r in races if r.get("speed_rating") is not None)
         if rated:
             med = rated[len(rated) // 2]
             for r in races:
-                sr = r.get("speed_rating")
-                r["season_outlier"] = (sr is not None
-                                       and sr < med - SEASON_OUTLIER_PTS)
+                r["season_outlier"] = (r.get("speed_rating") is not None
+                                       and _pub(r) < med - SEASON_OUTLIER_PTS)
         # ★ THE HS-EQUIVALENT NUMBER IS THE BOARD'S TOO (owner, 2026-09-07:
         #   "the source of truth got f'd again": header 130.3, block 127.7
         #   with the HS view on). The own-pool block took the board's 80th
