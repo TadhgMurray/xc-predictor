@@ -868,6 +868,9 @@ else
 fi
 
 bgjoin 04h_season_levels
+# a race a report moved to another course (scripts/set_race_course.py), put
+# back on it before the backfill prices every row
+step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else

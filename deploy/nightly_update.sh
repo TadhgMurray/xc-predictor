@@ -304,6 +304,9 @@ step 04w_weather "$PY" -u backfill/weather_provisional.py --apply || true
 # AthleticLIVE XC races whose label named no distance: the meet's or the
 # venue's, before 05 normalises them (sources/athleticlive_xc.py distances)
 step 04x_alive_dist "$PY" -u -m sources.athleticlive_xc distances --write || true
+# a race a report moved to another course goes back there after every
+# scrape (scripts/set_race_course.py), before the new rows are priced
+step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply || true
 
 # ★ 05b (2026-11-01, Sagebrush 2021): rows normalised before their gender
 #   was known keep the wrong side of a combined race's distance; 05b
