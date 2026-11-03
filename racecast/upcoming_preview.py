@@ -306,39 +306,96 @@ def fieldRules(plan, div_id):
 #   savepoint: a failure keeps the last-edition field.
 def qualifiedField(cur, plan, div_id):
     """{person_id: school} or None for one race of a meet plan."""
+    return qualifiedFieldInfo(cur, plan, div_id)[0]
+
+
+def qualifiedFieldInfo(cur, plan, div_id):
+    """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
+    for one race of a meet plan: where the field came from, for the page
+    to say (predictions.js showBasis)."""
     import qualifying as Q
     if not plan:
-        return None
+        return None, None
     rule = Q.ruleFor(plan.get("name"), plan.get("source"))
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
     if race is None or not plan.get("date"):
-        return None
+        return None, None
     # ★ ELSE A LEARNED ROUTE (high school state / section / district, NAIA):
     #   Q.learnedRoute, from scripts/qualifier_audit.py --write-routes
     route = None if rule is not None else Q.learnedRoute(
         plan.get("name"), plan.get("source"), race.get("label"), race.get("gender"))
     if rule is None and route is None:
-        return None
+        return None, None
     forecast = os.environ.get("XCP_QUALIFY_FORECAST", "1") != "0"
     src = rule["source"] if rule is not None else route["source"]
     try:
         cur.execute("SAVEPOINT up_qual")
         if rule is not None:
-            field, _n_pred = Q.fieldFromRounds(
+            field, n_pred = Q.fieldFromRounds(
                 cur, rule, str(plan["date"])[:10], race.get("gender"),
                 predict=(lambda mid, g: predictedRound(cur, mid, g, src)) if forecast else None)
+            n_rounds = len(Q._roundMeets(cur, rule, str(plan["date"])[:10],
+                                         rule.get("window", 21)))
         else:
-            field, _n_pred = Q.learnedField(
+            field, n_pred = Q.learnedField(
                 cur, route, str(plan["date"])[:10],
                 predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src))
                 if forecast else None)
+            n_rounds = len(route.get("rounds") or [])
         cur.execute("RELEASE SAVEPOINT up_qual")
     except Exception as exc:                            # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT up_qual")
         print(f"qualified field {plan.get('meet_id')}/{div_id}: {type(exc).__name__}: {exc}",
               flush=True)
+        return None, None
+    if not field:
+        return None, None
+    return field, {"rule": rule["key"] if rule is not None else "route",
+                   "rounds": n_rounds, "predicted": n_pred}
+
+
+# ★ THE PREDICTIONS PAGE'S FIELD, FROM QUALIFIERS (owner, 2026-11-03: "can
+#   we just have it as a setting for predictions that is on by default?").
+#   /api/predict/field, "this year", qualify on (the default): a meet not
+#   yet run that qualifiedFieldInfo covers is listed as its qualifiers, in
+#   meetField's shape, with basis {"kind": "qualified", ...} for the line
+#   under the meet. None otherwise: the page's usual field.
+def qualifiedMeetField(cur, meet_id, div_id, source):
+    import predict as P
+    if div_id is None:
         return None
-    return field
+    try:
+        cur.execute("SAVEPOINT up_qfield")
+        ran = P._exactField(cur, int(meet_id), int(div_id), "XC", source=source)
+        cur.execute("RELEASE SAVEPOINT up_qfield")
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT up_qfield")
+        return None
+    if ran:
+        return None                       # it has run: the field that ran
+    field, info = qualifiedFieldInfo(cur, meetPlan(cur, int(meet_id), source), div_id)
+    if not field:
+        return None
+    season = P._currentSeason(cur, "XC")
+    entries = P._athleteEntries(cur, set(field), "XC", season)
+    states = P._teamStates(cur, [dict(e, school=field.get(e["person_id"]) or e.get("school"))
+                                 for e in entries], None)
+    by = {}
+    for e in entries:
+        school = field.get(e["person_id"]) or e.get("school") or "Unattached"
+        team = by.setdefault(school, {"school": school,
+                                      "state": states.get(school) or P._stateOf(school),
+                                      "runners": [], "dropped": []})
+        team["runners"].append({"person_id": e["person_id"], "name": e.get("name"),
+                                "grade": e.get("grade"), "pool": e.get("pool"),
+                                "rating": e.get("rating"), "n_races": None})
+    teams = sorted(by.values(), key=lambda t: (-len(t["runners"]), t["school"]))
+    for t in teams:
+        t["runners"].sort(key=lambda r: -(r["rating"] or 0))
+        t["entered"] = len(t["runners"])
+    P._stampCrests(teams, "school", "state")
+    return {"season_year": season, "when": "thisyear", "teams": teams,
+            "basis": dict(info, kind="qualified")}
 
 
 def predictedRound(cur, meet_id, gender, source):

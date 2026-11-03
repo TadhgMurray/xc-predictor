@@ -11587,11 +11587,21 @@ def api_predict_field():
                 if target is not None:
                     target["source"], target["alt"] = src, alt_idx
             with _predict._stage("total"):
-                out = meetField(cur, int(meet), div_n,
-                                sport, when=when, source=src,
-                                per_team=_perTeam(request.args),
-                                event_id=event_n, pick=pick, target=target,
-                                skip_top=_skipTop(request.args))
+                # ★ A MEET YOU QUALIFY FOR, AS ITS QUALIFIERS (owner,
+                #   2026-11-03: "a setting for predictions that is on by
+                #   default"): ?qualify=0 is last edition's teams, as before
+                #   (upcoming_preview.qualifiedMeetField)
+                out = None
+                if (when == "thisyear" and sport == "XC" and div_n is not None
+                        and (request.args.get("qualify") or "1") != "0"):
+                    from upcoming_preview import qualifiedMeetField
+                    out = qualifiedMeetField(cur, int(meet), div_n, src)
+                if out is None:
+                    out = meetField(cur, int(meet), div_n,
+                                    sport, when=when, source=src,
+                                    per_team=_perTeam(request.args),
+                                    event_id=event_n, pick=pick, target=target,
+                                    skip_top=_skipTop(request.args))
     out["alt"] = alt_idx
     resp = jsonify(out)
     # the live split, as /api/predict/team gives it (predict._stage)
