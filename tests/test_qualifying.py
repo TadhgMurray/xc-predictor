@@ -237,3 +237,21 @@ def test_a_race_with_no_gender_takes_last_years_runners(monkeypatch):
     assert U.lastYearGender(Cur(), plan, plan["races"][1]) == "F"     # the second of its name
     assert U.lastYearGender(Cur(), plan, plan["races"][0]) == "M"
     assert U.lastYearGender(Cur(), {"races": []}, {"div_id": 1, "label": "x"}) is None
+
+
+def test_the_pages_read_the_nightlys_stored_field_first(monkeypatch, tmp_path):
+    import json
+    import upcoming_preview as U
+    path = tmp_path / "qf.json"
+    key = U.storedKey("tfrrs", 5, 2, "2026-11-21")
+    path.write_text(json.dumps({"fields": {key: {
+        "field": {"1": "A", "2": "B"}, "info": {"rule": "ncaa_d1", "rounds": 9, "predicted": 9},
+        "made": "2026-11-04"}}}))
+    monkeypatch.setattr(U, "STORED_PATH", str(path))
+    U._STORED["mtime"] = None
+    plan = {"meet_id": 5, "source": "tfrrs", "date": "2026-11-21", "name": "x", "races": []}
+    field, info = U.qualifiedFieldInfo(None, plan, 2)
+    assert field == {1: "A", 2: "B"} and info["predicted"] == 9 and info["made"] == "2026-11-04"
+    assert U.storedField("tfrrs", 5, 3, "2026-11-21") == (None, None)
+    # the nightly itself does not read it back (live=True works it out)
+    assert U.qualifiedFieldInfo(None, plan, 2, live=True) == (None, None)

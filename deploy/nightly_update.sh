@@ -439,6 +439,15 @@ if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
 fi
 
+# ★ THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS (owner, 2026-11-03:
+#   the predictions page's "This season's qualifiers" showed last year's teams
+#   everywhere): worked out here, the rounds not yet run predicted, and
+#   stored for the pages (racecast/build_qualified_fields.py). OFF THE &&
+#   CHAIN; XCP_QUALIFIED_BUILD=0 skips it.
+if [ "${XCP_QUALIFIED_BUILD:-1}" = "1" ]; then
+  step 13h2_qualified_fields "$PY" -u racecast/build_qualified_fields.py --budget-minutes 60
+fi
+
 # ★ THE SITEMAP AND INDEXNOW, NIGHTLY TOO (SEO pass, 2026-10-10). Until now
 #   only the full pipeline rebuilt them, so a meet scraped tonight had a page
 #   but no sitemap line and no IndexNow ping for days. OFF THE && CHAIN, and
