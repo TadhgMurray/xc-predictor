@@ -1425,8 +1425,26 @@ def buildCollegePersonState(conn):
         cur.execute("CREATE TEMP TABLE si_cand (school text, state text)")
         if cand:
             psycopg2.extras.execute_values(cur, "INSERT INTO si_cand VALUES %s", cand)
+        # ★ THE TEAM'S OWN STATE FIRST (owner, 2026-11-03: Georgetown
+        #   University's runners on "Georgetown (KY)", Big East and all --
+        #   "we need to fix wrong team collisions everywhere rn"). The
+        #   season's state is where its races were, and the Hoyas race in
+        #   Louisville more than in DC, so the race count gave KY. A runner
+        #   whose rows carry athletic.net's team id (si_team_state:
+        #   anet_team.anet_state, where the school IS) or whose tfrrs
+        #   string links to one team (si_link_state) is placed by that;
+        #   the race count only decides the runners neither knows.
+        cur.execute("SELECT to_regclass('pg_temp.si_team_state'), to_regclass('pg_temp.si_link_state')")
+        has_team, has_link = (x is not None for x in cur.fetchone())
+        team_sql = ("""SELECT t.school, t.person_id, t.state FROM si_team_state t
+                       JOIN si_cand c ON c.school = t.school AND c.state = t.state"""
+                    if has_team else "SELECT NULL::text, NULL::bigint, NULL::text WHERE false")
+        link_sql = ("""SELECT l.school, max(l.state) AS state FROM si_link_state l
+                       JOIN si_cand c ON c.school = l.school AND c.state = l.state
+                       GROUP BY 1 HAVING count(DISTINCT l.state) = 1"""
+                    if has_link else "SELECT NULL::text, NULL::text WHERE false")
         cur.execute("DROP TABLE IF EXISTS college_person_state_new")
-        cur.execute("""
+        cur.execute(f"""
             CREATE TABLE college_person_state_new AS
             -- ! the per-season table, not the 23 GB boards table (the
             --   2026-09-15 rule this file keeps; test_db_quiet): a season's
@@ -1438,9 +1456,23 @@ def buildCollegePersonState(conn):
                 WHERE  s.person_id IS NOT NULL
                   AND  (starts_with(s.pool, 'college') OR starts_with(s.pool, 'pro'))
                 GROUP  BY 1, 2, 3
+            ), raced AS (
+                SELECT DISTINCT ON (school, person_id) school, person_id, state
+                FROM   r ORDER BY school, person_id, n DESC, state
+            ), team AS ({team_sql}), link AS ({link_sql}),
+            people AS (
+                SELECT DISTINCT s.school, s.person_id
+                FROM   athlete_season s JOIN (SELECT DISTINCT school FROM si_cand) c USING (school)
+                WHERE  s.person_id IS NOT NULL
+                  AND  (starts_with(s.pool, 'college') OR starts_with(s.pool, 'pro'))
             )
-            SELECT DISTINCT ON (school, person_id) school, person_id, state
-            FROM   r ORDER BY school, person_id, n DESC, state
+            SELECT p.school, p.person_id,
+                   COALESCE(tm.state, lk.state, rc.state) AS state
+            FROM   people p
+            LEFT   JOIN team  tm ON tm.school = p.school AND tm.person_id = p.person_id
+            LEFT   JOIN link  lk ON lk.school = p.school
+            LEFT   JOIN raced rc ON rc.school = p.school AND rc.person_id = p.person_id
+            WHERE  COALESCE(tm.state, lk.state, rc.state) IS NOT NULL
         """)
         cur.execute("SELECT count(*), count(DISTINCT school) FROM college_person_state_new")
         n, ns = cur.fetchone()

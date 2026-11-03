@@ -23,3 +23,12 @@ def test_feed_twins_read_the_school_without_its_state():
     assert L.sameSchool("Marshall", "Marshall (WV)")
     assert not L.sameSchool("Charleston (W.V.)", "Glenville State")
     assert "regexp_replace" in L._schoolWordsSql("r.school")
+
+
+def test_college_person_state_prefers_the_teams_own_state():
+    """Georgetown University's runners were placed in KY by where they raced
+    (owner, 2026-11-03); the anet team's state and the tfrrs link win."""
+    src = open(os.path.join(_ROOT, "racecast", "build_school_identity.py")).read()
+    body = src[src.index("def buildCollegePersonState"):]
+    assert "COALESCE(tm.state, lk.state, rc.state)" in body
+    assert "si_team_state" in body and "si_link_state" in body
