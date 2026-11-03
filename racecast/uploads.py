@@ -1047,6 +1047,14 @@ def _submit(conn, cur, up, here, account_id, email=None):
     if send:
         AC.logEvent(cur, "upload_sent", account_id, email=email, detail={"upload": uid})
     conn.commit()
+    if send:
+        # the owner reviews every upload: say one is waiting (no file text)
+        AC.mailAdmins(f"Racecast upload to review: {meta['meet_name'] or 'a meet'}",
+                      f"An upload was sent for review.\n\nMeet: {meta['meet_name'] or '-'}\n"
+                      f"Date: {meta['meet_date'] or '-'}\nSport: {meta['sport'] or '-'}\n"
+                      f"Rows: {len(events) if events else '-'} events\n\n"
+                      f"Review it: {AC.siteOrigin()}/account/admin/uploads/{uid}\n",
+                      log_as="upload")
     return _back(here, notice="Sent. The site owner reviews every upload before it goes live; "
                               "you will get an email when it is decided." if send else "Saved.")
 

@@ -13065,6 +13065,14 @@ def api_report():
         #   means the user believes they have told you and they have not.
         return jsonify({"error": "Could not save that -- nothing was "
                                  "recorded. Try again shortly."}), 500
+    # ★ THE OWNER HEARS OF IT (owner, 2026-11-03: "reports should send me
+    #   emails"); reply goes to the reporter when they left an address
+    _accounts.mailAdmins(
+        f"Racecast report #{report_id}: {kind}" + (f" on {page}" if page else ""),
+        f"{detail}\n\n--\nPage: {SITE_ORIGIN + page if page.startswith('/') else (page or '-')}\n"
+        f"Kind: {kind}\nFrom: {email or 'no address left'}\n"
+        f"Open reports: {SITE_ORIGIN}/account/status\n",
+        reply_to=_accounts.normEmail(email) or None, log_as="report")
 
     return jsonify({"ok": True, "report_id": report_id})
 
@@ -13090,13 +13098,7 @@ def contact_page():
 
 def _mailAdmins(subject, text, reply_to):
     """The contact message to every admin, off the request thread."""
-    def go():
-        for to in sorted(_accounts.adminEmails()):
-            try:
-                _accounts.sendMail(to, subject, text, headers={"Reply-To": reply_to}, log_as="contact")
-            except Exception:                           # noqa: BLE001
-                app.logger.exception("contact mail failed")
-    threading.Thread(target=go, daemon=True).start()
+    _accounts.mailAdmins(subject, text, reply_to=reply_to, log_as="contact")
 
 
 @app.route("/api/contact", methods=["POST"])

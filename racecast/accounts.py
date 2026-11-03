@@ -470,6 +470,30 @@ def requestLink(cur, email, ip, next_path, age_ok):
     return "send", url
 
 
+def mailAdmins(subject, text, reply_to=None, log_as="admin"):
+    """The message to every admin (XCP_ADMIN_EMAILS), off the request
+    thread: a slow provider never holds a page.
+
+    ★ THE OWNER HEARS ABOUT WHAT WAITS ON THEM (owner, 2026-11-03: "can some
+      more things send me emails. Like reports"). Contact messages did;
+      reports, sent uploads and fix requests now do too.
+    ! reply_to only for a sender who gave an address; never another admin's."""
+    import threading
+    to_all = sorted(adminEmails())
+    if not to_all:
+        return 0
+
+    def go():
+        for to in to_all:
+            try:
+                sendMail(to, subject, text,
+                         headers={"Reply-To": reply_to} if reply_to else None, log_as=log_as)
+            except Exception as exc:                    # noqa: BLE001
+                print(f"[mail] {log_as} mail failed: {type(exc).__name__}", flush=True)
+    threading.Thread(target=go, daemon=True).start()
+    return len(to_all)
+
+
 def sendMailWithin(to, subject, text, seconds=MAIL_WAIT_SECONDS):
     """sendMail, but the request waits at most `seconds`: 'sent', 'failed',
     or 'slow' (still going; it may yet arrive).

@@ -653,6 +653,15 @@ def fix_post():
             return again(err), 400
         AC.logEvent(cur, "fix_request", sess["account"]["id"], detail={"fix": fid, "kind": detail["kind"]})
         conn.commit()
+    try:
+        from decision_email import FIX_WORDS
+        what = FIX_WORDS.get(detail["kind"], detail["kind"])
+    except Exception:                                   # noqa: BLE001
+        what = detail.get("kind")
+    AC.mailAdmins(f"Racecast fix to review: {what}",
+                  f"A fix was sent for review.\n\nWhat: {what}\n"
+                  f"Athlete: {AC.siteOrigin()}/athlete/{pid}\n\n"
+                  f"Review it: {AC.siteOrigin()}/account/admin/fixes\n", log_as="fix")
     return _back("/account/fixes", notice="Sent. The site owner reads every fix; you will get an email "
                                           "when it is decided.")
 
