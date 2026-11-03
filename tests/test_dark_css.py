@@ -18,9 +18,9 @@ def test_dark_css_is_current():
 def test_mapping_lands_on_a_few_shades():
     """owner, 2026-11-03: "some things are really white while some are just
     muted grays" -- neutrals land on fixed tiers by role."""
-    assert B.darkColor("#ffffff", "background") == "#14161a"          # the page
+    assert B.darkColor("#ffffff", "background") == "#181818"          # the page
     assert B.darkColor("#fafbfc", "background") == B.darkColor("#f3f6fa", "background")
-    assert B.darkColor("#111418", "color") == B.darkColor("#333", "color") == "#e6e8eb"
+    assert B.darkColor("#111418", "color") == B.darkColor("#333", "color") == "#f1f1f1"
     assert B.darkColor("#666", "color") == B.darkColor("#777", "color")
     assert B.darkColor("#e5e7eb", "border-color") == B.darkColor("#ddd", "border-color")
     assert B.darkColor("rgba(0,0,0,.2)", "box-shadow") == "rgba(0, 0, 0, 0.32)"

@@ -51,8 +51,8 @@ _URL = re.compile(r"url\([^)]*\)", re.I)
 KEEP_AS_IS = re.compile(r"\.hm-(?:band|text|search|what|facts)\b")
 # ...but lifted off the page by a shade, so the band still reads as a band
 
-GROUND = (0x14, 0x16, 0x1a)
-INK = (0xe6, 0xe8, 0xeb)
+GROUND = (0x18, 0x18, 0x18)
+INK = (0xf1, 0xf1, 0xf1)
 
 
 def _parse(tok):
@@ -103,20 +103,23 @@ def _fmt(r, g, b, a):
 #   greys into a dozen visibly different ones. A neutral now lands on one of
 #   a few fixed shades by what it is doing: text (ink, secondary, muted,
 #   faint), ground (page, raised, sunk, strong), line (hair, firm).
-TEXT_TIERS = ((0.30, (0xe6, 0xe8, 0xeb)),    # ink: #111 .. #444
-              (0.55, (0xb6, 0xbb, 0xc2)),    # secondary: #555 .. #888
-              (0.75, (0x8d, 0x93, 0x9b)),    # muted: #999 .. #bbb
-              (1.01, (0x63, 0x69, 0x71)))    # faint: #ccc and lighter
-GROUND_TIERS = ((0.985, (0x14, 0x16, 0x1a)),  # white: the page itself
-                (0.95, (0x19, 0x1c, 0x20)),   # zebra, hover, pale panel
-                (0.88, (0x23, 0x27, 0x2d)),   # a grey panel or chip
-                (0.70, (0x2e, 0x33, 0x3a)))   # a strong grey ground
-SELECTED = (0x34, 0x3a, 0x43)                 # a selected tab or chip, a black button
+# ★ THE NEUTRAL CHARCOAL (owner, 2026-11-03, of four schemes: "B or C, but
+#   still kind of bad ... the links especially"). Greys with no blue in them,
+#   the way YouTube and Google draw dark pages; the blue is kept for links.
+TEXT_TIERS = ((0.30, (0xf1, 0xf1, 0xf1)),    # ink: #111 .. #444
+              (0.55, (0xc8, 0xc8, 0xc8)),    # secondary: #555 .. #888
+              (0.75, (0x9a, 0x9a, 0x9a)),    # muted: #999 .. #bbb
+              (1.01, (0x6e, 0x6e, 0x6e)))    # faint: #ccc and lighter
+GROUND_TIERS = ((0.985, (0x18, 0x18, 0x18)),  # white: the page itself
+                (0.95, (0x1f, 0x1f, 0x1f)),   # zebra, hover, pale panel
+                (0.88, (0x27, 0x27, 0x27)),   # a grey panel or chip
+                (0.70, (0x30, 0x30, 0x30)))   # a strong grey ground
+SELECTED = (0x3a, 0x3a, 0x3a)                 # a selected tab or chip, a black button
 # the light sheets' tokens that are DARK colours: a ground of var(--ink) or
 # var(--sel) is a selected state, read like a literal dark ground
 DARK_TOKENS = ("--ink", "--sel", "--accent")
-LINE_TIERS = ((0.85, (0x26, 0x2a, 0x30)),     # hairlines
-              (0.60, (0x3d, 0x43, 0x4b)))     # firm lines
+LINE_TIERS = ((0.85, (0x2c, 0x2c, 0x2c)),     # hairlines
+              (0.60, (0x3f, 0x3f, 0x3f)))     # firm lines
 
 
 def _role(prop):
@@ -404,9 +407,23 @@ BASE = f"""{PREFIX} {{ color-scheme: dark; background: {_fmt(*GROUND, 1)}; color
 {PREFIX} body {{ background: {_fmt(*GROUND, 1)}; color: {_fmt(*INK, 1)}; }}
 {PREFIX} img.school-crest, {PREFIX} img.unit-logo, {PREFIX} img.unit-chip-logo,
 {PREFIX} img.crest, {PREFIX} .crest img {{ background: rgba(255, 255, 255, 0.9); border-radius: 4px; }}
-{PREFIX} .hm-band {{ background: #1b1e23; }}
-{PREFIX} main.rc .rc-follow {{ background: #1d2025; }}
-{PREFIX} main.rc .rc-follow.is-on {{ background: #e6e8eb; color: #141618; }}
+{PREFIX} .hm-band {{ background: #1f1f1f; }}
+{PREFIX} main.rc .rc-follow {{ background: #272727; }}
+{PREFIX} main.rc .rc-follow.is-on {{ background: #3a3a3a; color: #f1f1f1; }}
+"""
+
+# ★ LINKS, LAST, SO NOTHING ABOVE OVERRIDES THEM (owner, 2026-11-03: "the
+#   links especially don't work with the black background"). One light blue
+#   for a link in a sentence -- Google's own dark-mode link colour -- and the
+#   names that fill every table (athletes, schools, meets) in plain ink, the
+#   blue only on hover: a page of blue names on black was the glare.
+LINKS = f"""
+{PREFIX} {{ --link: #8ab4f8; --accent: #8ab4f8; }}
+{PREFIX} a {{ color: #8ab4f8; }}
+{PREFIX} table a, {PREFIX} .board-grid a, {PREFIX} .bests-panel a, {PREFIX} .pr-panel a,
+{PREFIX} .rc-crow a, {PREFIX} .topnav a {{ color: #f1f1f1; text-decoration-color: rgba(241, 241, 241, 0.35); }}
+{PREFIX} table a:hover, {PREFIX} .board-grid a:hover, {PREFIX} .bests-panel a:hover,
+{PREFIX} .pr-panel a:hover, {PREFIX} .rc-crow a:hover {{ color: #8ab4f8; }}
 """
 
 
@@ -431,6 +448,7 @@ def build():
             body = darkSheet(blk)
             if body:
                 parts.append(f"\n/* ---- templates/{name} ---- */\n{body}")
+    parts.append("\n/* ---- links, last ---- */" + LINKS)
     return "".join(parts)
 
 
