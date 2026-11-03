@@ -48,7 +48,7 @@
     {# ★ THE ONE LINK TO THE MEET (owner, 2026-10-07: "try not to have
        duplicated things"): the meet's name, above the title #}
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">{{ "XC"|sport_name }}</span></div>
-    <div class="rc-kick">{% if meet_unit %}<a class="rc-unit-mark" href="{{ meet_unit.href }}" title="{{ meet_unit.name }}" aria-label="{{ meet_unit.name }}">{{ meet_unit.mark|safe }}</a>{% endif %}<a href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">{{ header.meet_name|with_year(race_date) }}</a></div>
+    <div class="rc-kick">{% if meet_unit %}<a class="rc-unit-mark" href="{{ meet_unit.href }}" title="{{ meet_unit.name }}" aria-label="{{ meet_unit.name }}">{{ meet_unit.mark|safe }}</a>{% else %}{{ meet_logo(header.meet_name, size=22) }}{% endif %}<a href="/meet/xc/{{ header.meet_id }}{% if other_sources %}?alt={{ alt_idx }}{% endif %}">{{ header.meet_name|with_year(race_date) }}</a></div>
     <h1>{{ title }}</h1>
     <div class="rc-meta">
       {# |urlencode, same as every school link: the name goes into the URL

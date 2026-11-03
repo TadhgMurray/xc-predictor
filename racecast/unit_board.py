@@ -543,3 +543,84 @@ def meetUnit(cur, meet_name, schools, sport="XC"):
     shown = label(kind, value, state or None)
     return {"kind": kind, "unit": value, "name": prettyName(shown), "href": href,
             "mark": unitMark(kind, value, state or None, size=22, shown=shown)}
+
+
+# ====================================================================== #
+#  THE SAME MARK WHEREVER THE MEET IS LINKED (owner, 2026-11-03: "for races
+#  like secs, it doesn't always show the logo in all places the race is
+#  linked"). A list row has only the meet's NAME -- no field to count -- so
+#  this reads the name alone, against the units that HAVE a stored logo,
+#  and is stricter about the words than meetUnitPick.
+# ====================================================================== #
+_MEET_LOGO = {"of": None, "cache": {}}
+MEET_LOGO_CACHE = 20000
+
+
+def meetLogoPick(meet_name, keys):
+    """The (kind, stored name) of the unit `meet_name` is the championship
+    of, among `keys` = {(kind, normKey): stored name}, or None. Pure.
+
+    The name must read like a championship, hold every word of the unit's
+    key, and a ONE-word key ('sec', 'summit', 'southern') must either be
+    written as a code in the name ('SEC', 'GNAC') or be followed by
+    'conference' / 'league' ('Southern Conference'), so 'Southern Indiana
+    Championships' is not SoCon's. Two different units equally good: none."""
+    import re
+    raw = str(meet_name or "")
+    toks = re.findall(r"[A-Za-z0-9]+", raw)
+    low = [t.lower() for t in toks]
+    words = set(low)
+    if not words or not any(w.startswith(_MEET_WORDS) for w in words):
+        return None
+    best, tie = None, False
+    for (kind, key), name in keys.items():
+        if kind not in MEET_UNIT_KINDS:
+            continue
+        kw = key.split()
+        if not kw or not all(w in words for w in kw):
+            continue
+        if len(kw) == 1:
+            w = kw[0]
+            idx = [i for i, t in enumerate(low) if t == w]
+            coded = any(toks[i].isupper() and len(toks[i]) <= 6 for i in idx)
+            named = any(i + 1 < len(low) and low[i + 1] in ("conference", "league")
+                        for i in idx)
+            if not (coded or named):
+                continue
+        rank = len(kw)
+        if best is None or rank > best[0]:
+            best, tie = (rank, (kind, name)), False
+        elif rank == best[0] and best[1] != (kind, name):
+            tie = True
+    return None if best is None or tie else best[1]
+
+
+def meetLogo(meet_name, college=None, size=16):
+    """The template global `meet_logo`: a meet link's small conference logo
+    -- only a stored one, else nothing. `college` narrows to conferences
+    (True) or leagues (False). Markup."""
+    import html
+    from markupsafe import Markup
+    if not meet_name:
+        return Markup("")
+    keys = _aliases()
+    if _MEET_LOGO["of"] is not keys:
+        _MEET_LOGO["of"], _MEET_LOGO["cache"] = keys, {}
+    ck = (str(meet_name), college)
+    cache = _MEET_LOGO["cache"]
+    if ck not in cache:
+        sub = keys
+        if college is not None:
+            want = "conference" if college else "league"
+            sub = {k: v for k, v in keys.items() if k[0] == want}
+        pick = meetLogoPick(meet_name, sub)
+        url = storedLogoUrl(pick[0], pick[1], None, px=64) if pick else None
+        if len(cache) > MEET_LOGO_CACHE:
+            cache.clear()
+        cache[ck] = (url, pick)
+    url, pick = cache[ck]
+    if not url:
+        return Markup("")
+    title = html.escape(prettyName(pick[1]))
+    return Markup(f'<img class="unit-chip-logo" src="{html.escape(url)}" alt="" title="{title}" '
+                  f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async">')

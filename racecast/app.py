@@ -428,6 +428,7 @@ app.jinja_env.globals["school_href"] = school_identity.schoolHref
 import unit_board as _unit_board                                  # noqa: E402
 app.jinja_env.globals["unit_href"] = _unit_board.chipHref
 app.jinja_env.globals["unit_logo"] = _unit_board.chipLogo
+app.jinja_env.globals["meet_logo"] = _unit_board.meetLogo
 
 
 # ★ THE RACE'S GENDER WORD, AND ONLY WHEN THE NAME LACKS ONE (owner,

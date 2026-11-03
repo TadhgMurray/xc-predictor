@@ -224,3 +224,29 @@ def test_a_logo_stored_under_another_spelling_is_found(monkeypatch):
     m = {"unit:conference:BIG TEN": [("", "abcd1234", "/x.png", "")]}
     monkeypatch.setattr(school_logo, "_CRESTS", {"loaded": True, "map": m, "factory": None, "retry_at": 0})
     assert UB._aliases()[("conference", "big ten")] == "BIG TEN"
+
+
+def test_meet_logo_reads_the_name_strictly():
+    import unit_board as UB
+    keys = {("conference", "sec"): "SEC", ("conference", "southern"): "SOUTHERN",
+            ("conference", "big ten"): "BIG TEN", ("conference", "big east"): "BIG EAST",
+            ("league", "sunkist"): "SUNKIST", ("division", "ncaa di"): "NCAA DI"}
+    P = UB.meetLogoPick
+    assert P("2026 SEC Cross Country Championships", keys) == ("conference", "SEC")
+    assert P("Southern Conference Championships", keys) == ("conference", "SOUTHERN")
+    assert P("Southern Indiana Championships", keys) is None       # a word, not SoCon
+    assert P("Big Ten Championships", keys) == ("conference", "BIG TEN")
+    assert P("Big Ten Invitational", keys) is None                 # not its championship
+    assert P("Sunkist League Finals", keys) == ("league", "SUNKIST")
+    assert P("NCAA DI Championships", keys) is None                # divisions are not meets' marks
+    assert P("", keys) is None
+
+
+def test_meet_logo_markup_only_with_a_stored_logo(monkeypatch):
+    import unit_board as UB
+    monkeypatch.setattr(UB, "_aliases", lambda: {("conference", "sec"): "SEC"})
+    monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: "/img/school/u.png")
+    assert 'class="unit-chip-logo"' in str(UB.meetLogo("SEC Championships"))
+    assert str(UB.meetLogo("Harvard Invitational")) == ""
+    monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: None)
+    assert str(UB.meetLogo("SEC Championships")) == ""   # a fresh key map, a fresh cache
