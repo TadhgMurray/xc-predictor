@@ -1019,6 +1019,10 @@ step 06a_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --ou
 #   course was first raced, and the build was never in the pipeline).
 #   --incremental keeps every existing course's id, so course_difficulties
 #   still points at the right courses while the solve runs.
+# a race with a course name but no coordinates takes its course's place
+# (scripts/place_unplaced_meets.py), so it matches a course, gets weather and
+# joins the solve -- before the canonical ids are built from (name, place)
+step 06a2_place_by_name "$PY" -u scripts/place_unplaced_meets.py --write
 step 06b_course_canonical "$PY" -u scripts/build_course_canonical.py --incremental --apply
 # ★ THE RACES THE RECORD CONDEMNED (owner, 2026-09-14): a time faster than
 #   the world record allows, outside the college pools, marks its whole

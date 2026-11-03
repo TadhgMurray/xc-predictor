@@ -271,6 +271,10 @@ step 04c_twins        "$PY" -u engine/twin_flag.py --write
 step 06_tfrrs_meets   "$PY" -u scripts/land_tfrrs_meet_names.py --apply
 # the night's new tfrrs XC meets find their course's gps (run_pipeline 06a)
 step 06a_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --out "$LOGDIR"
+# a race with a course name but no coordinates takes its course's place
+# (scripts/place_unplaced_meets.py), so it matches a course, gets weather and
+# joins the solve -- before the canonical ids are built from (name, place)
+step 06a2_place_by_name "$PY" -u scripts/place_unplaced_meets.py --write
 step 06b_course_canonical "$PY" -u scripts/build_course_canonical.py --incremental --apply
 
 # ---- 3. price the new rows ---------------------------------------------- #
