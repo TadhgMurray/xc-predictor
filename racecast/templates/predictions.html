@@ -77,7 +77,7 @@
       <span>Share</span>
     </button></span>
     </div>
-    <p class="rc-story">This week's meets, the state championships, or any race that has already
+    <p class="rc-story">The championships ahead, the state meets, or any race that has already
       happened - run it again, or test the model against what actually did.</p>
     {# filled once a prediction is on the page, as the race page names its
        winners (predictions.js showChamps) #}
@@ -93,21 +93,43 @@
      signal every way in (a pick, a Predict link, a shared link, a restored
      session) already sets, so predictions.js did not need to learn it. #}
   <div class="pred-open" id="pred-open">
+    {# ★ THE UPCOMING CHAMPIONSHIPS, FROM LAST YEAR'S MEETS (owner, 2026-11-03:
+       "change upcoming meets on the predictions page to just be upcoming
+       national-style meets, and we use the meets from last year to predict
+       from, just so we don't have to scrape its husk"; state meets too).
+       Each opens last year's meet in "this year" mode on a date a year on
+       (app._upcomingChampsCached); the field is this season's qualifiers
+       where a rule or a learned route covers it. This week's posted meets
+       still open from search and the meets pages. #}
     <section class="pred-week" aria-labelledby="pred-week-h">
-      <h2 id="pred-week-h">This week's meets <small>next 7 days</small></h2>
-      {% if week %}
+      <h2 id="pred-week-h">Upcoming championships <small>this season, from last year's meets</small></h2>
+      {% if champs_national or champs_state %}
       <table class="rc-tscores rc-tscores-plain pred-week-t"><tbody>
-        {% for m in week %}
+        {% for m in champs_national + champs_state[:8] %}
         <tr>
-          <td class="tn"><a href="{{ m.predict_href }}">{{ m.name }}</a>
-            <span class="sp">{{ m.when }}{% if m.venue %} · {{ m.venue }}{% endif %}{% if m.state %} · {{ m.state }}{% endif %}{% if m.sport == 'TF' %} · track{% endif %}</span></td>
-          <td class="go-c"><a href="{{ m.predict_href }}" aria-label="Predict {{ m.name }}">Predict &rarr;</a></td>
+          <td class="tn"><a href="{{ m.href }}">{{ m.title }}</a>
+            <span class="sp">{{ m.when }} · from the {{ m.last_date[:4] }} meet{% if m.kind == 'national' %} · national{% endif %}</span></td>
+          <td class="go-c"><a href="{{ m.href }}" aria-label="Predict {{ m.title }}">Predict &rarr;</a></td>
         </tr>
         {% endfor %}
       </tbody></table>
-      <a class="rc-more" href="/meets?view=upcoming">All {{ "{:,}".format(week_n) }} meet{{ "" if week_n == 1 else "s" }} this week &rarr;</a>
+      {% if champs_state|length > 8 %}
+      <details class="pred-week-more"><summary>{{ champs_state|length - 8 }} more state and regional championships</summary>
+      <table class="rc-tscores rc-tscores-plain pred-week-t"><tbody>
+        {% for m in champs_state[8:] %}
+        <tr>
+          <td class="tn"><a href="{{ m.href }}">{{ m.title }}</a>
+            <span class="sp">{{ m.when }} · from the {{ m.last_date[:4] }} meet</span></td>
+          <td class="go-c"><a href="{{ m.href }}" aria-label="Predict {{ m.title }}">Predict &rarr;</a></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+      </details>
+      {% endif %}
+      <p class="hint">The field is who qualified at this season's earlier rounds &mdash; our
+        prediction for a round not run yet. <a href="/meets?view=upcoming">Every upcoming meet &rarr;</a></p>
       {% else %}
-      <p class="hint">No meet has been posted for the next seven days yet.
+      <p class="hint">No championship ahead this season.
         <a href="/meets?view=upcoming">Upcoming meets &rarr;</a></p>
       {% endif %}
     </section>

@@ -11150,7 +11150,12 @@ def _predictOpening():
             week.append({**m, "when": when})
     week.sort(key=lambda m: (-m["n_races"], m["date"] or "", m["name"] or ""))
     states, names = _stateNames()
+    # ★ THE UPCOMING CHAMPIONSHIPS, FROM LAST YEAR'S MEETS (owner,
+    #   2026-11-03), in place of this week's scraped listings on the page
+    champs = _upcomingChampsCached()
     return {"week": week[:PRED_WEEK_N], "week_n": len(week),
+            "champs_national": [m for m in champs if m["kind"] == "national"],
+            "champs_state": [m for m in champs if m["kind"] != "national"],
             "pred_states": states,
             "pred_popular": [(c, names[c]) for c in PRED_POPULAR_STATES
                              if c in names]}
@@ -11595,7 +11600,12 @@ def api_predict_field():
                 if (when == "thisyear" and sport == "XC" and div_n is not None
                         and (request.args.get("qualify") or "1") != "0"):
                     from upcoming_preview import qualifiedMeetField
-                    out = qualifiedMeetField(cur, int(meet), div_n, src)
+                    # ! THE DAY ASKED: last year's meet on this year's date
+                    #   is predicted as this year's edition (pastPlan)
+                    day = (request.args.get("date") or "").strip()
+                    out = qualifiedMeetField(cur, int(meet), div_n, src,
+                                             day=day if re.match(r"^\d{4}-\d{2}-\d{2}$", day)
+                                             else None)
                 if out is None:
                     out = meetField(cur, int(meet), div_n,
                                     sport, when=when, source=src,
@@ -11657,6 +11667,46 @@ def _fillRaceGenders(cur, meet_id, source, races):
     for r in races:
         if not r.get("gender"):
             r["gender"] = by.get(r["div_id"])
+
+
+@app.route("/api/predict/upcoming")
+def api_predict_upcoming():
+    """★ THE UPCOMING CHAMPIONSHIPS, FROM LAST YEAR'S MEETS (owner,
+    2026-11-03): upcoming_preview.upcomingChampionships, cached for the
+    day. The predictions page lists them under the meet search."""
+    return jsonify({"meets": _upcomingChampsCached()})
+
+
+def _upcomingChampsCached():
+    """upcoming_preview.upcomingChampionships, once a day per worker, each
+    row with the predictions link and a name without last year's year. []
+    on a failure: the page shows no list rather than an error."""
+    import datetime as _dt
+    import ttlcache
+    from upcoming_preview import upcomingChampionships
+
+    def compute():
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("SET statement_timeout = '120s'")
+                out = upcomingChampionships(cur)
+                conn.rollback()
+        for m in out:
+            day = _dt.date.fromisoformat(m["date"])
+            m["when"] = day.strftime("%a %b ") + str(day.day)
+            m["title"] = re.sub(r"\s+", " ", re.sub(r"\b(19|20)\d{2}(-\d{2,4})?\b", " ",
+                                                    m["name"] or "")).strip(" -")
+            m["href"] = "/predictions?" + urllib.parse.urlencode(
+                {"meet_id": m["meet_id"], "src": m["source"], "date": m["date"],
+                 "pick": "predicted"})
+        return out
+    try:
+        rows, _ = ttlcache.get(("predict_upcoming", _dt.date.today().isoformat()),
+                               compute, ttl=6 * 3600)
+    except Exception:                                   # noqa: BLE001
+        app.logger.exception("upcoming championships failed")
+        rows = []
+    return rows
 
 
 @app.route("/api/predict/races")
