@@ -1946,8 +1946,11 @@ function syncBoardHeader(rows, data) {
     }
     if (r.school) school = ` · ${esc(r.school)}`;
   }
+  // a conference leads with its own mark (owner, 2026-11-03: "Why no logo
+  // here"); r.mark is unit_board.unitMark's markup, trusted like the rows'
+  const lead = board === "units" ? `<span class="un-mark">${r.mark || ""}</span>` : crestMark(r.crest);
   champs.innerHTML = '<div><span class="k">No. 1 on this board</span>'
-    + `<span class="rc-crow">${crestMark(r.crest)}<b class="rc-cn">${who}</b>`
+    + `<span class="rc-crow">${lead}<b class="rc-cn">${who}</b>`
     + `<i>${num}${school}</i></span></div>`;
   champs.hidden = false;
 }
