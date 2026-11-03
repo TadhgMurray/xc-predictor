@@ -683,8 +683,10 @@ RULES = {
     },
     # ------------------------------------------------------ provisional_day
     "engine/provisional_day.py": {
-        **_all("WINDOW_DAYS LEVEL_DAYS CAL_MAX", "INFRA",
-               "how far back races and levels are read, and how many solved races calibrate"),
+        **_all("WINDOW_DAYS LEVEL_DAYS CAL_MAX QUANTILES", "INFRA",
+               "how far back races and levels are read, how many solved races calibrate, and the "
+               "readings tried (the one closest to the solve on held-out races is kept)"),
+        "NIGHTLY_TOL": ("INFRA", "a rating within 0.2% of the venue price was written by the nightly"),
         **_all("MIN_FIELD CAL_MIN_FIELD CAL_MIN", "STATED",
                "the nightly provisional race-day term (owner, 2026-11-03): runners with a level a "
                "race needs, the solved races' size, and how many must calibrate it; the offset and "

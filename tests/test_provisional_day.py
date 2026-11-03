@@ -37,9 +37,11 @@ def test_the_calibrated_day_recovers_the_solve_and_beats_no_term():
         g, s, n, tilt = P.raceReading(pairs, tilts)
         solved.append((g, s, n, tilt, u))
     cal = P.calibrate(solved)
-    assert abs(cal["b"] - (-0.01)) < 0.005
+    assert abs(cal["b"] - (-0.01)) < 0.005 and 0.8 < cal["beta"] < 1.2
     rmse, rmse0 = P.backtest(solved, cal)
     assert rmse < 0.5 * rmse0 and P.passes(rmse, rmse0, len(solved))
+    ho, ho0 = P.heldOut(solved)
+    assert ho < 0.5 * ho0
     # a slow day reads slow, a fast one fast
     for u in (0.05, -0.04):
         pairs, tilts = _race(u, 100, rnd=rnd)
@@ -48,10 +50,28 @@ def test_the_calibrated_day_recovers_the_solve_and_beats_no_term():
 
 
 def test_a_small_field_is_shrunk_toward_a_typical_day():
-    cal = {"b": 0.0, "t": 0.0004}
+    cal = {"b": 0.0, "t": 0.0004, "alpha": 0.0, "beta": 1.0}
     big = P.dayFrom(-0.045, 0.03, 200, 0.9, cal)
     small = P.dayFrom(-0.045, 0.03, 6, 0.9, cal)
     assert 0 < small < big <= 0.05 + 1e-9
+
+
+def test_a_reading_with_no_signal_is_trusted_not_at_all():
+    rnd = random.Random(2)
+    solved = []
+    for _ in range(100):
+        pairs, tilts = _race(0.0, 40, rnd=rnd)          # the field says nothing...
+        solved.append((*P.raceReading(pairs, tilts), rnd.gauss(0, 0.025)))  # ...about u
+    cal = P.calibrate(solved)
+    assert cal["beta"] < 0.3
+    ho, ho0 = P.heldOut(solved)
+    assert not P.passes(ho, ho0, len(solved))
+
+
+def test_the_nightly_s_own_prices_are_told_from_the_solve_s():
+    assert P.nightlyPriced([120.0, 101.33], [120.001, 101.3])
+    assert not P.nightlyPriced([123.0, 104.0], [120.0, 101.3])
+    assert P.quantile([1, 2, 3, 4], 0.75) == 3.25
 
 
 def test_the_gate_refuses_too_few_or_no_better():

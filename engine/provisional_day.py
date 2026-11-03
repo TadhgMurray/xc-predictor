@@ -61,12 +61,14 @@ sys.path.insert(0, "engine")
 sys.path.insert(0, "racecast")
 
 WINDOW_DAYS = 60          # how far back a race is looked at, new or solved
-LEVEL_DAYS = 365          # above_level.LOOKBACK_DAYS
+LEVEL_DAYS = (45, 365)    # the two levels tried: this season's form, and a year (above_level)
+QUANTILES = (0.5, 0.75)   # the field's middle, and its front (those who raced it)
 MIN_FIELD = 5             # runners with a level before a race gets a term
 CAL_MIN_FIELD = 20        # a solved race used for the calibration
-CAL_MAX = 400             # solved races read (by hash, so the same ones nightly)
-CAL_MIN = 30              # solved races needed before anything is written
-GATE = 0.85               # error at most this share of "no term"'s
+CAL_MAX = 600             # solved races read (by a stable hash, the same ones nightly)
+CAL_MIN = 40              # solved races needed before anything is written
+GATE = 0.85               # held-out error at most this share of "no term"'s
+NIGHTLY_TOL = 0.002       # a rating within 0.2% of the venue price is the nightly's own
 
 Row = namedtuple("Row", "result_id person_id source meet_id div_id normalized_time "
                         "pool rating_pool race_date distance speed_rating")
@@ -84,36 +86,61 @@ def mad(xs):
     return 1.4826 * statistics.median([abs(x - m) for x in xs])
 
 
-def raceReading(pairs, tilts):
+def quantile(xs, q):
+    """percentile_cont: linear interpolation."""
+    v = sorted(xs)
+    if not v:
+        return None
+    k = (len(v) - 1) * q
+    lo, hi = math.floor(k), math.ceil(k)
+    return v[lo] + (v[hi] - v[lo]) * (k - lo)
+
+
+def raceReading(pairs, tilts, q=0.5):
     """[(priced rating with no day, level)], [tilts] -> (g, s, n, tilt): the
-    median log ratio, its robust spread, the runners read and the field's
-    median tilt; None under MIN_FIELD."""
+    field's q-quantile log ratio, its robust spread, the runners read and
+    the field's median tilt; None under MIN_FIELD."""
     gs = [math.log(r / lv) for r, lv in pairs if r and lv and r > 0 and lv > 0]
     if len(gs) < MIN_FIELD:
         return None
-    return statistics.median(gs), mad(gs), len(gs), statistics.median(tilts) if tilts else 1.0
+    return quantile(gs, q), mad(gs), len(gs), statistics.median(tilts) if tilts else 1.0
+
+
+def shrunk(g, s, n, tilt, b, t):
+    """The day the reading says (log time, + = slow), shrunk toward 0 by its
+    noise against the spread t of real days."""
+    tilt = tilt if tilt and tilt > 0.3 else 1.0
+    raw = -(g - b) / tilt
+    noise = (s / tilt) ** 2 / max(n, 1)
+    return raw * t / (t + noise)
 
 
 def calibrate(solved):
-    """solved: [(g, s, n, tilt, u_solved)] -> {"b", "t"} or None."""
+    """solved: [(g, s, n, tilt, u_solved)] -> {"b", "t", "alpha", "beta"} or
+    None. b: the offset of a field's level from the solve's ability; t: the
+    variance of real days; then u = alpha + beta * shrunk(...), fitted by
+    least squares, so a reading that tracks the days only partly is
+    trusted only that far."""
     if len(solved) < CAL_MIN:
         return None
     b = statistics.median(g + tilt * u for g, _s, _n, tilt, u in solved)
     us = [u for *_x, u in solved]
     t = max(statistics.pvariance(us), 1e-6)
-    return {"b": b, "t": t}
+    xs = [shrunk(g, s, n, tilt, b, t) for g, s, n, tilt, _u in solved]
+    mx, my = statistics.fmean(xs), statistics.fmean(us)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    beta = (sum((x - mx) * (y - my) for x, y in zip(xs, us)) / sxx) if sxx > 0 else 0.0
+    beta = max(0.0, min(beta, 1.5))
+    return {"b": b, "t": t, "alpha": my - beta * mx, "beta": beta}
 
 
 def dayFrom(g, s, n, tilt, cal):
-    """The shrunk provisional day (log time, + = slow) for one race."""
-    tilt = tilt if tilt and tilt > 0.3 else 1.0
-    raw = -(g - cal["b"]) / tilt
-    noise = (s / tilt) ** 2 / max(n, 1)
-    return raw * cal["t"] / (cal["t"] + noise)
+    """The provisional day (log time, + = slow) for one race."""
+    return cal["alpha"] + cal["beta"] * shrunk(g, s, n, tilt, cal["b"], cal["t"])
 
 
 def backtest(solved, cal):
-    """(rmse of the provisional day against the solve's, rmse of 0)."""
+    """(rmse of the provisional day against the solve's, rmse of 0), in sample."""
     if not solved or not cal:
         return None, None
     e1 = [(dayFrom(g, s, n, tilt, cal) - u) ** 2 for g, s, n, tilt, u in solved]
@@ -121,9 +148,34 @@ def backtest(solved, cal):
     return math.sqrt(sum(e1) / len(e1)), math.sqrt(sum(e0) / len(e0))
 
 
+def heldOut(solved):
+    """(rmse, rmse of 0) with two folds: each half calibrated on the other,
+    so the score is of races the calibration never saw."""
+    folds = (solved[0::2], solved[1::2])
+    e1, e0 = [], []
+    for test, train in ((folds[0], folds[1]), (folds[1], folds[0])):
+        cal = calibrate(train) if len(train) >= CAL_MIN // 2 else None
+        if cal is None:
+            return None, None
+        for g, s, n, tilt, u in test:
+            e1.append((dayFrom(g, s, n, tilt, cal) - u) ** 2)
+            e0.append(u * u)
+    return math.sqrt(sum(e1) / len(e1)), math.sqrt(sum(e0) / len(e0))
+
+
 def passes(rmse, rmse0, n_cal, gate=GATE):
     return (rmse is not None and rmse0 is not None and n_cal >= CAL_MIN
             and rmse0 > 0 and rmse <= gate * rmse0)
+
+
+def nightlyPriced(rated, priced, tol=NIGHTLY_TOL, share=0.8):
+    """Were this race's ratings written by the nightly (at the venue price)
+    rather than by the solve? [(stored rating, venue price)] -> bool."""
+    pairs = [(a, b) for a, b in zip(rated, priced) if a and b]
+    if not pairs:
+        return False
+    same = sum(abs(a / b - 1.0) <= tol for a, b in pairs)
+    return same >= share * len(pairs)
 
 
 # --------------------------------------------------------------------- #
@@ -149,14 +201,17 @@ _RACES_SQL = """
 """
 
 _LEVEL_SQL = """
-    SELECT p.pid, p.day, p.pool,
-           (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY k.speed_rating)
-            FROM   ranking_results k
-            WHERE  k.person_id = p.pid AND k.sport = 'XC'
-              AND  k.race_date < p.day AND k.race_date >= p.day - %(back)s
-              AND  k.speed_rating > 0
-              AND  split_part(k.pool, '|', 1) = p.pool) AS level
+    SELECT p.pid, p.day, p.pool, l.short, l.long
     FROM   unnest(%(pids)s::bigint[], %(days)s::date[], %(pools)s::text[]) AS p(pid, day, pool)
+    CROSS  JOIN LATERAL (
+           SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY k.speed_rating)
+                      FILTER (WHERE k.race_date >= p.day - %(short)s) AS short,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY k.speed_rating) AS long
+           FROM   ranking_results k
+           WHERE  k.person_id = p.pid AND k.sport = 'XC'
+             AND  k.race_date < p.day AND k.race_date >= p.day - %(long)s
+             AND  k.speed_rating > 0
+             AND  split_part(k.pool, '|', 1) = p.pool) l
 """
 
 
@@ -190,18 +245,19 @@ def _dayRows(cur):
 
 
 def _levels(cur, wanted):
-    """{(person, day, pool): level} for every (person, day, pool) asked."""
+    """{(person, day, pool): (level over LEVEL_DAYS[0], over LEVEL_DAYS[1])}."""
     wanted = sorted(wanted)
     out = {}
     for i in range(0, len(wanted), 20000):
         chunk = wanted[i:i + 20000]
-        cur.execute(_LEVEL_SQL, {"back": LEVEL_DAYS,
+        cur.execute(_LEVEL_SQL, {"short": LEVEL_DAYS[0], "long": LEVEL_DAYS[1],
                                  "pids": [w[0] for w in chunk],
                                  "days": [w[1] for w in chunk],
                                  "pools": [w[2] for w in chunk]})
-        for pid, day, pool, level in cur.fetchall():
-            if level:
-                out[(int(pid), day, pool)] = float(level)
+        for pid, day, pool, short, long_ in cur.fetchall():
+            if short or long_:
+                out[(int(pid), day, pool)] = (float(short) if short else None,
+                                              float(long_) if long_ else None)
     return out
 
 
@@ -278,74 +334,104 @@ def main():
             g["rows"].append(r)
             g["races"].add((r.meet_id, r.div_id))
 
-        solved, new = [], []
-        for key, g in by_race.items():
-            day = key[2]
-            hit = days.get(key)
-            if hit and not hit[2]:
-                if len(g["rows"]) >= CAL_MIN_FIELD:
-                    solved.append((key, g, hit[0]))
-            elif cutoff is None or day > cutoff:
-                new.append((key, g))
-        # the same solved races every night: by a stable hash of the race
-        import zlib
-        solved.sort(key=lambda x: zlib.crc32(f"{x[0][0]}/{x[0][1]}/{x[0][2]}".encode()))
-        solved = solved[:CAL_MAX]
-
-        wanted = {(int(r.person_id), key[2], r.pool)
-                  for key, g, *_u in solved + [(k, g) for k, g in new]
-                  for r in g["rows"] if r.person_id is not None and r.pool}
-        with conn.cursor() as cur:
-            levels = _levels(cur, wanted)
-        conn.commit()
-        print(f"  {len(new):,} races after the last solve ({cutoff}), {len(solved):,} solved races "
-              f"read for the calibration, {len(levels):,} runners' levels", flush=True)
-
-        def reading(key, g):
-            pairs, tilts, priced = [], [], {}
+        # ★ A RACE PRICED AT ITS COURSE, NO DAY: the reading's numerator,
+        #   and the test of who wrote the stored ratings. Only the races
+        #   read (the sampled solved ones and every unsolved one): pricing
+        #   two million rows is a fixed point each.
+        def price(g):
+            g["priced"], g["field"], seen = {}, [], set()
             for r in g["rows"]:
                 rv = venueRating(float(r.normalized_time), r.pool, "XC", g["d"],
                                  rowDistance(r, "XC"))
                 if rv is None:
                     continue
-                priced[r.result_id] = (rv, r)
-                if r.person_id is None or r.person_id in g["seen"]:
-                    continue                  # a runner in both feeds' copies, once
-                g["seen"].add(r.person_id)
+                g["priced"][r.result_id] = (rv, r)
+                if r.person_id is not None and r.person_id not in seen and r.pool:
+                    seen.add(r.person_id)         # a runner in both feeds' copies, once
+                    g["field"].append((r, rv))
+
+        # ★ NEW = THE NIGHTLY PRICED IT, NOT "DATED AFTER THE SOLVE" (owner's
+        #   dry run, 2026-11-03: the last solved day was Oct 31, so the
+        #   NESCAC championship of Oct 31 -- scraped after that solve, priced
+        #   by 09b, no day -- was skipped as the solve's). A race the solve
+        #   rated carries its own numbers (era, form, day); one 09b priced
+        #   sits at the venue price to the rounding (nightlyPriced), or
+        #   carries last night's provisional day.
+        solved, new = [], []
+        for key, g in by_race.items():
+            hit = days.get(key)
+            if hit and not hit[2]:
+                if len({r.person_id for r in g["rows"]}) >= CAL_MIN_FIELD:
+                    solved.append((key, g, hit[0]))
+                continue
+            price(g)
+            stored = [(float(r.speed_rating), rv) for rv, r in g["priced"].values()]
+            if (hit and hit[2]) or nightlyPriced([a for a, _b in stored], [b for _a, b in stored]):
+                new.append((key, g))
+        # the same solved races every night: by a stable hash of the race
+        import zlib
+        solved.sort(key=lambda x: zlib.crc32(f"{x[0][0]}/{x[0][1]}/{x[0][2]}".encode()))
+        solved = solved[:CAL_MAX]
+        for _key, g, _u in solved:
+            price(g)
+        solved = [x for x in solved if len(x[1]["field"]) >= CAL_MIN_FIELD]
+
+        wanted = {(int(r.person_id), key[2], r.pool)
+                  for key, g, *_u in solved + [(k, g) for k, g in new]
+                  for r, _rv in g["field"]}
+        with conn.cursor() as cur:
+            levels = _levels(cur, wanted)
+        conn.commit()
+        print(f"  {len(new):,} races the nightly priced with no solved day (last solved day "
+              f"{cutoff}), {len(solved):,} solved races to calibrate on, "
+              f"{len(levels):,} runners' levels", flush=True)
+
+        def reading(key, g, which, q):
+            pairs, tilts = [], []
+            for r, rv in g["field"]:
                 tilts.append(_tilt(rv, r.pool))
                 lv = levels.get((int(r.person_id), key[2], r.pool))
-                if lv:
-                    pairs.append((rv, lv))
-            return raceReading(pairs, tilts), priced
+                if lv and lv[which]:
+                    pairs.append((rv, lv[which]))
+            return raceReading(pairs, tilts, q)
 
-        cal_rows = []
-        for key, g, u in solved:
-            got, _p = reading(key, g)
-            if got:
-                cal_rows.append((*got, u))
-        cal = calibrate(cal_rows)
-        rmse, rmse0 = backtest(cal_rows, cal)
-        if cal:
-            print(f"  calibration: {len(cal_rows):,} solved races, offset b {cal['b']:+.4f}, "
-                  f"spread of solved days sd {math.sqrt(cal['t']) * 100:.2f}%")
-            print(f"  backtest on them: provisional day off the solve's by {rmse * 100:.2f}% "
-                  f"(rms), no term at all by {rmse0 * 100:.2f}%")
-        ok = cal is not None and passes(rmse, rmse0, len(cal_rows))
+        # ★ FOUR READINGS, THE BEST ON RACES IT NEVER SAW. The level over this
+        #   season's form or over a year, the field's middle or its front;
+        #   each calibrated on half the solved races and scored on the other
+        #   half (heldOut), and the one closest to the solve's own days kept.
+        best = None
+        for which, back in enumerate(LEVEL_DAYS):
+            for q in QUANTILES:
+                cal_rows = [(*got, u) for key, g, u in solved
+                            if (got := reading(key, g, which, q))]
+                ho, ho0 = heldOut(cal_rows)
+                cal = calibrate(cal_rows)
+                if ho is None or cal is None:
+                    print(f"  level {back} d, field q{q:.2f}: too few solved races ({len(cal_rows)})")
+                    continue
+                print(f"  level {back} d, field q{q:.2f}: {len(cal_rows):,} solved races, "
+                      f"held-out error {ho * 100:.2f}% vs no term {ho0 * 100:.2f}%  "
+                      f"(slope {cal['beta']:.2f})")
+                if best is None or ho < best[0]:
+                    best = (ho, ho0, which, q, cal, len(cal_rows))
+        ok = best is not None and passes(best[0], best[1], best[5])
+        if best:
+            print(f"  kept: level {LEVEL_DAYS[best[2]]} d, field q{best[3]:.2f}")
         if not ok:
             print(f"  NOT WRITTEN: the provisional day must beat no term by "
-                  f"{(1 - GATE):.0%} on {CAL_MIN}+ solved races "
-                  f"({len(cal_rows)} read{'' if cal else ', too few to calibrate'})")
+                  f"{(1 - GATE):.0%} on races it never saw, with {CAL_MIN}+ solved races")
+        cal = best[4] if best else None
 
         out_days, out_ratings = [], []
         shown = []
         for key, g in new:
-            got, priced = reading(key, g)
+            got = reading(key, g, best[2], best[3]) if best else None
             if not got:
                 continue
-            gg, s, n, tilt = got
-            u = dayFrom(gg, s, n, tilt, cal) if cal else 0.0
+            gg, sd, n, tilt = got
+            u = dayFrom(gg, sd, n, tilt, cal) if cal else 0.0
             a = appliedDay(u, mode)
-            for rid, (rv, r) in priced.items():
+            for rid, (rv, r) in g["priced"].items():
                 out_ratings.append((rid, round(rv * math.exp(_tilt(rv, r.pool) * a), 2),
                                     r.rating_pool or r.pool))
             out_days.append((g["champ"] or None, g["cid"], g["dm"], key[2], round(u, 5), n))

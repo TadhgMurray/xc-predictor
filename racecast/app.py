@@ -4006,15 +4006,24 @@ _DUP_DAYS = 1     # sources disagree about which day a two-day meet's race fell 
 
 
 def _time_key(race):
-    """Bucket key for the fallback match: sport + time to the hundredth.
+    """Bucket key for the fallback match: sport + time ROUNDED UP to the
+    tenth.
 
     Rows only get COMPARED if they land in the same bucket, so this is what
     keeps the pass cheap -- no all-pairs scan over the athlete's career.
+
+    ★ UP TO THE TENTH, NOT THE HUNDREDTH (owner, 2026-11-03, /athlete/29320769:
+      the Big Ten championship twice, 23:04.19 from tfrrs and 23:04.2 from
+      athletic.net). Cross country posts hundredths rounded UP to the tenth,
+      so one feed's 23:04.11..23:04.19 is the other's 23:04.2; keyed to the
+      hundredth the pair never met. Only cross-source pairs within a day are
+      ever folded (_is_cross_source_twin), so a wider bucket costs nothing.
     """
+    import math
     t = race.get("time_raw")
     if t is None:
         return None                    # field events etc. -> never fuzzy-matched
-    return (race["sport"], round(float(t), 2))
+    return (race["sport"], math.ceil(round(float(t) * 10, 6)) / 10.0)
 
 
 def _days_apart(d1, d2):
@@ -4222,18 +4231,36 @@ def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
                     (meet_id, source))
         got = cur.fetchone()
         canon = got and (got["canon_meet_id"] if isinstance(got, dict) else got[0])
-        if not canon:
+        day = next((str(r.get("date"))[:10] for r in rows if r.get("date")), None)
+        pids = sorted({int(r["person_id"]) for r in need if r.get("person_id") is not None})
+        if canon:
+            cur.execute(f"""
+                SELECT r.person_id, r.time_seconds, r.speed_rating,
+                       {_ratingPoolCol(cur, table)},
+                       {_name_sql('r')} AS name
+                FROM   {table} r
+                {_athlete_lateral('r')}
+                WHERE  r.canon_meet_id = %s AND r.source <> %s
+                  AND  r.time_seconds IS NOT NULL
+            """, (canon, source))
+        elif day and pids:
+            # ★ NO CANON LINK (owner, 2026-11-03, the 2026 UAA women on tfrrs:
+            #   not one rating on the page; no 2026 meet has a canon_meet_id,
+            #   link_feed_twins.py). The same runner's row in the other feed
+            #   on the same day, within a second -- twin_flag's twin_same_day
+            #   rule, which is why this copy carries no rating of its own.
+            cur.execute(f"""
+                SELECT r.person_id, r.time_seconds, r.speed_rating,
+                       {_ratingPoolCol(cur, table)},
+                       NULL::text AS name
+                FROM   {table} r
+                WHERE  r.person_id = ANY(%s) AND r.source <> %s
+                  AND  left(r.date, 10) = %s
+                  AND  r.time_seconds IS NOT NULL
+            """, (pids, source, day))
+        else:
             cur.execute("ROLLBACK TO SAVEPOINT twin_borrow")   # and the timeout
             return 0
-        cur.execute(f"""
-            SELECT r.person_id, r.time_seconds, r.speed_rating,
-                   {_ratingPoolCol(cur, table)},
-                   {_name_sql('r')} AS name
-            FROM   {table} r
-            {_athlete_lateral('r')}
-            WHERE  r.canon_meet_id = %s AND r.source <> %s
-              AND  r.time_seconds IS NOT NULL
-        """, (canon, source))
         twins = cur.fetchall()
         cur.execute("SET LOCAL statement_timeout = %s", (was,))
         cur.execute("RELEASE SAVEPOINT twin_borrow")
@@ -4252,6 +4279,10 @@ def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
     n = 0
     for r in need:
         cands = by_pid.get(r.get("person_id")) if r.get("person_id") else None
+        if cands and not canon:
+            # same day, not the same meet: only the run within a second
+            cands = [t for t in cands if r.get("time_seconds") is not None
+                     and abs(float(t["time_seconds"]) - float(r["time_seconds"])) <= 1.0]
         if not cands:
             cands = [t for t in by_name.get(key(r.get(name_key)), [])
                      if r.get("time_seconds") is not None
