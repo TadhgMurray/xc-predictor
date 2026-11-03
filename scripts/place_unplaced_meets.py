@@ -90,6 +90,65 @@ def pickPlace(places, name, state):
     return hits[0] if len(hits) == 1 else None
 
 
+TWIN_MIN = 5      # shared runners before another race is this race
+
+
+def twinPlaces(cur, left_m, left_t):
+    """({(meet, div, source): (lat, lon, n)}, {tfrrs meet: (lat, lon, n)})
+    from the placed race on the same day that shares the most runners
+    (TWIN_MIN at least). n is the shared runner count."""
+    out_m, out_t = {}, {}
+    if left_m:
+        cur.execute("CREATE TEMP TABLE pu_left (meet_id bigint, div_id bigint, source text) ON COMMIT DROP")
+        import psycopg2.extras
+        psycopg2.extras.execute_values(cur, "INSERT INTO pu_left VALUES %s", left_m)
+        cur.execute(f"""
+            WITH mine AS (
+                SELECT l.meet_id, l.div_id, l.source, r.person_id, substr(r.date, 1, 10) AS d
+                FROM   pu_left l JOIN results r ON r.meet_id = l.meet_id AND r.div_id = l.div_id
+                                              AND r.source IS NOT DISTINCT FROM l.source
+                WHERE  r.person_id IS NOT NULL
+            ), twin AS (
+                SELECT m.meet_id, m.div_id, m.source, o.meet_id AS om, o.div_id AS od, o.source AS os,
+                       count(DISTINCT m.person_id) AS n
+                FROM   mine m JOIN results o ON o.person_id = m.person_id AND substr(o.date, 1, 10) = m.d
+                WHERE  NOT (o.meet_id = m.meet_id AND o.div_id = m.div_id AND o.source IS NOT DISTINCT FROM m.source)
+                GROUP  BY 1, 2, 3, 4, 5, 6
+                HAVING count(DISTINCT m.person_id) >= {TWIN_MIN}
+            ), placed AS (
+                SELECT t.*, COALESCE(x.gps_lat, xt.gps_lat) AS lat, COALESCE(x.gps_long, xt.gps_long) AS lon
+                FROM   twin t
+                LEFT   JOIN meets x ON x.meet_id = t.om AND x.div_id = t.od AND x.source IS NOT DISTINCT FROM t.os
+                LEFT   JOIN meets_tfrrs xt ON t.os = 'tfrrs' AND xt.meet_id = t.om AND xt.sport = 'XC'
+            )
+            SELECT DISTINCT ON (meet_id, div_id, source) meet_id, div_id, source, lat, lon, n
+            FROM   placed WHERE lat IS NOT NULL AND lon IS NOT NULL
+            ORDER  BY meet_id, div_id, source, n DESC
+        """)
+        out_m = {(r[0], r[1], r[2]): (float(r[3]), float(r[4]), int(r[5])) for r in cur.fetchall()}
+    if left_t:
+        cur.execute(f"""
+            WITH mine AS (
+                SELECT r.meet_id, r.person_id, substr(r.date, 1, 10) AS d
+                FROM   results r
+                WHERE  r.source = 'tfrrs' AND r.meet_id = ANY(%s) AND r.person_id IS NOT NULL
+            ), twin AS (
+                SELECT m.meet_id, o.meet_id AS om, o.div_id AS od, o.source AS os,
+                       count(DISTINCT m.person_id) AS n
+                FROM   mine m JOIN results o ON o.person_id = m.person_id AND substr(o.date, 1, 10) = m.d
+                WHERE  o.source <> 'tfrrs'
+                GROUP  BY 1, 2, 3, 4
+                HAVING count(DISTINCT m.person_id) >= {TWIN_MIN}
+            )
+            SELECT DISTINCT ON (t.meet_id) t.meet_id, x.gps_lat, x.gps_long, t.n
+            FROM   twin t JOIN meets x ON x.meet_id = t.om AND x.div_id = t.od AND x.source = t.os
+            WHERE  x.gps_lat IS NOT NULL AND x.gps_long IS NOT NULL
+            ORDER  BY t.meet_id, t.n DESC
+        """, (list(left_t),))
+        out_t = {r[0]: (float(r[1]), float(r[2]), int(r[3])) for r in cur.fetchall()}
+    return out_m, out_t
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -104,26 +163,36 @@ def main():
         places = {(r[0], r[1]): (float(r[2]), float(r[3]), int(r[4])) for r in cur.fetchall()}
         since = "AND meet_date >= %(since)s" if a.since else ""
         cur.execute(f"""SELECT meet_id, div_id, course_name, state, meet_name, meet_date, source FROM meets
-                        WHERE gps_lat IS NULL AND course_name IS NOT NULL AND btrim(course_name) <> ''
-                        {since}""", {"since": a.since})
+                        WHERE gps_lat IS NULL {since}""", {"since": a.since})
         anet = cur.fetchall()
         since_t = "AND date >= %(since)s" if a.since else ""
         cur.execute(f"""SELECT meet_id, venue_name, state, meet_name, date FROM meets_tfrrs
-                        WHERE sport = 'XC' AND gps_lat IS NULL AND venue_name IS NOT NULL
-                          AND btrim(venue_name) <> '' {since_t}""", {"since": a.since})
+                        WHERE sport = 'XC' AND gps_lat IS NULL {since_t}""", {"since": a.since})
         tf = cur.fetchall()
         got_m = [(m, d, c, s, nm, dt, src, pickPlace(places, c, s)) for m, d, c, s, nm, dt, src in anet]
         got_t = [(m, c, s, nm, dt, pickPlace(places, c, s)) for m, c, s, nm, dt in tf]
+        # ★ PASS 2, THE SAME RACE IN ANOTHER FEED (owner, 2026-11-03: "What
+        #   about the rest?"). A race the name cannot place is very often a
+        #   copy -- the tfrrs or timer posting of a meet athletic.net also
+        #   carries, at a venue spelled another way or with no state. The
+        #   runners say which: a placed race on the same day sharing
+        #   TWIN_MIN of them is that race, and its place is this one's.
+        left_m = [(g[0], g[1], g[6]) for g in got_m if not g[-1]]
+        left_t = [g[0] for g in got_t if not g[-1]]
+        twin_m, twin_t = twinPlaces(cur, left_m, left_t)
+        got_m = [g if g[-1] else g[:-1] + (twin_m.get((g[0], g[1], g[6])),) for g in got_m]
+        got_t = [g if g[-1] else g[:-1] + (twin_t.get(g[0]),) for g in got_t]
         hit_m = [g for g in got_m if g[-1]]
         hit_t = [g for g in got_t if g[-1]]
-        print(f"[place] meets rows with a course but no place: {len(anet):,}; "
-              f"{len(hit_m):,} placed by their course's name")
-        print(f"[place] tfrrs XC meets with a venue but no place: {len(tf):,}; "
-              f"{len(hit_t):,} placed by their venue's name")
+        print(f"[place] by the same race in another feed: {len(twin_m):,} races, "
+              f"{len(twin_t):,} tfrrs meets")
+        print(f"[place] races with no place: {len(anet):,}; {len(hit_m):,} placed "
+              f"(by their course's name, or by the same race in another feed)")
+        print(f"[place] tfrrs XC meets with no place: {len(tf):,}; {len(hit_t):,} placed")
         for m, d, c, s, nm, dt, _src, p in hit_m[:a.show]:
-            print(f"   {dt or '':<10} {(nm or '')[:40]:<40} {c[:30]:<30} {s or '':<3} -> {p[0]:.4f},{p[1]:.4f} ({p[2]} races)")
+            print(f"   {dt or '':<10} {(nm or '')[:40]:<40} {(c or '')[:30]:<30} {s or '':<3} -> {p[0]:.4f},{p[1]:.4f} ({p[2]} races)")
         for m, c, s, nm, dt, p in hit_t[:a.show]:
-            print(f"   {dt or '':<10} {(nm or '')[:40]:<40} {c[:30]:<30} {s or '':<3} -> {p[0]:.4f},{p[1]:.4f} ({p[2]} races)  tfrrs")
+            print(f"   {dt or '':<10} {(nm or '')[:40]:<40} {(c or '')[:30]:<30} {s or '':<3} -> {p[0]:.4f},{p[1]:.4f} ({p[2]} races)  tfrrs")
         if not a.write:
             conn.rollback()
             print("  DRY RUN -- --write places them")

@@ -385,6 +385,33 @@ def knownTitle(name):
     return KNOWN_TITLES.get(UB.normKey(name))
 
 
+def fileUrl(title, width=512):
+    """The image link of one Wikimedia file (a 512 px rendering), or None."""
+    t = title if title.lower().startswith("file:") else "File:" + title
+    info = _get({"action": "query", "titles": t, "prop": "imageinfo",
+                 "iiprop": "url", "iiurlwidth": width})
+    pages = (info.get("query") or {}).get("pages") or []
+    ii = ((pages[0].get("imageinfo") or [{}])[0]) if pages else {}
+    return ii.get("thumburl") or ii.get("url")
+
+
+def findFiles(words, n=8, pause=1.0):
+    """[(title, image link)] for Wikimedia Commons files matching words."""
+    global API
+    keep = API
+    API = "https://commons.wikimedia.org/w/api.php"
+    try:
+        got = _get({"action": "query", "list": "search", "srnamespace": 6,
+                    "srsearch": words, "srlimit": n})
+        out = []
+        for h in (got.get("query") or {}).get("search") or []:
+            time.sleep(pause)
+            out.append((h["title"], fileUrl(h["title"])))
+        return out
+    finally:
+        API = keep
+
+
 def articleLogo(title, pause=1.0):
     """The logo url of one named article, or None."""
     page = _get({"action": "query", "titles": title, "prop": "images", "imlimit": 50})
@@ -413,6 +440,10 @@ def main():
     ap.add_argument("--set", nargs=2, metavar=("KIND", "NAME"),
                     help="pin this unit's logo to --url (conference, league, section ...)")
     ap.add_argument("--url", help="the image for --set (or 'none' to hide it)")
+    ap.add_argument("--file", help="for --set: a Wikimedia file by its title ('Foot Locker logo.svg'), "
+                                   "resolved to its image here")
+    ap.add_argument("--find", help="list Wikimedia files matching words ('Foot Locker logo'), with "
+                                   "each one's image link, and stop")
     ap.add_argument("--state", default="", help="a high school unit's state")
     ap.add_argument("--series", action="store_true",
                     help="the national series' marks: NXN, NXR, Foot Locker (unit_board.SERIES)")
@@ -425,6 +456,16 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
+    if a.find:
+        # ★ "JUST GIVE ME URLS" (owner, 2026-11-03): the files Wikimedia has
+        #   for these words, each with the link --set --url takes
+        for title, url in findFiles(a.find):
+            print(f"  {title}\n      {url}")
+        return 0
+    if a.file and not a.url:
+        a.url = fileUrl(a.file)
+        if not a.url:
+            raise SystemExit(f"no Wikimedia file {a.file!r}")
     if not a.set and not a.auto and not a.divisions and not a.series:
         ap.error("--set KIND NAME --url URL, --auto, or --divisions")
 
