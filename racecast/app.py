@@ -10252,7 +10252,8 @@ def api_explain(sport, result_id):
             resp.headers["Cache-Control"] = "no-store"
             return resp, 404
         cache.put(key, body)
-    return jsonify(body)
+    # ★ ON THE PUBLIC SCALE, like every rating the page shows (CLAUDE.md)
+    return jsonify(_ex.toHsBody(body, sport))
 
 
 @app.route("/api/course_search")

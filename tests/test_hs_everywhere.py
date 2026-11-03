@@ -52,3 +52,21 @@ def offenders():
 def test_every_rating_is_on_the_hs_scale():
     bad = offenders()
     assert not bad, "ratings printed off the HS scale:\n" + "\n".join(bad)
+
+
+def test_rating_breakdown_is_hs_equivalent(monkeypatch):
+    """owner, 2026-11-03: the 'How this was rated' panel showed 116.1 on the
+    college men scale beside a 140.4 on the page."""
+    import sys as _s
+    _s.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "racecast"))
+    import explain_rating as E
+    import pool_view as PV
+    monkeypatch.setattr(PV, "toHs", lambda v, pool, sport=None: None if v is None else v * 1.2)
+    body = {"race": {"pool": "college_m"}, "start_rating": 100.0, "rating": 110.0,
+            "steps": [{"key": "distance", "text": "x: a 100.0 on an average outdoor track"},
+                      {"key": "weather", "pts": 4.0}, {"key": "other", "pts": 6.0}]}
+    out = E.toHsBody(body, "XC")
+    assert out["scale"] == "hs" and out["rating"] == 132.0 and out["start_rating"] == 120.0
+    assert "a 120.0 on" in out["steps"][0]["text"]
+    assert abs(sum(s["pts"] for s in out["steps"][1:]) - 12.0) < 1e-6
+    assert body["rating"] == 110.0                       # the cached body untouched

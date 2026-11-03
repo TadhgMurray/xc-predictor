@@ -579,6 +579,41 @@ def buildChain(t):
             "rating": None if rating is None else round(float(rating), 2)}
 
 
+def toHsBody(body, sport):
+    """The breakdown on the HS-equivalent scale (CLAUDE.md: every rating a
+    page shows is HS-equivalent; owner, 2026-11-03: "please make this
+    hs-equivalent"). The steps walk the pool's own scale; each point is
+    re-read as the step's move on the public scale -- the running rating
+    before and after it, both mapped -- so the steps still add up to the
+    rating the page shows. Pure but for pool_view's map. A copy; the cached
+    body is not touched. Unchanged when the pool has no HS twin."""
+    import copy
+    try:
+        import pool_view as PV
+    except Exception:                                   # noqa: BLE001
+        return body
+    pool = ((body.get("race") or {}).get("pool") or "").split("|")[0]
+    start, rating = body.get("start_rating"), body.get("rating")
+    if not pool or start is None or PV.toHs(start, pool, sport) is None:
+        return body
+    out = copy.deepcopy(body)
+    hs = lambda v: PV.toHs(v, pool, sport)
+    run = float(start)
+    hs_start = hs(run)
+    for st in out.get("steps") or []:
+        if st.get("key") == "distance" and st.get("text"):
+            st["text"] = st["text"].replace(f"a {float(start):.1f} on", f"a {hs_start:.1f} on")
+        if st.get("pts") is not None:
+            before = hs(run)
+            run += float(st["pts"])
+            st["pts"] = round(hs(run) - before, 2)
+    out["start_rating"] = round(hs_start, 2)
+    if rating is not None:
+        out["rating"] = round(hs(rating), 2)
+    out["scale"] = "hs"
+    return out
+
+
 def _weatherText(w, wd, sport):
     bits = []
     agg = wd.get("temp_agg")

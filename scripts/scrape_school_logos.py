@@ -88,6 +88,7 @@ MIN_PX = 48
 #   otherwise, and so is anything we found some other way.
 MAX_ASPECT = 1.6
 ICON_MAX_ASPECT = 3.0
+WIDE_MAX_ASPECT = 4.0      # a conference's wordmark (unit_logos.UNIT_SHAPE)
 _ICON_KINDS = ("apple-touch", "icon-sized", "icon", "tile", "manifest")
 MAX_BYTES = 5 * 1024 * 1024
 TIMEOUT = 15
@@ -672,7 +673,10 @@ def acceptable(width, height, kind=None):
         return False
     if min(width, height) < MIN_PX:
         return False
-    cap = ICON_MAX_ASPECT if (kind or "").split(":")[-1] in _ICON_KINDS else MAX_ASPECT
+    last = (kind or "").split(":")[-1]
+    # "wide": a conference wordmark (unit_logos) -- NESCAC's is 290x93
+    cap = (WIDE_MAX_ASPECT if last == "wide"
+           else ICON_MAX_ASPECT if last in _ICON_KINDS else MAX_ASPECT)
     return max(width, height) / float(min(width, height)) <= cap
 
 

@@ -261,7 +261,9 @@
       html += '<div class="rx-total"><span>Rating</span><span class="rx-final">' +
         body.rating.toFixed(1) + "</span></div>";
       var shown = parseFloat(rv.textContent);
-      if (!isNaN(shown) && Math.abs(shown - body.rating) >= 0.05) {
+      // the breakdown comes on the HS-equivalent scale (body.scale "hs"),
+      // the same number the page shows: no second scale to explain
+      if (body.scale !== "hs" && !isNaN(shown) && Math.abs(shown - body.rating) >= 0.05) {
         html += '<p class="rx-note">This page shows ' + shown.toFixed(1) +
           " on the HS-equivalent scale; the steps are on the " +
           esc(body.race && body.race.pool_label || "athlete's own") +

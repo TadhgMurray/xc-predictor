@@ -50,7 +50,7 @@ CONF_WORDS = ("conference", "league", "association", "athletic", "collegiate")
 
 
 # a conference's mark may be a wordmark up to 3:1 (scrape_school_logos.acceptable)
-UNIT_SHAPE = "override:icon"
+UNIT_SHAPE = "override:wide"     # up to 4:1 -- NESCAC's mark is 3.1:1
 
 from unit_board import logoKey as unitKey                      # noqa: E402  the one definition
 
