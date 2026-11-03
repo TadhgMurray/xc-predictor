@@ -395,6 +395,15 @@ def schoolHref(school, state=None, pool=None, sport=None, trusted=False):
     """
     if not school:
         return "#"
+    # ★ NO LINK TO A PAGE THAT 404s (Search Console, 2026-11-03: 7,865
+    #   "Not found" -- clubs, "48-Unattached", a time in the school column).
+    #   The route refuses a name panels.isTeamName refuses; so does the link.
+    try:
+        from panels import isTeamName
+        if not isTeamName(school):
+            return "#"
+    except Exception:                                   # noqa: BLE001
+        pass
     st = (teamState(school, pool, state) if pool
           else contextState(school, state, trusted))
     # ! quote(safe="/") is exactly what Jinja's |urlencode did here, and

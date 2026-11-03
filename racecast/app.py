@@ -5535,6 +5535,20 @@ def meet_tf_find(meet_id):
     return jsonify(out)
 
 
+# ★ THE MALFORMED RACE ADDRESSES GOOGLE HAS (Search Console, 2026-11-03):
+#   /race/tf/32182/2034098/None (a track row with no division, from before
+#   the templates guarded it) and /race/xc/46526/compiled/4700/ (no gender).
+#   Each goes to its meet, permanently, instead of a 404.
+@app.route("/race/tf/<int(signed=True):meet_id>/<int(signed=True):event_id>/None")
+def race_tf_malformed(meet_id, event_id):
+    return redirect(f"/meet/tf/{meet_id}", code=301)
+
+
+@app.route("/race/xc/<int(signed=True):meet_id>/compiled/<int:distance>/")
+def race_xc_compiled_malformed(meet_id, distance):
+    return redirect(f"/meet/xc/{meet_id}", code=301)
+
+
 @app.route("/race/xc/<int:meet_id>/compiled/<int:distance>/<gender>")
 def compiled_race(meet_id, distance, gender):
     """One compiled race: every division at this distance and gender, merged.

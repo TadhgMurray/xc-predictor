@@ -1067,7 +1067,14 @@ def stampBoardRows(rows, rating_keys=("rating",), pool=None, sport=None):
     these are season means and career bests, not single races.
     Returns True when anything moves enough to show the toggle."""
     has_alt = False
+    try:
+        from panels import isTeamName
+    except Exception:                                   # noqa: BLE001
+        isTeamName = None
     for row in rows:
+        # ★ the JS boards link a school only when it has a page (no_page)
+        if isTeamName is not None and row.get("school") and not isTeamName(row["school"]):
+            row["no_page"] = True
         p = row.get("pool", pool)
         s = row.get("sport", sport)
         # A row that knows its race distance gets the exact factor; a

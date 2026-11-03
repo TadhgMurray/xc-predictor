@@ -205,9 +205,11 @@ function schoolHref(school, state) {
        + (state ? `?state=${encodeURIComponent(state)}` : "");
 }
 
-function schoolCell(school, state, crest) {
+function schoolCell(school, state, crest, noPage) {
   const st = state ? ` <span class="state">${esc(state)}</span>` : "";
   if (!school) return `<td> - ${st}</td>`;
+  // a club or "Unattached" has no page (the server marks it no_page)
+  if (noPage) return `<td>${crestMark(crest)}${esc(school)}${st}</td>`;
   return `<td>${crestMark(crest)}<a href="${schoolHref(school, state)}">`
        + `${esc(school)}</a>${st}</td>`;
 }
@@ -1349,7 +1351,7 @@ function renderAbility(rows) {
     <tr${String(r.person_id) === state.highlight ? ' class="is-found"' : ""}>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.school_state || r.state, r.crest)}
+      ${schoolCell(r.school, r.school_state || r.state, r.crest, r.no_page)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(SPORT_SHORT[r.sport] || r.sport)}</td>
       <td>${academicLabel(r.year)}</td>
@@ -1384,7 +1386,7 @@ function renderPerformance(rows) {
     <tr>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.school_state || r.state, r.crest)}
+      ${schoolCell(r.school, r.school_state || r.state, r.crest, r.no_page)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(SPORT_SHORT[r.sport] || r.sport)}</td>
       ${maybeLink(href, esc(fmtDate(r.race_date)))}
@@ -1427,7 +1429,7 @@ function renderPr(rows) {
     <tr>
       <td class="rank${state.offset + i < 3 ? " top3" : ""}">${state.offset + i + 1}</td>
       <td><a href="/athlete/${r.person_id}">${esc(r.name)}</a></td>
-      ${schoolCell(r.school, r.school_state || r.state, r.crest)}
+      ${schoolCell(r.school, r.school_state || r.state, r.crest, r.no_page)}
       <td>${esc(gradeLabel(r.grade, r.pool || poolNow()))}</td>
       <td>${esc(POOL_LABEL[r.pool] || r.pool)}</td>
       <td>${esc(fmtDate(r.race_date))}</td>

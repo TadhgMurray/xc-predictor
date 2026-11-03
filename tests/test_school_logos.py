@@ -2725,8 +2725,13 @@ class OneHref(unittest.TestCase):
                          "/school/Amherst?state=MA&level=college")
 
     def test_a_school_the_identity_cannot_place_links_as_it_always_did(self):
-        self.assertEqual(self.SI.schoolHref("Nowhere Unknown", "VT"),
-                         "/school/Nowhere Unknown".replace(" ", "%20"))
+        self.assertEqual(self.SI.schoolHref("Nowhere Valley", "VT"),
+                         "/school/Nowhere Valley".replace(" ", "%20"))
+
+    def test_a_name_with_no_page_is_not_a_link(self):
+        """Search Console's 404s (2026-11-03): clubs, Unattached, a time."""
+        for name in ("48-Unattached", "12:16.57", "Unattached"):
+            self.assertEqual(self.SI.schoolHref(name, "VT"), "#", name)
 
     def test_a_slash_in_a_school_name_survives_the_path_converter(self):
         """The route is <path:school_name> and school strings really do
