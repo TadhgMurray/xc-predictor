@@ -68,6 +68,7 @@ FILES = (
     "engine/joint_golive.py",
     "engine/apply_tilt.py",
     "engine/fill_ratings.py",
+    "engine/provisional_day.py",
     "racecast/build_ranking_results.py",
     "racecast/pool_ceiling.py",
     "racecast/pool_view.py",
@@ -680,6 +681,17 @@ RULES = {
                "a race with no course anchored to its own field: runners needed, runners with a "
                "rating elsewhere, and the largest shift taken (owner, 2026-11-02)"),
     },
+    # ------------------------------------------------------ provisional_day
+    "engine/provisional_day.py": {
+        **_all("WINDOW_DAYS LEVEL_DAYS CAL_MAX", "INFRA",
+               "how far back races and levels are read, and how many solved races calibrate"),
+        **_all("MIN_FIELD CAL_MIN_FIELD CAL_MIN", "STATED",
+               "the nightly provisional race-day term (owner, 2026-11-03): runners with a level a "
+               "race needs, the solved races' size, and how many must calibrate it; the offset and "
+               "the shrinkage are read from the solve's own days, not set"),
+        "GATE": ("STATED", "written only when its backtest error is at most 85% of no term's"),
+        **_all("_ROWS_SQL _RACES_SQL _LEVEL_SQL", "INFRA", "SQL"),
+    },
     # ------------------------------------------------ build_ranking_results
     "racecast/build_ranking_results.py": {
         "_HAVE_RATING_POOL": ("INFRA", "whether the result tables carry rating_pool (set per build)"),
@@ -807,6 +819,8 @@ ENV_RULES = {
     **_all("XCP_RACE_KEY XCP_RACE_EFFECT_OWN XCP_DAY_DIVISION_GUARD XCP_DAY_DIVISION_SHRINK XCP_DAY_SOFT "
            "XCP_DAY_PRIOR", "REMOVED", RACE),
     "XCP_DAY_GUARD_NEAR_ZERO": ("REMOVED", RACE + " (ablation switch for the day guard's tie-break)"),
+    "XCP_WX_RECENT_MIN": ("INFRA", "minutes the recent-weather fetch may run before the pipeline stops "
+                                   "waiting on it (2026-11-03: a stuck fetch held a run 10 hours)"),
     "XCP_DAY_DISTANCE": ("REMOVED", RACE + " (the loop layer between venue and division; off until the "
                                            "day-term consistency report says it helps)"),
     "XCP_RACE_EFFECT_SPORTS": ("FITTED", "whether the track race day is credited: cross-validated on the "

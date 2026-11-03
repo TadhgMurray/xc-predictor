@@ -1173,7 +1173,10 @@ _DAY_DDL = """
         race_date     date    NOT NULL,
         day_effect    real    NOT NULL,
         n_rows        integer NOT NULL,
-        course_effect real
+        course_effect real,
+        -- a nightly provisional term (engine/provisional_day.py) for a race
+        -- this solve has not seen; the solve's own rows are false
+        provisional   boolean NOT NULL DEFAULT false
     )
 """
 

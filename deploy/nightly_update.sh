@@ -312,6 +312,10 @@ step 04x_alive_dist "$PY" -u -m sources.athleticlive_xc distances --write || tru
 # scrape (scripts/set_race_course.py), before the new rows are priced
 step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply || true
 
+# ★ 09c (2026-11-03, owner: "the no race day thing is killing me"): the
+#   races since the last full solve get a provisional race-day term read off
+#   their field and calibrated on the solve's own days (engine/provisional_day.py);
+#   written only when its backtest beats no term. Never blocks the boards.
 # ★ 05b (2026-11-01, Sagebrush 2021): rows normalised before their gender
 #   was known keep the wrong side of a combined race's distance; 05b
 #   re-normalises the races where a few rows sit apart from their group and
@@ -319,6 +323,7 @@ step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply || true
 if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --apply --new-only \
    && { step 05b_stragglers "$PY" -u scripts/fix_stragglers.py --apply || true; } \
    && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue \
+   && { step 09c_provisional_day "$PY" -u engine/provisional_day.py --write || true; } \
    && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 
   # ---- 4. publish: boards, rank lines, teams, search -------------------- #

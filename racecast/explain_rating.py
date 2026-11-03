@@ -510,7 +510,9 @@ def buildChain(t):
     u, mode = t.get("day_u"), t.get("day_mode")
     if u is None:
         add("day", "Race day", None,
-            "Not available: the solve kept no race-day term for this race.",
+            "Not yet: the race-day term is fitted by the weekly full solve, and a race "
+            "run since the last one gets a provisional term overnight once its field "
+            "has enough runners with a level to read it from.",
             available=False, applied=bool(mode))
     else:
         slow = float(u) > 0
@@ -518,7 +520,10 @@ def buildChain(t):
         how = ("level" if level else
                f"{_a(float(u))} {'slow' if slow else 'fast'}")
         n = t.get("day_n")
-        who = f"the field ({n} runners rated here)" if n else "the field"
+        if t.get("day_provisional"):
+            who = (f"the field ({n} runners with a level coming in)" if n else "the field")
+        else:
+            who = f"the field ({n} runners rated here)" if n else "the field"
         if not mode:
             txt = (f"That day {who} ran {how} against their own ratings. "
                    f"{_SPORT_WORDS.get(sport, sport)} ratings do not carry the race-day term (it only "
@@ -539,8 +544,12 @@ def buildChain(t):
                        f"rating {'is credited' if x > 0 else 'is lowered'} {_a(x, 2)}.")
                 if abs(float(u)) > RACE_DAY_CAP + 1e-9:
                     txt += " Capped at 10%: beyond that the result sheet is suspect."
+            if t.get("day_provisional"):
+                txt += (" Provisional: read overnight from how this field ran against "
+                        "their level coming in; the weekly full solve refits it.")
             add("day", "Race day", x, txt, applied=True,
-                detail={"day_pct": round(pctOf(float(u)), 2), "n_rows": n})
+                detail={"day_pct": round(pctOf(float(u)), 2), "n_rows": n,
+                        "provisional": bool(t.get("day_provisional"))})
 
     # --- event offset, sport gain (track) -------------------------------- #
     if sport == "TF":
@@ -800,8 +809,9 @@ def raceDayRow(cur, sport, row, ce_col, has_table):
             if row.get("canonical_id") is None or row.get("cell_distance_m") is None:
                 return None, None, None
             cur.execute(f"""
-                SELECT day_effect, n_rows, {ce_col} AS course_effect
-                FROM race_day_effect
+                SELECT day_effect, n_rows, {ce_col} AS course_effect,
+                       COALESCE((to_jsonb(e) ->> 'provisional')::boolean, false) AS provisional
+                FROM race_day_effect e
                 WHERE canonical_id = %(cid)s AND distance_m = %(dm)s
                   AND race_date::text = %(day)s::text
                 ORDER BY n_rows DESC LIMIT 1""",
@@ -813,8 +823,9 @@ def raceDayRow(cur, sport, row, ce_col, has_table):
             key = (f"TF:loc:{row['location_id']}:"
                    f"{'in' if row.get('is_indoor') == 1 else 'out'}")
             cur.execute(f"""
-                SELECT day_effect, n_rows, {ce_col} AS course_effect
-                FROM race_day_effect
+                SELECT day_effect, n_rows, {ce_col} AS course_effect,
+                       COALESCE((to_jsonb(e) ->> 'provisional')::boolean, false) AS provisional
+                FROM race_day_effect e
                 WHERE course_name = %(key)s AND race_date::text = %(day)s::text
                 ORDER BY n_rows DESC LIMIT 1""", {"key": key, "day": row["date"][:10]})
         got = cur.fetchone()
@@ -824,6 +835,8 @@ def raceDayRow(cur, sport, row, ce_col, has_table):
     if not got:
         return None, None, None
     got = dict(got)
+    # a nightly provisional term (engine/provisional_day.py): the chain says so
+    row["day_provisional"] = bool(got.get("provisional"))
     return (_num(got.get("day_effect")), got.get("n_rows"),
             _num(got.get("course_effect")))
 
@@ -944,6 +957,7 @@ def gatherTerms(cur, sport, row, ce_col="NULL::real", has_day_table=False,
     # --- course and day ----------------------------------------------- #
     u, n, ce = raceDayRow(cur, sport, row, ce_col, has_day_table)
     t["day_u"], t["day_n"], t["day_mode"] = u, n, modes.get(sport)
+    t["day_provisional"] = bool(row.get("day_provisional"))
     if row.get("dist_corrected"):
         t["course_applied"] = False
         t["course_why"] = ("This division's distance was corrected by hand, so it "
