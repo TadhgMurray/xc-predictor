@@ -49,6 +49,7 @@ _URL = re.compile(r"url\([^)]*\)", re.I)
 # ! ALREADY DARK BY DESIGN: the home page's band is a dark ground with light
 #   type in BOTH modes -- flipped, it turned into a pale slab on a dark page
 KEEP_AS_IS = re.compile(r"\.hm-(?:band|text|search|what|facts)\b")
+# ...but lifted off the page by a shade, so the band still reads as a band
 
 GROUND = (0x14, 0x16, 0x1a)
 INK = (0xe6, 0xe8, 0xeb)
@@ -96,20 +97,127 @@ def _fmt(r, g, b, a):
     return f"rgba({r}, {g}, {b}, {round(a, 3)})"
 
 
+# ★ A FEW SHADES, NOT A CONTINUUM (owner, 2026-11-03: "it looks off ...
+#   how some things are really white while some are just muted grays").
+#   Flipping every grey on its own turned the light sheets' dozen near-same
+#   greys into a dozen visibly different ones. A neutral now lands on one of
+#   a few fixed shades by what it is doing: text (ink, secondary, muted,
+#   faint), ground (page, raised, sunk, strong), line (hair, firm).
+TEXT_TIERS = ((0.30, (0xe6, 0xe8, 0xeb)),    # ink: #111 .. #444
+              (0.55, (0xb6, 0xbb, 0xc2)),    # secondary: #555 .. #888
+              (0.75, (0x8d, 0x93, 0x9b)),    # muted: #999 .. #bbb
+              (1.01, (0x63, 0x69, 0x71)))    # faint: #ccc and lighter
+GROUND_TIERS = ((0.985, (0x14, 0x16, 0x1a)),  # white: the page itself
+                (0.95, (0x1b, 0x1e, 0x23)),   # zebra, hover, pale panel
+                (0.88, (0x23, 0x27, 0x2d)),   # a grey panel or chip
+                (0.70, (0x2e, 0x33, 0x3a)))   # a strong grey ground
+LINE_TIERS = ((0.85, (0x2b, 0x30, 0x36)),     # hairlines
+              (0.60, (0x3d, 0x43, 0x4b)))     # firm lines
+
+
+def _role(prop):
+    p = prop.lower()
+    if "shadow" in p:
+        return "shadow"
+    if p.startswith("--"):
+        if re.search(r"bg|ground|zebra|hover|sel-bg|panel|card|surface|fill-bg", p):
+            return "ground"
+        if re.search(r"line|border|rule|grid", p):
+            return "line"
+        return "text"
+    if p.startswith("background"):
+        return "ground"
+    if p.startswith(("border", "outline", "column-rule")):
+        return "line"
+    return "text"                     # color, fill, stroke, caret, decoration
+
+
+def _tier(l, tiers, lo_first=False):
+    for edge, rgb in tiers:
+        if (l >= edge) if not lo_first else (l < edge):
+            return rgb
+    return None
+
+
 def darkColor(tok, prop=""):
     """The dark-mode twin of one colour token for property `prop`. Pure."""
     c = _parse(tok)
     if c is None:
         return tok
     r, g, b, a = c
-    if "shadow" in prop:
+    role = _role(prop)
+    if role == "shadow":
         return _fmt(0, 0, 0, min(1.0, a * 1.6))
     h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
-    l2 = 0.08 + (1.0 - l) * 0.86
-    if l2 < 0.3:
-        s *= 0.6                 # a dark ground keeps its hue, not its glare
-    r2, g2, b2 = colorsys.hls_to_rgb(h, l2, s)
+    neutral = s < 0.18 or max(r, g, b) - min(r, g, b) < 24
+    if neutral:
+        if role == "text":
+            rgb = _tier(l, TEXT_TIERS, lo_first=True)
+            return _fmt(*rgb, a)
+        if role == "ground":
+            got = _tier(l, GROUND_TIERS)
+            if got:
+                return _fmt(*got, a)
+            # a dark ground (a black button, a selected chip) turns light:
+            # in dark mode the selected state reads as ink, as it does now
+            return _fmt(*TEXT_TIERS[0][1], a) if l < 0.3 else _fmt(*GROUND_TIERS[-1][1], a)
+        got = _tier(l, LINE_TIERS)
+        return _fmt(*(got or (0x55, 0x5b, 0x63)), a)
+    # a colour with a hue: links, accents, badges, tints
+    if role == "text":
+        # light, but in the same ORDER as the light sheet's: a ramp (the
+        # field's five rating tiers) stays five steps, the navy link is one
+        l2, s2 = max(0.56, min(0.86, 0.92 - 0.6 * l)), min(s, 0.75)
+    elif role == "ground":
+        if l > 0.85:
+            l2, s2 = 0.17, s * 0.45           # a pale tint: a dark one of its hue
+        elif l < 0.25:
+            l2, s2 = 0.30, s * 0.7            # a deep ground: lifted a little
+        else:
+            return _fmt(r, g, b, a)           # a badge's colour: kept as it is
+    else:
+        l2, s2 = (0.30, s * 0.6) if l > 0.6 else (0.55, s)
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l2, s2)
     return _fmt(r2 * 255, g2 * 255, b2 * 255, a)
+
+
+def _neutralL(val):
+    """Lightness of the first neutral colour in a value, or None. Pure."""
+    for m in _COLOR.finditer(val):
+        c = _parse(m.group(0))
+        if not c:
+            continue
+        r, g, b, _a = c
+        h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+        if s < 0.18 or max(r, g, b) - min(r, g, b) < 24:
+            return l
+        return None
+    return None
+
+
+def _lightNeutral(val):
+    l = _neutralL(val)
+    return l is not None and l > 0.85
+
+
+def _darkNeutral(val):
+    l = _neutralL(val)
+    return l is not None and l < 0.3
+
+
+def keptGround(val):
+    """Is this background a badge colour darkColor keeps? (hue, middle
+    lightness) Pure."""
+    for m in _COLOR.finditer(val):
+        c = _parse(m.group(0))
+        if not c:
+            continue
+        r, g, b, _a = c
+        h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+        neutral = s < 0.18 or max(r, g, b) - min(r, g, b) < 24
+        if not neutral and 0.25 <= l <= 0.85:
+            return True
+    return False
 
 
 def mapValue(value, prop):
@@ -188,15 +296,34 @@ def darkDecls(body):
       field went grey. Copying every colour declaration keeps the light
       sheets' own cascade among the dark rules -- a rule whose colours are
       all tokens is copied too, for the same reason."""
-    out, any_change = [], False
+    decls = []
     for d in _splitTop(body, ";"):
         if ":" not in d:
             continue
         prop, _, val = d.partition(":")
         prop = prop.strip()
-        if not _COLOR_PROPS.match(prop) or _NOT_COLOR.search(prop):
-            continue
-        new, changed = mapValue(val.strip(), prop.lower())
+        if _COLOR_PROPS.match(prop) and not _NOT_COLOR.search(prop):
+            decls.append((prop, val.strip()))
+    # ! A BADGE KEEPS ITS INK: a rule whose ground keeps its colour (the PR
+    #   gold, a sport tag) keeps its text colour too, or white on gold turns
+    #   grey on gold
+    grounds = [v for p, v in decls if p.lower().startswith("background")]
+    badge = any(keptGround(v) for v in grounds)
+    # ! WHITE TYPE SITS ON A GROUND: with no ground in its own rule it is on a
+    #   badge or a photo set elsewhere and stays white; on a token or dark
+    #   ground (a selected chip, which turns light here) it turns dark
+    dark_ground = any("var(" in v or _darkNeutral(v) for v in grounds)
+    out, any_change = [], False
+    for prop, val in decls:
+        if _role(prop) == "text" and not prop.startswith("--"):
+            if badge or (not grounds and _lightNeutral(val)):
+                out.append(f"{prop}: {val}")
+                continue
+            if dark_ground and _lightNeutral(val):
+                out.append(f"{prop}: {_COLOR.sub(lambda m: _fmt(*GROUND_TIERS[0][1], (_parse(m.group(0)) or (0, 0, 0, 1))[3]), val)}")
+                any_change = True
+                continue
+        new, changed = mapValue(val, prop.lower())
         any_change = any_change or changed
         out.append(f"{prop}: {new}")
     return out, any_change
@@ -253,6 +380,7 @@ BASE = f"""{PREFIX} {{ color-scheme: dark; background: {_fmt(*GROUND, 1)}; color
 {PREFIX} body {{ background: {_fmt(*GROUND, 1)}; color: {_fmt(*INK, 1)}; }}
 {PREFIX} img.school-crest, {PREFIX} img.unit-logo, {PREFIX} img.unit-chip-logo,
 {PREFIX} img.crest, {PREFIX} .crest img {{ background: rgba(255, 255, 255, 0.9); border-radius: 4px; }}
+{PREFIX} .hm-band {{ background: #1b1e23; }}
 {PREFIX} main.rc .rc-follow {{ background: #1d2025; }}
 {PREFIX} main.rc .rc-follow.is-on {{ background: #e6e8eb; color: #141618; }}
 """

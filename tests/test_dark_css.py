@@ -15,13 +15,25 @@ def test_dark_css_is_current():
     assert r.returncode == 0, "run: python scripts/build_dark_css.py\n" + r.stdout
 
 
-def test_mapping_flips_lightness_and_keeps_shadows_dark():
-    assert B.darkColor("#ffffff") == "#141414"
-    assert B.darkColor("#111418") > "#d8"            # near-white ink
+def test_mapping_lands_on_a_few_shades():
+    """owner, 2026-11-03: "some things are really white while some are just
+    muted grays" -- neutrals land on fixed tiers by role."""
+    assert B.darkColor("#ffffff", "background") == "#14161a"          # the page
+    assert B.darkColor("#fafbfc", "background") == B.darkColor("#f3f6fa", "background")
+    assert B.darkColor("#111418", "color") == B.darkColor("#333", "color") == "#e6e8eb"
+    assert B.darkColor("#666", "color") == B.darkColor("#777", "color")
+    assert B.darkColor("#e5e7eb", "border-color") == B.darkColor("#ddd", "border-color")
     assert B.darkColor("rgba(0,0,0,.2)", "box-shadow") == "rgba(0, 0, 0, 0.32)"
     assert B.darkColor("var(--x)") == "var(--x)"
+    # a link is light and keeps its hue
+    assert B.darkColor("#14477d", "--link") > "#6"
     v, changed = B.mapValue("url(#fff) #fff", "background")
     assert v.startswith("url(#fff)") and changed
+
+
+def test_a_badge_keeps_its_colours():
+    out = B.darkSheet(".flag--pr { background: #e0a500; color: #fff; }")
+    assert "background: #e0a500" in out and "color: #fff" in out
 
 
 def test_cascade_is_kept_for_token_rules():
