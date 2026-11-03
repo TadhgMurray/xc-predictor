@@ -46,31 +46,44 @@
 {% if error %}
   <p class="st-err">Could not read this: {{ error }}. Run <code>python racecast/monitor.py --init</code> if the table is not there yet.</p>
 {% else %}
-  <h2 id="daily">Page views per day</h2>
+  {# one bar chart, drawn twice: views, and (2026-11-03, owner: "visitors as
+     its own table/chart") visitors -- a browser counted once a day #}
+  {% macro bars(series, peak, unit, label) %}
   {% set W, H, pad = 720, 160, 18 %}
-  {% set bw = (W / rep.daily|length) %}
-  <svg class="us-chart" viewBox="0 0 {{ W }} {{ H + pad }}" role="img"
-       aria-label="Page views per day, last {{ rep.days }} days, {{ n(rep.views) }} in all">
+  {% set bw = (W / series|length) %}
+  <svg class="us-chart" viewBox="0 0 {{ W }} {{ H + pad }}" role="img" aria-label="{{ label }}">
     <line class="axis" x1="0" y1="{{ H }}" x2="{{ W }}" y2="{{ H }}"></line>
-    {% for day, v in rep.daily %}
-      {% set h = (v / rep.peak * (H - 14)) if v else 0 %}
+    {% for day, v in series %}
+      {% set h = (v / peak * (H - 14)) if (v and peak) else 0 %}
       {% set x = loop.index0 * bw %}
-      <g><title>{{ day.strftime("%a %b ") ~ day.day }}: {{ n(v) }} views</title>
+      <g><title>{{ day.strftime("%a %b ") ~ day.day }}: {{ n(v) }} {{ unit }}</title>
         <rect class="hit" x="{{ x }}" y="0" width="{{ bw }}" height="{{ H }}"></rect>
         {% if h %}{% set r = [4, h, (bw - 2) / 2]|min %}<path class="bar" d="M{{ x + 1 }},{{ H }} V{{ H - h + r }} q0,-{{ r }} {{ r }},-{{ r }} H{{ x + bw - 1 - r }} q{{ r }},0 {{ r }},{{ r }} V{{ H }} Z"></path>{% endif %}
       </g>
-      {% if loop.first or loop.last or (rep.days == 30 and loop.index0 % 7 == 0) or rep.days == 7 %}
+      {% if loop.first or loop.last or (series|length == 30 and loop.index0 % 7 == 0) or series|length == 7 %}
       <text x="{{ x + bw / 2 }}" y="{{ H + 13 }}" text-anchor="middle">{{ day.strftime("%b ") ~ day.day }}</text>{% endif %}
     {% endfor %}
-    <text x="0" y="10">peak {{ n(rep.peak) }}</text>
+    <text x="0" y="10">peak {{ n(peak) }}</text>
   </svg>
-  <p class="meta">{{ n(rep.views) }} views since {{ rep.since.strftime("%b ") ~ rep.since.day }}{% if rep.visitors %}, from {{ n(rep.visitors) }} daily visitors (a browser counts once a day; yours, signed in as admin, not at all){% endif %}.</p>
-  <details class="st-steps"><summary>As a table</summary>
-    {% set vis = dict(rep.visitors_daily or []) %}
-    <table><thead><tr><th>Day</th><th class="n">Visitors</th><th class="n">Views</th></tr></thead><tbody>
-    {% for day, v in rep.daily|reverse %}<tr><td>{{ day.strftime("%a %b ") ~ day.day }}</td><td class="n">{{ n(vis.get(day, 0)) }}</td><td class="n">{{ n(v) }}</td></tr>{% endfor %}
-    </tbody></table>
-  </details>
+  {% endmacro %}
+  {% set vis = dict(rep.visitors_daily or []) %}
+  {% set vseries = [] %}{% for day, _v in rep.daily %}{% set _ = vseries.append((day, vis.get(day, 0))) %}{% endfor %}
+  {% set vpeak = (vseries|map(attribute=1)|max) if vseries else 0 %}
+
+  <h2 id="visitors">Visitors per day</h2>
+  {% if rep.visitors %}
+  {{ bars(vseries, vpeak, "visitors", "Visitors per day, last " ~ rep.days ~ " days") }}
+  <p class="meta">{{ n(rep.visitors) }} daily visitors since {{ rep.since.strftime("%b ") ~ rep.since.day }}: a browser counts once a day, however many pages it opens; yours, signed in as admin, not at all. Counted since 2026-11-03, so earlier days read 0.</p>
+  {% else %}<p class="meta">No visitors counted yet: the count started 2026-11-03.</p>{% endif %}
+
+  <h2 id="daily">Page views per day</h2>
+  {{ bars(rep.daily, rep.peak, "views", "Page views per day, last " ~ rep.days ~ " days, " ~ n(rep.views) ~ " in all") }}
+  <p class="meta">{{ n(rep.views) }} views since {{ rep.since.strftime("%b ") ~ rep.since.day }}{% if rep.visitors %}, {{ (rep.views / rep.visitors)|round(1) }} per visitor{% endif %}.</p>
+
+  <h2 id="day-table">Day by day</h2>
+  <table><thead><tr><th>Day</th><th class="n">Visitors</th><th class="n">Views</th><th class="n">Views per visitor</th></tr></thead><tbody>
+  {% for day, v in rep.daily|reverse %}{% set vv = vis.get(day, 0) %}<tr><td>{{ day.strftime("%a %b ") ~ day.day }}</td><td class="n">{{ n(vv) }}</td><td class="n">{{ n(v) }}</td><td class="n">{{ (v / vv)|round(1) if vv else "-" }}</td></tr>{% endfor %}
+  </tbody></table>
 
   <h2 id="screens">Phone or desktop</h2>
   {% set tot = rep.phone + rep.desktop %}

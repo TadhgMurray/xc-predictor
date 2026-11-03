@@ -19,7 +19,7 @@
 {% from "_scale.html" import rv %}
 {% set glabel = (goals|selectattr(0, "equalto", goal)|first)[1] %}
 {% set meta_title = "What do I need to run? " ~ glabel %}
-{% set meta_description = "The time it takes to make state, finish top 25 or top 8 there, or match a college's typical recruit, at any cross country course and distance." %}
+{% set meta_description = "The time it takes to make state, finish top 25 or top 8 there, match a college's typical recruit, or place at a college conference meet or nationals, at any cross country course and distance." %}
 {% set meta_path = "/goal" %}
 {% set meta_crumbs = [("What it takes", "/what-it-takes"), ("What do I need to run?", none)] %}
 {% include "_meta.html" %}
@@ -32,10 +32,10 @@
 <main class="page-wide p2-page rc goal-page">
   <header class="rc-hd"><div class="rc-hgrid rc-hone">
     <div class="rc-left">
-      <div class="rc-sport"><span class="sport-tag sport-tag--xc">High school {{ gender_words|lower }} cross country</span></div>
+      <div class="rc-sport"><span class="sport-tag sport-tag--xc">{% if is_college %}College {{ college_words|lower }}'s cross country{% else %}High school {{ gender_words|lower }} cross country{% endif %}</span></div>
       <h1>What do I need to run?</h1>
       <div class="rc-meta">
-        {% if target %}{{ glabel }}{% if goal == "recruit" %} · {{ target.label }}{% else %} · {{ state_name }} {{ target.label }}{% endif %} · {{ (dist)|goal_dist }} at {{ where }}{% else %}A goal, a course, a distance{% endif %}
+        {% if target %}{{ glabel }}{% if is_college %} · {{ target.where }}{% elif goal == "recruit" %} · {{ target.label }}{% else %} · {{ state_name }} {{ target.label }}{% endif %} · {{ (dist)|goal_dist }} at {{ where }}{% else %}A goal, a course, a distance{% endif %}
         · <a href="/what-it-takes">What it takes</a>
         <button type="button" class="share-btn rc-share-link" data-share-title="{{ meta_title }} on Racecast"
             data-share-url="{{ site_origin ~ request.full_path.rstrip('?') }}" title="Share this page"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/></svg><span>Share</span></button>
@@ -44,16 +44,17 @@
       <div class="rc-champs">
         <div><span class="k">You need</span>
           <span class="rc-crow"><b class="rc-cn">{{ (times.course or times.typical)|scale_time or "–" }}</b><i>{{ (dist)|goal_dist }} at {{ where }}</i></span>
-          <span class="rc-csub">a season rating of {{ rv(target.rating, target.rating) }}</span></div>
+          <span class="rc-csub">a season rating of {{ rv(target.rating, target.rating if not is_college else target.rating|hs(pool, "XC")) }}</span></div>
         {% if athlete and athlete.times %}
         <div><span class="k">{{ athlete.name or "This athlete" }} now</span>
-          <span class="rc-crow"><b class="rc-cn">{{ (athlete.times.course or athlete.times.typical)|scale_time or "–" }}</b><i>{% if athlete.gap > 0 %}{{ "%.1f"|format(athlete.gap) }} points to find{% else %}already there, {{ "%.1f"|format(-athlete.gap) }} points to spare{% endif %}</i></span>
-          <span class="rc-csub">{{ athlete.year }} season rating {{ rv(athlete.rating, athlete.rating) }}</span></div>
+          <span class="rc-crow"><b class="rc-cn">{{ (athlete.times.course or athlete.times.typical)|scale_time or "–" }}</b><i>{% set _gap = hs_delta(athlete.gap, target.rating, pool, "XC") if is_college else athlete.gap %}{# hs-ok: an HS goal's gap is already HS; a college one goes through hs_delta #}{% if athlete.gap > 0 %}{{ "%.1f"|format(_gap) }} points to find{% else %}already there, {{ "%.1f"|format(-_gap) }} points to spare{% endif %}</i></span>
+          <span class="rc-csub">{{ athlete.year }} season rating {{ rv(athlete.rating, athlete.rating if not is_college else athlete.rating|hs(pool, "XC")) }}</span></div>
         {% endif %}
       </div>
       {% else %}
-      <p class="rc-story">Pick a goal: making your state meet, a top-25 or top-8 finish there, or a college's typical
-        recruit. Then a course and a distance, and read the time that goal takes there.</p>
+      <p class="rc-story">Pick a goal: making your state meet, a top-25 or top-8 finish there, a college's typical
+        recruit, or in college a top-7 or all-conference finish at your conference meet or the top 40 at
+        nationals. Then a course and a distance, and read the time that goal takes there.</p>
       {% endif %}
     </div>
   </div></header>
@@ -69,8 +70,8 @@
     <div class="field">
       <label for="goal-g">Runners</label>
       <select id="goal-g" name="g">
-        <option value="boys"{% if gender == "boys" %} selected{% endif %}>Boys</option>
-        <option value="girls"{% if gender == "girls" %} selected{% endif %}>Girls</option>
+        <option value="boys"{% if gender == "boys" %} selected{% endif %} data-hs="Boys" data-college="Men">{{ "Men" if is_college else "Boys" }}</option>
+        <option value="girls"{% if gender == "girls" %} selected{% endif %} data-hs="Girls" data-college="Women">{{ "Women" if is_college else "Girls" }}</option>
       </select>
     </div>
     <div class="field goal-state">
@@ -91,6 +92,18 @@
       <label for="goal-college">College</label>
       <input id="goal-college" name="college" list="goal-colleges" value="{{ college }}" autocomplete="off" placeholder="Type a college">
       <datalist id="goal-colleges">{% for c in colleges %}<option value="{{ c }}">{% endfor %}</datalist>
+    </div>
+    <div class="field goal-conf">
+      <label for="goal-conf">Conference</label>
+      <input id="goal-conf" name="conf" list="goal-confs" value="{{ conference }}" autocomplete="off" placeholder="Type a conference">
+      <datalist id="goal-confs">{% for c in conferences %}<option value="{{ c }}">{% endfor %}</datalist>
+    </div>
+    <div class="field goal-cdiv">
+      <label for="goal-cdiv">Division</label>
+      <select id="goal-cdiv" name="cdiv">
+        <option value="">Pick a division</option>
+        {% for d in cdivisions %}<option value="{{ d }}"{% if d == cdiv %} selected{% endif %}>{{ d }}</option>{% endfor %}
+      </select>
     </div>
     <div class="field goal-course">
       <label for="goal-course">Course</label>
@@ -134,7 +147,11 @@
       </tbody>
     </table>
     <p class="p2-foot">
-      {% if goal == "recruit" %}
+      {% if is_college %}
+        The mark is the season rating {{ mark_pct }}% of {{ target.whose }} had reached, over the
+        {{ target.years|join(", ") }} championship{{ "s" if target.years|length > 1 }} ({{ target.n }} rated runners).
+        {% if target.href %}<a href="{{ target.href }}">The {{ target.where }} page</a>.{% endif %}
+      {% elif goal == "recruit" %}
         The rating is the median high-school rating of {{ target.label }}'s recruits{% if target.classes %}, classes of {{ target.classes }}{% endif %}
         ({{ target.n }} recruits, recent classes weighted most){% if target.p25 is not none and target.p75 is not none %}; the middle half ran
         {{ rv(target.p25, target.p25) }} to {{ rv(target.p75, target.p75) }}{% endif %}.

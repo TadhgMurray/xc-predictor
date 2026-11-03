@@ -18,10 +18,19 @@
   var course = $("goal-course"), cid = $("goal-cid"), sug = $("goal-course-sug");
   var dist = $("goal-dist");
 
+  // ★ THE COLLEGE RUNGS (2026-11-03): a conference for the conference
+  //   meet's places, a division for nationals; Men/Women for Boys/Girls
+  var COLLEGE = { conf7: "conf", allconf: "conf", nat40: "cdiv" };
   function sync() {
-    var recruit = goal.value === "recruit";
-    form.querySelectorAll(".goal-state").forEach(function (el) { el.hidden = recruit; });
+    var g = goal.value, recruit = g === "recruit", college = COLLEGE[g];
+    form.querySelectorAll(".goal-state").forEach(function (el) { el.hidden = recruit || !!college; });
     form.querySelectorAll(".goal-college").forEach(function (el) { el.hidden = !recruit; });
+    form.querySelectorAll(".goal-conf").forEach(function (el) { el.hidden = college !== "conf"; });
+    form.querySelectorAll(".goal-cdiv").forEach(function (el) { el.hidden = college !== "cdiv"; });
+    var sel = $("goal-g");
+    if (sel) Array.prototype.forEach.call(sel.options, function (o) {
+      o.textContent = college ? o.dataset.college : o.dataset.hs;
+    });
   }
   goal.addEventListener("change", sync);
   sync();

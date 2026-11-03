@@ -39,6 +39,11 @@ GOALS = (("qualify", "Make state"),
          ("top", "Top 25 at state"),
          ("podium", "Top 8 at state"),
          ("recruit", "A college's typical recruit"))
+# ★ AND THE COLLEGE RUNGS (owner, 2026-11-03: "What if I want collegiate
+#   goals?"): a conference meet's top 7 and top 14, a division's nationals'
+#   top 40 (college_goal.py)
+import college_goal as CG
+GOALS = GOALS + tuple((k, lab) for k, _n, lab in CG.RUNGS)
 _GOAL_KEYS = tuple(k for k, _ in GOALS)
 # the place lines' wording comes from cuts.PLACE_LINES, so a changed line
 # (top 20 somewhere) renames itself here
@@ -48,6 +53,8 @@ _RECRUIT_GENDER = {"boys": "m", "girls": "f"}
 
 
 def goalLabel(key):
+    if CG.isCollegeGoal(key):
+        return CG.label(key)
     if key in _PLACE_WORDS:
         return f"{_PLACE_WORDS[key]} at state"
     return dict(GOALS).get(key, key)
@@ -173,6 +180,9 @@ def goal_page():
     cid = args.get("cid", type=int)
     dist = args.get("dist", type=float)
     athlete_id = args.get("athlete", type=int)
+    conference = (args.get("conf") or "").strip()
+    cdiv = (args.get("cdiv") or "").strip()
+    is_college = CG.isCollegeGoal(goal)
     states, names = _states()
     if state and state not in names:
         abort(404)
@@ -182,13 +192,35 @@ def goal_page():
            "cid": cid, "dist": dist, "athlete": None, "target": None,
            "times": None, "course": None, "divisions": [], "colleges": [],
            "error": None, "state_name": names.get(state),
+           "is_college": is_college, "conference": conference, "cdiv": cdiv,
+           "conferences": [], "cdivisions": [],
            "mark_pct": int(round(100 * (1 - cuts.MARK_Q)))}
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ THE ATHLETE FILLS THE FORM: their season's state, division
             #   and gender, exactly the ones their "What it takes" line uses
             season = None
-            if athlete_id:
+            if athlete_id and is_college:
+                # a college runner: their newest college season, and its
+                # conference and division fill the form
+                try:
+                    cs = CG.athleteCollege(cur, athlete_id)
+                except Exception:                       # noqa: BLE001
+                    conn.rollback()
+                    cs = None
+                if cs:
+                    gender = gender or cs["gender"]
+                    conference = conference or (cs.get("conference") or "")
+                    cdiv = cdiv or (cs.get("division") or "")
+                    from rankings import nameLateral
+                    cur.execute(f"SELECT a.name FROM (SELECT %s::bigint AS person_id) s "
+                                f"{nameLateral('s')}", (athlete_id,))
+                    row = cur.fetchone()
+                    ctx["athlete"] = {"person_id": athlete_id,
+                                      "name": (row or {}).get("name"),
+                                      "rating": cs.get("rating"), "pool": cs.get("pool"),
+                                      "year": cs.get("year")}
+            if athlete_id and not is_college:
                 try:
                     season = cuts._athleteSeason(cur, athlete_id, P.currentYear(cur))
                 except Exception:                       # noqa: BLE001
@@ -209,13 +241,28 @@ def goal_page():
                                       "pool": season.get("pool"),
                                       "year": season.get("year")}
             gender = gender if gender in cuts.GENDERS else "boys"
-            pool = cuts.GENDERS[gender][0]
+            pool = CG.POOLS[gender] if is_college else cuts.GENDERS[gender][0]
+            ctx["pool"] = pool
             ctx.update(gender=gender, state=state, slug=slug,
                        gender_words=cuts.GENDERS[gender][1],
                        state_name=names.get(state))
 
             target = None
-            if goal == "recruit":
+            if is_college:
+                ctx.update(conference=conference, cdiv=cdiv,
+                           college_words=CG.WORDS[gender])
+                try:
+                    ctx["conferences"], ctx["cdivisions"] = CG.unitChoices(cur)
+                    target, why = CG.collegeGoal(cur, goal, gender, conference, cdiv)
+                except Exception as exc:                # noqa: BLE001
+                    conn.rollback()
+                    print(f"goal: college {goal} failed ({type(exc).__name__}: {exc})", flush=True)
+                    target, why = None, "College marks are not available right now."
+                if target is None and (conference or cdiv):
+                    ctx["error"] = why
+                if target:
+                    target["distance"] = None
+            elif goal == "recruit":
                 rows = R.schoolTable(cur, _RECRUIT_GENDER[gender], "XC")
                 ctx["colleges"] = [r["label"] for r in rows if r.get("label")]
                 if college:
@@ -267,7 +314,8 @@ def goal_page():
                               "name": v.get("course_name"),
                               "distances": [int(v["distance"])] if v.get("distance") else [],
                               "difficulty": v["difficulty"], "state_course": True}
-            dist = float(want or targetFor(pool, "XC") or 5000.0)
+            dist = float(want or (CG.DEFAULT_DIST.get(pool) if is_college else None)
+                         or targetFor(pool, "XC") or 5000.0)
             ctx.update(course=course, dist=dist, target=target)
 
             if target:

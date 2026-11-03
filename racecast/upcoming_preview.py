@@ -453,8 +453,11 @@ def upcomingChampionships(cur, today=None):
     import last_edition as LE
     import qualifying as Q
     today = today or datetime.date.today()
-    season = today.year if today.month >= 8 else today.year - 1
-    lo, hi = f"{season - 1}-08-01", f"{season}-07-31"
+    # the one season seam (season_year: Aug 15), last season's span
+    from season_year import seasonStart, seasonYearFor
+    season = seasonYearFor("XC", today)
+    lo = seasonStart(season - 1).isoformat()
+    hi = (seasonStart(season) - datetime.timedelta(days=1)).isoformat()
     # ! THE META TABLES' DATES, NOT A SEASON OF RESULTS (owner, 2026-11-03:
     #   "you just slowed down the site so much" -- a join over a season's
     #   results, per worker, retried on every timeout)
