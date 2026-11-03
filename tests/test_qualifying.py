@@ -213,3 +213,27 @@ def test_upcoming_championships_from_last_years_meets(monkeypatch):
     got = U.upcomingChampionships(Cur(), datetime.date(2026, 11, 3))
     assert [(m["meet_id"], m["date"], m["kind"]) for m in got] == [
         (2, "2026-11-07", "state"), (1, "2026-11-21", "national")]   # a year on, ahead only
+
+
+def test_a_race_with_no_gender_takes_last_years_runners(monkeypatch):
+    import last_edition as LE
+    import predict as P
+    import upcoming_preview as U
+    asked = {}
+
+    class Cur:
+        def execute(self, sql, args=None):
+            if args:
+                asked["div"] = args[1]
+
+        def fetchall(self):
+            return [(1,), (2,)]
+    monkeypatch.setattr(LE, "editionRaces", lambda cur, mid, sport, src: [
+        {"div_id": 50, "label": "Division I"}, {"div_id": 51, "label": "Division I"},
+        {"div_id": 52, "label": "Division II"}])
+    monkeypatch.setattr(P, "_fieldGender", lambda cur, ids, sport: "F" if asked["div"] == 51 else "M")
+    plan = {"source": "anet", "edition": {"meet_id": 9},
+            "races": [{"div_id": 7, "label": "Division I"}, {"div_id": 8, "label": "Division I"}]}
+    assert U.lastYearGender(Cur(), plan, plan["races"][1]) == "F"     # the second of its name
+    assert U.lastYearGender(Cur(), plan, plan["races"][0]) == "M"
+    assert U.lastYearGender(Cur(), {"races": []}, {"div_id": 1, "label": "x"}) is None

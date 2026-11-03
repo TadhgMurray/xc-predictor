@@ -33,6 +33,7 @@ team, or one meet (owner, 2026-10-10, approved):
 ! NEVER A 500. Each piece degrades to "nothing to say": no posted meet, no
   edition, no model, a timed-out prediction -- the block stays hidden.
 """
+import collections
 import datetime
 import os
 import re
@@ -309,6 +310,41 @@ def qualifiedField(cur, plan, div_id):
     return qualifiedFieldInfo(cur, plan, div_id)[0]
 
 
+def lastYearGender(cur, plan, race):
+    """★ THE GENDER OF WHO RAN IT LAST YEAR (owner, 2026-11-03: "Just look at
+    the gender of who ran it last year?"). A race whose label says no gender
+    ("Division I" twice, AIA and CIF Southern Section) is paired with last
+    edition's race of the same label in the same place among its namesakes
+    (div_id order), and that race's runners vote by their season pools
+    (predict._fieldGender). None when there is no such race."""
+    import last_edition as LE
+    import predict as P
+    ed = (plan or {}).get("edition") or {}
+    src = (plan or {}).get("source")
+    lab = LE.editionName(race.get("label"))
+    if not ed.get("meet_id") or not lab:
+        return None
+    try:
+        cur.execute("SAVEPOINT up_gender")
+        mine = sorted(int(r["div_id"]) for r in plan.get("races") or []
+                      if LE.editionName(r.get("label")) == lab)
+        theirs = sorted(int(r["div_id"]) for r in LE.editionRaces(cur, int(ed["meet_id"]), "XC", src)
+                        if LE.editionName(r.get("label")) == lab)
+        g = None
+        if len(mine) == len(theirs) and int(race["div_id"]) in mine:
+            div = theirs[mine.index(int(race["div_id"]))]
+            cur.execute("SELECT DISTINCT person_id FROM results WHERE meet_id = %s AND div_id = %s "
+                        "AND source = %s AND person_id IS NOT NULL",
+                        (int(ed["meet_id"]), div, src))
+            ids = [tuple(r.values())[0] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+            g = P._fieldGender(cur, ids, "XC")
+        cur.execute("RELEASE SAVEPOINT up_gender")
+        return g
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT up_gender")
+        return None
+
+
 def qualifiedFieldInfo(cur, plan, div_id):
     """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
     for one race of a meet plan: where the field came from, for the page
@@ -320,6 +356,8 @@ def qualifiedFieldInfo(cur, plan, div_id):
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
     if race is None or not plan.get("date"):
         return None, None
+    if not race.get("gender"):
+        race = dict(race, gender=lastYearGender(cur, plan, race))
     # ★ ELSE A LEARNED ROUTE (high school state / section / district, NAIA):
     #   Q.learnedRoute, from scripts/qualifier_audit.py --write-routes
     route = None if rule is not None else Q.learnedRoute(
@@ -399,6 +437,11 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
     for t in teams:
         t["runners"].sort(key=lambda r: -(r["rating"] or 0))
         t["entered"] = len(t["runners"])
+        # ★ THE TEAM'S LEVEL FOR ITS CREST (owner, 2026-11-03: Washington St.
+        #   with no logo): a college's name resolves through its pool
+        #   (school_logo.crestState), so the runners' commonest pool goes on
+        pools = collections.Counter(r["pool"] for r in t["runners"] if r.get("pool"))
+        t["pool"] = pools.most_common(1)[0][0] if pools else None
     P._stampCrests(teams, "school", "state")
     return {"season_year": season, "when": "thisyear", "teams": teams,
             "basis": dict(info, kind="qualified")}
@@ -438,8 +481,9 @@ def pastPlan(cur, meet_id, source, day):
     except Exception:                                   # noqa: BLE001
         cur.execute("ROLLBACK TO SAVEPOINT up_past")
         return None
+    # the meet is its own last edition: lastYearGender reads its runners
     return {"meet_id": int(meet_id), "source": source, "name": name,
-            "date": str(day)[:10], "races": races}
+            "date": str(day)[:10], "races": races, "edition": {"meet_id": int(meet_id)}}
 
 
 # ★ THE UPCOMING CHAMPIONSHIPS, FROM LAST YEAR (owner, 2026-11-03: "change
