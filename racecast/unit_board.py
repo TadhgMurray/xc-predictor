@@ -222,7 +222,10 @@ def chipHref(kind, raw, state=None, college=None):
     no state."""
     if kind not in KINDS or not raw:
         return None
-    is_college = KINDS[kind][1] if college is None else bool(college)
+    # ! a division (NCAA DIII, NAIA ...) is a college unit whatever the row
+    #   says; a conference or region may be a high school one (Delaware's)
+    is_college = (KINDS[kind][1] if college is None or kind == "division"
+                  else bool(college))
     if not is_college and not state:
         return None
     pool = "college_m" if is_college else "hs_m"

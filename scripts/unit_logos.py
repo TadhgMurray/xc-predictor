@@ -234,7 +234,12 @@ def wikiLogo(name, pause=1.0):
     if not titles:
         return None, None, "no conference article"
     page = _get({"action": "query", "titles": "|".join(titles[:5]),
-                 "prop": "extracts|images", "imlimit": 50,
+                 "prop": "extracts|images", "imlimit": "max",
+                 # ⚠ exlimit: without it only the FIRST of the five titles
+                 #   gets an intro, so "(NEC)" in the Northeast Conference's
+                 #   was never read -- 232 conferences "matched nothing"
+                 #   (owner's log, 2026-11-03: NEC, MIAC, MEAC, MVC, CUNYAC)
+                 "exlimit": "max",
                  "exintro": 1, "explaintext": 1, "exchars": 600})
     time.sleep(pause)
     by_title = {p.get("title"): p for p in (page.get("query") or {}).get("pages") or []}

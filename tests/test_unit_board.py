@@ -250,3 +250,13 @@ def test_meet_logo_markup_only_with_a_stored_logo(monkeypatch):
     assert str(UB.meetLogo("Harvard Invitational")) == ""
     monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: None)
     assert str(UB.meetLogo("SEC Championships")) == ""   # a fresh key map, a fresh cache
+
+
+def test_a_college_chip_links_to_the_college_board():
+    """Amherst (MA)'s NESCAC chip linked to pool=hs_m (owner, 2026-11-03)."""
+    import unit_board as UB
+    assert UB.chipHref("division", "NCAA DIII", "MA", False) == "/unit/division/NCAA%20DIII?pool=college_m"
+    assert UB.chipHref("conference", "NESCAC", "MA", True) == "/unit/conference/NESCAC?pool=college_m"
+    src = open(os.path.join(os.path.dirname(__file__), "..", "racecast", "school_units.py")).read()
+    body = src[src.index("def unitsForPerson"):]
+    assert '"college": is_college' in body[:6000]

@@ -393,6 +393,6 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None,
         out.append({"kind": col, "raw": value,
                     "label": _label(col, value, long, row),
                     "conflict": False, "asof": None,
-                    "state": row.get("state"), "college": bool(row.get("is_college"))})
+                    "state": row.get("state"), "college": is_college})
     return out
 
