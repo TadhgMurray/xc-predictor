@@ -1687,6 +1687,11 @@ fi
 if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
 fi
+# ★ AND THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS, as the nightly
+#   (racecast/build_qualified_fields.py); XCP_QUALIFIED_BUILD=0 skips it
+if [ "${XCP_QUALIFIED_BUILD:-1}" = "1" ]; then
+  step 13h2_qualified_fields "$PY" -u racecast/build_qualified_fields.py --budget-minutes 60
+fi
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.

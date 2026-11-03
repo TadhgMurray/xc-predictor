@@ -345,13 +345,56 @@ def lastYearGender(cur, plan, race):
         return None
 
 
-def qualifiedFieldInfo(cur, plan, div_id):
+# ★ THE QUALIFIER FIELDS, WORKED OUT OVERNIGHT (owner, 2026-11-03: "I can't
+#   find an example where it does" -- after the speed fix the page may not
+#   predict a round live, so a championship whose rounds have not run fell
+#   back to last year's teams everywhere). build_qualified_fields.py runs
+#   in the nightly (13h2), predicts the rounds not yet run, and writes every
+#   upcoming championship race's field here; the pages read it first.
+STORED_PATH = os.environ.get("XCP_QUALIFIED_FIELDS") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "model", "data",
+    "qualified_fields.json")
+_STORED = {"mtime": None, "fields": {}}
+
+
+def storedKey(source, meet_id, div_id, day):
+    return f"{source}:{int(meet_id)}:{int(div_id)}:{str(day)[:10]}"
+
+
+def storedField(source, meet_id, div_id, day):
+    """(field, info) the nightly stored for this race on that day, or
+    (None, None)."""
+    import json
+    try:
+        mtime = os.path.getmtime(STORED_PATH)
+    except OSError:
+        return None, None
+    if _STORED["mtime"] != mtime:
+        try:
+            with open(STORED_PATH) as fh:
+                _STORED["fields"] = json.load(fh).get("fields") or {}
+        except Exception:                               # noqa: BLE001
+            _STORED["fields"] = {}
+        _STORED["mtime"] = mtime
+    got = _STORED["fields"].get(storedKey(source, meet_id, div_id, day))
+    if not got:
+        return None, None
+    return {int(k): v for k, v in got["field"].items()}, dict(got["info"], made=got.get("made"))
+
+
+def qualifiedFieldInfo(cur, plan, div_id, live=False):
     """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
     for one race of a meet plan: where the field came from, for the page
-    to say (predictions.js showBasis)."""
+    to say (predictions.js showBasis). The nightly's stored field first
+    (storedField); live=True (the nightly itself) predicts rounds that have
+    not run, which a page never does."""
     import qualifying as Q
     if not plan:
         return None, None
+    if not live and plan.get("meet_id") and plan.get("date"):
+        field, info = storedField(plan.get("source"), plan["meet_id"], div_id, plan["date"])
+        if field:
+            return field, info
     rule = Q.ruleFor(plan.get("name"), plan.get("source"))
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
     if race is None or not plan.get("date"):
@@ -371,13 +414,14 @@ def qualifiedFieldInfo(cur, plan, div_id):
         if rule is not None:
             field, n_pred = Q.fieldFromRounds(
                 cur, rule, str(plan["date"])[:10], race.get("gender"),
-                predict=(lambda mid, g: predictedRound(cur, mid, g, src)) if forecast else None)
+                predict=(lambda mid, g: predictedRound(cur, mid, g, src, live)) if forecast
+                else None)
             n_rounds = len(Q._roundMeets(cur, rule, str(plan["date"])[:10],
                                          rule.get("window", 21)))
         else:
             field, n_pred = Q.learnedField(
                 cur, route, str(plan["date"])[:10],
-                predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src))
+                predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src, live))
                 if forecast else None)
             n_rounds = len(route.get("rounds") or [])
         cur.execute("RELEASE SAVEPOINT up_qual")
@@ -538,7 +582,7 @@ def upcomingChampionships(cur, today=None):
     return out
 
 
-def predictedRound(cur, meet_id, gender, source):
+def predictedRound(cur, meet_id, gender, source, live=False):
     """A round that has not run, as we predict it: [(person_id, school,
     seconds, rating)] of its `gender` race (the one with the most schools),
     from racePrediction -- the stored forecast, else a live one."""
@@ -547,10 +591,10 @@ def predictedRound(cur, meet_id, gender, source):
     if not races:
         return []
     race = max(races, key=lambda r: len(r.get("schools") or {}))
-    return predictedDiv(cur, meet_id, race["div_id"], source)
+    return predictedDiv(cur, meet_id, race["div_id"], source, live)
 
 
-def predictedDiv(cur, meet_id, div_id, source):
+def predictedDiv(cur, meet_id, div_id, source, live=False):
     """One race that has not run, as we predict it (predictedRound).
     ! STORED OR ALREADY CACHED ONLY, NEVER RUN HERE (owner, 2026-11-03: "you
       just slowed down the site so much"): a championship's preview asking
@@ -559,6 +603,9 @@ def predictedDiv(cur, meet_id, div_id, source):
       (build_meet_forecasts.py, soonest meet first) stores the rounds; until
       then the round is not counted."""
     import meet_forecast as MF
+    if live:                              # the nightly (build_qualified_fields)
+        pred = racePrediction(cur, meet_id, div_id, source)
+        return _rowsOf(pred)
     pred = ttlcache.peek(("up_pred", source, int(meet_id), div_id))
     if pred is None:
         try:
@@ -568,6 +615,12 @@ def predictedDiv(cur, meet_id, div_id, source):
         except Exception:                               # noqa: BLE001
             cur.execute("ROLLBACK TO SAVEPOINT up_pdiv")
             pred = None
+    return _rowsOf(pred)
+
+
+def _rowsOf(pred):
+    """A stored or live race prediction as qualifying rows: [(person_id,
+    school, seconds, rating)] in predicted order, or []."""
     if not pred or not pred.get("available"):
         return []
     return [(int(r["person_id"]), r.get("school"), float(r["seconds"]),
