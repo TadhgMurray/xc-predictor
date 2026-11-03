@@ -360,20 +360,26 @@ def qualifiedFieldInfo(cur, plan, div_id):
 #   yet run that qualifiedFieldInfo covers is listed as its qualifiers, in
 #   meetField's shape, with basis {"kind": "qualified", ...} for the line
 #   under the meet. None otherwise: the page's usual field.
-def qualifiedMeetField(cur, meet_id, div_id, source):
+def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
+    """meetField's shape from qualifiers, or None. `day` (ISO), when it is
+    after the meet's own date: last year's meet predicted for this year's
+    edition on that day (pastPlan) -- no scraped listing needed."""
     import predict as P
     if div_id is None:
         return None
-    try:
-        cur.execute("SAVEPOINT up_qfield")
-        ran = P._exactField(cur, int(meet_id), int(div_id), "XC", source=source)
-        cur.execute("RELEASE SAVEPOINT up_qfield")
-    except Exception:                                   # noqa: BLE001
-        cur.execute("ROLLBACK TO SAVEPOINT up_qfield")
-        return None
-    if ran:
-        return None                       # it has run: the field that ran
-    field, info = qualifiedFieldInfo(cur, meetPlan(cur, int(meet_id), source), div_id)
+    plan = pastPlan(cur, meet_id, source, day) if day else None
+    if plan is None:
+        try:
+            cur.execute("SAVEPOINT up_qfield")
+            ran = P._exactField(cur, int(meet_id), int(div_id), "XC", source=source)
+            cur.execute("RELEASE SAVEPOINT up_qfield")
+        except Exception:                               # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT up_qfield")
+            return None
+        if ran:
+            return None                   # it has run: the field that ran
+        plan = meetPlan(cur, int(meet_id), source)
+    field, info = qualifiedFieldInfo(cur, plan, div_id)
     if not field:
         return None
     season = P._currentSeason(cur, "XC")
@@ -396,6 +402,84 @@ def qualifiedMeetField(cur, meet_id, div_id, source):
     P._stampCrests(teams, "school", "state")
     return {"season_year": season, "when": "thisyear", "teams": teams,
             "basis": dict(info, kind="qualified")}
+
+
+# ★ LAST YEAR'S MEET AS THIS YEAR'S (owner, 2026-11-03: "we use the meets
+#   from last year to predict from, just so we don't have to scrape its
+#   husk"). A meet that ran, asked for on a later day: its races (labels and
+#   genders from its results) and name, dated `day`, in meetPlan's shape.
+def pastPlan(cur, meet_id, source, day):
+    import last_edition as LE
+    try:
+        cur.execute("SAVEPOINT up_past")
+        cur.execute("""SELECT min(date) FROM results WHERE meet_id = %s AND source = %s
+                         AND date ~ '^(19|20)[0-9]{2}-'""", (int(meet_id), source))
+        row = cur.fetchone()
+        ran_on = (row["min"] if isinstance(row, dict) else row[0]) if row else None
+        if not ran_on or str(ran_on)[:10] >= str(day)[:10]:
+            cur.execute("RELEASE SAVEPOINT up_past")
+            return None
+        if source == "tfrrs":
+            cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s LIMIT 1",
+                        (int(meet_id),))
+        else:
+            cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1", (int(meet_id),))
+        row = cur.fetchone()
+        name = (row["meet_name"] if isinstance(row, dict) else row[0]) if row else None
+        races = LE.editionRaces(cur, int(meet_id), "XC", source)
+        cur.execute("RELEASE SAVEPOINT up_past")
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT up_past")
+        return None
+    return {"meet_id": int(meet_id), "source": source, "name": name,
+            "date": str(day)[:10], "races": races}
+
+
+# ★ THE UPCOMING CHAMPIONSHIPS, FROM LAST YEAR (owner, 2026-11-03: "change
+#   upcoming meets on the predictions page to just be upcoming
+#   national-style meets", with state meets too). Every meet of last season
+#   that a published rule (qualifying.RULES: NCAA, NXN) or a learned route
+#   covers, dated a year on (364 days, the same weekday) and still ahead:
+#   [{"name", "source", "meet_id", "last_date", "date", "kind"}]. The page
+#   opens each as last year's meet in "this year" mode on that date.
+def upcomingChampionships(cur, today=None):
+    import last_edition as LE
+    import qualifying as Q
+    today = today or datetime.date.today()
+    season = today.year if today.month >= 8 else today.year - 1
+    lo, hi = f"{season - 1}-08-01", f"{season}-07-31"
+    cur.execute("""SELECT 'tfrrs' AS src, m.meet_id, min(m.meet_name) AS name, min(r.date) AS d
+                   FROM   meets_tfrrs m JOIN results r
+                          ON r.source = 'tfrrs' AND r.meet_id = m.meet_id
+                   WHERE  m.sport = 'XC' AND r.date ~ '^(19|20)[0-9]{2}-'
+                     AND  r.date BETWEEN %s AND %s
+                   GROUP  BY m.meet_id
+                   UNION ALL
+                   SELECT 'anet', m.meet_id, min(m.meet_name), min(r.date)
+                   FROM   meets m JOIN results r
+                          ON r.source = 'anet' AND r.meet_id = m.meet_id
+                   WHERE  r.date ~ '^(19|20)[0-9]{2}-' AND r.date BETWEEN %s AND %s
+                     AND  m.meet_name ~* 'state|champ|nation|region|section|district|federation|'
+                                         'interscholastic|olympic|naia|njcaa|cif|uil|nxn|nike'
+                   GROUP  BY m.meet_id""", (lo, hi, lo, hi))
+    routes = Q._loadRoutes()
+    out = []
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        src, mid, name, d = row[0], int(row[1]), row[2], str(row[3])[:10]
+        rule = Q.ruleFor(name, src)
+        route = (src, LE.editionName(name)) in routes
+        if rule is None and not route:
+            continue
+        date = (datetime.date.fromisoformat(d) + datetime.timedelta(days=364)).isoformat()
+        if date < today.isoformat():
+            continue
+        national = rule is not None or bool(re.search(
+            r"\bnational|\bnaia\b|\bnjcaa\b|\bncaa\b|\bnxn\b", name or "", re.I))
+        out.append({"name": name, "source": src, "meet_id": mid, "last_date": d,
+                    "date": date, "kind": "national" if national else "state"})
+    out.sort(key=lambda m: (m["date"], m["name"] or ""))
+    return out
 
 
 def predictedRound(cur, meet_id, gender, source):

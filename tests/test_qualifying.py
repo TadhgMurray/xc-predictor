@@ -190,3 +190,23 @@ def test_the_predictions_field_from_qualifiers(monkeypatch):
     assert b["school"] == "B"                                 # the school they qualified for
     monkeypatch.setattr(P, "_exactField", lambda *a, **k: [{"person_id": 1}])
     assert U.qualifiedMeetField(Cur(), 5, 2, "tfrrs") is None   # it has run: the field that ran
+
+
+def test_upcoming_championships_from_last_years_meets(monkeypatch):
+    import datetime
+    import upcoming_preview as U
+
+    class Cur:
+        def execute(self, *a, **k):
+            pass
+
+        def fetchall(self):
+            return [("tfrrs", 1, "2025 NCAA Division I Cross Country Championships", "2025-11-22"),
+                    ("anet", 2, "2025 MSHSL Class A State Championships", "2025-11-08"),
+                    ("anet", 3, "Some Invitational", "2025-11-15"),
+                    ("anet", 4, "2025 MSHSL Class AA State Championships", "2025-10-25")]
+    monkeypatch.setattr(Q, "_loadRoutes", lambda: {("anet", "mshsl class a state championships"): [{}],
+                                                   ("anet", "mshsl class aa state championships"): [{}]})
+    got = U.upcomingChampionships(Cur(), datetime.date(2026, 11, 3))
+    assert [(m["meet_id"], m["date"], m["kind"]) for m in got] == [
+        (2, "2026-11-07", "state"), (1, "2026-11-21", "national")]   # a year on, ahead only
