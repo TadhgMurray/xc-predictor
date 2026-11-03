@@ -6125,3 +6125,24 @@ th.fk.fk-l, td.fk.fk-l { text-align: left !important; }
   .recruit-school table.rec-tbl tr.rec-unl, .recruit-school table.rec-tbl tr.rec-unl td { display: block; width: 100%; }
   .recruit-school .r-scroll { overflow: visible; }
 }
+
+
+/* ★ THE THEME SWITCH (owner, 2026-11-03: "dark mode"), beside the account
+   control: a moon in light mode, a sun in dark. dark.css is generated from
+   these sheets (scripts/build_dark_css.py) -- rerun it after a colour change. */
+.topbar .theme-toggle {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 2.1rem; height: 2.1rem; margin-left: 0.5rem; padding: 0;
+  border: 1px solid #d8dbe0; border-radius: 6px; background: transparent;
+  color: #444; cursor: pointer;
+}
+.topbar .theme-toggle:hover { color: #111; border-color: #999; }
+.topbar .theme-toggle .tt-sun { display: none; }
+html[data-theme="dark"] .topbar .theme-toggle .tt-sun { display: block; }
+html[data-theme="dark"] .topbar .theme-toggle .tt-moon { display: none; }
+/* on the two-row and phone bars the switch sits just before the account
+   control, which keeps the push to the right edge */
+@media (max-width: 1200px) {
+  .topbar .theme-toggle { order: 2; margin-left: auto; }
+  .topbar .theme-toggle + .topbar-account { margin-left: 0.4rem; }
+}
