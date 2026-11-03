@@ -640,6 +640,15 @@ def meetLogoPick(meet_name, keys):
 SERIES = (
     ("NXN", r"\bNXN\b|nike\s+cross\s+nationals"),
     ("NXR", r"\bNXR\b|nike\s+cross\s+regional"),
+    # ★ THE HIGH SCHOOL NATIONALS UNDER EACH NAME (owner, 2026-11-03: "not
+    #   seeing any logos for footlocker/brooks"): Kinney (1979), Foot Locker
+    #   (1993), Eastbay (2021), Champs Sports (2022), Foot Locker again
+    #   (2023), and since August 2025 Brooks XC, presented by Fleet Feet --
+    #   its nationals and its regionals ("Brooks XC South Championship",
+    #   "Brooks Midwest XC Championships"). Each era wears its own mark.
+    ("BROOKS XC", r"\bbrooks\s+xc\b|\bbrooks\b[\w\s]{0,20}?\b(?:xc|cross\s*country)\s+"
+                  r"(?:championships?|regionals?|nationals?|qualifiers?)"),
+    ("CHAMPS SPORTS", r"champs\s+sports\s+(?:xc|cross)"),
     ("FOOT LOCKER", r"foot\s*locker|eastbay\s+cross\s+country|kinney\s+cross\s+country"),
 )
 
@@ -707,5 +716,8 @@ def meetLogo(meet_name, college=None, size=16):
     if not url:
         return Markup("")
     title = html.escape(prettyName(pick[1]))
-    return Markup(f'<img class="unit-chip-logo" src="{html.escape(url)}" alt="" title="{title}" '
-                  f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async">')
+    # ★ AT ITS OWN WIDTH (2026-11-03): a series' mark is a wordmark (Foot
+    #   Locker, Champs Sports), squeezed into a square it is a smudge; the
+    #   height is the chip's and the width follows, capped (style.css is-meet)
+    return Markup(f'<img class="unit-chip-logo is-meet" src="{html.escape(url)}" alt="" '
+                  f'title="{title}" height="{int(size)}" loading="lazy" decoding="async">')

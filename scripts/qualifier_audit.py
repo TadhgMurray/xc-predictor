@@ -160,7 +160,8 @@ def qualifiers(F, k, m):
 def _season(conn, y):
     """{race: [(pid, school, s)]}, {race: date} for the XC races of the
     season starting August y. race = (source, meet_id, div_id). Streamed."""
-    lo, hi = f"{y}-08-01", f"{y}-12-31"
+    from season_year import seasonStart          # the one season seam (Aug 15)
+    lo, hi = seasonStart(y).isoformat(), f"{y}-12-31"
     cur = conn.cursor(name=f"qa_{y}")
     cur.itersize = 200_000
     cur.execute("""

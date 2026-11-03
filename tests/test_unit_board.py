@@ -246,7 +246,7 @@ def test_meet_logo_markup_only_with_a_stored_logo(monkeypatch):
     import unit_board as UB
     monkeypatch.setattr(UB, "_aliases", lambda: {("conference", "sec"): "SEC"})
     monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: "/img/school/u.png")
-    assert 'class="unit-chip-logo"' in str(UB.meetLogo("SEC Championships"))
+    assert 'class="unit-chip-logo is-meet"' in str(UB.meetLogo("SEC Championships"))
     assert str(UB.meetLogo("Harvard Invitational")) == ""
     monkeypatch.setattr(UB, "storedLogoUrl", lambda *a, **k: None)
     assert str(UB.meetLogo("SEC Championships")) == ""   # a fresh key map, a fresh cache
@@ -313,3 +313,18 @@ def test_repo_logos_are_listed():
     import unit_logos as L
     got = {(k, n) for k, n, _ in L.repoFiles()}
     assert ("conference", "BIG EAST") in got and ("conference", "C-USA") in got
+
+
+def test_the_high_school_nationals_under_every_name():
+    """Owner, 2026-11-03: "not seeing any logos for footlocker/brooks"."""
+    import unit_board as U
+    assert U.seriesOf("Brooks XC Championships") == "BROOKS XC"
+    assert U.seriesOf("Brooks Midwest XC Championships") == "BROOKS XC"
+    assert U.seriesOf("Champs Sports XC Championships South") == "CHAMPS SPORTS"
+    assert U.seriesOf("Foot Locker Northeast Regional") == "FOOT LOCKER"
+    assert U.seriesOf("Brooks PR Invitational") is None
+    assert U.seriesOf("Brooks High School Invitational") is None
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "racecast", "static", "series")
+    for f in ("foot-locker.png", "brooks-xc.png", "champs-sports.png"):
+        assert os.path.exists(os.path.join(here, f))

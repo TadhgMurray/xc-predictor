@@ -92,7 +92,8 @@ def main():
             cur.execute(_ROWS.format(where=f"({where})"), args)
         else:
             cur.execute("SET LOCAL statement_timeout = '30min'")
-            cur.execute(_ROWS.format(where="r.date >= %s"), (f"{a.since}-08-01",))
+            from season_year import seasonStart      # the one season seam (Aug 15)
+            cur.execute(_ROWS.format(where="r.date >= %s"), (seasonStart(int(a.since)).isoformat(),))
         rows = cur.fetchall()
         keyed = [((r[1], r[2], r[3]), r[7], float(r[9]) / float(r[8]), r) for r in rows]
         bad = stragglers(keyed)
