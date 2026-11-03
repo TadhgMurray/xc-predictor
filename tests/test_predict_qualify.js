@@ -22,7 +22,8 @@ function grab(name) {
 let fails = 0;
 const ok = (c, m) => { console.log((c ? "  ok  " : "  FAIL") + " " + m); if (!c) fails++; };
 
-ok(/id="qualify"[^>]*checked/.test(HTML), "the Qualifiers box is ticked by default");
+ok(/<select id="qualify"/.test(HTML) && /<option value="1" selected>This season's qualifiers/.test(HTML),
+   "a select, on This season's qualifiers by default");
 ok(/qualify: true,/.test(SRC), "...and the page starts with it on");
 
 const els = { "t-date": { value: "2026-11-21" }, "mc-basis": { hidden: true, textContent: "" } };
@@ -43,7 +44,7 @@ const editsFor = () => ({ field: { basis: { kind: "qualified", rounds: 9, predic
 const activeBlocks = () => [1];
 const showBasis = eval(`(${grab("showBasis")})`);
 showBasis([1]);
-ok(!els["mc-basis"].hidden && /qualifiers/.test(els["mc-basis"].textContent)
+ok(!els["mc-basis"].hidden && /earned a spot/.test(els["mc-basis"].textContent)
    && /9 of its 9 qualifying rounds have not run/.test(els["mc-basis"].textContent),
    "the line under the meet says the field is qualifiers, and how many rounds are predicted");
 
