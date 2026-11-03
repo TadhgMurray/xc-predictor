@@ -122,8 +122,11 @@ def test_a_learned_route_found_again_and_its_field(monkeypatch, tmp_path):
     assert sum(1 for s in got.values() if s in ("n0", "n1")) == 14 and len(got) == 17
     monkeypatch.setattr(Q, "_thisRound", lambda cur, rnd, day, src: (
         (1, 1, False) if rnd["meet"] == "north regional" else None))
+    assert Q.learnedField(None, r, "2026-11-07", lambda mid, div: rows) == (None, 0), \
+        "one of two rounds found: not enough (ROUTE_FOUND)"
+    monkeypatch.setattr(Q, "_thisRound", lambda cur, rnd, day, src: (1, 1, False))
     field, n_pred = Q.learnedField(None, r, "2026-11-07", lambda mid, div: rows)
-    assert n_pred == 1 and len(field) == 17                  # one of two rounds is half: enough
+    assert n_pred == 2 and len(field) == 17                  # both found (the same rows twice)
 
 
 def test_nxr_rounds_are_the_regional_championships_only():
