@@ -14,3 +14,5 @@ timezonefinder
 xarray
 icechunk
 cdsapi                   # backfill/era5_cds_recent.py: weather after the free store ends (04e2)
+lightgbm                 # model/race_blend.py: the blend's gradient-boosted members
+xgboost                  # model/race_blend.py
