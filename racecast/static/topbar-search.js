@@ -95,13 +95,19 @@ function escAttr(s) {
                 // ★ AND SAY WHEN NOTHING MATCHED, rather than showing only
                 //   a link to a results page that will say the same
                 box.innerHTML = '<div class="sr-state">No athletes, teams, ' +
-                    'meets or courses match \u201c' + esc(q) + '\u201d.</div>' + more;
+                    'meets, courses or conferences match \u201c' + esc(q) + '\u201d.</div>' + more;
                 return;
             }
             var items = rows.map(function (r) {
                 var sub = r.sublabel ? '<span class="sr-sub">' + esc(r.sublabel) + '</span>' : '';
+                /* a conference/division says which (its sublabel's first
+                   word), and a school or unit with a stored logo wears it */
+                var k = r.kind === 'unit'
+                    ? String(r.sublabel || 'unit').split(' \u00b7 ')[0] : (r.kind || '');
+                var mark = r.crest ? '<img class="sr-mark" src="' + esc(r.crest) +
+                    '" alt="" width="16" height="16" loading="lazy" decoding="async">' : '';
                 return '<a class="sr-item" href="' + esc(r.link || '') + '">' +
-                    '<span class="sr-kind">' + esc(r.kind || '') + '</span>' +
+                    '<span class="sr-kind">' + esc(k) + '</span>' + mark +
                     '<span class="sr-label">' + esc(r.label) + '</span>' + sub + '</a>';
             }).join('');
             box.innerHTML = '<div class="sr-scroll">' + items + '</div>' + more;

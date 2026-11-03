@@ -93,6 +93,8 @@ CREATE INDEX IF NOT EXISTS {prefix}_trgm_venue
     ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'venue';
 CREATE INDEX IF NOT EXISTS {prefix}_trgm_school
     ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'school';
+CREATE INDEX IF NOT EXISTS {prefix}_trgm_unit
+    ON {table} USING gin (search_text gin_trgm_ops) WHERE kind = 'unit';
 """
 
 
@@ -721,6 +723,51 @@ def unitLink(kind, unit, state, college):
     return q
 
 
+def unitRows(kind, college, rows):
+    """The search rows for one unit kind, from (unit, state, school) triples.
+    Pure, so tests/test_search_units.py pins it without a database.
+
+    ★ ONE ROW PER UNIT, WHATEVER IT IS SPELLED (owner, 2026-11-03: "can you
+      search for conferences/divisions and such?"). 'MTN WEST' and 'MOUNTAIN
+      WEST' are one conference (unit_board.normKey), shown under the spelling
+      most of its schools carry, and every spelling is in the search text, so
+      either finds it. A college unit is one entry nationwide; a high school
+      one is per state, where one league name can be two leagues.
+    ★ IT OPENS THE UNIT'S OWN PAGE (/unit/<kind>/<name>, unit_board.unitHref)
+      where the kind has one; a district or county has none and keeps the
+      narrowed rankings board.
+    ! A MEET LABEL FILED AS A CONFERENCE ("Combined Events", "XIV") is not
+      one (unit_names.notAConference), the same rule the board applies."""
+    import unit_board as UB
+    from unit_names import notAConference
+    groups = {}
+    for unit, state, school in rows:
+        if not unit or not str(unit).strip():
+            continue
+        if kind == "conference" and notAConference(unit):
+            continue
+        key = (UB.normKey(unit), None if college else state)
+        g = groups.setdefault(key, {"spell": {}, "schools": set()})
+        sp = str(unit).strip()
+        g["spell"].setdefault(sp, set()).add(schoolFold(school))
+        g["schools"].add(schoolFold(school))
+    out = []
+    for (key, state), g in groups.items():
+        raw = max(g["spell"], key=lambda sp: (len(g["spell"][sp]), -len(sp), sp))
+        n = len(g["schools"])
+        label = UB.label(kind, raw, state) or raw
+        pool = "college_m" if college else "hs_m"
+        if kind in UB.KINDS:
+            link = UB.unitHref(kind, raw, None if college else state, pool)
+        else:
+            link = unitLink(kind, raw, state, college)
+        sub = f"{kind}{' · ' + state if state and not college else ''}"
+        sub += f" · {n} school{'s' if n != 1 else ''}"
+        text = " ".join(dict.fromkeys([label, raw] + sorted(g["spell"])))
+        out.append(("unit", label, sub, link, text, label, 0, int(n)))
+    return out
+
+
 def _load_units(conn):
     cur = conn.cursor()
     cur.execute("SELECT to_regclass('school_unit')")
@@ -737,29 +784,14 @@ def _load_units(conn):
             if kind not in have:
                 continue
             # ★ A COLLEGE UNIT IS ONE ENTRY (owner, 2026-11-01: NESCAC six
-            #   times, once per state its schools are in). Its board is
-            #   nationwide (unitLink), so the state split only repeated it;
-            #   high-school units stay per state, where a league name can
-            #   mean two different leagues. One school under several
-            #   spellings is counted once (schoolFold).
+            #   times, once per state its schools are in). One school under
+            #   several spellings is counted once (schoolFold).
             cur.execute(f"""
                 SELECT "{kind}", state, school
                 FROM   school_unit
                 WHERE  "{kind}" IS NOT NULL AND is_college = %s
             """, (college,))
-            groups = {}
-            for unit, state, school in cur.fetchall():
-                groups.setdefault((unit, None if college else state), set()).add(schoolFold(school))
-            rows = [(u, st, len(v)) for (u, st), v in groups.items()]
-            for unit, state, n in rows:
-                label = str(unit)
-                sub = f"{kind}{' · ' + state if state and not college else ''}"
-                sub += f" · {n} school{'s' if n != 1 else ''}"
-                out.append((
-                    "unit", label, sub,
-                    unitLink(kind, str(unit), state, college),
-                    label.lower(), label.lower(), 0, int(n),
-                ))
+            out.extend(unitRows(kind, college, cur.fetchall()))
     _flush(wr, out); conn.commit()
     print(f"  units: {len(out):,}")
 
@@ -810,6 +842,15 @@ def main():
             fn(conn)
             print(f"  {key}: {time.time() - t0:.0f}s", flush=True)
 
+        if args.only == "units":
+            # the units' own count index, which a full build makes with the
+            # rest; a few thousand rows, so seconds
+            with conn.cursor() as cur:
+                cur.execute("""CREATE INDEX IF NOT EXISTS idx_search_trgm_unit
+                               ON search_index USING gin (search_text gin_trgm_ops)
+                               WHERE kind = 'unit'""")
+            conn.commit()
+
         if not args.only:
             with conn.cursor() as cur:
                 # ★ THE TRIGRAM INDEX IS THE LONG POLE: a GIN build over 15M
@@ -843,7 +884,7 @@ def main():
                 ("idx_search_new_trgm", "idx_search_trgm"),
                 ("idx_search_new_school_label", "idx_search_school_label")]
                 + [(f"idx_search_new_trgm_{k}", f"idx_search_trgm_{k}")
-                   for k in ("meet", "course", "venue", "school")])
+                   for k in ("meet", "course", "venue", "school", "unit")])
             conn.commit()
             print("search_index: swapped in", flush=True)
 

@@ -304,6 +304,9 @@ _STATE_NAMES = {
     "DC": "the District of Columbia",
 }
 STATE_FLAGS = {c: f"Flag of {n}.svg" for c, n in _STATE_NAMES.items()}
+# the Nation entry of the rank line wears the US flag (owner, 2026-11-03:
+# "Should national have usa flag?"), stored as unit:state:US
+STATE_FLAGS["US"] = "Flag of the United States.svg"
 
 SERIES_ARTICLES = (("NXN", "Nike Cross Nationals"),
                    ("FOOT LOCKER", "Foot Locker Cross Country Championships"))

@@ -622,6 +622,9 @@ body.hide-ms_f      .pool-block[data-pool="ms_f"] {
     min-width: 3.5rem;
 }
 .sr-label { font-weight: 500; }
+/* a school's crest or a conference's logo before its name (2026-11-03) */
+.sr-mark { width: 16px; height: 16px; object-fit: contain; flex: none;
+           align-self: center; margin-right: -0.2rem; }
 .sr-sub { color: #888; font-size: 0.85rem; margin-left: auto; }
 
 .search-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 1rem 0; }
@@ -3832,6 +3835,10 @@ td.margin-b { color: #b45309; font-weight: 600; }
                    font-variant-numeric: tabular-nums;
                    text-decoration: none; }
 .rank-line .rk a:hover { text-decoration: underline; }
+/* the scope's own name, linked to its unit page (2026-11-03): reads as the
+   plain label it was before it became a link -- the bold number stays the
+   rank's affordance, the name only underlines on hover */
+.rank-line .rk a.rl-unit { font-weight: inherit; font-variant-numeric: normal; }
 /* an entry never breaks inside itself: "Tri-Valley #2" split at the hyphen
    on phones (issue 88). inline-block, not just nowrap: the template glues
    entries to their separators with no whitespace, so the only break

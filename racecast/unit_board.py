@@ -306,6 +306,21 @@ def chipLogo(kind, raw, state=None, size=16):
                   f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async">')
 
 
+def logoForLink(link, px=64):
+    """A unit's stored logo for a "/unit/<kind>/<name>[?state=..]" link, or
+    None. For the search index, which keeps a link rather than the unit
+    (school_logo.crestUrlForLink is the schools' twin)."""
+    from urllib.parse import unquote, urlsplit, parse_qs
+    if not link or not str(link).startswith("/unit/"):
+        return None
+    parts = urlsplit(str(link))
+    bits = parts.path[len("/unit/"):].split("/", 1)
+    if len(bits) != 2 or not bits[1]:
+        return None
+    state = (parse_qs(parts.query).get("state") or [None])[0]
+    return storedLogoUrl(bits[0], unquote(bits[1]), state, px=px)
+
+
 def unitMark(kind, name, state=None, size=28, shown=None):
     """The unit's mark for a page: its own logo when scripts/unit_logos.py
     stored one (served like a school crest), else the generated badge.

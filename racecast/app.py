@@ -1892,7 +1892,9 @@ def buildRankLine(cur, person_id, season):
                 # opens. The template ignores the key.
                 entries.append({"label": "Nation", "rank": r,
                                 "href": boardHref(False),
-                                "total": boardTotal()})
+                                "total": boardTotal(),
+                                # the US flag beside it (unit_logos --flags: unit:state:US)
+                                "kind": "state", "raw": "US"})
         elif scope == "state" and state:
             r = boardRank(True)
             if r:
@@ -1926,6 +1928,10 @@ def buildRankLine(cur, person_id, season):
             if row:
                 entries.append({
                     "label": "Team", "rank": row["place"],
+                    # the school's crest beside it (owner, 2026-11-03: "team
+                    # thing should also have logo")
+                    "kind": "team", "raw": school, "state": state,
+                    "pool": season.get("pool"),
                     # through the resolver, so a team-rank chip cannot
                     # open a different school of the same name than the
                     # label beside it names
@@ -9246,8 +9252,9 @@ def _searchApiRows(raw, kind, limit):
     #   a suffix. bareSchool leaves an unsuffixed label alone.
     for _r in rows:
         _r["value"] = search_index.bareSchool(_r.get("label"))
-
-    return [dict(_r) for _r in rows]
+    rows = [dict(_r) for _r in rows]
+    _stampSearchMarks(rows)
+    return rows
 
 
 def _searchTerms(raw, prefix="t"):
@@ -9604,13 +9611,25 @@ def _run_search(q, kind, year_filter, offset):
     #   the answer is in the start-up cache, and a school with no crest gets
     #   no key at all, so the template and the Load More JS both just see a
     #   row without one.
-    for _r in results:
-        if (_r.get("kind") if isinstance(_r, dict) else None) != "school":
+    _stampSearchMarks(results)
+    return results, counts, years
+
+
+def _stampSearchMarks(rows):
+    """A school hit's crest and a conference/division hit's logo, as
+    row["crest"] (owner, 2026-11-03: units are searchable, and "I FUCKING
+    LOVE LOGOS"). From the start-up caches, no query."""
+    import unit_board as _UB
+    for _r in rows:
+        k = _r.get("kind") if isinstance(_r, dict) else None
+        if k == "school":
+            url = school_logo.crestUrlForLink(_r.get("link"))
+        elif k == "unit":
+            url = _UB.logoForLink(_r.get("link"))
+        else:
             continue
-        url = school_logo.crestUrlForLink(_r.get("link"))
         if url:
             _r["crest"] = url
-    return results, counts, years
 
 PAGE_SIZE = 30
 
@@ -9623,7 +9642,7 @@ SEARCH_COUNT_CAP = 1000
 SEARCH_ONE_PASS = 5000
 
 # The tab order on the results page, and the kinds the counts are taken over.
-SEARCH_KINDS = ("athlete", "meet", "course", "venue", "school")
+SEARCH_KINDS = ("athlete", "meet", "course", "venue", "school", "unit")
 
 @app.route("/search")
 def search_page():

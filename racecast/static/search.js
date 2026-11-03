@@ -58,6 +58,12 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     });
 
+    // a conference/division row's kind is the first word of its sublabel
+    // ("conference · 11 schools"), as search.html's result_row prints it
+    function unitKind(r) {
+        return r.kind === 'unit' ? String(r.sublabel || 'unit').split(' \u00b7 ')[0] : r.kind;
+    }
+
     function buildRow(r, kind) {
         var tr = document.createElement('tr');
         tr.className = 'result-row';
@@ -68,7 +74,8 @@ document.addEventListener('DOMContentLoaded', function () {
         else if (kind === 'course')  cells = [r.label, r.sort_count];
         else if (kind === 'venue')   cells = [r.label, r.sublabel, r.sort_count];
         else if (kind === 'school')  cells = [r.label, r.sort_count];
-        else                         cells = [r.label, r.kind, r.sublabel];
+        else if (kind === 'unit')    cells = [r.label, r.sublabel];
+        else                         cells = [r.label, unitKind(r), r.sublabel];
         tr.innerHTML = cells.map(function (c, i) {
             var text = esc(c == null || c === 0 ? ' - ' : c);
             // the first cell is the name: a real link, as in search.html

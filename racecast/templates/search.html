@@ -26,10 +26,16 @@
         <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
                  width="18" height="18" loading="lazy" decoding="async">{% endif %}<a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
         <td>{{ r.sort_count or ' - ' }}</td>
+    {% elif kind == 'unit' %}
+        {# a conference, division, league or section: its logo when one is
+           stored (_stampSearchMarks), its kind and size from the sublabel #}
+        <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
+                 width="18" height="18" loading="lazy" decoding="async">{% endif %}<a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
+        <td>{{ r.sublabel or ' - ' }}</td>
     {% else %}  {# all: mixed kinds, uniform columns #}
         <td>{% if r.crest %}<img class="school-mark" src="{{ r.crest }}" alt=""
                  width="18" height="18" loading="lazy" decoding="async">{% endif %}<a class="sr-link" href="{{ r.link }}">{{ r.label }}</a></td>
-        <td>{{ r.kind }}</td>
+        <td>{{ (r.sublabel or 'unit').split(' · ')[0] if r.kind == 'unit' else r.kind }}</td>
         <td>{{ r.sublabel or ' - ' }}</td>
     {% endif %}
 </tr>
@@ -62,7 +68,8 @@
        kind is its own query), so no data-tab and no race-page.js. #}
     {% set tab_list = [('all','All'), ('athlete','Athletes'),
                        ('meet','Meets'), ('course','Courses'),
-                       ('venue','Venues'), ('school','Schools')] %}
+                       ('venue','Venues'), ('school','Schools'),
+                       ('unit','Conferences')] %}
     {% set n_all = counts.values()|sum %}
     <header class="rc-hd"><div class="rc-hgrid rc-hone">
       <div class="rc-left">
@@ -140,6 +147,8 @@
                     <th>Venue</th><th>Type</th><th>Results</th>
                 {% elif kind == 'school' %}
                     <th>School</th><th>Athletes</th>
+                {% elif kind == 'unit' %}
+                    <th>Name</th><th>Kind</th>
                 {% else %}  {# all #}
                     <th>Result</th><th>Type</th><th>Detail</th>
                 {% endif %}

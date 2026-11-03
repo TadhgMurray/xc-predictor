@@ -305,7 +305,7 @@ def test_nxr_regions_and_the_repo_marks():
 def test_state_flags():
     import unit_board as UB
     import unit_logos as L
-    assert len(L.STATE_FLAGS) == 51 and L.STATE_FLAGS["GA"] == "Flag of Georgia (U.S. state).svg"
+    assert len(L.STATE_FLAGS) == 52 and L.STATE_FLAGS["US"] == "Flag of the United States.svg" and L.STATE_FLAGS["GA"] == "Flag of Georgia (U.S. state).svg"
     assert UB.logoKey("state", "ma") == "unit:state:MA"
 
 
