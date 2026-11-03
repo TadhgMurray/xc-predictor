@@ -279,3 +279,12 @@ def test_series_meets():
     assert UB.seriesOf("Foot Locker Cross Country South Regional Championships") == "FOOT LOCKER"
     assert UB.seriesOf("Footlocker Nationals") == "FOOT LOCKER"
     assert UB.seriesOf("Dallas Jesuit Classic") is None
+
+
+def test_one_conference_under_its_spellings():
+    """owner, 2026-11-03: "two MTN wests"; Conference USA as C-USA and USA."""
+    import unit_board as UB
+    assert UB.normKey("MTN WEST") == UB.normKey("Mountain West") == UB.normKey("MW")
+    assert UB.normKey("C-USA") == UB.normKey("USA") == UB.normKey("Conference USA")
+    assert UB.normKey("A10 XC") == UB.normKey("A-10")
+    assert UB.normKey("NE10") == UB.normKey("NORTHEAST-10")

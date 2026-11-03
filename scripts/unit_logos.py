@@ -336,6 +336,7 @@ KNOWN_TITLES = {
     "wcc": "West Coast Conference", "wac": "Western Athletic Conference",
     "big west": "Big West Conference", "big sky": "Big Sky Conference",
     "ovc": "Ohio Valley Conference", "socon": "Southern Conference",
+    "southern": "Southern Conference",
     "sun belt": "Sun Belt Conference", "patriot": "Patriot League",
     "ivy": "Ivy League", "horizon": "Horizon League", "mac": "Mid-American Conference",
     "america east": "America East Conference", "uaa": "University Athletic Association",

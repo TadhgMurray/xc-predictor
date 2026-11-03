@@ -330,16 +330,28 @@ _GENERIC_WORDS = {"conference", "conferences", "athletic", "athletics", "league"
                   "intercollegiate", "the", "of", "and", "girls", "boys", "men", "women",
                   # a meet's event label filed as the conference (owner's board,
                   # 2026-11-02: "Gnac Combined Events" beside GNAC)
-                  "combined", "events", "indoor", "outdoor", "championship", "championships"}
+                  "combined", "events", "indoor", "outdoor", "championship", "championships",
+                  "xc"}
 
 
 def normKey(value):
     """One unit under its spellings: 'HENLOPEN ATHLETIC' and 'HENLOPEN' are
     'henlopen'; 'NIC-10 GIRLS' and 'NIC-10' are 'nic 10'. Pure."""
     import re
-    toks = [t for t in re.findall(r"[a-z0-9]+", str(value or "").lower())
+    toks = [_ABBR_WORDS.get(t, t) for t in re.findall(r"[a-z0-9]+", str(value or "").lower())
             if t not in _GENERIC_WORDS]
-    return " ".join(toks) or str(value or "").strip().lower()
+    key = " ".join(toks) or str(value or "").strip().lower()
+    return _KEY_ALIAS.get(key, key)
+
+
+# ★ ONE CONFERENCE, TWO SPELLINGS ON THE BOARD (owner, 2026-11-03: "two MTN
+#   wests", and Conference USA as both "C-USA" and "USA"). A shortened word
+#   is the word; a code the feeds write two ways is one key.
+_ABBR_WORDS = {"mtn": "mountain", "mt": "mountain", "intl": "international",
+               "assn": "association", "conf": "conference"}
+_KEY_ALIAS = {"c usa": "usa", "cusa": "usa", "mw": "mountain west",
+              "ne10": "northeast 10", "a10": "a 10", "atlantic 10": "a 10",
+              "big 10": "big ten", "socon": "southern", "metro atlantic": "maac"}
 
 
 _CODE_WORDS = {"ncaa", "naia", "njcaa", "nccaa", "uscaa", "di", "dii", "diii", "sec", "acc",
