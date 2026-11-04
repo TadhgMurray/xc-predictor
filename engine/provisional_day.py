@@ -69,6 +69,7 @@ CAL_MAX = 600             # solved races read (by a stable hash, the same ones n
 CAL_MIN = 40              # solved races needed before anything is written
 GATE = 0.85               # held-out error at most this share of "no term"'s
 NIGHTLY_TOL = 0.002       # a rating within 0.2% of the venue price is the nightly's own
+WRONG_FAST = 0.12         # a field this much faster than its level: a doubted distance
 
 Row = namedtuple("Row", "result_id person_id source meet_id div_id normalized_time "
                         "pool rating_pool race_date distance speed_rating")
@@ -261,6 +262,51 @@ def _levels(cur, wanted):
     return out
 
 
+def doubtedDistance(g, b, cap=WRONG_FAST):
+    """A field this much faster than its runners' level (g against the
+    calibrated offset b) ran a shorter race than the one listed. Pure."""
+    return g is not None and b is not None and (g - b) >= cap
+
+
+SUSPECT_DDL = """
+CREATE TABLE IF NOT EXISTS distance_suspect_nightly (
+    source     text   NOT NULL,
+    meet_id    bigint NOT NULL,
+    div_id     bigint NOT NULL,
+    race_date  date,
+    field_pct  real,
+    n_runners  int,
+    flagged_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (source, meet_id, div_id)
+)"""
+
+
+def writeSuspects(conn, rows):
+    """Rebuild distance_suspect_nightly from tonight's suspects and withhold
+    their ratings (speed_rating NULL: off the boards and the pages until the
+    full run prices them at the distance wrong_distance settles)."""
+    with conn.cursor() as cur:
+        cur.execute(SUSPECT_DDL)
+        cur.execute("DELETE FROM distance_suspect_nightly")
+        if rows:
+            psycopg2_extras().execute_values(cur, """
+                INSERT INTO distance_suspect_nightly (source, meet_id, div_id, race_date,
+                                                      field_pct, n_runners)
+                VALUES %s ON CONFLICT DO NOTHING""",
+                [(s, m, d, day, round(dev * 100, 2), n) for (s, m, d), day, dev, n in rows])
+            cur.execute("""UPDATE results r SET speed_rating = NULL
+                           FROM distance_suspect_nightly x
+                           WHERE r.source = x.source AND r.meet_id = x.meet_id
+                             AND r.div_id = x.div_id AND r.speed_rating IS NOT NULL""")
+            print(f"  ratings withheld on {cur.rowcount:,} rows of {len(rows):,} doubted races")
+    conn.commit()
+
+
+def psycopg2_extras():
+    import psycopg2.extras
+    return psycopg2.extras
+
+
 def ensureColumn(conn):
     """race_day_effect.provisional, for a table the go-live wrote before the
     column existed (a catalogue-only change; a short lock, never a wait)."""
@@ -323,13 +369,17 @@ def main():
         #   A runner in two copies is read once (their first row).
         by_race = {}
         for r in rows:
-            d = rowDifficulty(r, "XC", races, cells)
-            if d is None or r.distance is None:
+            if r.distance is None:
                 continue
+            d = rowDifficulty(r, "XC", races, cells)
             dm = int(round(float(r.distance) / 100.0)) * 100
             cid, champ = races.get((r.source, r.meet_id, r.div_id)) or (None, None)
             champ_key = champ if champ and (champ, dm) in cells else None
-            key = (champ_key or int(cid), dm, r.race_date)
+            # a race on no fitted course is read for its distance only
+            # (doubtedDistance), under its own key: there is no course-day
+            # to share and no day term to give it
+            key = ((champ_key or int(cid)) if d is not None
+                   else ("race", r.source, int(r.meet_id), int(r.div_id)), dm, r.race_date)
             g = by_race.setdefault(key, {"cid": cid, "champ": champ_key, "dm": dm,
                                          "d": d, "rows": [], "seen": set(),
                                          "races": set()})
@@ -473,11 +523,27 @@ def main():
 
         out_days, out_ratings = [], []
         shown = []
+        suspects = []
         for key, g in new:
             got = reading(key, g, best[2], best[3]) if best else None
             if not got:
                 continue
             gg, sd, n, tilt = got
+            # ★ A FIELD FAR FASTER THAN ITSELF IS A WRONG DISTANCE (owner,
+            #   2026-11-04, /race/xc/289543/1156957: the America East women,
+            #   "6000 m" won in 17:05.7 -- a 5K -- and rated to 147.4 that
+            #   night; "Nightly doesn't find fake distances like this").
+            #   wrong_distance.py fixes distances, but only in the full
+            #   pipeline; until then a new race whose runners all read
+            #   WRONG_FAST or more faster than their level coming in has its
+            #   ratings WITHHELD (the race page's own "Ratings withheld"),
+            #   never priced at a distance it was not run at. The full run's
+            #   writer decides the distance; this table is rebuilt nightly.
+            if cal and doubtedDistance(gg, cal["b"]):
+                suspects.append((key, g, gg - cal["b"], n))
+                continue
+            if g["d"] is None:
+                continue                      # no course: no day term to give
             u = dayFrom(gg, sd, n, tilt, cal) if cal else 0.0
             a = appliedDay(u, mode)
             for rid, (rv, r) in g["priced"].items():
@@ -494,6 +560,17 @@ def main():
                   f"({n} runners with a level{more})")
         tail = "" if not ok else "" if args.write else "  -- DRY RUN: --write writes them"
         print(f"  {len(out_days):,} races, {len(out_ratings):,} ratings{tail}")
+        print(f"  {len(suspects):,} new races ran {WRONG_FAST:.0%}+ faster than their runners' "
+              f"level: distance doubted, ratings withheld until the full run's wrong_distance")
+        for key, g, dev, n in sorted(suspects, key=lambda x: -x[2])[:args.show]:
+            for meet, div in sorted(g["races"]):
+                print(f"    /race/xc/{meet}/{div}  {key[2]}  listed {key[1]} m  "
+                      f"field {dev * 100:+.1f}% vs level ({n} runners)")
+        if args.write and cal:
+            writeSuspects(conn, [(src_meet_div, key[2], dev, n)
+                                 for key, g, dev, n in suspects
+                                 for src_meet_div in sorted({(r.source, int(r.meet_id), int(r.div_id))
+                                                             for r in g["rows"]})])
 
         if not (args.write and ok):
             return 0

@@ -4173,11 +4173,20 @@ def raceExtras(cur, meet_id, div_id, source):
     """
     out = {"withheld": False, "weather": None}
     cur.execute("SELECT to_regclass('dist_drop') AS d, "
-                "to_regclass('weather') AS w")
+                "to_regclass('weather') AS w, "
+                "to_regclass('distance_suspect_nightly') AS n")
     reg = cur.fetchone()
     if reg["d"]:
         cur.execute("SELECT 1 FROM dist_drop WHERE sport = 'XC' "
                     "AND meet_id = %s AND div_id = %s", (meet_id, div_id))
+        out["withheld"] = cur.fetchone() is not None
+    # ★ AND A NEW RACE THE NIGHTLY DOUBTS (engine/provisional_day.py, owner
+    #   2026-11-04): its field ran far faster than its runners' level, so
+    #   its listed distance is withheld from the ratings until the full
+    #   run's wrong_distance settles it
+    if not out["withheld"] and reg["n"] and source:
+        cur.execute("SELECT 1 FROM distance_suspect_nightly WHERE source = %s "
+                    "AND meet_id = %s AND div_id = %s", (source, meet_id, div_id))
         out["withheld"] = cur.fetchone() is not None
     if reg["w"] and source:
         cur.execute("""

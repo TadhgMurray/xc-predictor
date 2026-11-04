@@ -692,6 +692,9 @@ RULES = {
                "race needs, the solved races' size, and how many must calibrate it; the offset and "
                "the shrinkage are read from the solve's own days, not set"),
         "GATE": ("STATED", "written only when its backtest error is at most 85% of no term's"),
+        "WRONG_FAST": ("STATED", "a new race whose field reads 12%+ faster than its runners' level has its "
+                                 "ratings withheld as a doubted distance until the full run's "
+                                 "wrong_distance (its BIG_MOVE, the same 12%)"),
         **_all("_ROWS_SQL _RACES_SQL _LEVEL_SQL", "INFRA", "SQL"),
     },
     # ------------------------------------------------ build_ranking_results

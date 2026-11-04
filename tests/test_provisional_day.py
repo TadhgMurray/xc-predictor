@@ -88,3 +88,12 @@ def test_the_nightly_runs_it_after_the_fill_and_never_blocks_the_boards():
     assert "engine/provisional_day.py --write || true" in sh
     g = open(os.path.join(ROOT, "engine", "joint_golive.py"), encoding="utf-8").read()
     assert "provisional   boolean NOT NULL DEFAULT false" in g
+
+
+def test_a_field_far_faster_than_itself_is_a_doubted_distance():
+    """2026-11-04, the America East women: "6000 m" in 17:05.7."""
+    b = -0.01
+    assert P.doubtedDistance(b + 0.19, b)          # a 5K stored as 6K
+    assert not P.doubtedDistance(b + 0.05, b)      # a fast day
+    assert not P.doubtedDistance(b - 0.20, b)      # a slow field is never withheld here
+    assert not P.doubtedDistance(None, b)
