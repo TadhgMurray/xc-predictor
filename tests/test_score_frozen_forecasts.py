@@ -76,3 +76,15 @@ def test_a_rebuild_asks_the_frozen_basis_with_history_cut_at_the_freeze(monkeypa
     assert [r["person_id"] for r in got["runners"]] == [1, 2]       # 3 had no time
     a, b = S.sharedRunners(fc, got)
     assert [r["person_id"] for r in a["runners"]] == [1, 2] == [r["person_id"] for r in b["runners"]]
+
+
+def test_the_rating_order_baseline():
+    """owner, 2026-11-04: "the model basically just regurgitates ratings" --
+    the same runners ordered by rating alone, to score beside the model."""
+    import score_frozen_forecasts as S
+    fc = {"runners": [{"person_id": 1, "seconds": 900, "rating": 140.0},
+                      {"person_id": 2, "seconds": 910, "rating": 145.0},
+                      {"person_id": 3, "seconds": 920, "rating": None}]}
+    model, by_rating = S.ratingOrder(fc)
+    assert [r["person_id"] for r in model["runners"]] == [1, 2]          # rated only
+    assert sorted(by_rating["runners"], key=lambda r: r["seconds"])[0]["person_id"] == 2

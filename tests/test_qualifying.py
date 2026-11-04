@@ -493,3 +493,20 @@ def test_the_sites_own_school_merges_apply(monkeypatch):
                                 4: "Washington State", 5: "Washington State"})
     assert field == {1: "La Jolla", 2: "La Jolla", 3: "Washington State",
                      4: "Washington State", 5: "Washington State"}
+
+
+def test_brooks_is_ten_a_region_and_golden_tickets_by_region():
+    # owner, 2026-11-04: "isn't it only 40?"
+    rule = Q.ruleFor("Brooks XC National Championships 2026", "anet")
+    assert rule["key"] == "brooks"
+    assert Q.isRound(rule, "Brooks XC Championships West 2026", 2026)
+    assert not Q.isRound(rule, "Brooks XC National Championships 2026", 2026)
+    rounds, labels = {}, {}
+    for i, reg in enumerate(("Northeast", "Midwest", "South", "West")):
+        rounds[i] = [(f"{reg}-{k}", f"School {reg} {k}", 900.0 + k, 150.0 - k - i)
+                     for k in range(30)]
+        labels[i] = f"{reg} region"
+    field = Q.selectField(rule, rounds, labels=labels)
+    assert len(field) == 50                                  # 4 x 10, and 10 tickets
+    assert sum(1 for s in field.values() if s == "West region") >= 10
+    assert set(field.values()) == set(labels.values())

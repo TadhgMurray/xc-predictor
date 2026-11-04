@@ -30,7 +30,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", help="the runner's first and last name")
-    ap.add_argument("--rule", default="nxn", help="ncaa_d1, ncaa_d2, ncaa_d3 or nxn")
+    ap.add_argument("--rule", default="nxn", help="ncaa_d1, ncaa_d2, ncaa_d3, nxn or brooks")
     ap.add_argument("--date", default=None, help="the championship's date (default: NXN's, "
                                                  "the first Saturday of December)")
     a = ap.parse_args()
@@ -104,9 +104,11 @@ def main():
                                                (SELECT min(r.date) FROM results r
                                                 WHERE r.source = 'anet' AND r.meet_id = m.meet_id)) AS d
                                FROM meets m
-                               WHERE m.meet_name ~* 'nxr|nike cross|federation'
+                               WHERE m.meet_name ~* %s
                                  AND (m.meet_date IS NULL OR m.meet_date = ''
-                                      OR (m.meet_date >= %s AND m.meet_date < %s))""", (lo, hi))
+                                      OR (m.meet_date >= %s AND m.meet_date < %s))""",
+                            ("brooks" if rule["key"] == "brooks" else "nxr|nike cross|federation|cif",
+                             lo, hi))
             for r in sorted(cur.fetchall(), key=lambda r: str(r["d"])):
                 if not r["d"] or not (lo <= str(r["d"])[:10] < hi):
                     continue

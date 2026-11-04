@@ -110,6 +110,20 @@ RULES = (
      "cite": "NXN qualifying (MileSplit / Dyestat summaries; check each year): top 2 "
              "teams per regional; 4 at-large teams per gender; top 5 individuals not on "
              "a qualifying team; about 5 at-large individuals"},
+    # ★ BROOKS XC CHAMPIONSHIPS (owner, 2026-11-04: "isn't it only 40?"):
+    #   individuals only, the top ten of each of four regionals plus Golden
+    #   Tickets to about fifty a gender, raced and scored by region
+    {"key": "brooks", "source": "anet",
+     "meet": r"\bbrooks\b.*\bnational", "not": r"northeast|midwest|\bsouth\b|\bwest\b|region",
+     "round": r"\bbrooks\b.*\b(northeast|midwest|south|west)\b|"
+              r"\b(northeast|midwest|south|west)\b.*\bbrooks\b",
+     "round_not": r"national|middle school|\bms\b|community|kids|open race", "window": 28,
+     "teams_auto": 0, "teams_at_large": 0, "ind_auto": 10, "ind_at_large": 10,
+     "ind_at_large_by": "rating", "teams_by_round": r"\b(northeast|midwest|south|west)\b",
+     "team_size": 7,
+     "cite": "Brooks XC Championships (events.brooksrunning.com; Wikipedia's Foot Locker / "
+             "Brooks entry): four regionals, the top 10 of each qualify; Golden Tickets "
+             "to about 50 a gender; the final is scored by region"},
 )
 
 
@@ -236,7 +250,7 @@ def atLargeIndividuals(queues, n, n_teams):
     return out
 
 
-def selectField(rule, rounds, pools=None):
+def selectField(rule, rounds, pools=None, labels=None):
     """{person_id: school}: the championship's field from its rounds by the
     rule. rounds: {round key: [(pid, school, seconds, rating)]}; pools: other
     races at-large teams may also come from (rule["at_large_from"]), same
@@ -283,9 +297,28 @@ def selectField(rule, rounds, pools=None):
                 rest.append((place, r[0]))
         ind_queues[k] = rest
     schools = {r[0]: r[1] for rows in rounds.values() for r in rows}
-    for pid in atLargeIndividuals(ind_queues, rule.get("ind_at_large", 0), n_teams):
-        field[pid] = schools.get(pid)
-    return _capTeams(field, rounds, pools, size)
+    if rule.get("ind_at_large_by") == "rating":
+        # ★ GOLDEN TICKETS: the best-rated runners not already in (Brooks)
+        best = {}
+        for rows in rounds.values():
+            for r in rows:
+                if r[0] not in field and r[3] is not None:
+                    best[r[0]] = max(best.get(r[0], r[3]), r[3])
+        for pid in sorted(best, key=lambda p: -best[p])[:rule.get("ind_at_large", 0)]:
+            field[pid] = schools.get(pid)
+    else:
+        for pid in atLargeIndividuals(ind_queues, rule.get("ind_at_large", 0), n_teams):
+            field[pid] = schools.get(pid)
+    field = _capTeams(field, rounds, pools, size)
+    if labels and rule.get("teams_by_round"):
+        # ★ RACED BY REGION (Brooks): each runner under the region they came
+        #   through, a Golden Ticket under the region of their round
+        came = {}
+        for k, rows in rounds.items():
+            for r in rows:
+                came.setdefault(r[0], k)
+        field = {p: labels.get(came.get(p), s) for p, s in field.items()}
+    return field
 
 
 # ★ THE SITE'S OWN MERGES FIRST (owner, 2026-11-04: "There are other things
@@ -431,6 +464,11 @@ def _roundMeets(cur, rule, day, window, season=None):
     return out
 
 
+def _seasonOf(day):
+    from season_year import seasonYearFromIso
+    return seasonYearFromIso("XC", str(day)[:10])
+
+
 def _shift(day, days):
     import datetime
     return (datetime.date.fromisoformat(str(day)[:10])
@@ -519,6 +557,17 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
                     last_season=len({p[0] for p in past}), last_season_ok=past_ok)
     if len(rounds) < MIN_ROUNDS:
         return None, 0
+    labels = None
+    if rule.get("teams_by_round"):
+        names = {mid: name for mid, name, _d in seen}
+        names.update({mid: name for mid, name, _d in
+                      _roundMeets(cur, rule, _shift(day, -364), rule.get("window", 21),
+                                  season=_seasonOf(day))})
+        labels = {}
+        for mid, name in names.items():
+            m = re.search(rule["teams_by_round"], (name or "").lower())
+            if m:
+                labels[mid] = f"{m.group(1).title()} region"
     pools = {}
     if rule.get("at_large_from"):
         extra = dict(rule, round=rule["at_large_from"], round_not=None)
@@ -527,7 +576,7 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
                                                   int(str(day)[:4]), every=True)):
                 if len(rows) >= 10:
                     pools[(mid, i)] = rows
-    return selectField(rule, rounds, pools), n_pred
+    return selectField(rule, rounds, pools, labels), n_pred
 
 
 # ★ LAST YEAR'S ROUNDS, RUN THIS YEAR (owner's nightly, 2026-11-04: the
