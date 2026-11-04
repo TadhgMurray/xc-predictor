@@ -730,29 +730,50 @@ def _rows(cur, sport, lo, hi):
 #   The owner's rule: the most recent season is the end-all. Older
 #   seasons are provenance, never the answer.
 def current(counter, prefer=None):
-    """(unit, latest_yr, conflict) or None.
+    """(unit, season, conflict) or None.
 
-    ★ prefer: a set of units that win the latest season whenever any of
-      them was voted at all, whatever the counts (the writer passes the
-      known college conferences, alias-resolved). A meet named for its
-      host can out-vote the real conference championship -- the host
-      meet is bigger -- and the count is then the wrong judge. The
-      conflict flag still reports the disagreement."""
+    ★ prefer: a set of units that win their season whenever any of them was
+      voted at all, whatever the counts (the writer passes the known college
+      conferences, alias-resolved). A meet named for its host can out-vote
+      the real conference championship -- the host meet is bigger -- and the
+      count is then the wrong judge. The conflict flag still reports the
+      disagreement.
+
+    ★ THE NEWEST SEASON THAT DECIDES (owner's Lyndon State, 2026-11-04: "Big
+      East", from ONE row at a Pennsylvania meet in 2017 tied with one North
+      Atlantic row, over NAC 2012-2015; and one Mideast row in 2025, two
+      years after the college closed). The most recent season is still the
+      end-all -- when it says something: its winner has two votes or more
+      and nothing ties it. A season of one stray row, or a dead heat, is
+      passed over for the season before. When no season decides, the unit
+      with the most votes over every season wins (the newer on a tie)."""
     if not counter:
         return None
-    latest = max(yr for (_u, yr) in counter)
-    in_latest = Counter()
+    by_year = {}
     for (u, yr), n in counter.items():
-        if yr == latest:
-            in_latest[u] += n
-    top = in_latest.most_common()
-    conflict = len(top) > 1 and top[1][1] >= 2
-    if prefer:
-        known = [(u, n) for u, n in top if u in prefer]
-        if known:
-            return known[0][0], latest, conflict
-    return top[0][0], latest, conflict
-
+        by_year.setdefault(yr, Counter())[u] += n
+    for yr in sorted(by_year, reverse=True):
+        top = by_year[yr].most_common()
+        conflict = len(top) > 1 and top[1][1] >= 2
+        unit, n = top[0]
+        if prefer:
+            known = [(u, k) for u, k in top if u in prefer]
+            if known:
+                unit, n = known[0]
+                tied = len(known) > 1 and known[1][1] == n
+            else:
+                tied = len(top) > 1 and top[1][1] == n
+        else:
+            tied = len(top) > 1 and top[1][1] == n
+        if n >= 2 and not tied:
+            return unit, yr, conflict
+    total, last = Counter(), {}
+    for (u, yr), n in counter.items():
+        total[u] += n
+        last[u] = max(last.get(u, ""), yr)
+    pool = [u for u in total if prefer and u in prefer] or list(total)
+    unit = max(pool, key=lambda u: (total[u], last[u]))
+    return unit, last[unit], len(total) > 1
 
 
 def rivals(counter):

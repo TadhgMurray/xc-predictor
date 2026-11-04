@@ -901,7 +901,7 @@ def buildTeamSeasons(cur):
     cur.execute("DROP TABLE IF EXISTS tmp_team_rows")
     cur.execute("""CREATE TEMP TABLE tmp_team_rows
                    (person_id bigint, yr int, n_school int, n_college int,
-                    n_club int, n_other int)""")
+                    n_club int, n_other int, n_graded int)""")
     # ⚠ OFFSET 0 IS THE FIX FOR THE STEP'S SLOWEST PHASE (2026-10-25: 1,870 s
     #   of 03_pro_flag's 3,096 s on the server). Without it Postgres pulls the
     #   subquery up into the GROUP BY and pastes the whole `lv` expression --
@@ -918,8 +918,10 @@ def buildTeamSeasons(cur):
                    count(*) FILTER (WHERE lv IN ('hs', 'ms', 'elem')),
                    count(*) FILTER (WHERE lv = 'college'),
                    count(*) FILTER (WHERE lv IN ('club', 'pro')),
-                   count(*) FILTER (WHERE lv = 'other')
-            FROM (SELECT r.person_id, {_YR} AS yr, {lv} AS lv
+                   count(*) FILTER (WHERE lv = 'other'),
+                   count(*) FILTER (WHERE g ~ '^0?([1-9]|1[0-2])(st|nd|rd|th)?$')
+            FROM (SELECT r.person_id, {_YR} AS yr, {lv} AS lv,
+                         lower(btrim(COALESCE(r.grade, ''))) AS g
                   FROM {results} r
                   {joins}
                   WHERE r.person_id IS NOT NULL
@@ -931,7 +933,8 @@ def buildTeamSeasons(cur):
                    SELECT person_id, yr, sum(n_school)::int AS n_school,
                           sum(n_college)::int AS n_college,
                           sum(n_club)::int AS n_club,
-                          sum(n_other)::int AS n_other
+                          sum(n_other)::int AS n_other,
+                          sum(n_graded)::int AS n_graded
                    FROM tmp_team_rows GROUP BY 1, 2""")
     cur.execute("CREATE INDEX ON tmp_team_season (person_id, yr)")
     cur.execute("ANALYZE tmp_team_season")
@@ -985,6 +988,68 @@ def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
           f"({cur.fetchone()[0]:,} athletes) -- earlier college, this season "
           f"no school team and >= {min_races} races for a club")
     return n
+
+
+# ★ A RUNNER WHOSE CAREER IS A DECADE OLD IS NOT AT SCHOOL (owner, 2026-11-04,
+#   yes to: "someone whose first recorded race is 10 or more seasons back
+#   can't be a school or college athlete"). Jacques Sallberg raced from 2003;
+#   in 2013 he ran unattached at the Rose City Running Classic, a college
+#   meet, and the unattached rule (pool_resolve: the race's highest level)
+#   made him a college runner -- 157.2, on the college board. A season
+#   LONG_CAREER_SEASONS or more after a person's first race, with no school
+#   or college team that season, is professional (open), as the
+#   post-collegiate rule above makes a graduate's club seasons.
+# ! NOT A CHILD WHO STARTED YOUNG. A runner whose first race was at seven
+#   reaches season ten at sixteen; a homeschool or club runner may have no
+#   school team then. A school GRADE (1-12) on any row of the season or the
+#   three before it is the evidence of a schoolchild, and vetoes the season.
+# ! AND NEVER A SEASON WITH AN NCAA RACE, A SCHOOL SEASON OR AN EXISTING
+#   PRO SEASON: the same vetoes as every other route here.
+# XCP_LONG_CAREER=0 turns it off.
+LONG_CAREER_SEASONS = 10
+
+
+def longCareerOn():
+    return os.environ.get("XCP_LONG_CAREER", "1").strip() != "0"
+
+
+def buildLongCareer(cur, seasons=LONG_CAREER_SEASONS):
+    """tmp_long_career (person_id, yr, n): the seasons the rule above makes
+    professional. Needs tmp_team_season (buildTeamSeasons), tmp_ncaa_season,
+    tmp_school_season and tmp_pro_season."""
+    cur.execute("DROP TABLE IF EXISTS tmp_long_career")
+    cur.execute(f"""
+        CREATE TEMP TABLE tmp_long_career AS
+        WITH f AS (SELECT person_id, min(yr) AS y0 FROM tmp_team_season GROUP BY 1),
+             g AS (SELECT person_id, yr FROM tmp_team_season WHERE n_graded > 0)
+        SELECT s.person_id, s.yr, (s.n_club + s.n_other)::int AS n
+        FROM   tmp_team_season s
+        JOIN   f ON f.person_id = s.person_id
+        WHERE  s.yr - f.y0 >= {int(seasons)}
+          AND  s.n_school = 0 AND s.n_college = 0
+          AND  NOT EXISTS (SELECT 1 FROM g WHERE g.person_id = s.person_id
+                             AND g.yr BETWEEN s.yr - 3 AND s.yr)
+          AND  NOT EXISTS (SELECT 1 FROM tmp_ncaa_season n
+                           WHERE n.person_id = s.person_id AND n.yr = s.yr)
+          AND  NOT EXISTS (SELECT 1 FROM tmp_school_season n
+                           WHERE n.person_id = s.person_id AND n.yr = s.yr)
+          AND  NOT EXISTS (SELECT 1 FROM tmp_pro_season p
+                           WHERE p.person_id = s.person_id AND p.yr = s.yr)""")
+    n = cur.rowcount
+    cur.execute("SELECT count(DISTINCT person_id) FROM tmp_long_career")
+    print(f"    long career: {n:,} athlete-seasons ({cur.fetchone()[0]:,} athletes) -- "
+          f"{seasons}+ seasons after their first race, no school or college team, "
+          f"no school grade in four seasons")
+    return n
+
+
+def addLongCareer(cur):
+    cur.execute(f"""INSERT INTO tmp_pro_season (person_id, yr, pro_races, round)
+                    SELECT person_id, yr, n, {_LONG_CAREER_ROUND} FROM tmp_long_career""")
+    return cur.rowcount
+
+
+_LONG_CAREER_ROUND = -2
 
 
 def addPostCollegiate(cur):
@@ -1196,6 +1261,13 @@ def main(write=False, rounds=_MAX_ROUNDS, show_dist=True, since=None):
                 print("\n[pro] post-collegiate seasons (XCP_POST_COLLEGIATE=1)...")
                 buildPostCollegiate(cur)
                 print(f"    added {addPostCollegiate(cur):,} athlete-seasons")
+
+            if longCareerOn():
+                print("\n[pro] long-career seasons (XCP_LONG_CAREER=0 turns it off)...")
+                if not postCollegiateOn():
+                    buildTeamSeasons(cur)
+                buildLongCareer(cur)
+                print(f"    added {addLongCareer(cur):,} athlete-seasons")
 
             reportTop(cur)
 

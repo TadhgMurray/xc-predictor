@@ -48,3 +48,14 @@ def test_two_runners_in_one_race_are_two():
                     (3, "2026-10-30", 9, 1300.0), (4, "2026-10-30", 7, 1300.4)]
     bad = F.clashes(C(), [(2, 1, "x", "s"), (4, 3, "y", "s")])
     assert bad == {(2, 1)}            # 1300.0 and 1300.4 are one run in two feeds
+
+
+def test_chains_and_forks_merge_into_one_page():
+    """Nightly 2026-11-04: one page named the 'old' of two merges failed the run."""
+    pairs = [(2, 1, "A", "S"), (3, 2, "A", "S"), (2, 4, "A", "T")]
+    got = F.oneKeeper(pairs, {1: 50, 2: 3, 3: 1, 4: 10})
+    olds = [o for o, *_x in got]
+    assert len(olds) == len(set(olds)) == 3            # each page moves once
+    assert {k for _o, k, *_x in got} == {1}             # all to the page with most races
+    got = F.oneKeeper([(1_009_000_001, 7, "B", "S")], {1_009_000_001: 90, 7: 2})
+    assert got == [(1_009_000_001, 7, "B", "S")]        # never a placeholder as keeper

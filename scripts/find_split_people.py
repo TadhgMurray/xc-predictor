@@ -105,6 +105,41 @@ def findPairs(seasons):
     return out
 
 
+def oneKeeper(pairs, races):
+    """[(old, keep, name, school)] with every chain and fork resolved: the
+    pairs are joined into groups (A~B, B~C is one runner), each group keeps
+    ONE page -- a real one over a minted placeholder, then the most races --
+    and every other page of the group moves to it, once. Without this one
+    page could be named the "old" of two merges (two schools, two seasons)
+    and the decision table's key refused the second (nightly 2026-11-04,
+    04a2c_split_people exit 1). Pure."""
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    label = {}
+    for old, keep, name, school in pairs:
+        parent[find(old)] = find(keep)
+        label.setdefault(old, (name, school))
+        label.setdefault(keep, (name, school))
+    groups = {}
+    for p in parent:
+        groups.setdefault(find(p), []).append(p)
+    out = []
+    for members in groups.values():
+        keeper = sorted(members, key=lambda pid: (pid >= MINT_FLOOR, -races.get(pid, 0), pid))[0]
+        for pid in sorted(members):
+            if pid != keeper:
+                name, school = label.get(pid) or label.get(keeper)
+                out.append((pid, keeper, name, school))
+    return out
+
+
 _SEASONS = """
     SELECT s.person_id, s.school, split_part(s.pool, '_', 1) AS level,
            right(split_part(s.pool, '|', 1), 1) AS gender, s.year, s.n_races, s.grade
@@ -199,7 +234,10 @@ def main(argv=None):
             pairs = [p for p in pairs if p[0] not in ruled and p[1] not in ruled]
             bad = clashes(cur, pairs)
             conn.rollback()
-        keep = [p for p in pairs if (p[0], p[1]) not in bad]
+        races = {}
+        for x in seasons:
+            races[x["person_id"]] = races.get(x["person_id"], 0) + int(x.get("n_races") or 0)
+        keep = oneKeeper([p for p in pairs if (p[0], p[1]) not in bad], races)
         print(f"[split] {len(pairs) + len(bad):,} same name + school + season pairs; "
               f"{len(bad):,} raced one race at different times (two runners, left alone); "
               f"{len(keep):,} to merge")
