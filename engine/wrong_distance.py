@@ -72,6 +72,12 @@ K = 1.06                 # t ~ d^K: the exponent every distance tool here uses
 REF_MIN = 3              # other races in the season before a runner testifies
 SUSPECT = 0.03           # pass 1: a division this far off is left out of references
 
+# ---- a field of thin references (owner, 2026-11-04: /race/xc/283954/1129465,
+#      seventh-grade girls at 9:19 for a "3000 m" rated 168; fifty runners,
+#      each with this race and ONE other that season, so not one testified) ----
+THIN_FIELD = 12          # runners with 1+ OTHER race before a thin field testifies
+THIN_SHARE = 0.85        # ... and this share of them off the same way (3%+)
+
 # ---- a division ----
 FIELD_MIN = 6            # runners with a reference before the field testifies
 PIN_MIN = 10             # ... and before it can be pinned (fewer: listed for review)
@@ -541,6 +547,37 @@ LEFT   JOIN wd_ref2 f ON f.person_id = w.person_id AND f.yr = w.yr
 GROUP  BY w.dk
 """
 
+# ★ THE THIN FIELD: where too few runners have REF_MIN races (middle school,
+#   a first meet), each runner against the median of their OTHER races that
+#   season, one is enough -- the race itself never in its own reference. A
+#   field of THIN_FIELD+ of them, THIN_SHARE the same way, stands in for the
+#   division's numbers; every rule after it (a real distance, BIG_MOVE,
+#   downward pins only) is unchanged.
+_THIN_SQL = """
+CREATE TEMP TABLE wd_thin AS
+WITH thin AS (SELECT dk FROM wd_stat WHERE n_ref < %(f)s AND n_rows >= %(t)s),
+rr AS (
+    SELECT w.dk, w.person_id,
+           w.e - percentile_cont(0.5) WITHIN GROUP (ORDER BY o.e) AS r
+    FROM   wd_row w JOIN thin USING (dk)
+    JOIN   wd_row o ON o.person_id = w.person_id AND o.yr = w.yr AND o.dk <> w.dk
+    WHERE  w.person_id IS NOT NULL
+    GROUP  BY w.dk, w.person_id, w.e)
+SELECT dk, count(*)::int AS n,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY r) AS res,
+       percentile_cont(ARRAY[0.1, 0.25, 0.75, 0.9]) WITHIN GROUP (ORDER BY r) AS q,
+       avg(CASE WHEN r < -0.03 THEN 1.0 ELSE 0.0 END) AS sh_fast,
+       avg(CASE WHEN r >  0.03 THEN 1.0 ELSE 0.0 END) AS sh_slow
+FROM   rr GROUP BY dk HAVING count(*) >= %(t)s
+"""
+
+_THIN_APPLY = """
+UPDATE wd_stat s SET n_ref = t.n, res = t.res, q = t.q,
+                     sh_fast = t.sh_fast, sh_slow = t.sh_slow
+FROM   wd_thin t
+WHERE  s.dk = t.dk AND greatest(t.sh_fast, t.sh_slow) >= %(sh)s
+"""
+
 _PCTS = (0.001, 0.005, 0.01, 0.03, 0.1, 0.25, 0.5, 0.75, 0.9, 0.97, 0.99, 0.995, 0.999)
 _POOL_SQL = """
 SELECT pool, percentile_cont(%(p)s::float8[]) WITHIN GROUP (ORDER BY e50)
@@ -663,6 +700,11 @@ def build(cur, work_mem="512MB"):
     cur.execute("ANALYZE wd_ref2")
     _ex(cur, _STAT_SQL, None, "division statistics", t0)
     cur.execute("ALTER TABLE wd_stat ADD PRIMARY KEY (dk)")
+    _ex(cur, _THIN_SQL, {"f": FIELD_MIN, "t": THIN_FIELD},
+        "thin fields (runners against their other races, one is enough)", t0)
+    cur.execute(_THIN_APPLY, {"sh": THIN_SHARE})
+    print(f"  thin fields read: {cur.rowcount:,} divisions now testify on "
+          f"{THIN_FIELD}+ runners' other races", flush=True)
     cur.execute("ANALYZE wd_stat")
     cur.execute(_POOL_SQL, {"p": list(_PCTS)})
     pools = {p: list(zip(_PCTS, vals)) for p, vals in cur.fetchall()}
@@ -1263,6 +1305,18 @@ def explain(cur, meet, div, source=None):
                   f"({implied(listed, b):,.0f} m)")
     else:
         print(f"\n  no runner has {REF_MIN}+ other races that season")
+        thin = [math.log(t) - K * math.log(listed / 5000.0)
+                - statistics.median(math.log(ot) - K * math.log(od / 5000.0)
+                                    for ot, od, _x, _y in others)
+                for (_n, _g, _p, t), others in runners.items() if others]
+        if thin:
+            med = statistics.median(thin)
+            sh = max(sum(1 for r in thin if r < -0.03), sum(1 for r in thin if r > 0.03)) / len(thin)
+            ok = len(thin) >= THIN_FIELD and sh >= THIN_SHARE
+            print(f"  thin field: {len(thin)} runners against their other races: median "
+                  f"{100 * med:+.1f}% ({100 * sh:.0f}% the same way) -> implies "
+                  f"{implied(listed, med):,.0f} m; "
+                  f"{'it testifies' if ok else f'needs {THIN_FIELD}+ runners, {THIN_SHARE:.0%} one way'}")
 
 
 def _mmss(s):
