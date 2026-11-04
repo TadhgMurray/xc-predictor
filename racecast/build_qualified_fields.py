@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+# Project: xc-predictor / racecast
+# File:    build_qualified_fields.py
+# Purpose: Work out, overnight, the field of every upcoming championship you
+#          qualify for -- this season's qualifiers, predicting the rounds
+#          that have not run -- and store it for the pages to read.
+#
+#     set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
+#     $P -u racecast/build_qualified_fields.py                  # write
+#     $P -u racecast/build_qualified_fields.py --dry-run        # say, write nothing
+#
+# ★ WHY (owner, 2026-11-03: "I think the new field option doesn't work ... the
+#   individuals always seem to be the same"). A page may not run the model on
+#   a championship's rounds (owner, same day: "you just slowed down the site
+#   so much"), so a round not yet run counted only once its own forecast was
+#   frozen the night before it -- and almost every championship fell back to
+#   last year's teams. Here, off the request path, every round not run is
+#   predicted (upcoming_preview.qualifiedFieldInfo live=True) and each race's
+#   field is written to upcoming_preview.STORED_PATH, which the previews and
+#   the predictions page read first.
+#
+# ★ WHICH MEETS: the predictions page's upcoming championships (last year's
+#   meets a year on, upcoming_preview.upcomingChampionships) and every meet
+#   posted for the next DAYS days that a published rule or a learned route
+#   covers -- keyed as the pages ask: source, meet id, race, date.
+#
+# ! OFF THE && CHAIN (nightly 13h2): a failure keeps last night's file; the
+#   file is written beside and swapped, never half-written.
+import argparse
+import datetime
+import json
+import os
+import sys
+import time
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for sub in ("racecast", "scripts", "engine", "model"):
+    p = os.path.join(_ROOT, sub)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+DAYS = 45
+
+
+def targets(cur, today):
+    """[plan] -- meetPlan's shape, dated the day the pages will ask with."""
+    import last_edition as LE
+    import qualifying as Q
+    import upcoming_preview as U
+    out = []
+    for m in U.upcomingChampionships(cur, today):
+        plan = U.pastPlan(cur, m["meet_id"], m["source"], m["date"])
+        if plan:
+            out.append(plan)
+    hi = (today + datetime.timedelta(days=DAYS)).isoformat()
+    cur.execute("""SELECT 'tfrrs' AS src, meet_id, meet_name, date AS d FROM meets_tfrrs
+                   WHERE sport = 'XC' AND date ~ '^(19|20)[0-9]{2}-' AND date > %s AND date <= %s
+                   UNION
+                   SELECT DISTINCT 'anet', meet_id, meet_name, meet_date FROM meets
+                   WHERE meet_date ~ '^(19|20)[0-9]{2}-' AND meet_date > %s AND meet_date <= %s""",
+                (today.isoformat(), hi, today.isoformat(), hi))
+    routes = Q._loadRoutes()
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        src, mid, name = row[0], int(row[1]), row[2]
+        if Q.ruleFor(name, src) is None and (src, LE.editionName(name)) not in routes:
+            continue
+        plan = U.meetPlan(cur, mid, src)
+        if plan and plan.get("date"):
+            out.append(plan)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Store the qualifier fields of upcoming championships.")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--budget-minutes", type=float, default=90)
+    a = ap.parse_args()
+    t0 = time.time()
+    deadline = t0 + 60 * a.budget_minutes
+    today = datetime.date.today()
+
+    import psycopg2.extras
+    import upcoming_preview as U
+    from database import getConn
+
+    fields, n_races = {}, 0
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SET statement_timeout = '900s'")
+            plans = targets(cur, today)
+            conn.rollback()
+            print(f"  {len(plans)} upcoming championship(s) a rule or a learned route covers")
+            for plan in plans:
+                if time.time() > deadline:
+                    print("  out of budget; the rest next run")
+                    break
+                got = []
+                for race in plan.get("races") or []:
+                    n_races += 1
+                    try:
+                        field, info = U.qualifiedFieldInfo(cur, plan, race["div_id"], live=True)
+                    except Exception as exc:            # noqa: BLE001
+                        conn.rollback()
+                        print(f"    {plan.get('name')} {race.get('label')}: "
+                              f"{type(exc).__name__}: {exc}")
+                        continue
+                    conn.rollback()
+                    if field:
+                        fields[U.storedKey(plan["source"], plan["meet_id"], race["div_id"],
+                                           plan["date"])] = {
+                            "field": {str(k): v for k, v in field.items()}, "info": info,
+                            "made": today.isoformat()}
+                        got.append(f"{race.get('label')} {len(field)} "
+                                   f"({info.get('predicted', 0)}/{info.get('rounds', 0)} predicted)")
+                print(f"  {plan['date']}  {plan.get('name')}: "
+                      + ("; ".join(got) if got else "no race with enough rounds"))
+    print(f"  {len(fields)} race field(s) of {n_races} race(s)"
+          + ("" if not a.dry_run else " -- DRY RUN, nothing written"))
+    if not a.dry_run:
+        tmp = U.STORED_PATH + ".new"
+        with open(tmp, "w") as fh:
+            json.dump({"made": today.isoformat(), "fields": fields}, fh)
+        os.replace(tmp, U.STORED_PATH)
+        print(f"  wrote {U.STORED_PATH}")
+    print(f"  done in {time.time() - t0:.0f}s")
+
+
+if __name__ == "__main__":
+    main()
