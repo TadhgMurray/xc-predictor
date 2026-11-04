@@ -124,13 +124,13 @@ def main():
                 seen.append(("ran", mid, None, rows))
             return rows
 
-        def predicted(mid, g):
-            rows = U.predictedRound(cur, mid, g, src, live=True)
+        def predicted(mid, g, every=False):
+            rows = U.predictedRound(cur, mid, g, src, live=True, every=every)
             seen.append(("predicted (this season, posted)", mid, None, rows))
             return rows
 
         def past(mid, div, on):
-            rows = U.predictedPast(cur, mid, div, src, on)
+            rows = U.predictedPast(cur, mid, div, src, on, region=True)
             seen.append((f"last season's run again on {on}", mid, div, rows))
             return rows
 

@@ -417,3 +417,39 @@ def test_one_region_however_its_meet_is_named():
     assert Q.roundKey("NXR South Regional Championships") != Q.roundKey("NXR Southeast Regional")
     assert Q._sideMeet("NXR Northeast & New York Regional Open") > \
         Q._sideMeet("NXR Northeast & New York Regional Championships")
+
+
+def test_california_through_cif_state_and_new_york_no_longer_its_own(monkeypatch):
+    # owner, 2026-11-04: "for california just do CIF state"; "NY isn't its
+    # own thing anymore (starting this year)"
+    rule = Q.ruleFor("Nike Cross Nationals", "anet")
+    assert Q.isRound(rule, "2026 CIF State Cross Country Championships", 2026)
+    assert Q.isMerged(rule, "2026 CIF State Cross Country Championships")
+    assert Q.isRound(rule, "NYS Federation Championships at NXR", 2025)
+    assert not Q.isRound(rule, "NYS Federation Championships at NXR", 2026)
+    # the divisions are one ranking: a runner once, at their fastest
+    d1 = [(1, "A", 900.0, 50.0), (2, "B", 905.0, 50.0)]
+    d2 = [(3, "C", 899.0, 50.0), (1, "A", 950.0, 50.0)]
+    assert [r[0] for r in Q._oneRanking([d1, d2])] == [3, 1, 2]
+
+
+def test_a_regions_best_runners_join_last_years_round():
+    # owner, 2026-11-04: Mantecon (Florida) in no NXN round -- last year's
+    # Southeast run again held only the schools that went last year
+    import upcoming_preview as U
+    asked = []
+
+    class Cur:
+        def execute(self, sql, args=None):
+            asked.append((sql, args))
+            self.last = sql
+
+        def fetchall(self):
+            if "GROUP  BY 1, 2" in self.last:
+                return [{"state": "FL", "pool": "hs_m", "n": 120}, {"state": "GA", "pool": "hs_m", "n": 100},
+                        {"state": "CA", "pool": "hs_m", "n": 2}, {"state": "FL", "pool": "college_m", "n": 3}]
+            return [{"person_id": 29751562}, {"person_id": 7}]
+    got = U.regionRunners(Cur(), 5, 6, "anet", "2026-11-21")
+    assert got == {29751562, 7}
+    sql, args = next(a for a in asked if "ORDER  BY mean_rating DESC" in a[0])
+    assert args[0] == 2026 and args[1] == "hs_m" and args[2] == ["FL", "GA"]   # CA: a stray

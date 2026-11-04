@@ -453,8 +453,13 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
         if rule is not None:
             field, n_pred = Q.fieldFromRounds(
                 cur, rule, str(plan["date"])[:10], race.get("gender"),
-                predict=(lambda mid, g: predictedRound(cur, mid, g, src, live)) if forecast
-                else None, predict_past=past, info=used)
+                predict=(lambda mid, g, every=False: predictedRound(cur, mid, g, src, live, every))
+                if forecast else None,
+                # a published rule's rounds are regions: their best runners now
+                # race the round whether or not their school went last year
+                predict_past=((lambda mid, div, on: predictedPast(cur, mid, div, src, on,
+                                                                  region=True))
+                              if past else None), info=used)
             n_rounds = used.get("rounds", 0)
         else:
             field, n_pred = Q.learnedField(
@@ -751,7 +756,7 @@ def storedChampionships(today=None):
     return [m for m in champs if m.get("date") and m["date"] >= today.isoformat()]
 
 
-def predictedRound(cur, meet_id, gender, source, live=False):
+def predictedRound(cur, meet_id, gender, source, live=False, every=False):
     """A round that has not run, as we predict it: [(person_id, school,
     seconds, rating)] of its `gender` race (the one with the most schools),
     from racePrediction -- the stored forecast, else a live one."""
@@ -760,6 +765,9 @@ def predictedRound(cur, meet_id, gender, source, live=False):
     races = [r for r in (plan or {}).get("races") or [] if r.get("gender") == gender]
     if not races:
         return []
+    if every:                       # a merged round (CIF State): every division
+        return [row for r in races
+                for row in predictedDiv(cur, meet_id, r["div_id"], source, live)]
     # ★ THE CHAMPIONSHIP RACE, AS A ROUND THAT RAN IS READ (owner, 2026-11-04,
     #   NXN: Southlake Carroll with 14 runners, a Marshall team, and Marcelo
     #   Mantecon missing). "The race with the most schools" at a Nike regional
@@ -795,18 +803,84 @@ def predictedDiv(cur, meet_id, div_id, source, live=False):
     return _rowsOf(pred)
 
 
-def predictedPast(cur, meet_id, div_id, source, on):
+def predictedPast(cur, meet_id, div_id, source, on, region=False):
     """Last season's round `meet_id`/`div_id` run again on `on` (ISO) --
     its schools' squads now, the predictions page's "this year" of it -- as
     qualifying rows (qualifying.pastRounds). Runs the model: the nightly
     only. Kept per process, so a round shared by several championships is
-    predicted once."""
+    predicted once. region=True: the round's region's best runners now
+    race it too (regionRunners)."""
     def compute():
-        return livePrediction(cur, meet_id, div_id, source, on=on)
-    pred, _ = ttlcache.get(("up_past_pred", source, int(meet_id), int(div_id), str(on)[:10]),
+        add = regionRunners(cur, meet_id, div_id, source, on) if region else set()
+        return livePrediction(cur, meet_id, div_id, source, on=on, add=add)
+    pred, _ = ttlcache.get(("up_past_pred", source, int(meet_id), int(div_id), str(on)[:10],
+                            bool(region)),
                            compute, ttl=TTL, ttl_of=lambda v: TTL if v.get("available")
                            else FAIL_TTL)
     return _rowsOf(pred)
+
+
+# ★ THE REGION'S BEST, NOT ONLY LAST YEAR'S SCHOOLS (owner, 2026-11-04:
+#   Marcelo Mantecon, Florida, "he would win if in", was in no NXN round --
+#   NXR Southeast is not posted, and last year's Southeast run again holds
+#   only the schools that went last year). A region is the states its field
+#   came from last year (3%+ of it); its REGION_N best runners this season
+#   at the race's level and gender join the prediction, whatever school
+#   they run for. A published rule's rounds only (NXR, NCAA regionals): a
+#   learned route's round is a district or a league, not its states.
+REGION_N = 40
+
+
+def regionRunners(cur, meet_id, div_id, source, on):
+    """{person_id} of the region's best runners this season for last
+    season's round `meet_id`/`div_id`, or set() on anything unreadable."""
+    from season_year import seasonYearFromIso
+    try:
+        cur.execute("SAVEPOINT up_region")
+        last = seasonYearFromIso("XC", (datetime.date.fromisoformat(str(on)[:10])
+                                        - datetime.timedelta(days=364)).isoformat())
+        cur.execute("""SELECT s.state, split_part(s.pool, '|', 1) AS pool, count(*) AS n
+                       FROM   results r
+                       JOIN   athlete_season s ON s.person_id = r.person_id
+                              AND s.sport = 'XC' AND s.year = %s
+                       WHERE  r.meet_id = %s AND r.div_id = %s AND r.source = %s
+                       GROUP  BY 1, 2""", (last, int(meet_id), int(div_id), source))
+        rows = _dictRows(cur)
+        total = sum(int(r["n"]) for r in rows) or 1
+        pools = collections.Counter()
+        states = collections.Counter()
+        for r in rows:
+            pools[r["pool"]] += int(r["n"])
+            if r["state"]:
+                states[r["state"]] += int(r["n"])
+        pool = pools.most_common(1)[0][0] if pools else None
+        keep = sorted(st for st, n in states.items() if n >= 0.03 * total)
+        out = set()
+        if pool and keep:
+            cur.execute("""SELECT person_id FROM athlete_season
+                           WHERE  sport = 'XC' AND year = %s
+                             AND  split_part(pool, '|', 1) = %s
+                             AND  state = ANY(%s) AND mean_rating IS NOT NULL
+                           ORDER  BY mean_rating DESC LIMIT %s""",
+                        (last + 1, pool, keep, REGION_N))
+            out = {int(r["person_id"]) for r in _dictRows(cur)}
+        _release(cur, "up_region")
+        return out
+    except Exception as exc:                            # noqa: BLE001
+        _undo(cur, "up_region")
+        print(f"region runners {source} {meet_id}/{div_id}: {type(exc).__name__}: {exc}",
+              flush=True)
+        return set()
+
+
+def _dictRows(cur):
+    out = []
+    for r in cur.fetchall():
+        if isinstance(r, dict):
+            out.append(r)
+        else:
+            out.append(dict(zip([d[0] for d in cur.description], r)))
+    return out
 
 
 def _rowsOf(pred):
@@ -820,7 +894,7 @@ def _rowsOf(pred):
             if r.get("person_id") is not None and r.get("seconds")]
 
 
-def livePrediction(cur, meet_id, div_id, source=None, on=None):
+def livePrediction(cur, meet_id, div_id, source=None, on=None, add=None):
     """predict.predictTeam for one race, now, uncached: {"available",
     "teams", "runners", "n_field"} or {"available": False, "reason"}. The
     forecast step (build_meet_forecasts.py) stores this; pages read it
@@ -841,7 +915,7 @@ def livePrediction(cur, meet_id, div_id, source=None, on=None):
             field = qualifiedField(cur, plan, div_id)
             if field:
                 target["field_ids"] = field
-        out = predictTeam(cur, [], target)
+        out = predictTeam(cur, [], target, add=set(add or ()))
         _release(cur, "up_pred")
     except NotImplementedError:
         _undo(cur, "up_pred")

@@ -81,7 +81,16 @@ RULES = (
      "cite": "2025-26 NCAA DIII Cross Country Pre-Championships Manual, section 2.1: "
              "10 regions; 1 team each; 22 at-large; top 7 not on a qualifying team"},
     {"key": "nxn", "source": "anet",
-     "meet": r"nike cross nationals|\bnxn\b", "round": r"\bnxr\b.*regional|nike cross regional|federation.*\bnxr\b",
+     "meet": r"nike cross nationals|\bnxn\b",
+     "round": r"\bnxr\b.*regional|nike cross regional|federation.*\bnxr\b|\bcif\b.*\bstate\b",
+     # ★ CALIFORNIA COMES THROUGH ITS STATE MEET (owner, 2026-11-04: "for
+     #   california just do CIF state"): every division of it is one round,
+     #   run on one course on one day, ranked by time (fieldFromRounds)
+     "merged": r"\bcif\b.*\bstate\b",
+     # ★ AND NEW YORK IS NOT ITS OWN ROUND ANY MORE (owner, 2026-11-04: "NY
+     #   isn't its own thing anymore (starting this year)"): the Federation
+     #   meet counts for the 2025 season and before only
+     "round_last": ((r"federation", 2025),),
      # ! A REGIONAL'S MEET ALSO HOLDS ITS COMMUNITY, CITIZENS, KIDS AND
      #   MIDDLE SCHOOL RACES, and the NYS Federation runs "at NXR" (the
      #   server's 2025 list)
@@ -97,7 +106,6 @@ RULES = (
      #   on NXN 2025: Mira Costa, Redondo Union, San Clemente, Coronado, J Serra,
      #   Trabuco Hills missed, all at-large after the CIF state meet), and the
      #   field ran 22 teams a gender: 7 regionals x 2 + 8 at-large
-     "at_large_from": r"\bcif\b.*state",
      "team_size": 7,
      "cite": "NXN qualifying (MileSplit / Dyestat summaries; check each year): top 2 "
              "teams per regional; 4 at-large teams per gender; top 5 individuals not on "
@@ -121,11 +129,21 @@ def ruleFor(meet_name, source=None):
     return None
 
 
-def isRound(rule, meet_name):
-    """Is this meet one of the rule's rounds? Pure."""
+def isRound(rule, meet_name, season=None):
+    """Is this meet one of the rule's rounds (in `season`, the championship's
+    season year, where the rule's rounds changed)? Pure."""
     nm = (meet_name or "").lower()
+    if season is not None and any(re.search(pat, nm) and int(season) > last
+                                  for pat, last in rule.get("round_last") or ()):
+        return False
     return bool(re.search(rule["round"], nm)) and not (
         rule.get("round_not") and re.search(rule["round_not"], nm))
+
+
+def isMerged(rule, meet_name):
+    """A round whose races of a gender are one ranking (CIF State's
+    divisions for NXN). Pure."""
+    return bool(rule.get("merged") and re.search(rule["merged"], (meet_name or "").lower()))
 
 
 def pickRace(races):
@@ -307,10 +325,12 @@ def _roundMeets(cur, rule, day, window):
         cur.execute("""SELECT DISTINCT meet_id, meet_name, meet_date FROM meets
                        WHERE meet_date ~ '^(19|20)[0-9]{2}-'
                          AND meet_date >= %s AND meet_date < %s""", (lo, day))
+    from season_year import seasonYearFromIso
+    season = seasonYearFromIso("XC", str(day)[:10])
     out = []
     for row in cur.fetchall():
         row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
-        if isRound(rule, row[1]):
+        if isRound(rule, row[1], season):
             out.append((int(row[0]), row[1], str(row[2])[:10]))
     return out
 
@@ -374,9 +394,11 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
         #   region (the nightly, 2026-11-04: DI read 11 and 13 rounds of 9)
         if roundKey(name) in got:
             continue
-        rows = roundResults(cur, rule, mid, gender, int(str(day)[:4]))
+        merged = isMerged(rule, name)
+        rows = (_oneRanking(roundResults(cur, rule, mid, gender, int(str(day)[:4]), every=True))
+                if merged else roundResults(cur, rule, mid, gender, int(str(day)[:4])))
         if len(rows) < 10 and predict is not None:
-            rows = predict(mid, gender) or []
+            rows = (predict(mid, gender, True) if merged else predict(mid, gender)) or []
             n_pred += len(rows) >= 10
         if len(rows) >= 10:
             rounds[mid] = rows
@@ -384,8 +406,11 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     past, past_ok = [], 0
     if predict_past is not None:
         past = pastRounds(cur, rule, day, gender, got)
-        for mid, div, on in past:
-            rows = predict_past(mid, div, on) or []
+        acc = collections.OrderedDict()
+        for mid, div, on in past:          # a merged round: one entry per race
+            acc.setdefault(mid, []).append(predict_past(mid, div, on) or [])
+        for mid, lists in acc.items():
+            rows = _oneRanking(lists) if len(lists) > 1 else lists[0]
             if len(rows) >= 10:
                 rounds[mid] = rows
                 n_pred += 1
@@ -393,7 +418,7 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     if info is not None:
         # what was looked at, for the nightly to say why a field is missing
         info.update(rounds=len(rounds), this_season=len(seen), counted=len(rounds) - past_ok,
-                    last_season=len(past), last_season_ok=past_ok)
+                    last_season=len({p[0] for p in past}), last_season_ok=past_ok)
     if len(rounds) < MIN_ROUNDS:
         return None, 0
     pools = {}
@@ -414,6 +439,17 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
 #   found is last season's meet, its schools' squads now, on its date a year
 #   on (364 days, the same weekday): the predictions page's "this year" of
 #   the same meet. The nightly only (upcoming_preview.predictedPast).
+def _oneRanking(lists):
+    """Several races' rows as one ranking by time, one row a runner (their
+    fastest). Pure."""
+    best = {}
+    for rows in lists or []:
+        for r in rows or []:
+            if r[0] not in best or r[2] < best[r[0]][2]:
+                best[r[0]] = r
+    return sorted(best.values(), key=lambda r: r[2])
+
+
 def pastRounds(cur, rule, day, gender, have=()):
     """[(meet_id, div_id, on)] of last season's rounds of `rule` in
     `gender` whose edition name is not in `have`: the race pickRace takes
@@ -425,8 +461,13 @@ def pastRounds(cur, rule, day, gender, have=()):
                                key=lambda m: _sideMeet(m[1])):
         if roundKey(name) in have:
             continue
-        races = pickRace([r for r in LE.editionRaces(cur, mid, "XC", rule["source"])
-                          if (r.get("gender") or labelGender(r.get("label"))) == gender])
+        races = [r for r in LE.editionRaces(cur, mid, "XC", rule["source"])
+                 if (r.get("gender") or labelGender(r.get("label"))) == gender]
+        if isMerged(rule, name):
+            out.extend((mid, int(r["div_id"]), _shift(d, 364)) for r in races)
+            have.add(roundKey(name))
+            continue
+        races = pickRace(races)
         if not races:
             continue
         if len(races) > 1:
