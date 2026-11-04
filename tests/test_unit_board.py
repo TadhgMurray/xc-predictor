@@ -370,3 +370,15 @@ def test_nxr_regions_rank_teams_across_states():
     se = next(u for u in board if u["unit"] == "NXR Southeast")
     assert se["n_teams"] == 2 and se["state"] is None
     assert "state=AL%2CDC" in UB.regionHref("NXR Southeast", "hs_m", "XC")
+
+
+def test_an_nxr_region_wears_its_regionals_logo(monkeypatch):
+    import unit_board as UB
+    asked = []
+    monkeypatch.setattr(UB, "storedLogoUrl", lambda kind, name, state=None, px=64: (
+        asked.append((kind, name)) or ("/img/x.png" if (kind, name) == ("series", "NXR") else None)))
+    html = UB.unitMark("nxr", "NXR Southeast", size=22)
+    assert '<img' in html and "/img/x.png" in html
+    assert ("series", "NXR SOUTHEAST") in asked              # its own first, then NXR's
+    UB.unitMark("nxr", "California (CIF State)", size=22)
+    assert ("series", "NXR CALIFORNIA") in asked
