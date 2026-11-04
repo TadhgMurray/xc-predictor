@@ -1936,6 +1936,15 @@ function sameWeekdayNextYear(iso, targetYear) {
  *   do move, and because the model reads day-of-year as a feature so the
  *   difference is not cosmetic.
  */
+/* ★ THE SEASON A DATE IS IN (engine/season_year.py: Aug 15, named for the
+   year it opens in). A race dated in a later season has this year's seniors
+   gone (owner, 2026-11-04), so the field and the squads say which. */
+function seasonOf(iso) {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return null;
+  const y = parseInt(iso.slice(0, 4), 10);
+  return iso.slice(5, 10) >= "08-15" ? y : y - 1;
+}
+
 function defaultDate() {
   const now = new Date();
   const aligned = state.meet.date
@@ -2112,8 +2121,10 @@ function fieldQuery(div) {
      asked for on this year's date is this year's edition, its field the
      qualifiers where they apply (upcoming_preview.pastPlan); and the
      squads are ordered at this race's date and course */
-  if (state.when === "thisyear" && $("t-date") && $("t-date").value)
+  if (state.when === "thisyear" && $("t-date") && $("t-date").value) {
     q.set("date", $("t-date").value);
+    state.fieldSeason = seasonOf($("t-date").value);
+  }
   if (state.when === "thisyear" && state.pick === "predicted") {
     q.set("pick", "predicted");
     if (state.course && !isTrack()) q.set("course", state.course);
@@ -4488,7 +4499,10 @@ function squadKey(school, ctx, st) {
           state.meet ? (state.meet.alt || 0) : "",
           state.meet ? (state.meet.src || "") : "", ctx.div ?? "", ctx.gender,
           ctx.levels ? ctx.levels.join(",") : "?", st || "",
-          state.when || ""].join("\u0000");
+          state.when || "",
+          // the race's season: next season's squad is another answer
+          state.when === "thisyear" && $("t-date") ? (seasonOf($("t-date").value) ?? "") : ""
+         ].join("\u0000");
 }
 
 function squadParams(ctx) {
@@ -4511,6 +4525,10 @@ function squadParams(ctx) {
   /* ★ AS IT RAN, THAT SEASON'S SQUAD (owner, 2026-10-05: "as it ran
      includes new freshmen"). Everyone used to add every CURRENT runner. */
   if (state.when === "asran") q.set("when", "asran");
+  /* ★ AND THE RACE'S DATE: a squad for a later season has this year's
+     seniors gone (owner, 2026-11-04) */
+  if (state.when === "thisyear" && $("t-date") && $("t-date").value)
+    q.set("date", $("t-date").value);
   if (ctx.div != null && !Array.isArray(ctx.div)) q.set("div_id", ctx.div);
   return q;
 }
@@ -5038,6 +5056,23 @@ document.addEventListener("change", (e) => {
     if (v === state.skipTop) return;
     state.skipTop = v;
     if (!state.meet) { saveState(); return; }
+    for (const e of _edits.values()) e.field = null;
+    clearOutput();
+    loadField().then(() => { renderSquadBoxes(); saveState(); });
+  });
+})();
+
+/* ★ A DATE IN ANOTHER SEASON IS A NEW FIELD (owner, 2026-11-04: "If I set a
+   race for 2027 next season, it should not include current seniors"): read
+   again like a new size, the hand edits kept. A date in the same season
+   changes only the prediction. */
+(function () {
+  const el = $("t-date");
+  if (!el) return;
+  el.addEventListener("change", () => {
+    if (state.when !== "thisyear" || !state.meet) return;
+    const season = seasonOf(el.value);
+    if (season == null || season === state.fieldSeason) return;
     for (const e of _edits.values()) e.field = null;
     clearOutput();
     loadField().then(() => { renderSquadBoxes(); saveState(); });

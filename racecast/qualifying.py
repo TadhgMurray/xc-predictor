@@ -106,11 +106,16 @@ RULES = (
 
 
 def ruleFor(meet_name, source=None):
-    """The rule whose championship this meet is, or None. Pure."""
+    """The rule whose championship this meet is, or None. Pure.
+
+    ★ IN EITHER FEED (the nightly, 2026-11-04: the NCAA DII and DIII
+      championships fell to learned routes and found too few rounds -- the
+      copy kept of each was athletic.net's, and the rules only matched
+      tfrrs). A championship is the same meet whichever feed filed it; the
+      rule's own "source" is where its ROUNDS are read. `source` is kept
+      for the callers and no longer filters."""
     nm = (meet_name or "").lower()
     for r in RULES:
-        if source and r["source"] != source:
-            continue
         if re.search(r["meet"], nm) and not re.search(r["not"], nm):
             return r
     return None
@@ -335,7 +340,12 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     if rule is None or gender not in ("M", "F"):
         return None, 0
     rounds, n_pred, got = {}, 0, set()
-    for mid, name, _d in _roundMeets(cur, rule, day, rule.get("window", 21)):
+    seen = _roundMeets(cur, rule, day, rule.get("window", 21))
+    for mid, name, _d in seen:
+        # ! ONE ROUND PER EDITION: a region filed under two meet ids is one
+        #   region (the nightly, 2026-11-04: DI read 11 and 13 rounds of 9)
+        if LE.editionName(name) in got:
+            continue
         rows = roundResults(cur, rule, mid, gender, int(str(day)[:4]))
         if len(rows) < 10 and predict is not None:
             rows = predict(mid, gender) or []
@@ -343,14 +353,19 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
         if len(rows) >= 10:
             rounds[mid] = rows
             got.add(LE.editionName(name))
+    past, past_ok = [], 0
     if predict_past is not None:
-        for mid, div, on in pastRounds(cur, rule, day, gender, got):
+        past = pastRounds(cur, rule, day, gender, got)
+        for mid, div, on in past:
             rows = predict_past(mid, div, on) or []
             if len(rows) >= 10:
                 rounds[mid] = rows
                 n_pred += 1
+                past_ok += 1
     if info is not None:
-        info["rounds"] = len(rounds)
+        # what was looked at, for the nightly to say why a field is missing
+        info.update(rounds=len(rounds), this_season=len(seen), counted=len(rounds) - past_ok,
+                    last_season=len(past), last_season_ok=past_ok)
     if len(rounds) < MIN_ROUNDS:
         return None, 0
     pools = {}
@@ -377,12 +392,12 @@ def pastRounds(cur, rule, day, gender, have=()):
     (the one with the most runners when it leaves several), and `on`, its
     date a year on."""
     import last_edition as LE
-    out = []
+    out, have = [], set(have)
     for mid, name, d in _roundMeets(cur, rule, _shift(day, -364), rule.get("window", 21)):
         if LE.editionName(name) in have:
             continue
         races = pickRace([r for r in LE.editionRaces(cur, mid, "XC", rule["source"])
-                          if r.get("gender") == gender])
+                          if (r.get("gender") or labelGender(r.get("label"))) == gender])
         if not races:
             continue
         if len(races) > 1:
@@ -395,7 +410,20 @@ def pastRounds(cur, rule, day, gender, have=()):
                 n[int(row[0])] = int(row[1])
             races = [max(races, key=lambda r: n.get(int(r["div_id"]), 0))]
         out.append((mid, int(races[0]["div_id"]), _shift(d, 364)))
+        have.add(LE.editionName(name))
     return out
+
+
+def labelGender(label):
+    """"M" / "F" from a race label that says so, else None. Pure."""
+    lab = (label or "").lower()
+    women = re.search(r"\b(women|womens|women's|girls?|female|ladies)\b", lab)
+    men = re.search(r"\b(men|mens|men's|boys?|male)\b", lab)
+    if women and not men:
+        return "F"
+    if men and not women:
+        return "M"
+    return None
 
 
 def fieldFor(cur, rule, day, gender):
@@ -544,43 +572,44 @@ def _lastRound(cur, rnd, source):
     return None
 
 
-def learnedField(cur, route, day, predict_div=None, predict_past=None):
+def learnedField(cur, route, day, predict_div=None, predict_past=None, info=None):
     """({person_id: school}, rounds predicted) for a learned route's race on
     `day`, or (None, 0) when fewer than ROUTE_FOUND of its rounds are found.
     predict_div(meet_id, div_id) -> rows, for a round with no results yet;
     predict_past(meet_id, div_id, on) -> rows, last season's round run again
     on `on`, for one this season has not posted (fieldFromRounds)."""
     field, found, n_pred = {}, 0, 0
+    tally = collections.Counter()
     for rnd in route.get("rounds") or []:
         at = _thisRound(cur, rnd, day, route["source"])
-        if at is None and predict_past is not None:
+        tally["this_season"] += at is not None
+        rows = []
+        if at is not None:
+            mid, div, ran = at
+            if ran:
+                cur.execute("""
+                    SELECT DISTINCT ON (r.person_id) r.person_id, r.school, r.time_seconds
+                    FROM   results r
+                    WHERE  r.meet_id = %s AND r.div_id = %s AND r.source = %s
+                      AND  r.person_id IS NOT NULL AND r.time_seconds > 0
+                    ORDER  BY r.person_id, r.time_seconds""", (mid, div, route["source"]))
+                for row in cur.fetchall():
+                    row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+                    rows.append((int(row[0]), row[1], float(row[2]), None))
+            elif predict_div is not None:
+                rows = predict_div(mid, div) or []
+                n_pred += len(rows) >= 5
+        # ★ NOT POSTED, OR POSTED AND NOT YET PREDICTABLE (the nightly,
+        #   2026-11-04: rounds "found this season" that counted nothing):
+        #   last season's round, run again a year on
+        if len(rows) < 5 and predict_past is not None:
             last = _lastRound(cur, rnd, route["source"])
-            rows = []
+            tally["last_season"] += last is not None
             if last is not None:
                 rows = predict_past(last[0], last[1], _shift(rnd["date"], 364)) or []
-            if len(rows) >= 5:
-                found += 1
-                n_pred += 1
-                field.update(simpleQualifiers(rows, int(rnd.get("teams") or 0),
-                                              int(rnd.get("individuals") or 0)))
-            continue
-        if at is None:
-            continue
-        mid, div, ran = at
-        rows = []
-        if ran:
-            cur.execute("""
-                SELECT DISTINCT ON (r.person_id) r.person_id, r.school, r.time_seconds
-                FROM   results r
-                WHERE  r.meet_id = %s AND r.div_id = %s AND r.source = %s
-                  AND  r.person_id IS NOT NULL AND r.time_seconds > 0
-                ORDER  BY r.person_id, r.time_seconds""", (mid, div, route["source"]))
-            for row in cur.fetchall():
-                row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
-                rows.append((int(row[0]), row[1], float(row[2]), None))
-        elif predict_div is not None:
-            rows = predict_div(mid, div) or []
-            n_pred += len(rows) >= 5
+                if len(rows) >= 5:
+                    n_pred += 1
+                    tally["last_season_ok"] += 1
         if len(rows) < 5:
             continue
         found += 1
@@ -590,6 +619,8 @@ def learnedField(cur, route, day, predict_div=None, predict_past=None):
     #   listed without Jesuit, Central Catholic and Sunset -- a district not
     #   found is a district's teams missing, so a route that finds under
     #   ROUTE_FOUND of its rounds keeps the last-edition field instead)
+    if info is not None:
+        info.update(tally, rounds=found, of=len(route.get("rounds") or []))
     if found < ROUTE_FOUND * len(route.get("rounds") or []) or not field:
         return None, 0
     return field, n_pred

@@ -413,13 +413,15 @@ def storedField(source, meet_id, div_id, day):
     return {int(k): v for k, v in got["field"].items()}, dict(got["info"], made=got.get("made"))
 
 
-def qualifiedFieldInfo(cur, plan, div_id, live=False):
+def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
     """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
     for one race of a meet plan: where the field came from, for the page
     to say (predictions.js showBasis). The nightly's stored field first
     (storedField); live=True (the nightly itself) predicts rounds that have
-    not run, which a page never does."""
+    not run, which a page never does. `why`, a dict, is told what was
+    looked at when there is no field (the nightly prints it)."""
     import qualifying as Q
+    why = {} if why is None else why
     if not plan:
         return None, None
     if not live and plan.get("meet_id") and plan.get("date"):
@@ -437,6 +439,7 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False):
     route = None if rule is not None else Q.learnedRoute(
         plan.get("name"), plan.get("source"), race.get("label"), race.get("gender"))
     if rule is None and route is None:
+        why["no"] = f"no rule or learned route for {race.get('label')!r} ({race.get('gender') or '?'})"
         return None, None
     forecast = os.environ.get("XCP_QUALIFY_FORECAST", "1") != "0"
     src = rule["source"] if rule is not None else route["source"]
@@ -457,14 +460,16 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False):
             field, n_pred = Q.learnedField(
                 cur, route, str(plan["date"])[:10],
                 predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src, live))
-                if forecast else None, predict_past=past)
+                if forecast else None, predict_past=past, info=used)
             n_rounds = len(route.get("rounds") or [])
         _release(cur, "up_qual")
     except Exception as exc:                            # noqa: BLE001
         _undo(cur, "up_qual")
         print(f"qualified field {plan.get('meet_id')}/{div_id}: {type(exc).__name__}: {exc}",
               flush=True)
+        why["no"] = f"{type(exc).__name__}: {exc}"
         return None, None
+    why.update(used, gender=race.get("gender"), how=rule["key"] if rule is not None else "route")
     if not field:
         return None, None
     return field, {"rule": rule["key"] if rule is not None else "route",
@@ -538,8 +543,8 @@ def pastPlan(cur, meet_id, source, day):
         # ! THE NAME FIRST, AND OUT AT ONCE FOR A MEET NO RULE OR ROUTE
         #   COVERS: every "this year" field asks with a date now
         if source == "tfrrs":
-            cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s LIMIT 1",
-                        (int(meet_id),))
+            cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s "
+                        "ORDER BY (sport = 'XC') DESC LIMIT 1", (int(meet_id),))
         else:
             cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1", (int(meet_id),))
         row = cur.fetchone()
@@ -557,8 +562,11 @@ def pastPlan(cur, meet_id, source, day):
             return None
         races = LE.editionRaces(cur, int(meet_id), "XC", source)
         cur.execute("RELEASE SAVEPOINT up_past")
-    except Exception:                                   # noqa: BLE001
-        cur.execute("ROLLBACK TO SAVEPOINT up_past")
+    except Exception as exc:                            # noqa: BLE001
+        _undo(cur, "up_past")
+        print(f"past plan {source} {meet_id}: {type(exc).__name__}: {exc}", flush=True)
+        return None
+    if not races:
         return None
     # the meet is its own last edition: lastYearGender reads its runners
     return {"meet_id": int(meet_id), "source": source, "name": name,
@@ -669,11 +677,18 @@ def _oneEach(cur, rows):
                 except Exception:                       # noqa: BLE001
                     _endTransaction(cur)
             g.sort(key=lambda m: -n.get((m["source"], m["meet_id"]), 0))
+            # ★ AND ONE THE PAGE CAN OPEN (the nightly, 2026-11-04: NCAA DII
+            #   and DIII left the list once both feeds' copies were one
+            #   championship -- the tfrrs copy had the most results and no
+            #   plan): the first that pastPlan builds
+            ok = [m for m in g if pastPlan(cur, m["meet_id"], m["source"], m["date"])]
+            g = ok + [m for m in g if m not in ok]
             # ! UNLESS THE OTHER HOLDS A GENDER THE FIRST DOES NOT (a men's
-            #   page and a women's page of one championship): then both stay
+            #   page and a women's page of one championship): then both stay.
+            #   A copy whose genders are unknown says nothing either way.
             sexes = {(m["source"], m["meet_id"]): _gendersOf(cur, m) for m in g}
             first = sexes[(g[0]["source"], g[0]["meet_id"])]
-            keep = [m for m in g[1:] if sexes[(m["source"], m["meet_id"])] - first]
+            keep = [m for m in g[1:] if first and sexes[(m["source"], m["meet_id"])] - first]
             g = [g[0]] + [m for m in g[1:] if m not in keep]
             out.extend(dict(m, also=[]) for m in keep)
         out.append(dict(g[0], also=[m["meet_id"] for m in g[1:]]))
