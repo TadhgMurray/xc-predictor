@@ -1073,11 +1073,10 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
    filter means exactly what it says on this board; pool, sport, scope,
    grade, year and school describe an athlete and would do nothing. */
 .rankings-page[data-board="courses"] .not-courses  { display: none; }
-/* Finding an ATHLETE on a board of ground is not a question with an answer --
-   the same reason it is off on teams. And "Coming soon" lists nation,
+/* ★ THE FIND BOX FINDS A COURSE HERE (owner, 2026-11-04), a team on Teams
+   and a conference on Conferences: rankings.js syncFindBox. And "Coming soon" lists nation,
    division and the rest: unbuilt filters for ATHLETE boards, which read on
    this one as promises about courses that nobody has made. */
-.rankings-page[data-board="courses"] .findme     { display: none; }
 .rankings-page[data-board="courses"] .wip        { display: none; }
 
 /* ---- the Conferences tab (2026-11-02) ------------------------------ *
@@ -1092,7 +1091,6 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .rankings-page[data-board="units"] .pr-only,
 .rankings-page[data-board="units"] .teams-only,
 .rankings-page[data-board="units"] .courses-only,
-.rankings-page[data-board="units"] .findme,
 .rankings-page[data-board="units"] .not-units,
 .rankings-page[data-board="units"] .scope-field { display: none; }
 .rk .un-mark { display: inline-flex; vertical-align: middle; margin-right: .4rem; }
@@ -1110,8 +1108,6 @@ input[type="search"] { -webkit-appearance: textfield; appearance: textfield; }
 .rankings-page[data-board="teams"] .ability-only.teams-ok { display: flex; }
 .rankings-page[data-board="teams"] .perf-only    { display: none; }
 .rankings-page[data-board="teams"] .pr-only      { display: none; }
-/* Finding an ATHLETE on a board of teams is not a question with an answer. */
-.rankings-page[data-board="teams"] .findme       { display: none; }
 .rankings-page[data-board="teams"] p.board-note.teams-only { display: block; }
 
 /* ★ THE COURSE SPECIFIER ON TEAMS. The Course combo is always offered on

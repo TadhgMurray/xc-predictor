@@ -354,3 +354,31 @@ def test_a_team_in_another_division_is_not_a_conference_member():
     mixed = [dict(t, division=d) for t, d in zip(big12, ("NCAA DI", "NCAA DI", "NAIA", "NAIA", "NCAA DI"))]
     assert len(U.dropOddDivision(mixed)) == 5          # no clear majority: nothing dropped
     assert U.dropOddDivision(big12 + [andrew], "league") == big12 + [andrew]
+
+
+def test_nxr_regions_rank_teams_across_states():
+    """owner, 2026-11-04: "there should be rankings for NXR regions
+    somewhere in conferences" -- one region spans states, so its teams in
+    Florida and Georgia are one unit, not one per state."""
+    import unit_board as UB
+    assert UB.STATE_NXR["FL"] == "NXR Southeast" and UB.STATE_NXR["CA"] == "California (CIF State)"
+    assert len(set(UB.STATE_NXR)) == sum(len(v) for v in UB.NXR_STATES.values())   # once each
+    rows = [{"school": s, "state": st, "top5_mean": m, "nxr": UB.STATE_NXR[st]}
+            for s, st, m in (("Belen", "FL", 150.0), ("Brentwood", "GA", 148.0),
+                             ("Jesuit", "OR", 149.0), ("Summit", "OR", 147.0))]
+    board = UB.buildBoard(rows, "nxr", n=5, valid=None)
+    se = next(u for u in board if u["unit"] == "NXR Southeast")
+    assert se["n_teams"] == 2 and se["state"] is None
+    assert "state=AL%2CDC" in UB.regionHref("NXR Southeast", "hs_m", "XC")
+
+
+def test_an_nxr_region_wears_its_regionals_logo(monkeypatch):
+    import unit_board as UB
+    asked = []
+    monkeypatch.setattr(UB, "storedLogoUrl", lambda kind, name, state=None, px=64: (
+        asked.append((kind, name)) or ("/img/x.png" if (kind, name) == ("series", "NXR") else None)))
+    html = UB.unitMark("nxr", "NXR Southeast", size=22)
+    assert '<img' in html and "/img/x.png" in html
+    assert ("series", "NXR SOUTHEAST") in asked              # its own first, then NXR's
+    UB.unitMark("nxr", "California (CIF State)", size=22)
+    assert ("series", "NXR CALIFORNIA") in asked

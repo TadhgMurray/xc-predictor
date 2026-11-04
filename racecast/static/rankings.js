@@ -432,6 +432,7 @@ function buildQuery() {
     }
     if (state.sort) q3.set("sort", state.sort);
     if (state.dir) q3.set("dir", state.dir);
+    if (state.unitFind) q3.set("q", state.unitFind);
     q3.set("scale", hsMode() ? "hs" : "pool");
     return q3;
   }
@@ -613,7 +614,8 @@ function academicLabel(y) {
 
 const YEARS = (() => {
   const d = new Date();
-  const now = d.getFullYear() - (d.getMonth() < 7 ? 1 : 0);   // Aug opens it
+  // Aug 15 opens it (engine/season_year.py)
+  const now = d.getFullYear() - ((d.getMonth() < 7 || (d.getMonth() === 7 && d.getDate() < 15)) ? 1 : 0);
   const out = [];
   /* value is the stored academic year; the LABEL spans it, because
      "2025" alone reads as the calendar year and the spring half of that
@@ -1761,7 +1763,7 @@ function renderUnits(rows, data) {
 const UNIT_KINDS = {
   college: [["conference", "Conferences"], ["division", "Divisions"], ["region", "Regions"]],
   hs: [["league", "Leagues"], ["section", "Sections"], ["section_div", "Section divisions"],
-       ["state_div", "State divisions"], ["area", "Areas"]]
+       ["state_div", "State divisions"], ["area", "Areas"], ["nxr", "NXR regions"]]
 };
 
 function syncUnitKinds(kinds, chosen) {
@@ -2268,6 +2270,7 @@ function syncBoard(board) {
   state.board = board;
   state.offset = 0;
   $("rankings").dataset.board = board;
+  if (previous !== board) syncFindBox(previous);
 
   // .tab-link tabs (Breakouts, By state) are pages of their own
   document.querySelectorAll(".tab:not(.tab-link)").forEach((tab) => {
@@ -2818,16 +2821,16 @@ function applyUrlFilters(params) {
     if (lv && $("pool").querySelector(`option[value="${lv}"]`)) $("pool").value = lv;
   }
   setSelectFromUrl("sport", params.get("sport"));
-  /* ★ THE TIMES BOARD OPENS ON TRACK (owner, 2026-10-23: "the fastest times
-       board should really start with tf as default"). A cross country time
-       is its course as much as its runner; the track mile is the clock a
-       reader compares. A link that names a sport keeps it. */
-  if (state.board === "pr" && !params.get("sport")) {
-    $("sport").value = "TF";
-    if (!params.get("distance") && !params.get("event") && $("distance")) {
-      $("distance").value = "1600";
-      state.distAuto = true;             // the board's choice, not the reader's
-    }
+  /* ★ EVERY BOARD OPENS ON THE SPORT IN SEASON (owner, 2026-11-04: "default
+       to the current sport, as in rn its cross season so it should default
+       to cross"), the times board too -- it opened on track since
+       2026-10-23. The sport select starts on the season's sport (app.
+       _rankingsDefaultSport); its distance is the sport's own: the track
+       mile, the cross country 5000. A link that names a sport keeps it. */
+  if (state.board === "pr" && !params.get("sport")
+      && !params.get("distance") && !params.get("event") && $("distance")) {
+    $("distance").value = $("sport").value === "TF" ? "1600" : "5000";
+    state.distAuto = true;               // the board's choice, not the reader's
   }
   /* ! RESTORED, OR A SHARED "EVERYONE" LINK QUIETLY OPENS AS USA. The select
        defaults to usa in the markup, so without this the one scope worth
@@ -2991,11 +2994,66 @@ function findStatus(msg, isError) {
   el.className = "find-status" + (msg ? " show" : "") + (isError ? " error" : "");
 }
 
+/* ★ A SEARCH ON EVERY BOARD (owner, 2026-11-04: "On the conferences, teams,
+   and courses ranking boards you should be able to search up things"). The
+   athlete boards jump to an athlete's row; the Teams board narrows to the
+   school picked (its School filter, which keeps the rank the team holds in
+   the whole field); Conferences and Courses narrow by name as you type,
+   each row keeping its rank on the board. */
+const FIND_LABELS = {
+  teams:   ["Find a team on this board", "School name"],
+  units:   ["Find a conference, league or region", "Name"],
+  courses: ["Find a course", "Course name"]
+};
+
+function findMode() {
+  return state.board === "teams" ? "team"
+       : state.board === "units" ? "unit"
+       : state.board === "courses" ? "course" : "athlete";
+}
+
+function syncFindBox(previous) {
+  const lab = document.querySelector('label[for="find-input"]');
+  const [text, ph] = FIND_LABELS[state.board]
+    || ["Find an athlete on this board", "Name, or paste an athlete link"];
+  if (lab) lab.textContent = text;
+  $("find-input").placeholder = ph;
+  // what the box narrowed on the board left behind goes with it
+  if (state.findSchool && combos.school) combos.school.set([]);
+  state.findSchool = null;
+  state.unitFind = "";
+  if (previous === "courses" && $("course_name")) $("course_name").value = "";
+  $("find-input").value = "";
+  $("find-results").classList.add("hidden");
+  findStatus("", false);
+}
+
+function findByName(text) {
+  if (findMode() === "unit") state.unitFind = text;
+  else if (findMode() === "course") $("course_name").value = text;
+  state.offset = 0;
+  findStatus("", false);
+  load();
+}
+
+function findTeam(school, label) {
+  $("find-results").classList.add("hidden");
+  if (!combos.school) return;
+  combos.school.set([school]);
+  state.findSchool = school;
+  state.offset = 0;
+  findStatus(`${label}: its place on this board. Clear the box to see them all.`, false);
+  load();
+}
+
 async function findSuggest() {
   const q = $("find-input").value.trim();
   const box = $("find-results");
   findActive = -1;
+  const mode = findMode();
+  if (mode === "unit" || mode === "course") { findByName(q); return; }
   if (q.length < 2) { box.innerHTML = ""; box.classList.add("hidden"); return; }
+  if (mode === "team") { findTeamSuggest(q); return; }
 
   /* ★ ONE QUESTION IN FLIGHT, AND ONLY ATHLETES ASKED (owner, 2026-09-29:
      the board search was part of what made the boards slow). The box asked
@@ -3023,6 +3081,34 @@ async function findSuggest() {
   }
 }
 
+async function findTeamSuggest(q) {
+  const box = $("find-results");
+  if (findAbort) findAbort.abort();
+  const ctl = findAbort = new AbortController();
+  try {
+    const res = await fetch("/search/api?kind=school&limit=8&q=" + encodeURIComponent(q),
+                            { signal: ctl.signal });
+    const rows = await res.json();
+    if (ctl !== findAbort || $("find-input").value.trim() !== q) return;
+    const schools = (rows || []).filter((r) => /^\/school\//.test(r.link || ""));
+    box.innerHTML = schools.slice(0, 8).map((r) => {
+      const bare = decodeURIComponent(r.link.split("/school/")[1].split("?")[0]);
+      return `<button class="find-opt" data-school="${esc(bare)}" data-name="${esc(r.label)}">` +
+        `${esc(r.label)}<span class="find-sub">${esc(r.sublabel || "")}</span></button>`;
+    }).join("");
+    box.classList.toggle("hidden", schools.length === 0);
+  } catch (err) {
+    if (err.name !== "AbortError") box.classList.add("hidden");
+  }
+}
+
+/* one suggestion picked: a team narrows the board, an athlete is jumped to */
+function findPick(opt) {
+  $("find-input").value = opt.dataset.name;
+  if (opt.dataset.school) findTeam(opt.dataset.school, opt.dataset.name);
+  else jumpTo(opt.dataset.pid, opt.dataset.name);
+}
+
 /* ★ A SEARCH CAN BE TAKEN BACK (owner, 2026-09-29: "you can't take back a
    search on the rankings board"). A jump moved the board to the athlete's
    page and highlighted them, and emptying the box undid neither -- the
@@ -3032,6 +3118,15 @@ async function findSuggest() {
 let findReturnOffset = null;
 
 function findTakeBack() {
+  if (findMode() === "unit" || findMode() === "course") { findByName(""); return; }
+  if (state.findSchool) {
+    if (combos.school) combos.school.set([]);
+    state.findSchool = null;
+    state.offset = 0;
+    findStatus("", false);
+    load();
+    return;
+  }
   if (state.highlight == null && findReturnOffset == null) return;
   state.highlight = null;
   state.offset = findReturnOffset == null ? 0 : findReturnOffset;
@@ -3092,8 +3187,7 @@ $("find-input").addEventListener("keydown", (e) => {
     const pick = findActive >= 0 ? opts[findActive] : opts[0];
     if (!pick) return;
     e.preventDefault();
-    $("find-input").value = pick.dataset.name;
-    jumpTo(pick.dataset.pid, pick.dataset.name);
+    findPick(pick);
   } else if (e.key === "Escape") {
     // first Escape closes the suggestions; a second one, with nothing open,
     // takes the search back
@@ -3113,8 +3207,7 @@ $("find-results").addEventListener("mousedown", (e) => {
   e.preventDefault();
   /* data-name, not textContent: the button also contains the sublabel, and
      textContent would glue them together as "Anders EricksonCarlton-Wrenshall". */
-  $("find-input").value = opt.dataset.name;
-  jumpTo(opt.dataset.pid, opt.dataset.name);
+  findPick(opt);
 });
 
 $("find-input").addEventListener("search", () => {

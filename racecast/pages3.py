@@ -522,10 +522,18 @@ def api_units():
             conn.rollback()
     UB.sortBoard(units, (args.get("sort") or "avg").strip().lower(),
                  (args.get("dir") or "").strip().lower() or None)
+    # ★ FIND ONE ON THE BOARD (owner, 2026-11-04: "you should be able to
+    #   search up things"): ranked first, named second, so a conference
+    #   found keeps the rank it holds among all of them
+    find = (args.get("q") or "").strip().lower()
+    if find:
+        units = [u for u in units
+                 if find in f"{u.get('name') or ''} {u.get('unit') or ''}".lower()]
     level = levelOf(pool)
     for u in units:
         u["runner_name"] = names.get(u.get("runner_id"))
-        u["href"] = UB.unitHref(kind, u["unit"], u["state"] or st, pool, sport)
+        u["href"] = (UB.regionHref(u["unit"], pool, sport) if kind == "nxr"
+                     else UB.unitHref(kind, u["unit"], u["state"] or st, pool, sport))
         u["mark"] = UB.unitMark(kind, u["unit"], u["state"] or st, size=22, shown=u["name"])
         u["best_crest"] = (crestUrl(u["best_team"], u["best_state"], px=64, level=level)
                            if u.get("best_team") else None)
@@ -556,6 +564,7 @@ def gradeSquads(cur, args, pool, sport, year, kind, state, within):
     None when the field is too big to race."""
     from werkzeug.datastructures import MultiDict
     import teams as T
+    import unit_board as UB
     q = MultiDict([("sport", sport), ("pool", pool), ("year", str(year))]
                   + [("grade", g) for g in args.getlist("grade") if g.strip()])
     f, err = T.parseFilters(q)
@@ -568,6 +577,8 @@ def gradeSquads(cur, args, pool, sport, year, kind, state, within):
     for r in rows:
         r = dict(r)
         r.update({k: v for k, v in (r.pop("units", None) or {}).items()})
+        if kind == "nxr":
+            r["nxr"] = UB.STATE_NXR.get((r.get("state") or "").upper())
         if not r.get(kind):
             continue
         if state and (r.get("state") or "").upper() != state:
