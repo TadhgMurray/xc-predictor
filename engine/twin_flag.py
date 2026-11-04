@@ -588,45 +588,61 @@ def dupRaceCopySql(table, sport):
       anything, and that is nearly every row; one hash pass finds the
       keys that occur twice, and only their rows are joined. The division
       sizes and the final flagging still read every row, as they must."""
-    ev = ", event_id" if sport == "TF" else ""
-    ev_eq = " AND l.event_id = r.event_id" if ev else ""
+    tf = sport == "TF"
+    # ★ ON TRACK A RACE IS A ROUND (owner, 2026-11-04: "could there be a
+    #   better rule?", after the CIF-SS D4 3200). One event_id can hold the
+    #   prelims AND the final -- a finals meet re-lists the prelims beside
+    #   the final (rowRound: the feed's round column). The copy test now
+    #   compares round with round: the finals meet's prelim round is a whole
+    #   copy of the prelims meet and goes whole, its final has no twin
+    #   anywhere and is untouched -- "the entire race, not individual rows"
+    #   kept, with a round as the race. A feed with no round stamps reads
+    #   one round per event, as before. Heats file with prelims.
+    def rc(alias=""):
+        col = f"upper(left(btrim(COALESCE({alias}round, '')), 1))"
+        return f"(CASE {col} WHEN 'H' THEN 'P' ELSE {col} END)" if tf else "''"
     base_where = f"""
             WHERE  person_id IS NOT NULL AND time_seconds IS NOT NULL
               AND  time_seconds < 100000
               AND  date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'"""
-    key_a = "a.meet_id, a.div_id" + (", a.event_id" if ev else "")
-    key_b = "b.meet_id, b.div_id" + (", b.event_id" if ev else "")
-    sel_a = "a.meet_id AS ma, a.div_id AS da" + (", a.event_id AS ea" if ev else "")
-    sel_b = "b.meet_id AS mb, b.div_id AS db" + (", b.event_id AS eb" if ev else "")
+    ev = ", event_id" if tf else ""
+    # a division is (meet, div[, event, round]); `a`/`b` sides of a pair
+    key_a = "a.meet_id, a.div_id, a.rc" + (", a.event_id" if tf else "")
+    key_b = "b.meet_id, b.div_id, b.rc" + (", b.event_id" if tf else "")
+    sel_a = "a.meet_id AS ma, a.div_id AS da, a.rc AS ra" + (", a.event_id AS ea" if tf else "")
+    sel_b = "b.meet_id AS mb, b.div_id AS db, b.rc AS rb" + (", b.event_id AS eb" if tf else "")
+    grp = "1, 2, 3, 4, 5, 6, 7" + (", 8, 9" if tf else "")
     # ⚠ ON TRACK THE KEY CARRIES THE EVENT, AND A KEY SEEN MORE THAN 8
     #   TIMES IS A COMMON TIME, NOT A COPY (2026-09-06). A sprinter runs
     #   11.2 twenty times a season; keyed on (person, feed, tenth) alone
     #   that is 190 pairs per athlete and the pair join was heading for
     #   the hour cross-date took. A copied race is the same event, and
     #   two or three listings of it, never twenty.
-    kev = ", event_id" if ev else ""
-    kev_eq = " AND k.event_id IS NOT DISTINCT FROM r.event_id" if ev else ""
-    pev_eq = " AND b.event_id IS NOT DISTINCT FROM a.event_id" if ev else ""
+    kev = ", event_id" if tf else ""
+    kev_eq = " AND k.event_id IS NOT DISTINCT FROM r.event_id" if tf else ""
+    pev_eq = " AND b.event_id IS NOT DISTINCT FROM a.event_id" if tf else ""
+    sz_eq = lambda s_, x: (f"{s_}.source = p.source AND {s_}.meet_id = p.m{x} AND {s_}.div_id = p.d{x}"  # noqa: E731
+                           f" AND {s_}.rc = p.r{x}" + (f" AND {s_}.event_id = p.e{x}" if tf else ""))
     return f"""
         WITH keys AS (
             SELECT person_id, source{kev}, round(time_seconds::numeric, 1) AS rt
             FROM   {table}
             {base_where}
-            GROUP  BY 1, 2, 3{', 4' if ev else ''} HAVING count(*) BETWEEN 2 AND 8),
+            GROUP  BY 1, 2, 3{', 4' if tf else ''} HAVING count(*) BETWEEN 2 AND 8),
         rows_ AS (
-            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{', r.event_id' if ev else ''},
-                   substr(r.date, 1, 10)::date AS d, k.rt
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{', r.event_id' if tf else ''},
+                   {rc('r.')} AS rc, substr(r.date, 1, 10)::date AS d, k.rt
             FROM   {table} r
             JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
                          AND k.rt = round(r.time_seconds::numeric, 1){kev_eq}
             WHERE  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
               AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000),
         size AS (
-            SELECT source, meet_id, div_id{ev}, count(*) AS n,
+            SELECT source, meet_id, div_id{ev}, {rc()} AS rc, count(*) AS n,
                    min(substr(date, 1, 10)::date) AS d
             FROM   {table}
             {base_where}
-            GROUP  BY source, meet_id, div_id{ev}),
+            GROUP  BY source, meet_id, div_id{ev}{(", " + rc()) if tf else ""}),
         matched AS (
             SELECT a.result_id, a.source, {sel_a}, {sel_b}
             FROM   rows_ a
@@ -635,23 +651,19 @@ def dupRaceCopySql(table, sport):
                           AND ({key_b}) <> ({key_a})
                           AND abs(b.d - a.d) <= 90),
         pair AS (
-            SELECT source, ma, da{', ea' if ev else ''}, mb, db{', eb' if ev else ''},
+            SELECT source, ma, da, ra{', ea' if tf else ''}, mb, db, rb{', eb' if tf else ''},
                    count(DISTINCT result_id) AS shared
             FROM   matched
-            GROUP  BY 1, 2, 3, 4, 5{', 6, 7' if ev else ''}),
-        -- ★ WHOLE ONLY WHEN THE LOSER ITSELF IS THE COPY (owner, 2026-11-04,
-        --   /race/tf/623110/60/4: the CIF-SS D4 3200 finals meet re-lists
-        --   the prelims beside the final; 39 of its 48 rows matched the
-        --   prelims meet -- 90 percent of the SMALLER division -- and, dated a
-        --   week later, it lost whole: the nine finalists' only copy of
-        --   the final went with it). A loser 90 percent matched is a copy and goes
-        --   whole, as before; a bigger loser keeps its own rows and loses
-        --   only the matched ones.
+            GROUP  BY {grp}),
+        -- ★ AND WHOLE ONLY WHEN THE LOSER ITSELF IS THE COPY (2026-11-04):
+        --   a loser 90 percent matched goes whole; a bigger one (a feed
+        --   with no round stamps that lists prelims and final as one race)
+        --   keeps its own rows and loses only the matched ones.
         loser AS (
             SELECT p.*, (p.shared * 10 >= sa.n * 9) AS whole
             FROM   pair p
-            JOIN   size sa ON sa.source = p.source AND sa.meet_id = p.ma AND sa.div_id = p.da{' AND sa.event_id = p.ea' if ev else ''}
-            JOIN   size sb ON sb.source = p.source AND sb.meet_id = p.mb AND sb.div_id = p.db{' AND sb.event_id = p.eb' if ev else ''}
+            JOIN   size sa ON {sz_eq('sa', 'a')}
+            JOIN   size sb ON {sz_eq('sb', 'b')}
             WHERE  p.shared >= 5 AND p.shared * 10 >= least(sa.n, sb.n) * 9
               AND  (sa.d > sb.d
                     OR (sa.d = sb.d AND (sa.n < sb.n
@@ -659,14 +671,16 @@ def dupRaceCopySql(table, sport):
         SELECT DISTINCT r.result_id
         FROM   {table} r
         JOIN   loser l ON l.whole AND l.source = r.source AND l.ma = r.meet_id
-                      AND l.da = r.div_id{ev_eq.replace("l.event_id", "l.ea")}
-        {base_where}
+                      AND l.da = r.div_id AND l.ra = {rc('r.')}
+                      {"AND l.ea = r.event_id" if tf else ""}
+        {base_where.replace("person_id", "r.person_id").replace("time_seconds", "r.time_seconds").replace(" date ~", " r.date ~")}
         UNION
         SELECT m.result_id
         FROM   matched m
         JOIN   loser l ON NOT l.whole AND l.source = m.source
-                      AND l.ma = m.ma AND l.da = m.da AND l.mb = m.mb AND l.db = m.db
-                      {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if ev else ""}
+                      AND l.ma = m.ma AND l.da = m.da AND l.ra = m.ra
+                      AND l.mb = m.mb AND l.db = m.db AND l.rb = m.rb
+                      {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if tf else ""}
     """
 
 

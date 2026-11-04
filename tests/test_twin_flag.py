@@ -304,9 +304,10 @@ def test_a_copy_dated_days_apart_is_one_race():
 
 def test_a_finals_listing_that_repeats_the_prelims_keeps_the_final():
     """Owner, 2026-11-04, /race/tf/623110/60/4: the CIF-SS D4 3200 finals
-    meet re-lists the prelims run a week earlier under their own meet. The
-    finals division is the later and the bigger: its copied prelim rows go,
-    its nine finalists -- the only copy of the final -- stay."""
+    meet re-lists the prelims run a week earlier under their own meet. On
+    track a race is a ROUND: the finals meet's prelim round is a whole copy
+    and goes, its final -- the only copy of it -- stays. With no round
+    stamps, the bigger later division loses only its repeated rows."""
     import pytest
     dsn = os.environ.get("XCP_TWIN_TEST_DSN")
     if not dsn:
@@ -318,27 +319,35 @@ def test_a_finals_listing_that_repeats_the_prelims_keeps_the_final():
     psycopg2 = importlib.import_module("psycopg2")
     conn = psycopg2.connect(dsn)
     cur = conn.cursor()
-    cur.execute("""
-        CREATE TEMP TABLE results_tf (result_id bigint, person_id bigint, source text,
-            meet_id bigint, div_id bigint, event_id bigint, time_seconds double precision, date text);
-        -- the prelims meet: 39 runners, May 9
-        INSERT INTO results_tf SELECT 100 + g, g, 'anet', 50, 1, 4, 560 + g, '2026-05-09'
-            FROM generate_series(1, 39) g;
-        -- the finals meet, May 16: the same 39 prelim marks again ...
-        INSERT INTO results_tf SELECT 200 + g, g, 'anet', 60, 1, 4, 560 + g, '2026-05-16'
-            FROM generate_series(1, 39) g;
-        -- ... and the final itself, nine runners at new times
-        INSERT INTO results_tf SELECT 300 + g, g, 'anet', 60, 1, 4, 540 + g, '2026-05-16'
-            FROM generate_series(1, 9) g;
-        -- and a plain whole copy (still flagged whole): meet 70 repeats meet 50 a day later
-        INSERT INTO results_tf SELECT 400 + g, g, 'anet', 70, 1, 4, 560 + g, '2026-05-10'
-            FROM generate_series(1, 39) g;
-    """)
-    cur.execute(f"SELECT result_id FROM ({TF.dupRaceCopySql('results_tf', 'TF')}) s ORDER BY 1")
-    got = {r[0] for r in cur.fetchall()}
+
+    def run(rounds):
+        p_, f_ = ("'P'", "'F'") if rounds else ("NULL", "NULL")
+        cur.execute(f"""
+            DROP TABLE IF EXISTS results_tf;
+            CREATE TEMP TABLE results_tf (result_id bigint, person_id bigint, source text,
+                meet_id bigint, div_id bigint, event_id bigint, time_seconds double precision,
+                date text, round text);
+            -- the prelims meet: 39 runners, May 9
+            INSERT INTO results_tf SELECT 100 + g, g, 'anet', 50, 1, 4, 560 + g, '2026-05-09', {p_}
+                FROM generate_series(1, 39) g;
+            -- the finals meet, May 16: the same 39 prelim marks again ...
+            INSERT INTO results_tf SELECT 200 + g, g, 'anet', 60, 1, 4, 560 + g, '2026-05-16', {p_}
+                FROM generate_series(1, 39) g;
+            -- ... and the final itself, nine runners at new times
+            INSERT INTO results_tf SELECT 300 + g, g, 'anet', 60, 1, 4, 540 + g, '2026-05-16', {f_}
+                FROM generate_series(1, 9) g;
+            -- and a plain whole copy (still flagged whole): meet 70 repeats meet 50 a day later
+            INSERT INTO results_tf SELECT 400 + g, g, 'anet', 70, 1, 4, 560 + g, '2026-05-10', {p_}
+                FROM generate_series(1, 39) g;
+        """)
+        cur.execute(f"SELECT result_id FROM ({TF.dupRaceCopySql('results_tf', 'TF')}) s")
+        return {r[0] for r in cur.fetchall()}
+
+    for rounds in (True, False):
+        got = run(rounds)
+        assert not any(300 < rid <= 309 for rid in got), rounds        # the final stays
+        assert {200 + g for g in range(1, 40)} <= got, rounds          # its prelim copies go
+        assert {400 + g for g in range(1, 40)} <= got, rounds          # a whole copy goes whole
+        assert not any(100 < rid <= 139 for rid in got), rounds        # the original prelims stay
     conn.rollback()
     conn.close()
-    assert not any(300 < rid <= 309 for rid in got)          # the final stays
-    assert {200 + g for g in range(1, 40)} <= got            # its prelim copies go
-    assert {400 + g for g in range(1, 40)} <= got            # a whole copy still goes whole
-    assert not any(100 < rid <= 139 for rid in got)          # the original prelims stay
