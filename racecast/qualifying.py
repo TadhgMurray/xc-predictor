@@ -131,10 +131,16 @@ def isRound(rule, meet_name):
 def pickRace(races):
     """The round's race among a meet's races of one gender: the one its
     label calls the championship, else (in roundResults) the largest. Pure."""
+    side = (r"community|citizen|open|kids|\bms\b|middle|\bjv\b|junior varsity|fresh|frosh|"
+            r"soph|reserve|novice|youth")
     champ = [r for r in races if re.search(r"champ", r.get("label") or "", re.I)
-             and not re.search(r"community|citizen|open|kids|\bms\b|middle", r.get("label") or "",
-                               re.I)]
-    return champ if len(champ) == 1 else races
+             and not re.search(side, r.get("label") or "", re.I)]
+    if len(champ) == 1:
+        return champ
+    # no one championship race: never an Open, JV or community race while
+    # another is left (owner, 2026-11-04, NXN)
+    main = [r for r in races if not re.search(side, r.get("label") or "", re.I)]
+    return main or races
 
 
 # ------------------------------------------------------------------ #
@@ -261,7 +267,28 @@ def selectField(rule, rounds, pools=None):
     schools = {r[0]: r[1] for rows in rounds.values() for r in rows}
     for pid in atLargeIndividuals(ind_queues, rule.get("ind_at_large", 0), n_teams):
         field[pid] = schools.get(pid)
-    return field
+    return _capTeams(field, rounds, pools, size)
+
+
+def _capTeams(field, rounds, pools, size):
+    """At most `size` runners a school (owner, 2026-11-04: Southlake Carroll
+    listed with 14 at NXN): a school through two rounds is one team, its
+    best `size` by season rating, else by time. Pure."""
+    best = {}
+    for rows in list(rounds.values()) + list((pools or {}).values()):
+        for pid, school, sec, rating in rows:
+            key = (-(rating or 0), sec)
+            if pid in field and (pid not in best or key < best[pid]):
+                best[pid] = key
+    by = collections.defaultdict(list)
+    for pid, school in field.items():
+        by[school].append(pid)
+    out = dict(field)
+    for school, pids in by.items():
+        if school and isTeam(school) and len(pids) > size:
+            for pid in sorted(pids, key=lambda p: best.get(p, (0, 0)))[size:]:
+                out.pop(pid, None)
+    return out
 
 
 # ------------------------------------------------------------------ #
