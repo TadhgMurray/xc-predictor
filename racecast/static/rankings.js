@@ -2341,6 +2341,19 @@ function syncBoard(board) {
     }
     if (board === "pr" && (!distSel.value || (toTrack && distSel.value === "5000"))) {
       distSel.value = sportSel.value === "TF" ? "1600" : "5000";
+      state.distAuto = true;
+    }
+    /* ★ BEST RACES OPENS ON EVERY DISTANCE (owner, 2026-11-04: "best races
+       should default to all distances"). A distance the times board chose
+       for itself does not follow the reader onto Best races; one the reader
+       picked does. */
+    if (board === "performance" && state.distAuto) {
+      distSel.value = "";
+      state.distAuto = false;
+    }
+    if (!distSel.dataset.autoWired) {
+      distSel.dataset.autoWired = "1";
+      distSel.addEventListener("change", () => { state.distAuto = false; });
     }
   }
 
@@ -2811,7 +2824,10 @@ function applyUrlFilters(params) {
        reader compares. A link that names a sport keeps it. */
   if (state.board === "pr" && !params.get("sport")) {
     $("sport").value = "TF";
-    if (!params.get("distance") && !params.get("event") && $("distance")) $("distance").value = "1600";
+    if (!params.get("distance") && !params.get("event") && $("distance")) {
+      $("distance").value = "1600";
+      state.distAuto = true;             // the board's choice, not the reader's
+    }
   }
   /* ! RESTORED, OR A SHARED "EVERYONE" LINK QUIETLY OPENS AS USA. The select
        defaults to usa in the markup, so without this the one scope worth

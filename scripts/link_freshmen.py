@@ -298,6 +298,14 @@ def seniors(cur, years):
                          AND r.source = 'tfrrs' AND {collegeSql('r')})
                OR EXISTS (SELECT 1 FROM results_tf r WHERE r.person_id = a.person_id
                          AND r.source = 'tfrrs' AND {collegeSql('r')})   AS has_tfrrs,
+               -- the colleges those tfrrs rows are at: a first-year at one of
+               -- them is this senior's own college career, split (pairsFor)
+               (SELECT array_agg(DISTINCT x.school) FROM (
+                    SELECT r.school FROM results r WHERE r.person_id = a.person_id
+                      AND r.source = 'tfrrs' AND {collegeSql('r')}
+                    UNION
+                    SELECT r.school FROM results_tf r WHERE r.person_id = a.person_id
+                      AND r.source = 'tfrrs' AND {collegeSql('r')}) x) AS tfrrs_schools,
                -- a high school row in the freshman year or later: not a graduate
                EXISTS (SELECT 1 FROM results r WHERE r.person_id = a.person_id
                          AND r.date >= (a.y::text || '-08-01')
@@ -307,17 +315,47 @@ def seniors(cur, years):
                          AND {hsSql('r')})                 AS still_hs
         FROM lf_a a WHERE a.y = ANY(%(ys)s)
     """, {"ys": list(years)})
-    cur.execute("SELECT y, person_id, name, school, gender, has_tfrrs, still_hs "
+    cur.execute("SELECT y, person_id, name, school, gender, has_tfrrs, still_hs, tfrrs_schools "
                 "FROM lf_a2")
     out = {y: {} for y in years}
-    for y, pid, nm, sch, g, ht, still in cur.fetchall():
-        out[y][pid] = (nm, sch, g, ht, bool(still))
+    for y, pid, nm, sch, g, ht, still, colleges in cur.fetchall():
+        out[y][pid] = (nm, sch, g, ht, bool(still), tuple(c for c in (colleges or ()) if c))
     return out
 
 
 def _g(v):
     v = str(v or "").strip().upper()[:1]
     return v if v in ("M", "F") else None
+
+
+def narrowByGender(ts, as_, fresh, senior):
+    """Drop, on each side, the candidates whose KNOWN gender differs from the
+    only gender the other side shows; unknowns stay. Pure."""
+    gt = {_g(fresh[t][2]) for t in ts} - {None}
+    ga = {_g(senior[a][2]) for a in as_} - {None}
+    if len(gt) == 1 and len(as_) > 1:
+        g = next(iter(gt))
+        as_ = [a for a in as_ if _g(senior[a][2]) in (g, None)]
+    if len(ga) == 1 and len(ts) > 1:
+        g = next(iter(ga))
+        ts = [t for t in ts if _g(fresh[t][2]) in (g, None)]
+    return ts, as_
+
+
+def sameCollege(college, colleges):
+    """Is `college` one of `colleges`, any spelling (search_index.schoolFold)? Pure."""
+    if not college or not colleges:
+        return False
+    try:
+        from search_index import schoolFold
+    except ImportError:                                  # racecast/ off the path
+        import os as _os
+        import sys as _sys
+        _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__))), "racecast"))
+        from search_index import schoolFold
+    want = schoolFold(college)
+    return bool(want) and any(schoolFold(c) == want for c in colleges)
 
 
 def pairsFor(fresh, senior):
@@ -338,11 +376,27 @@ def pairsFor(fresh, senior):
         as_ = a_by.get(k, [])
         if not as_:
             continue
+        # ★ A NAMESAKE OF THE OTHER GENDER IS NO RIVAL (owner, 2026-11-04: "do
+        #   1", the freshman linker; the 2026 dry run skipped 246 as "name not
+        #   unique"). Jordan Smith the senior girl does not make Jordan Smith
+        #   the first-year boy ambiguous: on either side, the candidates of a
+        #   KNOWN other gender drop out before the count -- an unknown gender
+        #   still counts, as it always did.
+        ts, as_ = narrowByGender(ts, as_, fresh, senior)
         if len(ts) != 1 or len(as_) != 1:
             skipped["name not unique"] += 1
             continue
         t, a = ts[0], as_[0]
         if senior[a][3]:
+            # ★ UNLESS IT IS THIS COLLEGE (2026-11-04: 615 skipped as "senior
+            #   already on tfrrs" in 2026). A senior whose college rows are
+            #   at the first-year's own college is one runner whose college
+            #   career was split -- some rows reached the high school person,
+            #   the rest made a stranger -- not someone else's.
+            if sameCollege(fresh[t][1], senior[a][5] if len(senior[a]) > 5 else ()):
+                out.append((t, a, fresh[t][0], fresh[t][1], senior[a][1]))
+                skipped["joined: senior already at this college"] += 1
+                continue
             skipped["senior already on tfrrs"] += 1
             continue
         if len(senior[a]) > 4 and senior[a][4]:

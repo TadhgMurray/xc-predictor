@@ -82,7 +82,9 @@ def test_a_senior_racing_open_college_meets_unattached_is_still_a_senior():
     import inspect
     import link_freshmen as LF
     src = inspect.getsource(LF.seniors)
-    assert src.count("r.source = 'tfrrs' AND {collegeSql('r')}") == 2
+    # has_tfrrs (two tables) and, since 2026-11-04, the colleges those rows are at
+    assert src.count("r.source = 'tfrrs' AND {collegeSql('r')}") == 4
+    assert "r.source = 'tfrrs')" not in src and "r.source = 'tfrrs'\n" not in src
 
 
 def test_a_nickname_finds_the_senior_only_when_unique():
@@ -94,3 +96,30 @@ def test_a_nickname_finds_the_senior_only_when_unique():
     pairs, skipped = L.pairsFor(fresh, senior)
     assert [(t, a) for t, a, *_x in pairs] == [(201, 11)]
     assert skipped.get("nickname not unique") == 1      # two Burch seniors
+
+
+
+def test_a_namesake_of_the_other_gender_is_no_rival():
+    """2026-11-04 ("do 1"): Jordan Smith the senior girl does not make the
+    first-year boy ambiguous; an unknown gender still counts."""
+    fresh = {301: ("Jordan Smith", "Tufts", "M", 3)}
+    senior = {21: ("Jordan Smith", "A HS", "M", False, False),
+              22: ("Jordan Smith", "B HS", "F", False, False)}
+    pairs, _ = L.pairsFor(fresh, senior)
+    assert [(t, a) for t, a, *_x in pairs] == [(301, 21)]
+    senior[23] = ("Jordan Smith", "C HS", None, False, False)
+    pairs, skipped = L.pairsFor(fresh, senior)
+    assert pairs == [] and skipped.get("name not unique") == 1
+
+
+def test_a_senior_already_at_this_college_is_this_first_year():
+    """2026-11-04: 615 skipped as "senior already on tfrrs" -- one runner
+    whose college rows were split between the high school person and a
+    stranger. The same college joins; another college does not."""
+    fresh = {401: ("Ann Lee", "Tufts University", "F", 4)}
+    same = {31: ("Ann Lee", "Some HS", "F", True, False, ("Tufts",))}
+    pairs, skipped = L.pairsFor(fresh, same)
+    assert [(t, a) for t, a, *_x in pairs] == [(401, 31)]
+    other = {31: ("Ann Lee", "Some HS", "F", True, False, ("Bates",))}
+    pairs, skipped = L.pairsFor(fresh, other)
+    assert pairs == [] and skipped.get("senior already on tfrrs") == 1
