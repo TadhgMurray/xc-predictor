@@ -91,6 +91,23 @@ def raceKey(plan, race):
     return (group, str(plan["date"])[:10], race.get("gender"), lab)
 
 
+def describe(why):
+    """One line on why a race has no qualifier field. Pure."""
+    if why.get("no"):
+        return why["no"]
+    if why.get("how") == "route":
+        return (f"route ({why.get('gender') or '?'}): {why.get('rounds', 0)} of "
+                f"{why.get('of', 0)} rounds found (needs 80%) -- this season "
+                f"{why.get('this_season', 0)}, last season's {why.get('last_season', 0)}"
+                f" ({why.get('last_season_ok', 0)} predicted)")
+    if why.get("how"):
+        return (f"{why['how']} ({why.get('gender') or 'no gender'}): {why.get('rounds', 0)} "
+                f"rounds counted (needs 3) -- this season {why.get('this_season', 0)} found, "
+                f"{why.get('counted', 0)} with a field; last season's "
+                f"{why.get('last_season', 0)} ({why.get('last_season_ok', 0)} predicted)")
+    return "no stored plan for the race"
+
+
 def main():
     ap = argparse.ArgumentParser(description="Store the qualifier fields of upcoming championships.")
     ap.add_argument("--dry-run", action="store_true")
@@ -115,12 +132,12 @@ def main():
             conn.rollback()
             print(f"  {len(plans)} meet(s) to field: those, and the posted meets a rule "
                   f"or a learned route covers")
-            done = {}
+            done, whys = {}, {}
             for plan in plans:
                 if time.time() > deadline:
                     print("  out of budget; the rest next run")
                     break
-                got = []
+                got, nots = [], []
                 for race in plan.get("races") or []:
                     n_races += 1
                     if not race.get("gender"):      # who ran it last year
@@ -129,7 +146,11 @@ def main():
                     key = raceKey(plan, race)
                     try:
                         if key not in done:
-                            done[key] = U.qualifiedFieldInfo(cur, plan, race["div_id"], live=True)
+                            why = {}
+                            got_ = U.qualifiedFieldInfo(cur, plan, race["div_id"], live=True,
+                                                        why=why)
+                            done[key] = got_
+                            whys[key] = why
                         field, info = done[key]
                     except Exception as exc:            # noqa: BLE001
                         conn.rollback()
@@ -138,6 +159,8 @@ def main():
                               f"{type(exc).__name__}: {exc}")
                         continue
                     conn.rollback()
+                    if not field:
+                        nots.append(f"{race.get('label')}: {describe(whys.get(key) or {})}")
                     if field:
                         fields[U.storedKey(plan["source"], plan["meet_id"], race["div_id"],
                                            plan["date"])] = {
@@ -147,6 +170,10 @@ def main():
                                    f"({info.get('predicted', 0)}/{info.get('rounds', 0)} predicted)")
                 print(f"  {plan['date']}  {plan.get('name')}: "
                       + ("; ".join(got) if got else "no race with enough rounds"))
+                # ★ AND WHY NOT, per race (2026-11-04: NCAA DII, DIII, NAIA
+                #   "no race with enough rounds" and nothing to go on)
+                for line in sorted(set(nots))[:6]:
+                    print(f"        {line}")
     print(f"  {len(fields)} race field(s) of {n_races} race(s)"
           + ("" if not a.dry_run else " -- DRY RUN, nothing written"))
     if not a.dry_run:

@@ -216,3 +216,18 @@ def test_the_site_never_requires_a_column_the_scraper_has_not_added_yet():
     SL._HAS_LEVEL.update({"at": 0.0, "ok": False})
     got = SL.logoRow(_Cur(False), "A", "MA")
     assert got is not None and got["level"] == ""
+
+
+def test_a_name_whose_rows_are_all_one_state_is_one_school():
+    """owner, 2026-11-04: Washington St. had no badge on the predictions
+    page -- two rows, both WA (one level-less, one college), and no state
+    from the page, so the one-row fallback said no."""
+    import school_identity as si
+    si._LABELS.update({"loaded": True, "map": {}, "clusters": {}})
+    L._CRESTS.update({"loaded": True, "map": {
+        "Washington St.": [("WA", "aaaaaaaa", "/x/wsu.png", ""),
+                           ("WA", "bbbbbbbb", "/x/wsu-college.png", "college")],
+        "Oregon": [("OR", "cccccccc", "/x/uo.png", ""), ("IL", "dddddddd", "/x/il.png", "")]}})
+    assert L.crestState("Washington St.")[2] == "/x/wsu.png"
+    assert L.crestState("Washington St.", pool="college_m")[2] == "/x/wsu-college.png"
+    assert L.crestState("Oregon") is None                     # two states: two schools
