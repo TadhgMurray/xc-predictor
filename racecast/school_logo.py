@@ -282,7 +282,12 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
     #   (IL) -- and to Williams (wherever) from Williams College's. Where
     #   the name really is two schools, a crest filed under another state
     #   is another school's crest and NO badge is the right answer.
-    if len(rows) != 1:
+    # ★ ONE STATE IS STILL ONE SCHOOL (owner, 2026-11-04: Washington St.
+    #   had no badge on the predictions page -- its two rows, one with no
+    #   level and one "college", are both WA, and len(rows) == 1 said no).
+    #   Rows that all sit in one state are one school's, picked by level
+    #   as above; two states is two schools and still no badge.
+    if len({row[0] for row in rows}) != 1:
         return None
     try:
         from school_identity import splitsByState
@@ -290,6 +295,13 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
             return None
     except Exception:                              # noqa: BLE001
         pass
+    if lv:
+        for row in rows:
+            if len(row) > 3 and row[3] == lv:
+                return row
+    for row in rows:
+        if len(row) <= 3 or not row[3]:
+            return row
     return rows[0]
 
 

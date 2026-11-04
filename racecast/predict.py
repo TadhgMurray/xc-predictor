@@ -393,7 +393,8 @@ def predictTeam(cur, schools, target, head_to_head=False,
     # The meet's own field, plus whatever the page edited. `schools` is only
     # used when there is no meet to read a field from.
     with _stage("roster"):
-        roster = _teamRosters(cur, schools, target, remove or set(), add or set())
+        with raceDate(target.get("date")):
+            roster = _teamRosters(cur, schools, target, remove or set(), add or set())
     if not roster:
         return {"available": False,
                 "reason": "No athletes found for those teams."}
@@ -616,7 +617,8 @@ def predictTeamLineup(cur, schools, target, team, remove=None, add=None,
     except Exception as exc:                            # noqa: BLE001
         return {"available": False, "reason": f"race_sim unavailable: {exc}"}
 
-    roster = _teamRosters(cur, schools, target, remove or set(), add or set())
+    with raceDate(target.get("date")):
+        roster = _teamRosters(cur, schools, target, remove or set(), add or set())
     if not roster:
         return {"available": False,
                 "reason": "No athletes found for those teams."}
@@ -5139,8 +5141,80 @@ def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
 from roster import TERMINAL_KEYS as _TERMINAL_KEYS
 
 
+# ★ THE RACE'S SEASON, NOT TODAY'S (owner, 2026-11-04: "If I set a race for
+#   2027 next season, it should not include current seniors. It needs to take
+#   into account the time better!"). The squads were aged to the season we
+#   are in, whatever date the page asked for. A race dated in a later season
+#   loses everyone who will have left by then -- this year's seniors for next
+#   season, its juniors too two seasons on -- and the rest are that many
+#   grades older. The callers name the date (raceDate) around the field, the
+#   squads and the roster; the model already reads the date for the times.
+import contextlib as _contextlib
+import contextvars as _contextvars
+
+_RACE_DATE = _contextvars.ContextVar("predict_race_date", default=None)
+
+
+@_contextlib.contextmanager
+def raceDate(on):
+    """Squads built inside this are aged to the season of `on` (ISO date),
+    when that is later than the current one."""
+    tok = _RACE_DATE.set(str(on)[:10] if on else None)
+    try:
+        yield
+    finally:
+        _RACE_DATE.reset(tok)
+
+
+def seasonsAhead(on, now=None):
+    """How many seasons after the current one (academic years) `on` falls
+    in: 0 for this season, a past date, no date or junk."""
+    from season_year import academicYear
+    try:
+        day = datetime.date.fromisoformat(str(on)[:10])
+    except (TypeError, ValueError):
+        return 0
+    now = academicYear(datetime.date.today()) if now is None else now
+    return max(0, academicYear(day) - now)
+
+
+def goneBy(grade, years, pool=None, season=None):
+    """Will a runner of this grade have left their level `years` seasons on?
+    A high schooler past 12, a collegian past their senior class; a class
+    year ("2026") past its season. A blank or unreadable grade stays, as
+    the carry-forward keeps it (roster.graduatedClause). Pure."""
+    from grade_label import _ELIG, classYearGrade, gradeLabel, isClassYear
+    if not years or grade is None or not str(grade).strip():
+        return False
+    if isClassYear(grade):
+        return season is not None and classYearGrade(grade, season, pool) is None
+    label = gradeLabel(grade, pool)
+    if not label:
+        return False
+    if label.isdigit():
+        return int(label) + int(years) > 12
+    m = _ELIG.match(label)
+    if m:
+        return ("FR", "SO", "JR", "SR").index(m.group(1).upper()) + int(years) > 3
+    return False
+
+
+def _ageForward(squads, years, season):
+    """Each squad `years` seasons on: the leavers out, the grades older. In
+    place."""
+    for sch in list(squads):
+        kept = []
+        for r in squads[sch]:
+            if goneBy(r.get("grade"), years, r.get("pool"), season):
+                continue
+            r["grade"] = _advanced(r.get("grade"), years, r.get("pool"), season=season)
+            kept.append(r)
+        squads[sch] = kept
+
+
 def _currentSquads(cur, schools, sport, season_year, gender=None,
-                   levels=None, states=None, isolated=False, as_ran=False):
+                   levels=None, states=None, isolated=False, as_ran=False,
+                   on=None):
     """{school: [runners best-first]} for this season.
 
     states   -- {school: "MA"}: keep only that namesake of a contested name
@@ -5306,6 +5380,11 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
         squads[sch] = _dedupeByName(squads[sch])
     if states:
         _keepIdentity(cur, squads, states)
+    # ★ AND TO THE RACE'S SEASON (raceDate): a later season's race, without
+    #   the runners who will have left by then
+    ahead = 0 if as_ran else seasonsAhead(on or _RACE_DATE.get(), now)
+    if ahead:
+        _ageForward(squads, ahead, now + ahead)
     return squads
 
 

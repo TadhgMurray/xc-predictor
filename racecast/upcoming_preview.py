@@ -413,13 +413,15 @@ def storedField(source, meet_id, div_id, day):
     return {int(k): v for k, v in got["field"].items()}, dict(got["info"], made=got.get("made"))
 
 
-def qualifiedFieldInfo(cur, plan, div_id, live=False):
+def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
     """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
     for one race of a meet plan: where the field came from, for the page
     to say (predictions.js showBasis). The nightly's stored field first
     (storedField); live=True (the nightly itself) predicts rounds that have
-    not run, which a page never does."""
+    not run, which a page never does. `why`, a dict, is told what was
+    looked at when there is no field (the nightly prints it)."""
     import qualifying as Q
+    why = {} if why is None else why
     if not plan:
         return None, None
     if not live and plan.get("meet_id") and plan.get("date"):
@@ -437,6 +439,7 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False):
     route = None if rule is not None else Q.learnedRoute(
         plan.get("name"), plan.get("source"), race.get("label"), race.get("gender"))
     if rule is None and route is None:
+        why["no"] = f"no rule or learned route for {race.get('label')!r} ({race.get('gender') or '?'})"
         return None, None
     forecast = os.environ.get("XCP_QUALIFY_FORECAST", "1") != "0"
     src = rule["source"] if rule is not None else route["source"]
@@ -457,14 +460,16 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False):
             field, n_pred = Q.learnedField(
                 cur, route, str(plan["date"])[:10],
                 predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src, live))
-                if forecast else None, predict_past=past)
+                if forecast else None, predict_past=past, info=used)
             n_rounds = len(route.get("rounds") or [])
         _release(cur, "up_qual")
     except Exception as exc:                            # noqa: BLE001
         _undo(cur, "up_qual")
         print(f"qualified field {plan.get('meet_id')}/{div_id}: {type(exc).__name__}: {exc}",
               flush=True)
+        why["no"] = f"{type(exc).__name__}: {exc}"
         return None, None
+    why.update(used, gender=race.get("gender"), how=rule["key"] if rule is not None else "route")
     if not field:
         return None, None
     return field, {"rule": rule["key"] if rule is not None else "route",

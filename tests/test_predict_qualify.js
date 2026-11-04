@@ -30,7 +30,12 @@ const els = { "t-date": { value: "2026-11-21" }, "mc-basis": { hidden: true, tex
 const $ = (id) => els[id];
 const isTrack = () => false;
 let state = { meet: { id: 1, sport: "XC" }, when: "thisyear", qualify: true, pick: "rating" };
+const seasonOf = eval(`(${grab("seasonOf")})`);
 const fieldQuery = eval(`(${grab("fieldQuery")})`);
+// the season a date is in (Aug 15, as engine/season_year.py): a later one
+// is a new field, this year's seniors gone (owner, 2026-11-04)
+ok(seasonOf("2026-11-21") === 2026 && seasonOf("2027-08-14") === 2026 &&
+   seasonOf("2027-08-15") === 2027 && seasonOf("") === null, "seasonOf: the Aug 15 seam");
 ok(!fieldQuery(5).has("qualify"), "on: nothing extra is sent (the server's default)");
 state.qualify = false;
 ok(fieldQuery(5).get("qualify") === "0", "off: qualify=0");

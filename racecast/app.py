@@ -11607,11 +11607,17 @@ def api_predict_field():
                                              day=day if re.match(r"^\d{4}-\d{2}-\d{2}$", day)
                                              else None)
                 if out is None:
-                    out = meetField(cur, int(meet), div_n,
-                                    sport, when=when, source=src,
-                                    per_team=_perTeam(request.args),
-                                    event_id=event_n, pick=pick, target=target,
-                                    skip_top=_skipTop(request.args))
+                    # ★ THE RACE'S SEASON (owner, 2026-11-04: a 2027 race
+                    #   "should not include current seniors"): the squads
+                    #   are aged to the date asked (predict.raceDate)
+                    day = (request.args.get("date") or "").strip()
+                    with _predict.raceDate(day if when == "thisyear" and
+                                           re.match(r"^\d{4}-\d{2}-\d{2}$", day) else None):
+                        out = meetField(cur, int(meet), div_n,
+                                        sport, when=when, source=src,
+                                        per_team=_perTeam(request.args),
+                                        event_id=event_n, pick=pick, target=target,
+                                        skip_top=_skipTop(request.args))
     out["alt"] = alt_idx
     resp = jsonify(out)
     # the live split, as /api/predict/team gives it (predict._stage)
@@ -11941,8 +11947,12 @@ def _squadParams(args):
     # ★ AS IT RAN: the squad of the meet's own season, not this one's
     #   (owner, 2026-10-05: "as it ran includes new freshmen")
     as_ran = (args.get("when") or "").strip().lower() == "asran"
+    # ★ AND THE RACE'S DATE: a later season's squad has this year's seniors
+    #   gone (predict.raceDate)
+    day = (args.get("date") or "").strip()
     return {"sport": sport, "gender": gender, "levels": levels,
             "as_ran": as_ran,
+            "date": day if re.match(r"^\d{4}-\d{2}-\d{2}$", day) and not as_ran else None,
             "levels_given": "levels" in args,
             "meet_id": int(meet) if meet.isdigit() else None,
             "div_id": div_n, "event_id": event_n,
@@ -11999,15 +12009,18 @@ def _squadsServed(cur, wanted, p):
     wanted = [(sch, (st or meet_state or None)) for sch, st in wanted]
     lv_key = tuple(sorted(levels)) if levels else None
 
+    ahead = predict.seasonsAhead(p.get("date"))
+
     def key(sch, st):
-        return ("predict-squad", sch, sport, gender, lv_key, st, season, as_ran)
+        return ("predict-squad", sch, sport, gender, lv_key, st, season, as_ran, ahead)
 
     out = [ttlcache.peek(key(sch, st)) for sch, st in wanted]
     miss = [i for i, v in enumerate(out) if v is None]
     if miss:
-        got = predict.schoolSquads(cur, [wanted[i] for i in miss], sport,
-                                   season, gender=gender, levels=levels,
-                                   as_ran=as_ran)
+        with predict.raceDate(p.get("date")):
+            got = predict.schoolSquads(cur, [wanted[i] for i in miss], sport,
+                                       season, gender=gender, levels=levels,
+                                       as_ran=as_ran)
         for i, g in zip(miss, got):
             sch, st = wanted[i]
             # ⚠ THE LABEL IS NOT THE NAME, AND A CALLER MAY SEND EITHER.
@@ -12025,9 +12038,10 @@ def _squadsServed(cur, wanted, p):
             if not g.get("runners"):
                 bare = search_index.bareSchool(sch)
                 if bare and bare != sch:
-                    g = predict.schoolSquad(cur, bare, sport, season,
-                                            gender=gender, levels=levels,
-                                            state=st)
+                    with predict.raceDate(p.get("date")):
+                        g = predict.schoolSquad(cur, bare, sport, season,
+                                                gender=gender, levels=levels,
+                                                state=st)
             out[i] = g
             # ! FILED ONLY ONCE COMPUTED: a failure above raises out of
             #   the route and nothing is cached (the ttlcache rule)
