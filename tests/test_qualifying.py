@@ -255,3 +255,112 @@ def test_the_pages_read_the_nightlys_stored_field_first(monkeypatch, tmp_path):
     assert U.storedField("tfrrs", 5, 3, "2026-11-21") == (None, None)
     # the nightly itself does not read it back (live=True works it out)
     assert U.qualifiedFieldInfo(None, plan, 2, live=True) == (None, None)
+
+
+def test_last_years_rounds_run_this_year_when_none_are_posted(monkeypatch):
+    # owner's nightly, 2026-11-04: NCAA "no race with enough rounds" -- the
+    # regionals are not posted until the week they run
+    rule = Q.ruleFor("NCAA Division II Cross Country Champs (67th Men & 44th Women)", "tfrrs")
+    assert rule and rule["key"] == "ncaa_d2"                 # "Champs" is the championship
+    monkeypatch.setattr(Q, "_roundMeets", lambda cur, r, d, w: (
+        [] if d >= "2026-01-01" else [(i, f"NCAA DII Region {i}", "2025-11-08") for i in range(8)]))
+    monkeypatch.setattr(Q, "pastRounds", lambda cur, r, day, g, have=(): [
+        (i, 100 + i, "2026-11-07") for i in range(8)])
+    asked, info = [], {}
+
+    def past(mid, div, on):
+        asked.append((mid, div, on))
+        return _region(f"r{mid}", n_teams=5)
+    field, n_pred = Q.fieldFromRounds(None, rule, "2026-11-21", "M", predict_past=past, info=info)
+    assert field and n_pred == 8 and info["rounds"] == 8
+    assert asked[0] == (0, 100, "2026-11-07")
+    assert Q.fieldFromRounds(None, rule, "2026-11-21", "M") == (None, 0)   # not without it
+
+
+def test_a_learned_round_not_posted_is_last_years_run_again(monkeypatch, tmp_path):
+    route = {"source": "anet", "rounds": [
+        {"meet": "north regional", "race": "Boys", "gender": "M", "date": "2025-10-25",
+         "teams": 2, "individuals": 3, "meet_id": 11, "div_id": 21},
+        {"meet": "south regional", "race": "Boys", "gender": "M", "date": "2025-10-25",
+         "teams": 2, "individuals": 3}]}
+    monkeypatch.setattr(Q, "_thisRound", lambda cur, rnd, day, src: None)
+    real = Q._lastRound
+    monkeypatch.setattr(Q, "_lastRound", lambda cur, rnd, src: (
+        real(cur, rnd, src) if rnd.get("meet_id") else (12, 22)))     # ids, else by name
+    rows = _region("n", n_teams=5, extras=0)
+    asked = []
+
+    def past(mid, div, on):
+        asked.append((mid, div, on))
+        return rows
+    field, n_pred = Q.learnedField(None, route, "2026-11-07", predict_past=past)
+    assert n_pred == 2 and len(field) == 17
+    assert asked == [(11, 21, "2026-10-24"), (12, 22, "2026-10-24")]   # a year on, same weekday
+    assert Q.learnedField(None, route, "2026-11-07") == (None, 0)
+
+
+def test_one_of_each_championship(monkeypatch):
+    import datetime
+    import last_edition as LE
+    import upcoming_preview as U
+    counts = {1: 900, 2: 5000, 3: 10, 4: 800, 6: 400, 7: 380}
+
+    class Cur:
+        def __init__(self):
+            self.last = None
+
+        def execute(self, sql, args=None):
+            self.last = args
+
+        def fetchall(self):
+            return [("tfrrs", 1, "NCAA Division II Cross Country Champs (67th Men & 44th Women)",
+                     "2025-11-22"),
+                    ("tfrrs", 2, "NCAA Division II Cross Country Championships", "2025-11-22"),
+                    ("tfrrs", 3, "2025 NAIA XC National Championships", "2025-11-21"),
+                    ("tfrrs", 4, "NAIA Cross Country National Championships", "2025-11-21"),
+                    ("anet", 6, "Springfield Boys State Champs", "2025-11-08"),
+                    ("anet", 7, "Springfield Girls State Champs", "2025-11-08")]
+
+        def fetchone(self):
+            return {"n": counts[self.last[0]]}
+    monkeypatch.setattr(Q, "_loadRoutes", lambda: {
+        ("tfrrs", "naia xc national championships"): [{}],
+        ("tfrrs", "naia cross country national championships"): [{}],
+        ("anet", "springfield boys state champs"): [{}],
+        ("anet", "springfield girls state champs"): [{}]})
+    monkeypatch.setattr(LE, "editionRaces", lambda cur, mid, sport, src: [
+        {"div_id": 1, "gender": "F" if mid == 7 else "M"}])
+    got = U.upcomingChampionships(Cur(), datetime.date(2026, 11, 3))
+    assert sorted(m["meet_id"] for m in got) == [2, 4, 6, 7]   # the most results; boys and girls
+    assert next(m for m in got if m["meet_id"] == 2)["also"] == [1]
+
+
+def test_a_savepoint_the_prediction_ended_does_not_raise():
+    import upcoming_preview as U
+
+    class Conn:
+        rolled = 0
+
+        def rollback(self):
+            Conn.rolled += 1
+
+    class Cur:
+        connection = Conn()
+
+        def execute(self, sql, args=None):
+            raise RuntimeError('savepoint "up_qual" does not exist')
+    U._release(Cur(), "up_qual")
+    U._undo(Cur(), "up_qual")
+    assert Conn.rolled == 2
+
+
+def test_the_page_reads_the_nightlys_list(monkeypatch, tmp_path):
+    import datetime
+    import json
+    import upcoming_preview as U
+    path = tmp_path / "qf.json"
+    path.write_text(json.dumps({"made": "2026-11-04", "fields": {}, "champs": [
+        {"name": "NXN", "date": "2026-12-05"}, {"name": "gone", "date": "2026-11-01"}]}))
+    monkeypatch.setattr(U, "STORED_PATH", str(path))
+    assert [m["name"] for m in U.storedChampionships(datetime.date(2026, 11, 4))] == ["NXN"]
+    assert U.storedChampionships(datetime.date(2026, 11, 9)) is None     # stale: ask again

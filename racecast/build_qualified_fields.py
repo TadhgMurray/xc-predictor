@@ -22,7 +22,13 @@
 # ★ WHICH MEETS: the predictions page's upcoming championships (last year's
 #   meets a year on, upcoming_preview.upcomingChampionships) and every meet
 #   posted for the next DAYS days that a published rule or a learned route
-#   covers -- keyed as the pages ask: source, meet id, race, date.
+#   covers -- keyed as the pages ask: source, meet id, race, date. One
+#   championship is worked out once however many keys ask for it (raceKey),
+#   and the list itself is stored too (upcoming_preview.storedChampionships:
+#   one of each, NXN with it), so the page asks the database nothing.
+#
+# ★ A ROUND NOT POSTED YET (2026-11-04: NCAA "no race with enough rounds")
+#   is last season's round run this year (qualifying.pastRounds).
 #
 # ! OFF THE && CHAIN (nightly 13h2): a failure keeps last night's file; the
 #   file is written beside and swapped, never half-written.
@@ -42,13 +48,13 @@ for sub in ("racecast", "scripts", "engine", "model"):
 DAYS = 45
 
 
-def targets(cur, today):
+def targets(cur, today, champs):
     """[plan] -- meetPlan's shape, dated the day the pages will ask with."""
     import last_edition as LE
     import qualifying as Q
     import upcoming_preview as U
     out = []
-    for m in U.upcomingChampionships(cur, today):
+    for m in champs:
         plan = U.pastPlan(cur, m["meet_id"], m["source"], m["date"])
         if plan:
             out.append(plan)
@@ -71,6 +77,20 @@ def targets(cur, today):
     return out
 
 
+# ★ ONE CHAMPIONSHIP, WORKED OUT ONCE (owner's nightly, 2026-11-04: Brooks,
+#   MPSSAA, OSAA, MSHSAA and NEIC each listed twice). The predictions page
+#   asks for last year's meet a year on, a meet preview for this year's
+#   posted meet: two keys, one field. A race is the championship
+#   (upcoming_preview.championshipKey), the day, its gender and, for a
+#   learned route (which goes by the race's label), the label.
+def raceKey(plan, race):
+    import last_edition as LE
+    import upcoming_preview as U
+    group = U.championshipKey(plan.get("name"), plan.get("source"))
+    lab = "" if group.startswith("rule:") else LE.editionName(race.get("label"))
+    return (group, str(plan["date"])[:10], race.get("gender"), lab)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Store the qualifier fields of upcoming championships.")
     ap.add_argument("--dry-run", action="store_true")
@@ -88,9 +108,14 @@ def main():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SET statement_timeout = '900s'")
-            plans = targets(cur, today)
+            champs = U.upcomingChampionships(cur, today, thorough=True)
             conn.rollback()
-            print(f"  {len(plans)} upcoming championship(s) a rule or a learned route covers")
+            print(f"  {len(champs)} upcoming championship(s) on the predictions page")
+            plans = targets(cur, today, champs)
+            conn.rollback()
+            print(f"  {len(plans)} meet(s) to field: those, and the posted meets a rule "
+                  f"or a learned route covers")
+            done = {}
             for plan in plans:
                 if time.time() > deadline:
                     print("  out of budget; the rest next run")
@@ -98,10 +123,17 @@ def main():
                 got = []
                 for race in plan.get("races") or []:
                     n_races += 1
+                    if not race.get("gender"):      # who ran it last year
+                        race["gender"] = U.lastYearGender(cur, plan, race)
+                        conn.rollback()
+                    key = raceKey(plan, race)
                     try:
-                        field, info = U.qualifiedFieldInfo(cur, plan, race["div_id"], live=True)
+                        if key not in done:
+                            done[key] = U.qualifiedFieldInfo(cur, plan, race["div_id"], live=True)
+                        field, info = done[key]
                     except Exception as exc:            # noqa: BLE001
                         conn.rollback()
+                        done[key] = (None, None)
                         print(f"    {plan.get('name')} {race.get('label')}: "
                               f"{type(exc).__name__}: {exc}")
                         continue
@@ -120,7 +152,7 @@ def main():
     if not a.dry_run:
         tmp = U.STORED_PATH + ".new"
         with open(tmp, "w") as fh:
-            json.dump({"made": today.isoformat(), "fields": fields}, fh)
+            json.dump({"made": today.isoformat(), "fields": fields, "champs": champs}, fh)
         os.replace(tmp, U.STORED_PATH)
         print(f"  wrote {U.STORED_PATH}")
     print(f"  done in {time.time() - t0:.0f}s")

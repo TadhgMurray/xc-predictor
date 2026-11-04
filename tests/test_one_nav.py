@@ -135,32 +135,35 @@ def test_phone_css_has_the_two_rows_and_the_panel():
 
 
 # ------------------------------------------------------- predictions
-WEEK = [{"date": "2026-10-10", "label": "Today", "meets": [
-    {"meet_id": 7, "sport": "XC", "source": "anet", "name": "Small Dual", "date": "2026-10-10",
-     "venue": "Here Park", "state": "OR", "n_races": 2, "level": "HS"},
-    {"meet_id": 8, "sport": "XC", "source": "tfrrs", "name": "Big Invite", "date": "2026-10-10",
-     "venue": "Woodward Park", "state": "CA", "n_races": 20, "level": "College"},
-]}]
+# ★ THE UPCOMING CHAMPIONSHIPS, NOT THIS WEEK'S MEETS (owner, 2026-11-03):
+#   the nightly's list (upcoming_preview.storedChampionships), a year on
+CHAMPS = [
+    {"name": "2025 MSHSL Class A State Championships", "source": "anet", "meet_id": 2,
+     "last_date": "2025-11-08", "date": "2026-11-07", "kind": "state"},
+    {"name": "NCAA Division I Cross Country Championships", "source": "tfrrs", "meet_id": 8,
+     "last_date": "2025-11-22", "date": "2026-11-21", "kind": "national"},
+]
 
 
 @pytest.fixture
 def client(A, monkeypatch):
-    import weekend
-    for d in WEEK:
-        for m in d["meets"]:
-            m["predict_href"] = weekend.predictHref(m)
-    monkeypatch.setattr(weekend, "comingUpCached", lambda getConn, today=None: WEEK)
+    import ttlcache
+    import upcoming_preview as U
+    monkeypatch.setattr(U, "storedChampionships", lambda today=None: [dict(m) for m in CHAMPS])
+    monkeypatch.setattr(ttlcache, "get", lambda key, compute, **k: (compute(), False))
     return A.app.test_client()
 
 
 def test_predictions_opens_on_the_week_and_who_wins_state(client):
     html = client.get("/predictions").get_data(as_text=True)
     week = html.split('id="pred-week-h"', 1)[1].split("</section>", 1)[0]
-    # biggest first, each a Predict link into the page with its feed pinned
-    assert week.index("Big Invite") < week.index("Small Dual")
-    assert 'href="/predictions?meet_id=8&amp;sport=XC&amp;src=tfrrs"' in week
-    assert "Sat Oct 10 · Woodward Park · CA" in week
-    assert "All 2 meets this week" in week and 'href="/meets?view=upcoming"' in week
+    # national first, each a Predict link: last year's meet, this year's date
+    assert week.index("NCAA Division I Cross Country Championships") < week.index("MSHSL Class A")
+    assert ('href="/predictions?meet_id=8&amp;src=tfrrs&amp;date=2026-11-21&amp;pick=predicted"'
+            in week)
+    assert "Sat Nov 21 · from the 2025 meet · national" in week
+    assert ">MSHSL Class A State Championships<" in week          # last year's year off
+    assert 'href="/meets?view=upcoming"' in week
     card = html.split('id="pred-state-h"', 1)[1].split("</aside>", 1)[0]
     assert 'action="/projections"' in card and '<option value="ca">California</option>' in card
     assert 'href="/projections/ca">California</a>' in card
@@ -182,8 +185,10 @@ def test_the_options_fold_and_the_mode_label(client):
 
 
 def test_an_empty_week_is_said_not_an_error(A, monkeypatch):
-    import weekend
-    monkeypatch.setattr(weekend, "comingUpCached", lambda getConn, today=None: [])
+    import ttlcache
+    import upcoming_preview as U
+    monkeypatch.setattr(U, "storedChampionships", lambda today=None: [])
+    monkeypatch.setattr(ttlcache, "get", lambda key, compute, **k: (compute(), False))
     r = A.app.test_client().get("/predictions")
     assert r.status_code == 200
-    assert "No meet has been posted for the next seven days yet." in r.get_data(as_text=True)
+    assert "No championship ahead this season." in r.get_data(as_text=True)

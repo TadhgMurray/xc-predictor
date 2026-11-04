@@ -11683,20 +11683,25 @@ def _upcomingChampsCached():
     on a failure: the page shows no list rather than an error."""
     import datetime as _dt
     import ttlcache
-    from upcoming_preview import upcomingChampionships
+    from upcoming_preview import storedChampionships, upcomingChampionships
 
     def compute():
-        # ! A FAILURE IS KEPT TOO (ttl_of below), so a slow database is
-        #   asked once per worker every ten minutes, not on every visit
-        try:
-            with getConn() as conn:
-                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                    cur.execute("SET statement_timeout = '20s'")
-                    out = upcomingChampionships(cur)
-                    conn.rollback()
-        except Exception:                               # noqa: BLE001
-            app.logger.exception("upcoming championships failed")
-            return None
+        # ★ THE NIGHTLY'S LIST FIRST (build_qualified_fields.py): one of each
+        #   championship, NXN with it, and no database question at all
+        out = storedChampionships()
+        if out is None:
+            # ! A FAILURE IS KEPT TOO (ttl_of below), so a slow database is
+            #   asked once per worker every ten minutes, not on every visit
+            try:
+                with getConn() as conn:
+                    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                        cur.execute("SET statement_timeout = '20s'")
+                        out = upcomingChampionships(cur)
+                        conn.rollback()
+            except Exception:                           # noqa: BLE001
+                app.logger.exception("upcoming championships failed")
+                return None
+        out = [dict(m) for m in out]
         for m in out:
             day = _dt.date.fromisoformat(m["date"])
             m["when"] = day.strftime("%a %b ") + str(day.day)

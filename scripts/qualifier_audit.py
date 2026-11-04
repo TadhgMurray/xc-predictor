@@ -358,7 +358,9 @@ def main():
                     route["rounds"].append({"meet": LE.editionName(names.get((F[0], F[1]))),
                                             "meet_name": names.get((F[0], F[1])), "race": fl,
                                             "gender": fg, "distance": fd, "date": dprev[F],
-                                            "teams": k, "individuals": m})
+                                            "teams": k, "individuals": m,
+                                            # the round itself, for qualifying._lastRound
+                                            "meet_id": int(F[1]), "div_id": int(F[2])})
                 routes.append(route)
             near = rday + datetime.timedelta(days=364)
             R2 = nextYear(R[0], R[1], R[2], near)
