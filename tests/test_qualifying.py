@@ -503,10 +503,16 @@ def test_brooks_is_ten_a_region_and_golden_tickets_by_region():
     assert not Q.isRound(rule, "Brooks XC National Championships 2026", 2026)
     rounds, labels = {}, {}
     for i, reg in enumerate(("Northeast", "Midwest", "South", "West")):
-        rounds[i] = [(f"{reg}-{k}", f"School {reg} {k}", 900.0 + k, 150.0 - k - i)
+        rounds[i] = [(f"{reg}-{k}", f"School {reg} {k}", 900.0 + k,
+                      (200.0 if reg == "Northeast" else 150.0) - k)
                      for k in range(30)]
         labels[i] = f"{reg} region"
     field = Q.selectField(rule, rounds, labels=labels)
-    assert len(field) == 50                                  # 4 x 10, and 10 tickets
+    assert len(field) == 50                                  # 10 tickets, and 4 x 10
     assert sum(1 for s in field.values() if s == "West region") >= 10
     assert set(field.values()) == set(labels.values())
+    # owner, 2026-11-04: "take the ten fastest as indivs first, then do the
+    # people in regionals" -- the ten best-rated are tickets (Northeast's
+    # top ten here), and Northeast's regional places go to its next ten
+    ne = sorted(p for p in field if p.startswith("Northeast-"))
+    assert len(ne) == 20 and "Northeast-19" in field and "Northeast-20" not in field
