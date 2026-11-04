@@ -472,3 +472,14 @@ def test_last_seasons_federation_meet_is_not_a_round_for_this_season(monkeypatch
         {"div_id": 10 + mid, "label": "Boys Championship", "gender": "M"}])
     got = Q.pastRounds(Cur(), rule, "2026-12-05", "M")
     assert [m for m, _d, _on in got] == [2]
+
+
+def test_one_school_under_two_spellings_is_one_team():
+    # owner, 2026-11-04, NCAA DI: "Washington St." and "Washington State (WA)"
+    rule = dict(Q.ruleFor("NCAA Division I Cross Country Championships", "tfrrs"),
+                teams_at_large=0, ind_at_large=0)
+    a = _region("a", n_teams=3, extras=0) + [("wsu-1", "Washington St.", 950.0, 55.0)]
+    b = _region("b", n_teams=3, extras=0) + [("wsu-2", "Washington State", 950.0, 55.0),
+                                             ("wsu-3", "Washington State", 990.0, 55.0)]
+    field = Q.selectField(rule, {1: a, 2: b})
+    assert {field.get(p) for p in ("wsu-1", "wsu-2")} == {"Washington State"}
