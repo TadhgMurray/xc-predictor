@@ -405,3 +405,15 @@ def test_a_school_through_two_rounds_is_one_team_of_seven(monkeypatch):
     assert sum(1 for s in field.values() if s == "a0") == 7
     assert all(not str(p).startswith("a-0-x") for p, s in field.items() if s == "a0"), \
         "the best seven by rating, not the fastest in a weaker round"
+
+
+def test_one_region_however_its_meet_is_named():
+    # owner's NXN check, 2026-11-04: South counted twice, Northeast read
+    # from its Open meet
+    assert Q.roundKey("NXR South Regional Championships") == \
+        Q.roundKey("NXR South Regional Championships & Community Race")
+    assert Q.roundKey("NXR Northeast & New York Regional Open") == \
+        Q.roundKey("2025 NXR Northeast & New York Regional Championships")
+    assert Q.roundKey("NXR South Regional Championships") != Q.roundKey("NXR Southeast Regional")
+    assert Q._sideMeet("NXR Northeast & New York Regional Open") > \
+        Q._sideMeet("NXR Northeast & New York Regional Championships")
