@@ -242,7 +242,7 @@ def selectField(rule, rounds, pools=None):
     races at-large teams may also come from (rule["at_large_from"]), same
     shape -- no automatic places and no individuals from them."""
     size = rule.get("team_size", 7)
-    pools = pools or {}
+    rounds, pools = _oneSpelling(rounds, pools or {})
     orders = {k: teamOrder(v) for k, v in rounds.items()}
     qualified = {k: list(o[:rule["teams_auto"]]) for k, o in orders.items()}
     queues = {k: o[rule["teams_auto"]:] for k, o in orders.items()}
@@ -286,6 +286,100 @@ def selectField(rule, rounds, pools=None):
     for pid in atLargeIndividuals(ind_queues, rule.get("ind_at_large", 0), n_teams):
         field[pid] = schools.get(pid)
     return _capTeams(field, rounds, pools, size)
+
+
+# ★ THE SITE'S OWN MERGES FIRST (owner, 2026-11-04: "There are other things
+#   like this in the codebase, can you make sure that they use those
+#   results"). scripts/merge_school_names.py writes school_name_alias:
+#   two spellings one team's athletes wear both of, proved by the people
+#   (La Jolla (CA) / La Jolla-CA), the boards already file rows under it
+#   (build_ranking_results.canonicalSchool). A round's rows come from the
+#   results table in each feed's own spelling; the alias puts them under
+#   the boards' one, and nameKey catches what is left.
+_ALIAS = {"at": 0.0, "map": {}}
+ALIAS_TTL = 3600
+
+
+def loadAliases(cur):
+    """school_name_alias as {variant: canonical}, chains followed; read at
+    most once an hour per process. {} when the table is missing."""
+    import time
+    from school_name import resolveChains
+    if _ALIAS["at"] and time.time() - _ALIAS["at"] < ALIAS_TTL:
+        return _ALIAS["map"]
+    got = {}
+    try:
+        cur.execute("SAVEPOINT q_alias")
+        cur.execute("SELECT to_regclass('public.school_name_alias') IS NOT NULL AS ok")
+        row = cur.fetchone()
+        if row and (row["ok"] if isinstance(row, dict) else row[0]):
+            cur.execute("SELECT variant, canonical FROM school_name_alias")
+            for r in cur.fetchall():
+                v, c = (r["variant"], r["canonical"]) if isinstance(r, dict) else (r[0], r[1])
+                if v and c and v != c:
+                    got[v] = c
+        cur.execute("RELEASE SAVEPOINT q_alias")
+    except Exception:                                   # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT q_alias")
+        except Exception:                               # noqa: BLE001
+            pass
+    _ALIAS["map"] = {k: v for k, v in resolveChains(got).items() if k != v}
+    _ALIAS["at"] = time.time()
+    return _ALIAS["map"]
+
+
+def canonicalSchool(school):
+    """The boards' spelling of a school (school_name_alias, once loaded)."""
+    return _ALIAS["map"].get(school, school) if school else school
+
+
+def oneSpellingField(field):
+    """A finished field {pid: school} with each school under one spelling:
+    the site's alias, then names that differ only in decoration. Pure but
+    for the loaded alias."""
+    from school_name import nameKey
+    field = {p: canonicalSchool(s) for p, s in (field or {}).items()}
+    counts = collections.defaultdict(collections.Counter)
+    for s in field.values():
+        if s:
+            counts[nameKey(s) or s][s] += 1
+    spell = {}
+    for c in counts.values():
+        if len(c) > 1:
+            best = min(c.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))[0]
+            spell.update({n: best for n in c})
+    return {p: spell.get(s, s) for p, s in field.items()}
+
+
+def _oneSpelling(rounds, pools):
+    """The rounds' rows with each school under one spelling (owner,
+    2026-11-04: NCAA DI listed "Washington St." and "Washington State (WA)",
+    a runner each -- one feed's spelling a round that ran, the other's a
+    round predicted). Spellings that differ only in decoration
+    (school_name.sameKey: "St." and "State") take the commonest. Pure."""
+    from school_name import nameKey
+    if _ALIAS["map"]:
+        rounds = {k: [(r[0], canonicalSchool(r[1])) + tuple(r[2:]) for r in v]
+                  for k, v in rounds.items()}
+        pools = {k: [(r[0], canonicalSchool(r[1])) + tuple(r[2:]) for r in v]
+                 for k, v in pools.items()}
+    counts = collections.defaultdict(collections.Counter)
+    for rows in list(rounds.values()) + list(pools.values()):
+        for r in rows:
+            if r[1]:
+                counts[nameKey(r[1]) or r[1]][r[1]] += 1
+    spell = {}
+    for _k, c in counts.items():
+        if len(c) > 1:
+            best = min(c.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))[0]
+            spell.update({name: best for name in c})
+
+    def fix(rows):
+        return [(r[0], spell.get(r[1], r[1])) + tuple(r[2:]) for r in rows]
+    if not spell:
+        return rounds, pools
+    return ({k: fix(v) for k, v in rounds.items()}, {k: fix(v) for k, v in pools.items()})
 
 
 def _capTeams(field, rounds, pools, size):
@@ -388,6 +482,8 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     import last_edition as LE
     if rule is None or gender not in ("M", "F"):
         return None, 0
+    if cur is not None:
+        loadAliases(cur)
     rounds, n_pred, got = {}, 0, set()
     seen = sorted(_roundMeets(cur, rule, day, rule.get("window", 21)),
                   key=lambda m: _sideMeet(m[1]))
@@ -675,6 +771,8 @@ def learnedField(cur, route, day, predict_div=None, predict_past=None, info=None
     predict_div(meet_id, div_id) -> rows, for a round with no results yet;
     predict_past(meet_id, div_id, on) -> rows, last season's round run again
     on `on`, for one this season has not posted (fieldFromRounds)."""
+    if cur is not None:
+        loadAliases(cur)
     field, found, n_pred = {}, 0, 0
     tally = collections.Counter()
     for rnd in route.get("rounds") or []:
@@ -720,4 +818,4 @@ def learnedField(cur, route, day, predict_div=None, predict_past=None, info=None
         info.update(tally, rounds=found, of=len(route.get("rounds") or []))
     if found < ROUTE_FOUND * len(route.get("rounds") or []) or not field:
         return None, 0
-    return field, n_pred
+    return oneSpellingField(field), n_pred

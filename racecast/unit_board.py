@@ -407,9 +407,13 @@ def unitMark(kind, name, state=None, size=28, shown=None):
     #   NXR regions not have logos"): the one the meet links already use,
     #   NXR <REGION> then NXR's then NXN's (seriesLogoUrl)
     if not url and kind == "nxr":
-        key = ("NXR CALIFORNIA" if str(name).lower().startswith("california")
-               else str(name).strip().upper())
-        url = seriesLogoUrl(key, px=128 if size > 32 else 64)
+        px = 128 if size > 32 else 64
+        if str(name).lower().startswith("california"):
+            # ★ CALIFORNIA WEARS ITS FLAG (owner, 2026-11-04: "CIF should be
+            #   california flag"): the state's own mark, unit_logos --flags
+            url = storedLogoUrl("state", "CA", px=px)
+        else:
+            url = seriesLogoUrl(str(name).strip().upper(), px=px)
     if url:
         return (f'<img class="unit-badge unit-logo" src="{html.escape(url)}" alt="" '
                 f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async" '

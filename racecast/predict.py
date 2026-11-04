@@ -3710,6 +3710,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
 
     originals, basis = thisYearOriginals(cur, meet_id, div_id, sport,
                                          source=source, event_id=event_id)
+    originals = unpackIndividuals(originals)
     at_meet = sorted({r["school"] for r in originals if r.get("school")})
     # ★ THE RACE'S OWN GENDER, from the people who ran it. None means the
     #   field really is mixed -- "All races" at a meet with both -- and then
@@ -4611,6 +4612,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
             originals, _basis = thisYearOriginals(
                 cur, int(target["meet_id"]), div, sport, source=src,
                 event_id=ev)
+            originals = unpackIndividuals(originals)
         if mode == "rerun_exact":
             # The exact field IS the entry list, so counting it is counting
             # who entered -- no stamp needed, and _score falls back to it.
@@ -5090,11 +5092,11 @@ def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '') AS name,
                NULLIF(btrim(r.athlete_name), '') AS row_name,
-               s.mean_rating, s.pool, s.year AS season
+               s.mean_rating, s.pool, s.year AS season, s.school AS season_school
         FROM   {table} r
         {_NAME_LATERAL.format(pid="r.person_id")}
         LEFT JOIN LATERAL (
-            SELECT x.mean_rating, x.pool, x.year
+            SELECT x.mean_rating, x.pool, x.year, x.school
             FROM   athlete_season x
             WHERE  x.person_id = r.person_id AND x.sport = %(sport)s
               AND  x.year = {seasonYearSqlInt(sport, "r.date")}
@@ -5117,10 +5119,52 @@ def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
                     "grade": r.get("grade"), "pool": r.get("pool"),
                     "rating": (round(float(r["mean_rating"]), 1)
                                if r.get("mean_rating") is not None else None),
-                    "as_of_season": r.get("season")})
+                    "as_of_season": r.get("season"),
+                    # the school their own season is filed under, which a
+                    # meet's group of individuals is not (unpackIndividuals)
+                    "season_school": r.get("season_school")})
     if out:
         from pool_view import stampBoardRows
         stampBoardRows(out, rating_keys=("rating",), sport=sport)
+    return out
+
+
+# ★ A MEET'S GROUP OF INDIVIDUALS IS NOT A SCHOOL (owner, 2026-11-04, Brooks
+#   XC: "Northeast (CT)", "West (CA)", "Midwest (CO)", "South (TX)" on the
+#   card, each a real school of that name's squad -- "issues ... regarding
+#   at-large indiv qualifiers"). A championship enters its individuals
+#   under labels -- Brooks's regions, NXN's "SE Individuals -2" -- and the
+#   "this year" field read each label as a school and took that school's
+#   current squad. A label most of whose runners' own season is filed under
+#   other schools, two or more of them, is such a group: each of its
+#   runners goes back under their own school as its one entrant, and the
+#   school's squad (capped at one) stands in for them this year.
+INDIVIDUALS_SHARE = 0.6
+
+
+def unpackIndividuals(originals):
+    """The field's rows with each group of individuals' runners under their
+    own school (season_school). Pure."""
+    from school_name import nameKey
+    by = collections.defaultdict(list)
+    for r in originals or []:
+        if r.get("school"):
+            by[r["school"]].append(r)
+    groups = set()
+    for label, rows in by.items():
+        known = [r for r in rows if r.get("season_school")]
+        other = [r for r in known
+                 if nameKey(r["season_school"]) != nameKey(label)]
+        if (len(known) >= 2 and len(other) >= INDIVIDUALS_SHARE * len(known)
+                and len({nameKey(r["season_school"]) for r in other}) >= 2):
+            groups.add(label)
+    if not groups:
+        return originals
+    out = []
+    for r in originals:
+        if r.get("school") in groups and r.get("season_school"):
+            r = dict(r, school=r["season_school"], team_id=None, individual=True)
+        out.append(r)
     return out
 
 

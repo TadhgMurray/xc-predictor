@@ -381,4 +381,4 @@ def test_an_nxr_region_wears_its_regionals_logo(monkeypatch):
     assert '<img' in html and "/img/x.png" in html
     assert ("series", "NXR SOUTHEAST") in asked              # its own first, then NXR's
     UB.unitMark("nxr", "California (CIF State)", size=22)
-    assert ("series", "NXR CALIFORNIA") in asked
+    assert ("state", "CA") in asked                          # its flag (owner, 2026-11-04)
