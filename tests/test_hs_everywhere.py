@@ -70,3 +70,22 @@ def test_rating_breakdown_is_hs_equivalent(monkeypatch):
     assert "a 120.0 on" in out["steps"][0]["text"]
     assert abs(sum(s["pts"] for s in out["steps"][1:]) - 12.0) < 1e-6
     assert body["rating"] == 110.0                       # the cached body untouched
+
+
+def test_every_page_that_prints_a_rating_loads_the_hs_swap():
+    """2026-11-04, /goal: the template printed every rating through rv() --
+    this file's other checks passed -- but the page never loaded
+    scale-view.js, so rv's data-hs was never shown and college ratings read
+    on the college scale. A full page that prints a rating loads it."""
+    import glob
+    import re
+    here = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "racecast", "templates")
+    missing = []
+    for path in glob.glob(os.path.join(here, "*.html")):
+        src = open(path, encoding="utf-8").read()
+        if "<html" not in src:
+            continue                      # a partial: its page carries the script
+        if re.search(r"\brv\(|data-hs=|\brval\(", src) and "scale-view.js" not in src:
+            missing.append(os.path.basename(path))
+    assert not missing, f"pages printing ratings without scale-view.js: {missing}"

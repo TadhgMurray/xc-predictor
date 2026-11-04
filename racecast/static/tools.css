@@ -90,7 +90,7 @@
 .goal-page .goal-form #goal-course, .goal-page .goal-form #goal-college { min-width: 14rem; }
 .goal-page .goal-form .field[hidden] { display: none; }
 .goal-page .goal-go { width: auto; }
-.goal-page .goal-tbl { max-width: 40rem; }
+.goal-page .goal-tbl { width: 100%; }   /* the column, as every race-page table (2026-11-04) */
 .goal-page .goal-tbl td:first-child { color: var(--ink, #111418); width: auto; }
 .goal-page .goal-err { color: #a05a00; }
 @media (max-width: 640px) {

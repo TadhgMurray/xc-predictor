@@ -127,13 +127,24 @@
   {% if error %}<p class="p2-note goal-err">{{ error }}</p>{% endif %}
 
   {% if target and times %}
+  {# ★ THE RACE PAGE'S SHAPE FOR THE TABLE TOO (owner, 2026-11-04: "the
+     goals ui for the tables is not like the rest of the site"): the tab
+     bar, a panel, the race page's table -- as /what-it-takes lays out its
+     own -- with the reading of the mark under its own tab. #}
   <div class="rc-grid rc-grid-one">
   <div class="rc-mainc">
+  <div class="rc-tbar">
+    <nav class="seg rc-tabs" role="tablist">
+      <a class="seg-btn is-on" href="#times" data-tab="times">Times</a>
+      <a class="seg-btn" href="#how" data-tab="how">How it's read</a>
+    </nav>
+  </div>
+  <section class="rc-panel" id="times" data-panel="times">
     {% if target.thin %}
-    <div class="p2-banner" role="note"><strong>Thin data.</strong> {{ target.thin_reasons|join("; ")|capitalize }}. Read this mark as a rough guide, not a line.</div>
+    <div class="p2-banner" role="note"><strong>Thin data.</strong> {{ (target.thin_reasons|join("; ")|capitalize) if target.thin_reasons else "Few rated runners behind this mark" }}. Read it as a rough guide, not a line.</div>
     {% endif %}
-    <table class="p2-tbl goal-tbl">
-      <thead><tr><th>Where</th><th class="num">The goal</th>{% if athlete and athlete.times %}<th class="num">{{ athlete.name or "Athlete" }} now</th>{% endif %}</tr></thead>
+    <table class="rc-table goal-tbl">
+      <thead><tr><th>Where</th><th class="n">The goal</th>{% if athlete and athlete.times %}<th class="n">{{ athlete.name or "Athlete" }} now</th>{% endif %}</tr></thead>
       <tbody>
         {% set rows = [] %}
         {% if times.course %}{% set _ = rows.append(((dist)|goal_dist ~ " at " ~ course.name ~ ((" (" ~ (course.whose or "the state meet's course") ~ ")") if course.state_course else ""), "course")) %}{% endif %}
@@ -141,12 +152,17 @@
         {% set _ = rows.append(("1600 on a typical track", "t1600")) %}
         {% set _ = rows.append(("3200 on a typical track", "t3200")) %}
         {% for label, key in rows %}
-        <tr><td>{{ label }}</td><td class="num"><strong>{{ times.get(key)|scale_time or "–" }}</strong></td>
-          {% if athlete and athlete.times %}<td class="num">{{ athlete.times.get(key)|scale_time or "–" }}</td>{% endif %}</tr>
+        <tr><td>{{ label }}</td><td class="n tm"><b>{{ times.get(key)|scale_time or "–" }}</b></td>
+          {% if athlete and athlete.times %}<td class="n tm">{{ athlete.times.get(key)|scale_time or "–" }}</td>{% endif %}</tr>
         {% endfor %}
+        <tr class="goal-rating-row"><td>Season rating</td>
+          <td class="n rt">{{ rv(target.rating, target.rating if not is_college else target.rating|hs(pool, "XC")) }}</td>
+          {% if athlete and athlete.times %}<td class="n rt">{{ rv(athlete.rating, athlete.rating if not is_college else athlete.rating|hs(pool, "XC")) }}</td>{% endif %}</tr>
       </tbody>
     </table>
-    <p class="p2-foot">
+  </section>
+  <section class="rc-panel p2-how" id="how" data-panel="how" hidden>
+    <p>
       {% if is_college %}
         The mark is the season rating {{ mark_pct }}% of {{ target.whose }} had reached, over the
         {{ target.years|join(", ") }} championship{{ "s" if target.years|length > 1 }} ({{ target.n }} rated runners).
@@ -161,14 +177,18 @@
         {{ mark_pct }}% of {{ target.whose }} had reached ({{ target.n }} rated runners).
         <a href="{{ target.href }}">Every season's marks</a>.
       {% endif %}
-      Times use the conversions page's own arithmetic; the rating already allows for the course, and a
-      real race also carries the day.
     </p>
+    <p>Every rating on this page is on the high-school scale, as across the site. Times use the conversions
+      page's own arithmetic; the rating already allows for the course, and a real race also carries the day.</p>
+  </section>
   </div>
   </div>
   {% endif %}
 </main>
+{# the HS-equivalent on every rating (rv's data-hs), as every page does #}
+<script src="{{ static_v('scale-view.js') }}"></script>
 <script src="{{ static_v('share.js') }}"></script>
+<script src="{{ static_v('race-page.js') }}"></script>
 <script src="{{ static_v('goal.js') }}"></script>
 </body>
 </html>
