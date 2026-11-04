@@ -516,3 +516,20 @@ def test_brooks_is_ten_a_region_and_golden_tickets_by_region():
     # top ten here), and Northeast's regional places go to its next ten
     ne = sorted(p for p in field if p.startswith("Northeast-"))
     assert len(ne) == 20 and "Northeast-19" in field and "Northeast-20" not in field
+
+
+def test_a_race_with_no_gender_named_takes_its_runners(monkeypatch):
+    # the owner's Brooks check, 2026-11-04: three regionals named no gender
+    import predict as P
+
+    class Cur:
+        def execute(self, sql, args=None):
+            pass
+
+        def fetchall(self):
+            return [(1,), (2,), (3,)]
+    monkeypatch.setattr(P, "_fieldGender", lambda cur, ids, sport: "M")
+    rule = Q.ruleFor("Brooks XC National Championships", "anet")
+    got = Q._gendered(Cur(), rule, 9, [{"div_id": 1, "label": "Championship"},
+                                       {"div_id": 2, "label": "Girls 5K", "gender": None}])
+    assert [r["gender"] for r in got] == ["M", "F"]         # runners, then the label

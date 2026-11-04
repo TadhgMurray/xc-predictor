@@ -487,7 +487,8 @@ def roundResults(cur, rule, meet_id, gender, season=None, every=False):
     list of every race of that gender's rows. The rating is the season's
     (or the latest before it): never one made after."""
     import last_edition as LE
-    races = [r for r in LE.editionRaces(cur, meet_id, "XC", rule["source"])
+    races = [r for r in _gendered(cur, rule, meet_id,
+                                  LE.editionRaces(cur, meet_id, "XC", rule["source"]))
              if r.get("gender") == gender]
     if not every:
         races = pickRace(races)
@@ -616,8 +617,9 @@ def pastRounds(cur, rule, day, gender, have=()):
                                key=lambda m: _sideMeet(m[1])):
         if roundKey(name) in have:
             continue
-        races = [r for r in LE.editionRaces(cur, mid, "XC", rule["source"])
-                 if (r.get("gender") or labelGender(r.get("label"))) == gender]
+        races = [r for r in _gendered(cur, rule, mid,
+                                      LE.editionRaces(cur, mid, "XC", rule["source"]))
+                 if r.get("gender") == gender]
         if isMerged(rule, name):
             out.extend((mid, int(r["div_id"]), _shift(d, 364)) for r in races)
             have.add(roundKey(name))
@@ -660,6 +662,37 @@ def _sideMeet(name):
     the championship is read first. Pure."""
     nm = (name or "").lower()
     return int(bool(re.search(r"\bopen\b|community|citizen", nm)))
+
+
+def _gendered(cur, rule, meet_id, races):
+    """A meet's races, each with a gender: its runners' (editionRaces), else
+    its label's, else the season pools of the people who ran it
+    (predict._fieldGender). The owner's Brooks check, 2026-11-04: three of
+    the four 2025 regionals named no gender anywhere but in who ran them,
+    and only one counted."""
+    out = []
+    for r in races or []:
+        g = r.get("gender") or labelGender(r.get("label"))
+        if g is None and cur is not None:
+            try:
+                cur.execute("SAVEPOINT q_gender")
+                cur.execute("""SELECT DISTINCT person_id FROM results
+                               WHERE meet_id = %s AND div_id = %s AND source = %s
+                                 AND person_id IS NOT NULL LIMIT 300""",
+                            (int(meet_id), int(r["div_id"]), rule["source"]))
+                ids = [int(x["person_id"] if isinstance(x, dict) else x[0])
+                       for x in cur.fetchall()]
+                import predict as P
+                g = P._fieldGender(cur, ids, "XC") if ids else None
+                cur.execute("RELEASE SAVEPOINT q_gender")
+            except Exception:                           # noqa: BLE001
+                try:
+                    cur.execute("ROLLBACK TO SAVEPOINT q_gender")
+                except Exception:                       # noqa: BLE001
+                    pass
+                g = None
+        out.append(dict(r, gender=g))
+    return out
 
 
 def labelGender(label):
