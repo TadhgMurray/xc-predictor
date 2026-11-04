@@ -38,6 +38,7 @@ import functools
 import json
 import math
 import os
+import re
 
 from meet_compile import isTeam
 
@@ -3731,6 +3732,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   which Amherst this is, on top of the level above.
     squads = _currentSquads(cur, at_meet, sport, season_year, gender=gender,
                             levels=levels, states=states)
+    keepIndividuals(squads, originals)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
     # ★ A TRACK EVENT'S SQUAD IS WHO RUNS THAT DISTANCE (2026-10-10), best
     #   at it first; the school's other athletes wait under dropped
@@ -3843,7 +3845,12 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
                                 #   things about who is standing on the line,
                                 #   so the page can say which it is showing.
                                 "rating_year": prev.get("year")})
-    teams = sorted(by_school.values(),
+    # a school there only through an individual who is not racing this
+    # season has no one to send: no empty card (owner, 2026-11-04)
+    solo = ({r["school"] for r in originals if r.get("individual")}
+            - {r["school"] for r in originals if r.get("school") and not r.get("individual")})
+    teams = sorted((t for t in by_school.values()
+                    if t["runners"] or t["school"] not in solo),
                    key=lambda t: (-len(t["runners"]), t["school"]))
 
     # ★ THE DROPPED GET THE HS-EQUIVALENT NUMBER TOO. _squadsForYear stamps
@@ -4635,6 +4642,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                         cur, [dict(r) for r in originals],
                                         _meetState(cur, target["meet_id"],
                                                    sport, source=src)))
+            keepIndividuals(squads, originals)
             # ★ THE SAME EVENT SQUADS AS meetField, for a track event
             track_m = None
             if sport != "XC" and ev is not None:
@@ -5140,11 +5148,38 @@ def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
 #   runners goes back under their own school as its one entrant, and the
 #   school's squad (capped at one) stands in for them this year.
 INDIVIDUALS_SHARE = 0.6
+# ★ AND BY ITS NAME (owner, 2026-11-04: "Midwest (CO)" still on the Brooks
+#   card -- one runner under it, too few for the share above): a label
+#   that is a region or says "individuals" / "at-large" is a group unless
+#   its runners' own seasons say it is their school
+_GROUP_NAME = re.compile(
+    r"individual|at[\s-]*large|\bindv?\b|^\s*(north|south|east|west|central|midwest|northeast|"
+    r"northwest|southeast|southwest|heartland|pacific|mountain|great lakes|mid[\s-]*atlantic|"
+    r"new england|mid[\s-]*west)(\s+region(al)?)?(\s*[-#]?\s*\d+)?\s*$", re.I)
+
+
+def keepIndividuals(squads, originals):
+    """A school that was at the meet only through its individuals keeps
+    just those runners this year, the ones still on its squad -- an
+    individual entrant is a person, not a slot the school's best fills
+    (owner, 2026-11-04: "still a lot of randoms"). In place."""
+    ind, team = collections.defaultdict(set), set()
+    for r in originals or []:
+        if not r.get("school"):
+            continue
+        if r.get("individual"):
+            ind[r["school"]].add(r.get("person_id"))
+        else:
+            team.add(r["school"])
+    for school, pids in ind.items():
+        if school not in team and school in squads:
+            squads[school] = [e for e in squads[school] if e.get("person_id") in pids]
 
 
 def unpackIndividuals(originals):
     """The field's rows with each group of individuals' runners under their
-    own school (season_school). Pure."""
+    own school (season_school); a group's runner with no school of their own
+    on record is left out (no school to stand in for them). Pure."""
     from school_name import nameKey
     by = collections.defaultdict(list)
     for r in originals or []:
@@ -5155,14 +5190,19 @@ def unpackIndividuals(originals):
         known = [r for r in rows if r.get("season_school")]
         other = [r for r in known
                  if nameKey(r["season_school"]) != nameKey(label)]
-        if (len(known) >= 2 and len(other) >= INDIVIDUALS_SHARE * len(known)
-                and len({nameKey(r["season_school"]) for r in other}) >= 2):
+        own = len(known) - len(other)
+        by_data = (len(known) >= 2 and len(other) >= INDIVIDUALS_SHARE * len(known)
+                   and len({nameKey(r["season_school"]) for r in other}) >= 2)
+        by_name = bool(_GROUP_NAME.search(label)) and own < INDIVIDUALS_SHARE * max(1, len(known))
+        if by_data or by_name:
             groups.add(label)
     if not groups:
         return originals
     out = []
     for r in originals:
-        if r.get("school") in groups and r.get("season_school"):
+        if r.get("school") in groups:
+            if not r.get("season_school") or nameKey(r["season_school"]) == nameKey(r["school"]):
+                continue
             r = dict(r, school=r["season_school"], team_id=None, individual=True)
         out.append(r)
     return out
