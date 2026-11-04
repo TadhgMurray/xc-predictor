@@ -603,7 +603,13 @@ def recheckSport(conn, sport, since, dry_run=False):
                     {"since": "1990-01-01", "until": "2100-01-01", "recheck": since})
         for row in src:
             seen += 1
-            pool = _rowPool(row, sport)
+            # ! THE POOL THE ROW IS RATED IN, not the one this file would
+            #   pick (owner's dry run, 2026-11-04: solve-rated college_m rows
+            #   at 60-80, written on the hs scale where the solve rated them,
+            #   were about to move 1.65x because _rowPool says college_m). A
+            #   rating is wrong when its time is off ITS pool's scale; a pool
+            #   the fill and the solve disagree on is the full run's to settle.
+            pool = getattr(row, "rating_pool", None) or _rowPool(row, sport)
             if pool is None:
                 continue
             nt, was_moved = onPoolScale(row, pool, sport, float(row.normalized_time))

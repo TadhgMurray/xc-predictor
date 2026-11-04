@@ -236,8 +236,8 @@ def why(cur, a, b, since):
                   f"{gradeKey(s['grade'], s['level'])!r}  {s['n_races']} races")
     for label, sql in (("result_detach", "SELECT from_person, to_person FROM result_detach "
                                          "WHERE from_person = ANY(%(p)s) OR to_person = ANY(%(p)s)"),
-                       ("profile_school_veto", "SELECT old_id, new_id FROM profile_school_veto "
-                                               "WHERE old_id = ANY(%(p)s) OR new_id = ANY(%(p)s)"),
+                       ("profile_school_veto", "SELECT old_id FROM profile_school_veto "
+                                               "WHERE old_id = ANY(%(p)s)"),
                        ("profile_school_merge", "SELECT old_id, new_id FROM profile_school_merge "
                                                 "WHERE old_id = ANY(%(p)s) OR new_id = ANY(%(p)s)")):
         try:
@@ -253,6 +253,19 @@ def why(cur, a, b, since):
         s["name"] = names.get(s["person_id"])
     pairs = findPairs(seasons)
     print(f"  findPairs: {pairs or 'no pair'}")
+    # a merge on file whose old page still holds rows: the move kept them back
+    # (the target already holds that race -- link_profile_school's dropCollisions)
+    for pid in (a, b):
+        cur.execute("""SELECT result_id, meet_id, div_id, left(date, 10), time_seconds
+                       FROM results WHERE person_id = %s ORDER BY date DESC LIMIT 5""", (pid,))
+        for rid, m, d, day, t in cur.fetchall():
+            cur.execute("""SELECT result_id, div_id, person_id FROM results
+                           WHERE meet_id = %s AND left(date, 10) = %s AND result_id <> %s
+                             AND person_id = ANY(%s) AND abs(time_seconds - %s) <= 1""",
+                        (m, day, rid, [a, b], t))
+            twins = cur.fetchall()
+            print(f"  /athlete/{pid} holds {rid} (/race/xc/{m}/{d}, {day}, {t})"
+                  + (f"; same race also under {twins}" if twins else ""))
     if pairs:
         print(f"  same race, same day, different times: {'YES' if clashes(cur, pairs) else 'no'}")
 
