@@ -300,3 +300,45 @@ def test_a_copy_dated_days_apart_is_one_race():
     cur.execute(f"SELECT result_id FROM ({TF.twinRaceShiftedSql('results', 'XC')}) s ORDER BY 1")
     assert [r[0] for r in cur.fetchall()] == list(range(200, 209))
     conn.rollback()
+
+
+def test_a_finals_listing_that_repeats_the_prelims_keeps_the_final():
+    """Owner, 2026-11-04, /race/tf/623110/60/4: the CIF-SS D4 3200 finals
+    meet re-lists the prelims run a week earlier under their own meet. The
+    finals division is the later and the bigger: its copied prelim rows go,
+    its nine finalists -- the only copy of the final -- stay."""
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres to run the rules")
+    import importlib
+    for name in [n for n in sys.modules if n == "psycopg2" or n.startswith("psycopg2.")]:
+        if not hasattr(sys.modules[name], "__file__"):
+            del sys.modules[name]
+    psycopg2 = importlib.import_module("psycopg2")
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TEMP TABLE results_tf (result_id bigint, person_id bigint, source text,
+            meet_id bigint, div_id bigint, event_id bigint, time_seconds double precision, date text);
+        -- the prelims meet: 39 runners, May 9
+        INSERT INTO results_tf SELECT 100 + g, g, 'anet', 50, 1, 4, 560 + g, '2026-05-09'
+            FROM generate_series(1, 39) g;
+        -- the finals meet, May 16: the same 39 prelim marks again ...
+        INSERT INTO results_tf SELECT 200 + g, g, 'anet', 60, 1, 4, 560 + g, '2026-05-16'
+            FROM generate_series(1, 39) g;
+        -- ... and the final itself, nine runners at new times
+        INSERT INTO results_tf SELECT 300 + g, g, 'anet', 60, 1, 4, 540 + g, '2026-05-16'
+            FROM generate_series(1, 9) g;
+        -- and a plain whole copy (still flagged whole): meet 70 repeats meet 50 a day later
+        INSERT INTO results_tf SELECT 400 + g, g, 'anet', 70, 1, 4, 560 + g, '2026-05-10'
+            FROM generate_series(1, 39) g;
+    """)
+    cur.execute(f"SELECT result_id FROM ({TF.dupRaceCopySql('results_tf', 'TF')}) s ORDER BY 1")
+    got = {r[0] for r in cur.fetchall()}
+    conn.rollback()
+    conn.close()
+    assert not any(300 < rid <= 309 for rid in got)          # the final stays
+    assert {200 + g for g in range(1, 40)} <= got            # its prelim copies go
+    assert {400 + g for g in range(1, 40)} <= got            # a whole copy still goes whole
+    assert not any(100 < rid <= 139 for rid in got)          # the original prelims stay

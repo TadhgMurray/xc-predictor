@@ -627,16 +627,28 @@ def dupRaceCopySql(table, sport):
             FROM   {table}
             {base_where}
             GROUP  BY source, meet_id, div_id{ev}),
-        pair AS (
-            SELECT a.source, {sel_a}, {sel_b}, count(*) AS shared
+        matched AS (
+            SELECT a.result_id, a.source, {sel_a}, {sel_b}
             FROM   rows_ a
             JOIN   rows_ b ON b.person_id = a.person_id AND b.source = a.source
                           AND b.rt = a.rt{pev_eq}
                           AND ({key_b}) <> ({key_a})
-                          AND abs(b.d - a.d) <= 90
+                          AND abs(b.d - a.d) <= 90),
+        pair AS (
+            SELECT source, ma, da{', ea' if ev else ''}, mb, db{', eb' if ev else ''},
+                   count(DISTINCT result_id) AS shared
+            FROM   matched
             GROUP  BY 1, 2, 3, 4, 5{', 6, 7' if ev else ''}),
+        -- ★ WHOLE ONLY WHEN THE LOSER ITSELF IS THE COPY (owner, 2026-11-04,
+        --   /race/tf/623110/60/4: the CIF-SS D4 3200 finals meet re-lists
+        --   the prelims beside the final; 39 of its 48 rows matched the
+        --   prelims meet -- 90 percent of the SMALLER division -- and, dated a
+        --   week later, it lost whole: the nine finalists' only copy of
+        --   the final went with it). A loser 90 percent matched is a copy and goes
+        --   whole, as before; a bigger loser keeps its own rows and loses
+        --   only the matched ones.
         loser AS (
-            SELECT p.source, p.ma AS meet_id, p.da AS div_id{', p.ea AS event_id' if ev else ''}
+            SELECT p.*, (p.shared * 10 >= sa.n * 9) AS whole
             FROM   pair p
             JOIN   size sa ON sa.source = p.source AND sa.meet_id = p.ma AND sa.div_id = p.da{' AND sa.event_id = p.ea' if ev else ''}
             JOIN   size sb ON sb.source = p.source AND sb.meet_id = p.mb AND sb.div_id = p.db{' AND sb.event_id = p.eb' if ev else ''}
@@ -646,9 +658,15 @@ def dupRaceCopySql(table, sport):
                         OR (sa.n = sb.n AND (p.ma, p.da) > (p.mb, p.db))))))
         SELECT DISTINCT r.result_id
         FROM   {table} r
-        JOIN   loser l ON l.source = r.source AND l.meet_id = r.meet_id
-                      AND l.div_id = r.div_id{ev_eq}
+        JOIN   loser l ON l.whole AND l.source = r.source AND l.ma = r.meet_id
+                      AND l.da = r.div_id{ev_eq.replace("l.event_id", "l.ea")}
         {base_where}
+        UNION
+        SELECT m.result_id
+        FROM   matched m
+        JOIN   loser l ON NOT l.whole AND l.source = m.source
+                      AND l.ma = m.ma AND l.da = m.da AND l.mb = m.mb AND l.db = m.db
+                      {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if ev else ""}
     """
 
 
