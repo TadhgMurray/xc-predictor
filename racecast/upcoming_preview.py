@@ -755,10 +755,18 @@ def predictedRound(cur, meet_id, gender, source, live=False):
     """A round that has not run, as we predict it: [(person_id, school,
     seconds, rating)] of its `gender` race (the one with the most schools),
     from racePrediction -- the stored forecast, else a live one."""
+    import qualifying as Q
     plan = meetPlan(cur, meet_id, source)
     races = [r for r in (plan or {}).get("races") or [] if r.get("gender") == gender]
     if not races:
         return []
+    # ★ THE CHAMPIONSHIP RACE, AS A ROUND THAT RAN IS READ (owner, 2026-11-04,
+    #   NXN: Southlake Carroll with 14 runners, a Marshall team, and Marcelo
+    #   Mantecon missing). "The race with the most schools" at a Nike regional
+    #   is its Open race: its prediction leaves each school's varsity out, so
+    #   the "qualifiers" were Southlake's 8th to 14th and the Open's top teams.
+    #   qualifying.pickRace, the rule roundResults already used.
+    races = Q.pickRace(races)
     race = max(races, key=lambda r: len(r.get("schools") or {}))
     return predictedDiv(cur, meet_id, race["div_id"], source, live)
 

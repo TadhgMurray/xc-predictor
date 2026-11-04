@@ -382,3 +382,26 @@ def test_a_posted_round_not_yet_predictable_is_last_years(monkeypatch):
     field, n_pred = Q.learnedField(None, route, "2026-11-07", predict_div=lambda mid, div: [],
                                    predict_past=lambda mid, div, on: rows)
     assert field and n_pred == 1                 # this season's had nothing yet: last year's
+
+
+def test_a_rounds_race_is_its_championship_not_its_open():
+    # owner, 2026-11-04, NXN: the Open race's prediction made Southlake
+    # Carroll's 8th-14th runners qualifiers, and the Open's teams with them
+    races = [{"div_id": 1, "label": "Boys Championship Race"}, {"div_id": 2, "label": "Boys Open"},
+             {"div_id": 3, "label": "Community 5K"}]
+    assert [r["div_id"] for r in Q.pickRace(races)] == [1]
+    races = [{"div_id": 1, "label": "Boys Varsity"}, {"div_id": 2, "label": "Boys Open"},
+             {"div_id": 3, "label": "Boys JV"}]
+    assert [r["div_id"] for r in Q.pickRace(races)] == [1]
+
+
+def test_a_school_through_two_rounds_is_one_team_of_seven(monkeypatch):
+    rule = dict(Q.ruleFor("Nike Cross Nationals", "anet"), teams_at_large=0, ind_at_large=0)
+    a = _region("a", n_teams=3, per=10, extras=0)
+    # school a0 is also first in another round, with three other runners
+    b = _region("b", n_teams=3, per=7, extras=0) + [
+        (f"a-0-x{i}", "a0", 800.0 + i, 40.0) for i in range(3)]
+    field = Q.selectField(rule, {1: a, 2: b})
+    assert sum(1 for s in field.values() if s == "a0") == 7
+    assert all(not str(p).startswith("a-0-x") for p, s in field.items() if s == "a0"), \
+        "the best seven by rating, not the fastest in a weaker round"
