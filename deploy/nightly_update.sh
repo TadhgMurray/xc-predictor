@@ -335,13 +335,17 @@ step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply || true
 #   races since the last full solve get a provisional race-day term read off
 #   their field and calibrated on the solve's own days (engine/provisional_day.py);
 #   written only when its backtest beats no term. Never blocks the boards.
+# ★ 09b --recheck-since (2026-11-04, Florida Horse Park, 186.0): a row the
+#   backfill wrote on another pool's scale than the one it is priced in is
+#   moved onto it (anchor_repair's rescale) -- new rows as they are priced,
+#   and this season's rows already priced off the boards.
 # ★ 05b (2026-11-01, Sagebrush 2021): rows normalised before their gender
 #   was known keep the wrong side of a combined race's distance; 05b
 #   re-normalises the races where a few rows sit apart from their group and
 #   clears those ratings for 09b to price. Never blocks the boards.
 if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_normalize.py --sport both --apply --new-only \
    && { step 05b_stragglers "$PY" -u scripts/fix_stragglers.py --apply || true; } \
-   && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue \
+   && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue --recheck-since "$(date -d '-150 days' +%F)" \
    && { step 09c_provisional_day "$PY" -u engine/provisional_day.py --write || true; } \
    && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 

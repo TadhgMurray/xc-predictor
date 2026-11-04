@@ -98,7 +98,7 @@ def _hasTable(conn, name):
         return cur.fetchone()[0] is not None
 
 
-def _sqlFor(sport, conn=None):
+def _sqlFor(sport, conn=None, where=None):
     # ★ THROUGH _sourceSql, not _SQL: it fills in the rating_pool column and
     #   the impossible-race anti-join (2026-09-14), so a race the record
     #   condemned is never priced either -- unrated means unrated.
@@ -116,6 +116,8 @@ def _sqlFor(sport, conn=None):
         f"{_TEAM_ANCHOR!r} -- update fill_ratings._sqlFor together with it")
     sql = sql.replace(_TEAM_ANCHOR, f"{_TEAM_ANCHOR} {team_cols},", 1)
     mark, inverse = _MARK[sport]
+    if where is not None:
+        inverse = where
     # ★ NOT THE ROWS THE COURSE GUARD UNRATED (joint_golive.writeCourseGuard):
     #   their course number is the problem, so pricing them on it is too.
     if sport == "XC" and conn is not None and _hasTable(conn, "course_guard_unrated"):
@@ -520,6 +522,107 @@ def fieldOffsets(conn, k_by_pool, cap=FIELD_CAP):
     return out
 
 
+# ★ ON THE SCALE OF THE POOL IT IS PRICED IN (owner, 2026-11-04: Michelangelo
+#   Durante, a ninth grader at Belen Jesuit, 17:39.5 for 5000 m at the
+#   Florida Horse Park Invitational, rated 186.0 -- "what the fuck"). The
+#   backfill wrote his time on the middle school scale (a ninth grader at a
+#   6-12 school whose season voted 'ms': arbitrateLevel lets the season move
+#   grade 9 one step), the engine's resolver trusts the grade and prices him
+#   hs_m, and a 3200 m-anchored time over a 5000 m-anchored mean is 1.59x.
+#   Three rows of that meet carried the same +58.9%.
+#
+#   The full run has always caught this: 05b_anchor_repair moves every row
+#   onto the scale of the pool it is rated in before the solve
+#   (engine/anchor_repair.py, the owner's call of 2026-09-09: the RATED pool
+#   decides). The nightly prices new rows without it, so a disagreement
+#   between the two pool decisions reached the race page for a week. This is
+#   the same repair, row by row, at the moment of pricing: the stored value
+#   is checked against the pool this file is about to price it in; when it
+#   sits on another pool's scale (identified to anchor_repair's 3%), it is
+#   moved onto this one -- every other correction inside it kept -- priced
+#   from that, and the moved value is written back.
+#
+# ! ONLY WHEN THE SCALE IS NAMED. A row off its pool's scale that no pool
+#   reproduces is left as it was (priced as before, counted): rescaling it
+#   would be a guess, and the board build's own anchor gate keeps it off
+#   every board either way.
+def onPoolScale(row, pool, sport, nt):
+    """(normalized time on `pool`'s scale, True when it was moved)."""
+    import anchor_repair as AR
+    t = getattr(row, "time_seconds", None)
+    d = rowDistance(row, sport)
+    if not t or not d or float(t) <= 0 or float(d) <= 0 or not pool:
+        return nt, False
+    try:
+        new, _why = AR.repairRow(float(t), float(d), float(nt),
+                                 str(pool).split("|")[0], sport, AR.ac._POOLS)
+    except Exception:                                   # noqa: BLE001 -- a row, not the fill
+        return nt, False
+    if new is None or new <= 0:
+        return nt, False
+    return float(new), True
+
+
+def _writeNt(conn, sport, moved, clear=False):
+    """Write moved normalized times back (and, with clear, drop the rating
+    so the fill prices the row again)."""
+    if not moved:
+        return
+    from psycopg2.extras import execute_values
+    extra = ", speed_rating = NULL" if clear else ""
+    with conn.cursor() as cur:
+        execute_values(cur, f"""UPDATE {_TABLE[sport]} r SET normalized_time = v.nt{extra}
+                                FROM (VALUES %s) v(id, nt) WHERE r.result_id = v.id""",
+                       [(int(rid), round(float(nt), 2)) for rid, nt in moved],
+                       page_size=5000)
+    conn.commit()
+
+
+# ★ AND THE ROWS ALREADY PRICED OFF SCALE (--recheck-since). The nightly only
+#   prices NULL ratings, so a row priced wrong before onPoolScale existed --
+#   or rated by the solve and kept off the boards by the anchor gate -- keeps
+#   its number until the next full run. This reads the rated rows NOT on a
+#   board since a date, and every one that sits on another pool's scale gets
+#   its time moved and its rating cleared, for the fill below to price.
+def recheckSport(conn, sport, since, dry_run=False):
+    t0 = time.time()
+    where = ("WHERE r.speed_rating IS NOT NULL AND r.normalized_time > 0\n"
+             "               AND left(r.date::text, 10) >= %(recheck)s\n"
+             "               AND NOT EXISTS (SELECT 1 FROM ranking_results k9\n"
+             f"                               WHERE k9.result_id = r.result_id AND k9.sport = '{sport}')")
+    if sport == "TF":
+        where += ("\n               AND se.event_short IS NULL"
+                  "\n               AND COALESCE(r.is_field, 0) = 0")
+    seen = 0
+    moved = []
+    conn.commit()
+    with conn.cursor(f"recheck_{sport.lower()}",
+                     cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
+        src.itersize = 50_000
+        src.execute(_sqlFor(sport, conn, where=where),
+                    {"since": "1990-01-01", "until": "2100-01-01", "recheck": since})
+        for row in src:
+            seen += 1
+            pool = _rowPool(row, sport)
+            if pool is None:
+                continue
+            nt, was_moved = onPoolScale(row, pool, sport, float(row.normalized_time))
+            if was_moved:
+                moved.append((row.result_id, nt))
+                if len(moved) <= 5:
+                    print(f"    recheck: result {row.result_id}  {pool:<10} "
+                          f"nt {float(row.normalized_time):7.1f}s -> {nt:7.1f}s  "
+                          f"(was rated {float(row.speed_rating):.1f})")
+    conn.commit()
+    if not dry_run:
+        _writeNt(conn, sport, moved, clear=True)
+    print(f"  {sport}: --recheck-since {since}: {seen:,} rated rows off the boards read, "
+          f"{len(moved):,} on another pool's scale "
+          f"{'(DRY RUN)' if dry_run else 'moved and cleared to be priced again'} "
+          f"({(time.time() - t0) / 60:.1f} min)")
+    return len(moved)
+
+
 def fillSport(conn, sport, dry_run=False, venue=False):
     t0 = time.time()
     k_by_pool = poolConstants(conn, sport)
@@ -532,6 +635,7 @@ def fillSport(conn, sport, dry_run=False, venue=False):
 
     census = {"filled": 0, "no_pool": 0, "no_constant": 0, "bad_nt": 0,
               "at_course": 0, "field": 0}
+    moved = []
     offsets = fieldOffsets(conn, k_by_pool) if (venue and sport == "XC") else {}
     samples = []
     races = cells = None
@@ -574,6 +678,10 @@ def fillSport(conn, sport, dry_run=False, venue=False):
                 if k is None:
                     census["no_constant"] += 1
                     continue
+                # on this pool's scale, not the one the backfill chose
+                nt, was_moved = onPoolScale(row, pool, sport, float(nt))
+                if was_moved:
+                    moved.append((row.result_id, nt))
                 rating = None
                 d = None
                 if venue:
@@ -608,12 +716,17 @@ def fillSport(conn, sport, dry_run=False, venue=False):
         # leaves no _old table -- exactly what a gap-fill wants. The heap
         # rebuild is for the solve's 30M-row full rewrite, not for this.
         saveResultSpeedRatings(sport, pairs(), mode="update")
+        _writeNt(conn, sport, moved)
 
     print(f"  {sport}: filled {census['filled']:,}   "
           f"unpriceable: {census['no_pool']:,} no pool, "
           f"{census['no_constant']:,} pool never on a board, "
           f"{census['bad_nt']:,} no normalized time   "
           f"({(time.time() - t0) / 60:.1f} min)")
+    if moved:
+        print(f"  {sport}: {len(moved):,} rows sat on another pool's scale and were "
+              f"moved onto the one they are priced in (anchor_repair's rescale)"
+              f"{' -- DRY RUN, not written' if dry_run else ''}")
     if venue:
         print(f"  {sport}: {census['at_course']:,} priced at their own course, "
               f"{census['field']:,} anchored to their race's field (no course)")
@@ -638,6 +751,9 @@ def main():
     ap.add_argument("--check", type=int, default=0, metavar="N",
                     help="re-price N solved rows per sport with --venue's "
                          "formula and compare with the solve; writes nothing")
+    ap.add_argument("--recheck-since", metavar="YYYY-MM-DD",
+                    help="first: rated rows off the boards since this date that sit on "
+                         "another pool's scale get moved onto it and priced again")
     args = ap.parse_args()
 
     sports = (args.sport,) if args.sport else ("XC", "TF")
@@ -694,6 +810,8 @@ def main():
             # query fails on a missing temp table.
             B.prepareSprintEvents(conn)
         for sport in sports:
+            if args.recheck_since:
+                recheckSport(conn, sport, args.recheck_since, dry_run=args.dry_run)
             fillSport(conn, sport, dry_run=args.dry_run, venue=args.venue)
     print("fill_ratings done.")
 
