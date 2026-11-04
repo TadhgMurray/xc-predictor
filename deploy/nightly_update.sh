@@ -234,6 +234,16 @@ if [ "$SCRAPE" -eq 1 ]; then
   if [ "${XCP_NIGHTLY_LOCAL:-1}" != "0" ]; then
     step 01_local timeout "${XCP_NIGHTLY_LOCAL_MIN:-45}m" bash deploy/scrape_local.sh \
       --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
+    local_rc=$?
+    # ! THE BOUND IS NOT A FAILURE (owner's server, 2026-11-03 and 04:
+    #   "01_local FAILED (exit 124) after 2700s" failed the whole night). As
+    #   scrape() says for the feeds: what it saved is priced below, the rest
+    #   waits for tomorrow.
+    if [ "$local_rc" -eq 124 ]; then
+      FAILED="${FAILED/ 01_local/}"
+      echo "  01_local stopped at the ${XCP_NIGHTLY_LOCAL_MIN:-45}-minute bound; the rest waits for tomorrow" \
+        | tee -a "$SUMMARY"
+    fi
   fi
   # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
   #   blocked the old server and agreed only to a small scrape from the
