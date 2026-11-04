@@ -88,7 +88,7 @@ def main():
                     if rule:
                         field, n_pred = Q.fieldFromRounds(
                             cur, rule, str(plan["date"])[:10], race.get("gender"),
-                            predict=lambda mid, g: U.predictedRound(cur, mid, g, rule["source"]))
+                            predict=lambda mid, g, every=False: U.predictedRound(cur, mid, g, rule["source"], every=every))
                         n_round = len(Q._roundMeets(cur, rule, str(plan["date"])[:10],
                                                     rule.get("window", 21)))
                     elif route:
