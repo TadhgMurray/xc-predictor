@@ -226,12 +226,15 @@ def _meetPlanUncached(cur, meet_id, source):
 #  one race's prediction -- predict.predictTeam, cached
 # ------------------------------------------------------------------ #
 
-def _target(meet_id, div_id, source):
+def _target(meet_id, div_id, source, on=None):
     """The request the predictions page sends for this race in "This year"
-    mode, through app._target so it is validated by the same rules."""
+    mode, through app._target so it is validated by the same rules. `on`:
+    a meet that has run, "this year" on that day (mode rerun)."""
     from app import _target as appTarget
-    args = {"mode": "meet", "meet_id": str(int(meet_id)), "sport": "XC",
+    args = {"mode": "rerun" if on else "meet", "meet_id": str(int(meet_id)), "sport": "XC",
             "div_id": str(int(div_id)) if div_id is not None else ""}
+    if on:
+        args["date"] = str(on)[:10]
     if source == "tfrrs":
         args["src"] = "tfrrs"
     t, err = appTarget(args)
@@ -302,6 +305,34 @@ def fieldRules(plan, div_id):
     return out
 
 
+# ! A SAVEPOINT THE PREDICTION CODE MAY HAVE ENDED (owner's nightly,
+#   2026-11-04: 'savepoint "up_qual" does not exist' at NXN, CIF State
+#   Division 3 and the USATF Junior Olympics). predict.py answers a failed
+#   query with a whole rollback (predict._rollback), which takes every
+#   savepoint with it; the work after it was done and is good, so a
+#   RELEASE or ROLLBACK TO that finds no savepoint rolls back what is left
+#   of the transaction -- the state predict.py already chose -- not raise.
+def _release(cur, name):
+    try:
+        cur.execute(f"RELEASE SAVEPOINT {name}")
+    except Exception:                                   # noqa: BLE001
+        _endTransaction(cur)
+
+
+def _undo(cur, name):
+    try:
+        cur.execute(f"ROLLBACK TO SAVEPOINT {name}")
+    except Exception:                                   # noqa: BLE001
+        _endTransaction(cur)
+
+
+def _endTransaction(cur):
+    try:
+        cur.connection.rollback()
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
 # ★ A MEET YOU QUALIFY FOR TAKES ITS QUALIFIERS (racecast/qualifying.py:
 #   NCAA DI/DII/DIII, NXN), once this season's rounds have run. Its own
 #   savepoint: a failure keeps the last-edition field.
@@ -338,10 +369,10 @@ def lastYearGender(cur, plan, race):
                         (int(ed["meet_id"]), div, src))
             ids = [tuple(r.values())[0] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
             g = P._fieldGender(cur, ids, "XC")
-        cur.execute("RELEASE SAVEPOINT up_gender")
+        _release(cur, "up_gender")
         return g
     except Exception:                                   # noqa: BLE001
-        cur.execute("ROLLBACK TO SAVEPOINT up_gender")
+        _undo(cur, "up_gender")
         return None
 
 
@@ -409,24 +440,28 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False):
         return None, None
     forecast = os.environ.get("XCP_QUALIFY_FORECAST", "1") != "0"
     src = rule["source"] if rule is not None else route["source"]
+    # last season's rounds run this year, where this season's are not
+    # posted yet: the nightly only (predictedPast runs the model)
+    past = ((lambda mid, div, on: predictedPast(cur, mid, div, src, on))
+            if live and forecast else None)
+    used = {}
     try:
         cur.execute("SAVEPOINT up_qual")
         if rule is not None:
             field, n_pred = Q.fieldFromRounds(
                 cur, rule, str(plan["date"])[:10], race.get("gender"),
                 predict=(lambda mid, g: predictedRound(cur, mid, g, src, live)) if forecast
-                else None)
-            n_rounds = len(Q._roundMeets(cur, rule, str(plan["date"])[:10],
-                                         rule.get("window", 21)))
+                else None, predict_past=past, info=used)
+            n_rounds = used.get("rounds", 0)
         else:
             field, n_pred = Q.learnedField(
                 cur, route, str(plan["date"])[:10],
                 predict_div=(lambda mid, div: predictedDiv(cur, mid, div, src, live))
-                if forecast else None)
+                if forecast else None, predict_past=past)
             n_rounds = len(route.get("rounds") or [])
-        cur.execute("RELEASE SAVEPOINT up_qual")
+        _release(cur, "up_qual")
     except Exception as exc:                            # noqa: BLE001
-        cur.execute("ROLLBACK TO SAVEPOINT up_qual")
+        _undo(cur, "up_qual")
         print(f"qualified field {plan.get('meet_id')}/{div_id}: {type(exc).__name__}: {exc}",
               flush=True)
         return None, None
@@ -537,7 +572,7 @@ def pastPlan(cur, meet_id, source, day):
 #   covers, dated a year on (364 days, the same weekday) and still ahead:
 #   [{"name", "source", "meet_id", "last_date", "date", "kind"}]. The page
 #   opens each as last year's meet in "this year" mode on that date.
-def upcomingChampionships(cur, today=None):
+def upcomingChampionships(cur, today=None, thorough=False):
     import last_edition as LE
     import qualifying as Q
     today = today or datetime.date.today()
@@ -559,10 +594,12 @@ def upcomingChampionships(cur, today=None):
                      AND  meet_name ~* 'state|champ|nation|region|section|district|federation|'
                                        'interscholastic|olympic|naia|njcaa|cif|uil|nxn|nike'""",
                 (lo, hi, lo, hi))
+    rows = [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+    if thorough:
+        rows += _undatedChampionships(cur, lo, hi)
     routes = Q._loadRoutes()
     out, seen = [], set()
-    for row in cur.fetchall():
-        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+    for row in rows:
         src, mid, name, d = row[0], int(row[1]), row[2], str(row[3])[:10]
         if (src, mid) in seen:
             continue
@@ -577,9 +614,126 @@ def upcomingChampionships(cur, today=None):
         national = rule is not None or bool(re.search(
             r"\bnational|\bnaia\b|\bnjcaa\b|\bncaa\b|\bnxn\b", name or "", re.I))
         out.append({"name": name, "source": src, "meet_id": mid, "last_date": d,
-                    "date": date, "kind": "national" if national else "state"})
+                    "date": date, "kind": "national" if national else "state",
+                    "group": championshipKey(name, src)})
+    out = _oneEach(cur, out)
     out.sort(key=lambda m: (m["date"], m["name"] or ""))
     return out
+
+
+def championshipKey(name, source):
+    """Which championship a meet is, whatever its name says that year: the
+    rule's key (NCAA DI/DII/DIII, NXN), else the edition name. Pure."""
+    import last_edition as LE
+    import qualifying as Q
+    rule = Q.ruleFor(name, source)
+    if rule is not None:
+        return f"rule:{rule['key']}"
+    # "XC" / "Cross Country", "Champs" / "Championships": one meet, two
+    # spellings (NAIA 2025). The genders stay: a boys' and a girls' meet are
+    # two meets, and _oneEach checks that too.
+    ed = LE.editionName(name) or ""
+    ed = re.sub(r"\bxc\b", "cross country", ed)
+    ed = re.sub(r"\bchamps?\b|\bchampionships?\b", "championships", ed)
+    ed = re.sub(r"\s+", " ", ed).strip()
+    return f"{source}:{ed}"
+
+
+# ★ ONE OF EACH (owner, 2026-11-04: NCAA DII listed twice, "Champs (67th
+#   Men & 44th Women)" and "Championships", and NAIA, DI and DIII the same).
+#   The feeds file one championship under two meet ids -- a page per gender,
+#   a re-posted results page -- so meets of one championship (championshipKey)
+#   a week or less apart are one row: the one with the most results, which
+#   is the one pastPlan can build the races of.
+def _oneEach(cur, rows):
+    groups = []
+    for m in sorted(rows, key=lambda m: m["last_date"]):
+        g = next((g for g in groups if g[0]["group"] == m["group"]
+                  and abs((datetime.date.fromisoformat(m["last_date"])
+                           - datetime.date.fromisoformat(g[0]["last_date"])).days) <= 7), None)
+        if g is None:
+            groups.append([m])
+        else:
+            g.append(m)
+    out = []
+    for g in groups:
+        if len(g) > 1:
+            n = {}
+            for m in g:
+                try:
+                    cur.execute("SELECT count(*) AS n FROM results WHERE meet_id = %s "
+                                "AND source = %s", (m["meet_id"], m["source"]))
+                    row = cur.fetchone()
+                    n[(m["source"], m["meet_id"])] = int(
+                        (row["n"] if isinstance(row, dict) else row[0]) or 0)
+                except Exception:                       # noqa: BLE001
+                    _endTransaction(cur)
+            g.sort(key=lambda m: -n.get((m["source"], m["meet_id"]), 0))
+            # ! UNLESS THE OTHER HOLDS A GENDER THE FIRST DOES NOT (a men's
+            #   page and a women's page of one championship): then both stay
+            sexes = {(m["source"], m["meet_id"]): _gendersOf(cur, m) for m in g}
+            first = sexes[(g[0]["source"], g[0]["meet_id"])]
+            keep = [m for m in g[1:] if sexes[(m["source"], m["meet_id"])] - first]
+            g = [g[0]] + [m for m in g[1:] if m not in keep]
+            out.extend(dict(m, also=[]) for m in keep)
+        out.append(dict(g[0], also=[m["meet_id"] for m in g[1:]]))
+    return out
+
+
+def _gendersOf(cur, m):
+    import last_edition as LE
+    try:
+        cur.execute("SAVEPOINT up_sexes")
+        got = {r.get("gender") for r in LE.editionRaces(cur, m["meet_id"], "XC", m["source"])
+               if r.get("gender")}
+        _release(cur, "up_sexes")
+        return got
+    except Exception:                                   # noqa: BLE001
+        _undo(cur, "up_sexes")
+        return set()
+
+
+# ★ AND A CHAMPIONSHIP WITH NO DATE ON ITS MEETS ROW (owner, 2026-11-04:
+#   "and no NXN?"): NXN 2025, racecast.co/race/xc/253956, has no usable
+#   meet_date (qualifying_check found the same), so the dated query above
+#   never sees it. A rule meet's name with no date there takes its results'
+#   first day. The nightly only (thorough): it reads results.
+def _undatedChampionships(cur, lo, hi):
+    try:
+        cur.execute("""SELECT 'anet' AS src, m.meet_id, min(m.meet_name) AS name,
+                              min(r.date) AS d
+                       FROM   meets m JOIN results r
+                              ON r.source = 'anet' AND r.meet_id = m.meet_id
+                       WHERE  (m.meet_date IS NULL OR m.meet_date !~ '^(19|20)[0-9]{2}-')
+                         AND  m.meet_name ~* 'nike|nxn|ncaa|naia|njcaa|national'
+                         AND  r.date ~ '^(19|20)[0-9]{2}-' AND r.date BETWEEN %s AND %s
+                       GROUP  BY m.meet_id""", (lo, hi))
+        return [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in cur.fetchall()]
+    except Exception as exc:                            # noqa: BLE001
+        _endTransaction(cur)
+        print(f"undated championships: {type(exc).__name__}: {exc}", flush=True)
+        return []
+
+
+# ★ THE LIST, MADE OVERNIGHT (build_qualified_fields.py writes it beside
+#   the fields): the page reads it rather than asking the database, and it
+#   has the undated championships the page's own quick query cannot find.
+def storedChampionships(today=None):
+    """The nightly's upcoming championships still ahead, or None when the
+    file is missing or more than three days old."""
+    import json
+    today = today or datetime.date.today()
+    try:
+        with open(STORED_PATH) as fh:
+            got = json.load(fh)
+    except Exception:                                   # noqa: BLE001
+        return None
+    made, champs = got.get("made"), got.get("champs")
+    if not made or champs is None:
+        return None
+    if (today - datetime.date.fromisoformat(made)).days > 3:
+        return None
+    return [m for m in champs if m.get("date") and m["date"] >= today.isoformat()]
 
 
 def predictedRound(cur, meet_id, gender, source, live=False):
@@ -618,6 +772,20 @@ def predictedDiv(cur, meet_id, div_id, source, live=False):
     return _rowsOf(pred)
 
 
+def predictedPast(cur, meet_id, div_id, source, on):
+    """Last season's round `meet_id`/`div_id` run again on `on` (ISO) --
+    its schools' squads now, the predictions page's "this year" of it -- as
+    qualifying rows (qualifying.pastRounds). Runs the model: the nightly
+    only. Kept per process, so a round shared by several championships is
+    predicted once."""
+    def compute():
+        return livePrediction(cur, meet_id, div_id, source, on=on)
+    pred, _ = ttlcache.get(("up_past_pred", source, int(meet_id), int(div_id), str(on)[:10]),
+                           compute, ttl=TTL, ttl_of=lambda v: TTL if v.get("available")
+                           else FAIL_TTL)
+    return _rowsOf(pred)
+
+
 def _rowsOf(pred):
     """A stored or live race prediction as qualifying rows: [(person_id,
     school, seconds, rating)] in predicted order, or []."""
@@ -629,29 +797,34 @@ def _rowsOf(pred):
             if r.get("person_id") is not None and r.get("seconds")]
 
 
-def livePrediction(cur, meet_id, div_id, source=None):
+def livePrediction(cur, meet_id, div_id, source=None, on=None):
     """predict.predictTeam for one race, now, uncached: {"available",
     "teams", "runners", "n_field"} or {"available": False, "reason"}. The
     forecast step (build_meet_forecasts.py) stores this; pages read it
-    through racePrediction."""
+    through racePrediction. `on` (ISO): a meet that has run, run again on
+    that day with its schools' squads now (predictedPast)."""
     from app import _withSource
     from predict import predictTeam
     try:
         cur.execute("SAVEPOINT up_pred")
-        target = _withSource(cur, _target(meet_id, div_id, source))
-        if os.environ.get("XCP_FIELD_RULES", "1") != "0":
+        target = _withSource(cur, _target(meet_id, div_id, source, on))
+        if on:
+            import last_edition as LE
+            target.update(fieldRules({"races": LE.editionRaces(cur, int(meet_id), "XC", source)},
+                                     div_id))
+        elif os.environ.get("XCP_FIELD_RULES", "1") != "0":
             plan = meetPlan(cur, meet_id, source)
             target.update(fieldRules(plan, div_id))
             field = qualifiedField(cur, plan, div_id)
             if field:
                 target["field_ids"] = field
         out = predictTeam(cur, [], target)
-        cur.execute("RELEASE SAVEPOINT up_pred")
+        _release(cur, "up_pred")
     except NotImplementedError:
-        cur.execute("ROLLBACK TO SAVEPOINT up_pred")
+        _undo(cur, "up_pred")
         return {"available": False, "reason": "The prediction model is not loaded."}
     except Exception as exc:                            # noqa: BLE001
-        cur.execute("ROLLBACK TO SAVEPOINT up_pred")
+        _undo(cur, "up_pred")
         print(f"upcoming prediction {meet_id}/{div_id}: {type(exc).__name__}: {exc}",
               flush=True)
         return {"available": False, "reason": "The prediction could not be made."}
