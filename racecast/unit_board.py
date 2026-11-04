@@ -403,6 +403,13 @@ def unitMark(kind, name, state=None, size=28, shown=None):
     Markup."""
     import html
     url = storedLogoUrl(kind, name, state, px=128 if size > 32 else 64)
+    # ★ A NIKE REGION WEARS ITS REGIONAL'S MARK (owner, 2026-11-04: "why do
+    #   NXR regions not have logos"): the one the meet links already use,
+    #   NXR <REGION> then NXR's then NXN's (seriesLogoUrl)
+    if not url and kind == "nxr":
+        key = ("NXR CALIFORNIA" if str(name).lower().startswith("california")
+               else str(name).strip().upper())
+        url = seriesLogoUrl(key, px=128 if size > 32 else 64)
     if url:
         return (f'<img class="unit-badge unit-logo" src="{html.escape(url)}" alt="" '
                 f'width="{int(size)}" height="{int(size)}" loading="lazy" decoding="async" '
