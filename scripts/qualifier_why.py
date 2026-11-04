@@ -66,6 +66,55 @@ def main():
         if gender not in ("M", "F"):
             sys.exit("no gender on the athlete rows: cannot pick the race")
 
+        # where they raced: the round they should have come through
+        cur.execute("""SELECT r.date, r.school, r.meet_id, r.source,
+                              COALESCE(mt.meet_name, m.meet_name) AS meet
+                       FROM results r
+                       LEFT JOIN LATERAL (SELECT meet_name FROM meets_tfrrs x
+                                          WHERE r.source = 'tfrrs' AND x.meet_id = r.meet_id
+                                          LIMIT 1) mt ON TRUE
+                       LEFT JOIN LATERAL (SELECT meet_name FROM meets x
+                                          WHERE r.source = 'anet' AND x.meet_id = r.meet_id
+                                          LIMIT 1) m ON TRUE
+                       WHERE r.person_id = ANY(%s) AND r.date ~ '^(19|20)[0-9]{2}-'
+                         AND r.date >= %s
+                       ORDER BY r.date DESC LIMIT 12""",
+                    (sorted(ids), (datetime.date.fromisoformat(day)
+                                   - datetime.timedelta(days=430)).isoformat()))
+        print("\ntheir races (newest first):")
+        for r in cur.fetchall():
+            print(f"  {str(r['date'])[:10]}  {r['school']!s:28.28} {r['meet']}  "
+                  f"({r['source']} {r['meet_id']})")
+
+        # every meet in the two windows that looks like a round, and the rule's verdict
+        print("\nmeets in the round windows that look like rounds (this season, last):")
+        for back in (0, 364):
+            hi = (datetime.date.fromisoformat(day) - datetime.timedelta(days=back)).isoformat()
+            lo = (datetime.date.fromisoformat(hi)
+                  - datetime.timedelta(days=rule.get("window", 21) + 14)).isoformat()
+            if src == "tfrrs":
+                cur.execute("""SELECT DISTINCT meet_id, meet_name, date AS d FROM meets_tfrrs
+                               WHERE sport = 'XC' AND date >= %s AND date < %s
+                                 AND meet_name ~* 'region|ncaa'""", (lo, hi))
+            else:
+                # a meet with no date on its row (NXN 2025 had none) is dated by
+                # its results
+                cur.execute("""SELECT DISTINCT m.meet_id, m.meet_name,
+                                      COALESCE(NULLIF(m.meet_date, ''),
+                                               (SELECT min(r.date) FROM results r
+                                                WHERE r.source = 'anet' AND r.meet_id = m.meet_id)) AS d
+                               FROM meets m
+                               WHERE m.meet_name ~* 'nxr|nike cross|federation'
+                                 AND (m.meet_date IS NULL OR m.meet_date = ''
+                                      OR (m.meet_date >= %s AND m.meet_date < %s))""", (lo, hi))
+            for r in sorted(cur.fetchall(), key=lambda r: str(r["d"])):
+                if not r["d"] or not (lo <= str(r["d"])[:10] < hi):
+                    continue
+                ok = Q.isRound(rule, r["meet_name"])
+                print(f"  {str(r['d'] or '(no date)')[:10]}  {'ROUND' if ok else 'not a round':11} "
+                      f"{r['meet_name']}  ({r['meet_id']})")
+        conn.rollback()
+
         seen = []
         orig = Q.roundResults
 

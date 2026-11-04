@@ -367,11 +367,12 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     if rule is None or gender not in ("M", "F"):
         return None, 0
     rounds, n_pred, got = {}, 0, set()
-    seen = _roundMeets(cur, rule, day, rule.get("window", 21))
+    seen = sorted(_roundMeets(cur, rule, day, rule.get("window", 21)),
+                  key=lambda m: _sideMeet(m[1]))
     for mid, name, _d in seen:
         # ! ONE ROUND PER EDITION: a region filed under two meet ids is one
         #   region (the nightly, 2026-11-04: DI read 11 and 13 rounds of 9)
-        if LE.editionName(name) in got:
+        if roundKey(name) in got:
             continue
         rows = roundResults(cur, rule, mid, gender, int(str(day)[:4]))
         if len(rows) < 10 and predict is not None:
@@ -379,7 +380,7 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
             n_pred += len(rows) >= 10
         if len(rows) >= 10:
             rounds[mid] = rows
-            got.add(LE.editionName(name))
+            got.add(roundKey(name))
     past, past_ok = [], 0
     if predict_past is not None:
         past = pastRounds(cur, rule, day, gender, got)
@@ -420,8 +421,9 @@ def pastRounds(cur, rule, day, gender, have=()):
     date a year on."""
     import last_edition as LE
     out, have = [], set(have)
-    for mid, name, d in _roundMeets(cur, rule, _shift(day, -364), rule.get("window", 21)):
-        if LE.editionName(name) in have:
+    for mid, name, d in sorted(_roundMeets(cur, rule, _shift(day, -364), rule.get("window", 21)),
+                               key=lambda m: _sideMeet(m[1])):
+        if roundKey(name) in have:
             continue
         races = pickRace([r for r in LE.editionRaces(cur, mid, "XC", rule["source"])
                           if (r.get("gender") or labelGender(r.get("label"))) == gender])
@@ -437,8 +439,31 @@ def pastRounds(cur, rule, day, gender, have=()):
                 n[int(row[0])] = int(row[1])
             races = [max(races, key=lambda r: n.get(int(r["div_id"]), 0))]
         out.append((mid, int(races[0]["div_id"]), _shift(d, 364)))
-        have.add(LE.editionName(name))
+        have.add(roundKey(name))
     return out
+
+
+# ★ ONE REGION, HOWEVER ITS MEET IS NAMED THAT YEAR (owner's NXN check,
+#   2026-11-04: "NXR South Regional Championships" this season and "... &
+#   Community Race" last season were two regions, and the Northeast was read
+#   from its "Regional Open" meet). A round is its edition name less the
+#   words that only say which meet of the weekend it is.
+_ROUND_NOISE = {"championship", "championships", "champs", "champ", "regional", "regionals",
+                "region", "community", "race", "races", "open", "and", "the", "meet", "of"}
+
+
+def roundKey(name):
+    """Which round a meet is, as a set of words. Pure."""
+    import last_edition as LE
+    return frozenset(w for w in re.findall(r"[a-z0-9]+", (LE.editionName(name) or "").lower())
+                     if w not in _ROUND_NOISE)
+
+
+def _sideMeet(name):
+    """0 for a round's championship meet, 1 for its open / community meet:
+    the championship is read first. Pure."""
+    nm = (name or "").lower()
+    return int(bool(re.search(r"\bopen\b|community|citizen", nm)))
 
 
 def labelGender(label):
