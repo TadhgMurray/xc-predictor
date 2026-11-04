@@ -35,3 +35,14 @@ def test_oregon_by_token_is_oregon():
     # a name worn by colleges in two states is still a miss
     two = {"trinity university": [("TX", "TX")], "trinity college": [("CT", "CT")]}
     assert D.lookup(two, "Trinity") is None
+
+
+def test_a_state_named_college_is_not_the_states_university():
+    """owner, 2026-11-04: Connecticut College (NESCAC, DIII) read NCAA DI --
+    "connecticut" was the University of Connecticut's key."""
+    import build_college_directory as B
+    assert B.normName("Connecticut College") == "connecticut college"
+    assert B.normName("University of Connecticut") == "connecticut"
+    assert B.normName("Colorado College") == "colorado college"
+    assert B.normName("Boston College") == "boston"          # not a state: as before
+    assert B.lookup({"connecticut": [("CT", "NCAA DI")]}, "Connecticut College", "CT") is None

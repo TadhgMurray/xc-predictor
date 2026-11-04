@@ -106,11 +106,16 @@ RULES = (
 
 
 def ruleFor(meet_name, source=None):
-    """The rule whose championship this meet is, or None. Pure."""
+    """The rule whose championship this meet is, or None. Pure.
+
+    ★ IN EITHER FEED (the nightly, 2026-11-04: the NCAA DII and DIII
+      championships fell to learned routes and found too few rounds -- the
+      copy kept of each was athletic.net's, and the rules only matched
+      tfrrs). A championship is the same meet whichever feed filed it; the
+      rule's own "source" is where its ROUNDS are read. `source` is kept
+      for the callers and no longer filters."""
     nm = (meet_name or "").lower()
     for r in RULES:
-        if source and r["source"] != source:
-            continue
         if re.search(r["meet"], nm) and not re.search(r["not"], nm):
             return r
     return None
@@ -578,36 +583,33 @@ def learnedField(cur, route, day, predict_div=None, predict_past=None, info=None
     for rnd in route.get("rounds") or []:
         at = _thisRound(cur, rnd, day, route["source"])
         tally["this_season"] += at is not None
-        if at is None and predict_past is not None:
+        rows = []
+        if at is not None:
+            mid, div, ran = at
+            if ran:
+                cur.execute("""
+                    SELECT DISTINCT ON (r.person_id) r.person_id, r.school, r.time_seconds
+                    FROM   results r
+                    WHERE  r.meet_id = %s AND r.div_id = %s AND r.source = %s
+                      AND  r.person_id IS NOT NULL AND r.time_seconds > 0
+                    ORDER  BY r.person_id, r.time_seconds""", (mid, div, route["source"]))
+                for row in cur.fetchall():
+                    row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+                    rows.append((int(row[0]), row[1], float(row[2]), None))
+            elif predict_div is not None:
+                rows = predict_div(mid, div) or []
+                n_pred += len(rows) >= 5
+        # ★ NOT POSTED, OR POSTED AND NOT YET PREDICTABLE (the nightly,
+        #   2026-11-04: rounds "found this season" that counted nothing):
+        #   last season's round, run again a year on
+        if len(rows) < 5 and predict_past is not None:
             last = _lastRound(cur, rnd, route["source"])
             tally["last_season"] += last is not None
-            rows = []
             if last is not None:
                 rows = predict_past(last[0], last[1], _shift(rnd["date"], 364)) or []
-            if len(rows) >= 5:
-                found += 1
-                n_pred += 1
-                tally["last_season_ok"] += 1
-                field.update(simpleQualifiers(rows, int(rnd.get("teams") or 0),
-                                              int(rnd.get("individuals") or 0)))
-            continue
-        if at is None:
-            continue
-        mid, div, ran = at
-        rows = []
-        if ran:
-            cur.execute("""
-                SELECT DISTINCT ON (r.person_id) r.person_id, r.school, r.time_seconds
-                FROM   results r
-                WHERE  r.meet_id = %s AND r.div_id = %s AND r.source = %s
-                  AND  r.person_id IS NOT NULL AND r.time_seconds > 0
-                ORDER  BY r.person_id, r.time_seconds""", (mid, div, route["source"]))
-            for row in cur.fetchall():
-                row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
-                rows.append((int(row[0]), row[1], float(row[2]), None))
-        elif predict_div is not None:
-            rows = predict_div(mid, div) or []
-            n_pred += len(rows) >= 5
+                if len(rows) >= 5:
+                    n_pred += 1
+                    tally["last_season_ok"] += 1
         if len(rows) < 5:
             continue
         found += 1

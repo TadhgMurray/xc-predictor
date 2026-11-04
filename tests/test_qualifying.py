@@ -37,6 +37,8 @@ def test_the_rules_find_their_meets():
     assert Q.ruleFor("NCAA Division I Northeast Region Cross Country Championships", "tfrrs") is None
     assert Q.ruleFor("Nike Cross Nationals 2025", "anet")["key"] == "nxn"
     assert Q.ruleFor("NXR Southeast Regional", "anet") is None
+    # either feed's copy of a championship is that championship (2026-11-04)
+    assert Q.ruleFor("NCAA Division III Cross Country Championships", "anet")["key"] == "ncaa_d3"
     assert Q.isRound(Q.ruleFor("NCAA Division I Cross Country Championships"),
                      "NCAA Division I Mountain Region Cross Country Championships")
     assert not Q.isRound(Q.ruleFor("NCAA Division I Cross Country Championships"),
@@ -364,3 +366,14 @@ def test_the_page_reads_the_nightlys_list(monkeypatch, tmp_path):
     monkeypatch.setattr(U, "STORED_PATH", str(path))
     assert [m["name"] for m in U.storedChampionships(datetime.date(2026, 11, 4))] == ["NXN"]
     assert U.storedChampionships(datetime.date(2026, 11, 9)) is None     # stale: ask again
+
+
+def test_a_posted_round_not_yet_predictable_is_last_years(monkeypatch):
+    route = {"source": "anet", "rounds": [
+        {"meet": "north regional", "race": "Boys", "gender": "M", "date": "2025-10-25",
+         "teams": 2, "individuals": 3, "meet_id": 11, "div_id": 21}]}
+    monkeypatch.setattr(Q, "_thisRound", lambda cur, rnd, day, src: (99, 1, False))
+    rows = _region("n", n_teams=5, extras=0)
+    field, n_pred = Q.learnedField(None, route, "2026-11-07", predict_div=lambda mid, div: [],
+                                   predict_past=lambda mid, div, on: rows)
+    assert field and n_pred == 1                 # this season's had nothing yet: last year's

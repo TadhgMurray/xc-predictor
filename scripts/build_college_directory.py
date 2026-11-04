@@ -312,14 +312,34 @@ _ABBR = {"wis": "wisconsin", "cal": "california", "mt": "mount",
          "va": "virginia", "nc": "north carolina", "sc": "south carolina"}
 
 
+# ★ "<STATE> COLLEGE" IS NOT THE STATE'S UNIVERSITY (owner, 2026-11-04:
+#   Connecticut College, NESCAC and DIII, read "NCAA DI" and fell off its
+#   conference board). Stripping "college" left "connecticut" -- the
+#   University of Connecticut's key. A name that strips to a bare state
+#   keeps its "college": Colorado College, Washington College, Georgia
+#   College, Texas College are the same case.
+_STATE_NAMES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
+    "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
+    "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
+    "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york", "north carolina",
+    "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont",
+    "virginia", "washington", "west virginia", "wisconsin", "wyoming"}
+
+
 def normName(name):
     s = html.unescape(name or "").lower()
     s = re.sub(r"\[[^\]]*\]", "", s)                    # footnotes
     s = re.sub(r"\(.*?\)", " ", s)
     s = s.replace("&", " and ").replace("'", "").replace("’", "")
     s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    college = bool(re.search(r"\bcollege\s*$", s.strip())) and not re.search(r"\buniversity\b", s)
     s = _STRIP.sub(" ", s)
     s = re.sub(r"\s+", " ", s).strip()
+    if college and s in _STATE_NAMES:
+        return s + " college"
     return ALIASES.get(s, s)
 
 
