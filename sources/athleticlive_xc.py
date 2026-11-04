@@ -453,12 +453,13 @@ async def fetchXC(fetcher, alive_id, meet_date=None):
 def candidates(cur, limit, meets=None):
     if meets:
         return list(meets)
-    cur.execute("""SELECT DISTINCT u.anet_id, am.meet_date
+    cur.execute("""SELECT DISTINCT u.anet_id, am.meet_date, COALESCE(am.wanted, false)
                    FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
                    WHERE am.sport = 'XC' AND am.landed_at IS NULL
                      AND COALESCE(am.date_end, am.meet_date) < %s AND am.state = ANY(%s)
                      AND COALESCE(am.name, '') !~* %s
-                   ORDER BY am.meet_date DESC LIMIT %s""",
+                   -- a meet the owner asked for first (fixes.wantAlive)
+                   ORDER BY 3 DESC, am.meet_date DESC LIMIT %s""",
                 (datetime.date.today().isoformat(), list(A.US_STATES), A.NOT_RUNNING, limit))
     return [r[0] for r in cur.fetchall()]
 

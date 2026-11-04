@@ -35,10 +35,15 @@ if [ "${ALIVE:-1}" != "0" ]; then
   echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: discover"
   "$PY" -u -m sources.athleticlive init >/dev/null && \
   "$PY" -u -m sources.athleticlive discover || rc=1
-  echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: land (limit ${ALIVE_LIMIT:-200})"
-  "$PY" -u -m sources.athleticlive land --limit "${ALIVE_LIMIT:-200}" $WRITE || rc=1
+  # ★ CROSS COUNTRY BEFORE TRACK (owner, 2026-11-04: the 2026 DSAC XC
+  #   championships on AthleticLIVE never landed). The nightly gives this
+  #   whole script 45 minutes; the track lander ran first, used them up on
+  #   both nights the bound hit, and the cross country lander never started.
+  #   Cross country is the season that matters in the fall, and the smaller.
   echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: cross country (limit ${ALIVE_XC_LIMIT:-100})"
   "$PY" -u -m sources.athleticlive_xc land --limit "${ALIVE_XC_LIMIT:-100}" $WRITE || rc=1
+  echo "[local] $(date -u +%H:%M:%S) AthleticLIVE: land (limit ${ALIVE_LIMIT:-200})"
+  "$PY" -u -m sources.athleticlive land --limit "${ALIVE_LIMIT:-200}" $WRITE || rc=1
   # meets passed as "athletic.net has it" before the copies were counted
   "$PY" -u -m sources.athleticlive_xc recheck --days 60 $WRITE || rc=1
   # a race landed here that athletic.net has since posted: athletic.net's wins

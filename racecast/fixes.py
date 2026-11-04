@@ -148,12 +148,35 @@ def tablesReady(cur):
 _ANET = re.compile(r"^https?://(?:www\.)?athletic\.net/(CrossCountry|TrackAndField|cross-country|"
                    r"track-and-field)/meet/(\d{1,9})\b", re.I)
 _TFRRS = re.compile(r"^https?://(?:www\.|xc\.|m\.)?tfrrs\.org/results/(xc/)?(\d{1,9})\b", re.I)
+# ★ AN ATHLETICLIVE PAGE, UNDER ANY TIMER'S DOMAIN (owner, 2026-11-04:
+#   live.usp-sports.com/meets/80057/events/xc/2940261 -- the DSAC XC
+#   championships, AthleticLIVE behind Ultimate Sports Productions' own
+#   name). The timers host it as <tenant>.anet.live, live.athletic.net or a
+#   domain of their own; the path is AthleticLIVE's: /meets/<id>[/events/<sport>/...]
+_ALIVE = re.compile(r"^https?://([a-z0-9.-]+)/meets/(\d{1,9})(?:/events/([a-z]+))?", re.I)
+
+
+def aliveTarget(url):
+    """(alive meet id, 'XC' | 'TF' | None) for an AthleticLIVE meet link, else
+    None. A domain of AthleticLIVE's own, or any domain with its events path. Pure."""
+    m = _ALIVE.match((url or "").strip())
+    if not m:
+        return None
+    host, sport = m.group(1).lower(), (m.group(3) or "").lower()
+    ours = host.endswith(("anet.live", "athletic.live")) or host == "live.athletic.net"
+    if not ours and not sport:
+        return None
+    return int(m.group(2)), ("XC" if sport == "xc" else "TF" if sport else None)
 
 
 def queueTarget(url):
-    """(meet_id, sport, source) the scrape queue can take, or None. Only a
-    meet page of the two feeds the nightly scrape already reads."""
+    """(meet_id, sport, source) the scrape queue can take, or None. A meet
+    page of the two feeds the nightly scrape reads, or an AthleticLIVE meet
+    (source 'alive': its lander, deploy/scrape_local.sh)."""
     u = (url or "").strip()
+    a = aliveTarget(u)
+    if a:
+        return a[0], a[1] or "XC", "alive"
     m = _ANET.match(u)
     if m:
         sport = "XC" if m.group(1).lower().startswith("cross") else "TF"
@@ -400,7 +423,10 @@ def applySamePerson(conn, fx, keep):
 
 def requeue(cur, mid, sport, src):
     """Back into the scrape queue, ahead of the backlog (database.
-    ensureQueuePriority: claims take priority rows first)."""
+    ensureQueuePriority: claims take priority rows first). An AthleticLIVE
+    meet goes to the front of its own lander instead (wantAlive)."""
+    if src == "alive":
+        return wantAlive(cur, mid)
     try:
         import database
         first = database.ensureQueuePriority(cur)
@@ -414,6 +440,21 @@ def requeue(cur, mid, sport, src):
     else:
         cur.execute("""INSERT INTO meet_queue (meet_id, sport, scraped, source) VALUES (%s, %s, 0, %s)
                        ON CONFLICT (meet_id, sport, source) DO UPDATE SET scraped = 0""", (mid, sport, src))
+
+
+def wantAlive(cur, alive_id):
+    """An AthleticLIVE meet to the front of its lander, landed again if it
+    was: alive_meets.wanted (athleticlive_xc.candidates takes wanted meets
+    first). A meet discovery has not reached yet gets a stub row the next
+    discover fills in."""
+    cur.execute("SELECT to_regclass('public.alive_meets')")
+    if cur.fetchone()[0] is None:
+        return False
+    cur.execute("ALTER TABLE alive_meets ADD COLUMN IF NOT EXISTS wanted boolean")
+    cur.execute("""INSERT INTO alive_meets (alive_id, wanted) VALUES (%s, true)
+                   ON CONFLICT (alive_id) DO UPDATE SET wanted = true, landed_at = NULL""",
+                (int(alive_id),))
+    return True
 
 
 def applyMissing(cur, fx):

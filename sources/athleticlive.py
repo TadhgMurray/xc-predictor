@@ -147,6 +147,8 @@ CREATE TABLE IF NOT EXISTS alive_meets (
     landed_note  text
 );
 CREATE INDEX IF NOT EXISTS alive_meets_anet ON alive_meets USING gin (anet_ids);
+-- a meet the owner asked for (fixes.wantAlive): the lander takes it first
+ALTER TABLE alive_meets ADD COLUMN IF NOT EXISTS wanted boolean;
 -- ★ THE RUNNERS A LANDED RACE COULD NOT NAME (owner, 2026-10-27: land a race
 --   when 90% of its runners are named; holdUnknown). Kept whole, so a later
 --   linker can put each result on its person when they turn up with an id.

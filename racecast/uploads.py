@@ -731,10 +731,12 @@ def decide(cur, uid, action, admin_email, note=None):
         import fixes as FX
         target = FX.queueTarget(up.get("source_url"))
         if up["status"] not in ("submitted", "flagged") or not target:
-            return up["status"], "Only a waiting athletic.net or tfrrs meet link can be queued."
+            return up["status"], ("Only a waiting athletic.net, tfrrs or AthleticLIVE meet link "
+                                  "can be queued.")
         mid, sport, src = target
         FX.requeue(cur, mid, sport, src)
-        applied = {"mechanism": "meet_queue", "meet_id": mid, "sport": sport, "source": src}
+        applied = {"mechanism": "athleticlive lander (alive_meets.wanted)" if src == "alive"
+                   else "meet_queue", "meet_id": mid, "sport": sport, "source": src}
         cur.execute("""UPDATE result_upload SET status = 'approved', decided_at = now(), decided_by = %s,
                               decision_note = %s, applied = %s WHERE id = %s""",
                     (admin_email, note, Json(applied), uid))
