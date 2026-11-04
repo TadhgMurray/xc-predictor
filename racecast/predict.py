@@ -3720,7 +3720,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     # ★ AND THE LEVEL, for the same reason: a school NAME is both a college
     #   and a high school often enough that "everyone at Amherst" is two
     #   different teams. See _fieldLevels.
-    levels = _fieldLevels(cur, _lineupIds(originals), sport, season_year)
+    levels = _raceLevels(cur, originals, sport, season_year)
     # the school as the people who ran this meet for it wore it
     states = _teamStates(cur, [dict(r) for r in originals],
                          _meetState(cur, meet_id, sport, source=source))
@@ -4003,14 +4003,35 @@ def _fieldLevels(cur, person_ids, sport, season_year=None):
     return {lvl for lvl, n in rows if n / total >= _LEVEL_MIN_SHARE}
 
 
+# ★ THE LEVEL THE RACE WAS RUN AT, NOT WHAT ITS RUNNERS ARE NOW (owner,
+#   2026-11-04: Georgetown University's runners on an NXN card as
+#   "Georgetown (TX)", grade 12). Last year's Nike regional read through
+#   _fieldLevels at THIS season read its graduated seniors' college rows;
+#   with a third of the field in college no level reached the 60% bar, the
+#   race came back "mixed", and "Georgetown" took the university's squad.
+#   The field's own rows carry each runner's pool for the race's season
+#   (_exactField: athlete_season at the race's year); those decide, and
+#   _fieldLevels at the race's own season only where they say nothing.
+def _raceLevels(cur, originals, sport, season_year=None):
+    ids = set(_lineupIds(originals))
+    rows = [r for r in originals if r.get("person_id") in ids]
+    lv = collections.Counter(
+        str(r["pool"]).split("|")[0].split("_")[0] for r in rows if r.get("pool"))
+    lv.pop("", None)
+    total = sum(lv.values())
+    if total and total >= 0.5 * len(rows):
+        return {k for k, n in lv.items() if n / total >= _LEVEL_MIN_SHARE}
+    seasons = [r.get("as_of_season") for r in rows if r.get("as_of_season")]
+    return _fieldLevels(cur, list(ids), sport, max(seasons) if seasons else season_year)
+
+
 # Purpose:   the level of a meet's race, the way meetField reads it -- for a
 #            squad request that named its meet but no level (2026-10-05).
 # Output:    {"college"} etc., or None for a mixed race (no narrowing).
 def meetLevels(cur, meet_id, div_id, sport, source=None, event_id=None):
     originals = _exactField(cur, int(meet_id), div_id, sport, source=source,
                             event_id=event_id)
-    return _fieldLevels(cur, _lineupIds(originals), sport,
-                        _currentSeason(cur, sport)) or None
+    return _raceLevels(cur, originals, sport, _currentSeason(cur, sport)) or None
 
 
 # Purpose:   the ids whose level decides the field's, i.e. the LINEUP.
@@ -4607,9 +4628,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                     gender=_raceGender(cur, int(target["meet_id"]),
                                                        div, sport, src, ids,
                                                        event_id=ev),
-                                    levels=_fieldLevels(
-                                        cur, _lineupIds(originals), sport,
-                                        year),
+                                    levels=_raceLevels(cur, originals, sport, year),
                                     states=_teamStates(
                                         cur, [dict(r) for r in originals],
                                         _meetState(cur, target["meet_id"],

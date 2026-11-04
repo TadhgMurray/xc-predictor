@@ -56,3 +56,14 @@ def test_the_race_date_reaches_the_squads(monkeypatch):
     with P.raceDate(f"{now + 1}-10-01"):
         assert P.seasonsAhead(P._RACE_DATE.get(), now) == 1
     assert P._RACE_DATE.get() is None                          # and is let go after
+
+
+def test_a_race_is_the_level_it_was_run_at():
+    """owner, 2026-11-04: Georgetown University's runners on an NXN card --
+    last year's regional, read at this season, was a third college (its
+    graduated seniors) and so "mixed", and "Georgetown" took the university."""
+    rows = [{"person_id": i, "school": f"S{i % 9}", "pool": "hs_m", "as_of_season": 2025}
+            for i in range(30)]
+    assert P._raceLevels(None, rows, "XC", 2026) == {"hs"}      # no query: the rows say
+    mixed = rows[:15] + [dict(r, pool="college_m") for r in rows[15:]]
+    assert P._raceLevels(None, mixed, "XC", 2026) == set()       # a real open race: no narrowing
