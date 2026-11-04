@@ -313,7 +313,7 @@ def _capTeams(field, rounds, pools, size):
 #  the database half
 # ------------------------------------------------------------------ #
 
-def _roundMeets(cur, rule, day, window):
+def _roundMeets(cur, rule, day, window, season=None):
     """[(meet_id, name, date)] of the rule's rounds in the `window` days
     before `day` (ISO), with results."""
     lo = _shift(day, -window)
@@ -326,7 +326,9 @@ def _roundMeets(cur, rule, day, window):
                        WHERE meet_date ~ '^(19|20)[0-9]{2}-'
                          AND meet_date >= %s AND meet_date < %s""", (lo, day))
     from season_year import seasonYearFromIso
-    season = seasonYearFromIso("XC", str(day)[:10])
+    # the championship's season decides which rounds count (round_last),
+    # also when last season's rounds are read for it (pastRounds)
+    season = season if season is not None else seasonYearFromIso("XC", str(day)[:10])
     out = []
     for row in cur.fetchall():
         row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
@@ -457,7 +459,9 @@ def pastRounds(cur, rule, day, gender, have=()):
     date a year on."""
     import last_edition as LE
     out, have = [], set(have)
-    for mid, name, d in sorted(_roundMeets(cur, rule, _shift(day, -364), rule.get("window", 21)),
+    from season_year import seasonYearFromIso
+    for mid, name, d in sorted(_roundMeets(cur, rule, _shift(day, -364), rule.get("window", 21),
+                                           season=seasonYearFromIso("XC", str(day)[:10])),
                                key=lambda m: _sideMeet(m[1])):
         if roundKey(name) in have:
             continue
