@@ -407,7 +407,15 @@ def main():
                 continue
             price(g)
             stored = [(float(r.speed_rating), rv) for rv, r in g["priced"].values()]
-            if (hit and hit[2]) or nightlyPriced([a for a, _b in stored], [b for _a, b in stored]):
+            # ★ OR ON/AFTER THE SOLVE'S LAST DAY WITH NO DAY OF ITS OWN (owner's
+            #   --race 28639/1, 2026-11-04: NESCAC, Oct 31, the solve's last
+            #   day, scraped after it; placed by place_unplaced_meets, which
+            #   cleared its normalized times for a re-price with weather, so
+            #   its stored ratings no longer sit at the venue price). A race
+            #   the solve saw on that day has its row and was classed above.
+            late = cutoff is not None and key[2] >= cutoff
+            if (hit and hit[2]) or late or nightlyPriced([a for a, _b in stored],
+                                                         [b for _a, b in stored]):
                 new.append((key, g))
         # the same solved races every night: by a stable hash of the race
         import zlib
