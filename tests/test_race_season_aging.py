@@ -67,3 +67,19 @@ def test_a_race_is_the_level_it_was_run_at():
     assert P._raceLevels(None, rows, "XC", 2026) == {"hs"}      # no query: the rows say
     mixed = rows[:15] + [dict(r, pool="college_m") for r in rows[15:]]
     assert P._raceLevels(None, mixed, "XC", 2026) == set()       # a real open race: no narrowing
+
+
+def test_a_meets_group_of_individuals_is_not_a_school():
+    """owner, 2026-11-04, Brooks XC: "Northeast (CT)", "West (CA)" -- the
+    meet's regional groups of individuals read as schools of those names."""
+    rows = ([{"person_id": i, "school": "Northeast", "season_school": s, "team_id": 9}
+             for i, s in enumerate(["Shenendehowa", "Fayetteville-Manlius", "Ward Melville"])]
+            + [{"person_id": 10 + i, "school": "Jesuit", "season_school": "Jesuit"}
+               for i in range(7)]
+            + [{"person_id": 20, "school": "Washington St.", "season_school": "Washington State"},
+               {"person_id": 21, "school": "Washington St.", "season_school": "Washington State"}])
+    got = {r["person_id"]: r["school"] for r in P.unpackIndividuals(rows)}
+    assert got[0] == "Shenendehowa" and got[2] == "Ward Melville"      # individuals, home
+    assert got[10] == "Jesuit"                                          # a team stays a team
+    assert got[20] == "Washington St."                                  # a spelling is not a group
+    assert all(r.get("team_id") is None for r in P.unpackIndividuals(rows) if r.get("individual"))
