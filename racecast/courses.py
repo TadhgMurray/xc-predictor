@@ -135,12 +135,12 @@ def _band(d):
     return lo, hi
 
 
-def _where(f, params):
+def _where(f, params, name=True):
     parts = []
     if f["state"]:
         params["states"] = f["state"]
         parts.append(" AND c.state = ANY(%(states)s)")
-    if f["name"]:
+    if f["name"] and name:
         # ! CASE-INSENSITIVE CONTAINS, not a prefix. Course names carry the
         #   park before the town as often as after -- "Agri Park" and
         #   "Fayetteville, Agri Park" are the same ground -- so anchoring at
@@ -159,7 +159,15 @@ def _where(f, params):
 def getCourseRankings(cur, f):
     """One page of the course board."""
     params = {"limit": f["limit"], "offset": f["offset"]}
-    where = _where(f, params)
+    # ★ A NAME FINDS A COURSE, IT DOES NOT RE-RANK THE BOARD (owner,
+    #   2026-11-04: "you should be able to search up things"): the rank is
+    #   computed over the other filters, then the name picks rows out, so
+    #   "Woodward Park" comes back with the rank it holds among them all
+    where = _where(f, params, name=False)
+    named = ""
+    if f["name"]:
+        params["name"] = f"%{f['name'].lower()}%"
+        named = "WHERE lower(course_name) LIKE %(name)s"
     expr, _natural = _SORTS[f["sort"]]
 
     # ! THE RANK IS COMPUTED OVER THE FILTERED SET, and that is right here in
@@ -168,6 +176,7 @@ def getCourseRankings(cur, f):
     #   the whole corpus either way -- so "3rd hardest in Oregon" is a true
     #   sentence, where "3rd best team" among a filtered set would not be.
     cur.execute(f"""
+        SELECT * FROM (
         SELECT row_number() OVER (ORDER BY {expr} {f['dir']} NULLS LAST,
                                   c.n_results DESC, lower(c.course_name) ASC)
                    AS rank,
@@ -181,8 +190,9 @@ def getCourseRankings(cur, f):
                c.n_same_name
         FROM   course_rank c
         WHERE  TRUE {where}
-        ORDER  BY {expr} {f['dir']} NULLS LAST,
-                  c.n_results DESC, lower(c.course_name) ASC
+        ) ranked
+        {named}
+        ORDER  BY rank
         LIMIT  %(limit)s OFFSET %(offset)s
     """, params)
     return cur.fetchall()

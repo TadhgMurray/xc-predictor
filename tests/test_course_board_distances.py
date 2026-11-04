@@ -120,3 +120,23 @@ if __name__ == "__main__":
         print("  - " + str(e).replace("\n", "\n  - "))
         sys.exit(1)
     print("test_course_board_distances: all checks passed")
+
+
+def test_a_course_found_by_name_keeps_its_rank():
+    """owner, 2026-11-04: "you should be able to search up things" -- the
+    rank is computed over the board, then the name picks rows out."""
+    import courses as C
+    seen = {}
+
+    class Cur:
+        def execute(self, sql, params=None):
+            seen["sql"], seen["params"] = sql, params
+
+        def fetchall(self):
+            return []
+    f = {"state": None, "name": "woodward", "distance": None, "min_results": None,
+         "sort": next(iter(C._SORTS)), "dir": "DESC", "limit": 50, "offset": 0}
+    C.getCourseRankings(Cur(), f)
+    inner, outer = seen["sql"].split(") ranked", 1)
+    assert "LIKE %(name)s" not in inner and "LIKE %(name)s" in outer
+    assert seen["params"]["name"] == "%woodward%"

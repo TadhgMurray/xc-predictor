@@ -36,7 +36,28 @@ KINDS = {
     "section_div": ("Section divisions", False, True),
     "state_div":   ("State divisions", False, True),
     "area":        ("Areas", False, True),
+    # ★ THE NIKE REGIONS (owner, 2026-11-04: "there should be rankings for
+    #   NXR regions somewhere in conferences"): high school teams by their
+    #   state's NXR region (NXR_STATES), California as its own (it
+    #   qualifies through CIF State). No state needed: a region spans them.
+    "nxr":         ("NXR regions", False, False),
 }
+
+# The 2026 Nike Cross Regionals and their states (NikeCrossNationals.com /
+# RunnerSpace, checked 2026-11-04); California qualifies through CIF State.
+NXR_STATES = {
+    "NXR Northwest": ("AK", "HI", "ID", "MT", "OR", "WA", "WY"),
+    "NXR Southwest": ("AZ", "CO", "NM", "NV", "UT"),
+    "NXR Heartland": ("IA", "KS", "MN", "ND", "NE", "SD", "WI"),
+    "NXR Midwest": ("IL", "IN", "MI", "MO", "OH"),
+    "NXR South": ("AR", "LA", "MS", "OK", "TX"),
+    "NXR Southeast": ("AL", "DC", "DE", "FL", "GA", "KY", "MD", "NC", "SC", "TN", "VA", "WV"),
+    "NXR Northeast": ("CT", "MA", "ME", "NH", "NJ", "NY", "PA", "RI", "VT"),
+    "California (CIF State)": ("CA",),
+}
+STATE_NXR = {st: region for region, sts in NXR_STATES.items() for st in sts}
+# a kind whose unit spans states (keyed by name alone, like a college one)
+_STATELESS = {"nxr"}
 # ★ RANKED INSIDE A PARENT (owner, 2026-11-02: "you cannot find like the
 #   best conference in just d3"): the units a board can be narrowed by, per
 #   level. A conference board inside NCAA DIII; a league board inside a
@@ -50,7 +71,7 @@ SQUAD = 7
 def unitKey(kind, unit, state):
     """The identity of a unit: its name, and its state for a high school
     kind. Pure."""
-    return (unit, None) if KINDS[kind][1] else (unit, state)
+    return (unit, None) if KINDS[kind][1] or kind in _STATELESS else (unit, state)
 
 
 def rankUnits(rows, kind, n=DEFAULT_N):
@@ -138,6 +159,8 @@ def load(cur, kind, pool, sport, year, state=None, within=None, unit=None):
     `within` units ({col: value}), and only `unit` when given."""
     if kind not in KINDS:
         raise ValueError(kind)
+    if kind == "nxr":
+        return _loadRegions(cur, pool, sport, year, state)
     args = {"pool": pool, "sport": sport, "year": int(year)}
     w = dict(within or {})
     if unit:
@@ -145,6 +168,39 @@ def load(cur, kind, pool, sport, year, state=None, within=None, unit=None):
     cur.execute(_SQL.format(col=kind, cols=", ".join(_ALL_COLS),
                             where=_where(state, w, args)), args)
     return [dict(r) for r in cur.fetchall()]
+
+
+def _loadRegions(cur, pool, sport, year, state=None):
+    """The season board's teams, each with its NXR region (STATE_NXR) in
+    the "nxr" column; a team outside every region (abroad, unknown state)
+    is left out."""
+    args = {"pool": pool, "sport": sport, "year": int(year)}
+    where = ""
+    if state:
+        where = " AND state = %(state)s"
+        args["state"] = state
+    cur.execute(f"""
+        SELECT school, state, rank, points, n_athletes, top5_mean, best_rating,
+               best_person_id, ratings, {", ".join(_ALL_COLS)}
+        FROM   team_season
+        WHERE  span = 'season' AND scope = 'usa'
+          AND  pool = %(pool)s AND sport = %(sport)s AND year = %(year)s
+          {where}""", args)
+    out = []
+    for r in cur.fetchall():
+        r = dict(r)
+        r["nxr"] = STATE_NXR.get((r.get("state") or "").upper())
+        if r["nxr"]:
+            out.append(r)
+    return out
+
+
+def regionHref(region, pool=None, sport=None):
+    """An NXR region's teams: the Teams board narrowed to its states."""
+    from urllib.parse import urlencode
+    q = {"board": "teams", "pool": pool or "hs_m", "sport": sport or "XC",
+         "state": ",".join(NXR_STATES.get(region, ()))}
+    return "/rankings?" + urlencode(q)
 
 
 def options(cur, col, pool, sport, year, state=None):
@@ -431,6 +487,8 @@ def validKeys(cur, kind, college):
     level and no more than a quarter of its schools of the other."""
     if kind not in KINDS:
         return {}
+    if kind in _STATELESS:
+        return None               # every region is real: nothing to test
     cur.execute(f"""SELECT {kind} AS v,
                            count(DISTINCT (school, state)) FILTER (WHERE is_college) AS c,
                            count(DISTINCT (school, state)) FILTER (WHERE NOT is_college) AS h
@@ -502,7 +560,7 @@ def buildBoard(rows, kind, n=DEFAULT_N, valid=None):
         k = normKey(raw)
         if valid is not None and k not in valid:
             continue
-        st = None if KINDS[kind][1] else r.get("state")
+        st = None if KINDS[kind][1] or kind in _STATELESS else r.get("state")
         groups.setdefault((k, st), []).append(r)
     out = []
     for (k, st), teams in groups.items():
