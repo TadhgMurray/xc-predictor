@@ -2390,7 +2390,6 @@ function syncBoard(board) {
   }
 
   syncFilterUi();
-  autoSeason();
 
   $("subtitle").textContent =
     board === "ability"
@@ -2659,34 +2658,7 @@ $("min_races").addEventListener("change", applyNow);
 if ($("projected")) {
   $("projected").addEventListener("change", () => { state.offset = 0; applyNow(); });
 }
-$("sport").addEventListener("change", () => {
-  state.sportTouched = true; syncMinRaces(); autoSeason(); applyNow();
-});
-
-/* ★ CROSS COUNTRY OPENS ON THE CURRENT SEASON (owner, 2026-11-04: "it
-   should default to current season for everything which is xc"). With no
-   season in the link and none picked, a cross country board ticks this
-   season -- the athletes, best races, times, teams and conference boards
-   alike -- and lets it go again when the reader moves to track. A season
-   the reader ticks or clears is theirs from then on. Courses have no
-   season. */
-function autoSeason() {
-  if (!combos.year || state.yearTouched) return;
-  const xc = $("sport").value === "XC" && state.board !== "courses";
-  if (xc && !combos.year.values().length) {
-    combos.year.set([YEARS[0][0]]);
-    state.yearAuto = true;
-  } else if (!xc && state.yearAuto) {
-    combos.year.set([]);
-    state.yearAuto = false;
-  }
-}
-document.addEventListener("combochange", (e) => {
-  if (e.detail && e.detail.field === "year") {
-    state.yearTouched = true;
-    state.yearAuto = false;
-  }
-});
+$("sport").addEventListener("change", () => { state.sportTouched = true; syncMinRaces(); applyNow(); });
 
 /* Once touched, the pool is the user's and syncBoard stops overriding it. */
 $("pool").addEventListener("change", () => {
@@ -2849,16 +2821,16 @@ function applyUrlFilters(params) {
     if (lv && $("pool").querySelector(`option[value="${lv}"]`)) $("pool").value = lv;
   }
   setSelectFromUrl("sport", params.get("sport"));
-  /* ★ THE TIMES BOARD OPENS ON TRACK (owner, 2026-10-23: "the fastest times
-       board should really start with tf as default"). A cross country time
-       is its course as much as its runner; the track mile is the clock a
-       reader compares. A link that names a sport keeps it. */
-  if (state.board === "pr" && !params.get("sport")) {
-    $("sport").value = "TF";
-    if (!params.get("distance") && !params.get("event") && $("distance")) {
-      $("distance").value = "1600";
-      state.distAuto = true;             // the board's choice, not the reader's
-    }
+  /* ★ EVERY BOARD OPENS ON THE SPORT IN SEASON (owner, 2026-11-04: "default
+       to the current sport, as in rn its cross season so it should default
+       to cross"), the times board too -- it opened on track since
+       2026-10-23. The sport select starts on the season's sport (app.
+       _rankingsDefaultSport); its distance is the sport's own: the track
+       mile, the cross country 5000. A link that names a sport keeps it. */
+  if (state.board === "pr" && !params.get("sport")
+      && !params.get("distance") && !params.get("event") && $("distance")) {
+    $("distance").value = $("sport").value === "TF" ? "1600" : "5000";
+    state.distAuto = true;               // the board's choice, not the reader's
   }
   /* ! RESTORED, OR A SHARED "EVERYONE" LINK QUIETLY OPENS AS USA. The select
        defaults to usa in the markup, so without this the one scope worth
@@ -2963,12 +2935,9 @@ function initFromUrl() {
        same URL, a pool only the pr board accepts, and the first request 400ed
        with a message about pools that had nothing to do with the cause. */
   const asked = params.get("board");
-  // a season in the link is the reader's: autoSeason leaves it alone
-  if (params.get("year")) state.yearTouched = true;
   syncBoard(["performance", "pr", "ability", "teams", "courses", "units"]
               .includes(asked) ? asked : "ability");
   applyUrlFilters(params);
-  autoSeason();
 
   // ★ jump=<person_id>: an athlete page's rank link opens on their row
   //   (UX review, 2026-10-24) -- the find box's own path, which pages there
