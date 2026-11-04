@@ -255,6 +255,7 @@ def parseSummary(summary):
             "xc": bool(v.get("xc")),
             "order": v.get("nu"),
             "start": v.get("sd"),          # UTC start, '2026-10-24T14:20:00Z'
+            "run": v.get("rui"),           # the live-timing run, '1-1' (liveSplitUrl)
         })
     out.sort(key=lambda e: (e["order"] is None, e["order"] or 0, e["id"]))
     return out

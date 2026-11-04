@@ -435,6 +435,59 @@ def anetHasXC(cur, meet_id):
     return cur.fetchone() is not None
 
 
+# ★ A LIVE-TIMED RACE HAS NO RESULTS DOCUMENT (owner, 2026-11-04: the 2026
+#   DSAC XC championships, AthleticLIVE meet 80057 under live.usp-sports.com,
+#   "0 results in 0 races"). Chip-timed cross country posts its finish
+#   order to the meet's live-timing branch in Firebase --
+#       meet_<id>/liveBySplit/results/<run>/split_final/<runner key>
+#   one entry per runner: athletic.net athlete id (anli), names, grade,
+#   team name, time (m) and place (p) -- and the race's own index document
+#   never gets its results list. Read there when the document is empty, in
+#   the document's own shape, so the lander's rules apply unchanged.
+LIVE_ID_BASE = 500_000_000_000     # result "i" for a live split row: + event * 1e5 + bib
+
+
+def liveSplitUrl(alive_id, run):
+    return (f"{A.FIREBASE}/meet_{int(alive_id)}/liveBySplit/results/"
+            f"{run}/split_final.json")
+
+
+def _clockMs(mark):
+    """'16:08.80' -> 968800; None for anything that is not a time. Pure."""
+    import re
+    m = re.fullmatch(r"\s*(?:(\d+):)?(\d+):(\d{1,2})(?:\.(\d{1,3}))?\s*", str(mark or "")) \
+        or re.fullmatch(r"\s*()(\d+):(\d{1,2})(?:\.(\d{1,3}))?\s*", str(mark or ""))
+    if not m:
+        return None
+    h = int(m.group(1) or 0)
+    mins, secs = int(m.group(2)), int(m.group(3))
+    frac = (m.group(4) or "").ljust(3, "0")[:3]
+    return ((h * 60 + mins) * 60 + secs) * 1000 + int(frac or 0)
+
+
+def liveSplitRows(split_final, event_id):
+    """A run's split_final -> the results list of an index document
+    (resultRows' "r" shape). Pure."""
+    import zlib
+    out = []
+    for key, x in sorted((split_final or {}).items()):
+        if not isinstance(x, dict):
+            continue
+        bib = A._int(x.get("i")) or A._int(x.get("cm"))
+        if bib is None or bib >= 100_000:
+            bib = zlib.crc32(str(key).encode()) % 100_000
+        g = {"M": "male", "F": "female"}.get(str(x.get("g") or "").upper()[:1])
+        out.append({
+            "i": LIVE_ID_BASE + int(event_id) * 100_000 + bib,
+            "p": x.get("p"),
+            "m": x.get("m") or x.get("rtm"),
+            "im": _clockMs(x.get("m") or x.get("rtm")),
+            "a": {"ani": x.get("anli"), "fn": x.get("fn"), "l": x.get("l"), "y": x.get("y"),
+                  "g": g, "t": {"n": x.get("tn"), "f": x.get("tn")}},
+        })
+    return out
+
+
 async def fetchXC(fetcher, alive_id, meet_date=None):
     age = A.MAX_AGE_SETTLED if A._settled(meet_date) else None
     summary = A._json(await fetcher.fetch(A.summaryUrl(alive_id), max_age=age))
@@ -447,6 +500,19 @@ async def fetchXC(fetcher, alive_id, meet_date=None):
         doc = A._json(f)
         if isinstance(doc, dict):
             blobs[ev["id"]] = doc
+    # the races whose document carries no results: their live finish order
+    empty = [ev for ev in events if ev.get("run")
+             and not ((blobs.get(ev["id"]) or {}).get("_source", blobs.get(ev["id"]) or {}) or {}).get("r")]
+    if empty:
+        live = await fetcher.fetchAll([liveSplitUrl(alive_id, ev["run"]) for ev in empty], max_age=age)
+        for ev, f in zip(empty, live):
+            split = A._json(f)
+            rows = liveSplitRows(split, ev["id"]) if isinstance(split, dict) else []
+            if rows:
+                doc = blobs.get(ev["id"]) or {}
+                src = dict(doc.get("_source", doc) if isinstance(doc, dict) else {})
+                src["r"] = rows
+                blobs[ev["id"]] = {"_source": src}
     return events, blobs, ""
 
 
