@@ -272,6 +272,20 @@ def selectField(rule, rounds, pools=None, labels=None):
         else:
             for r in sorted((r for r in rows_of[k] if r[1] == school), key=lambda r: r[2])[:size]:
                 field[r[0]] = r[1]
+    schools = {r[0]: r[1] for rows in rounds.values() for r in rows}
+    tickets_first = rule.get("ind_at_large_by") == "rating"
+    if tickets_first:
+        # ★ GOLDEN TICKETS FIRST (owner, 2026-11-04: "take the ten fastest as
+        #   indivs first, then do the people in regionals"): the best-rated
+        #   runners of every round are in before any regional place is
+        #   counted, and a regional's top ten are the ten best of the rest
+        best = {}
+        for rows in rounds.values():
+            for r in rows:
+                if r[0] not in field and r[3] is not None:
+                    best[r[0]] = max(best.get(r[0], r[3]), r[3])
+        for pid in sorted(best, key=lambda p: -best[p])[:rule.get("ind_at_large", 0)]:
+            field[pid] = schools.get(pid)
     ind_queues, n_teams = {}, {}
     for k, rows in rounds.items():
         teams = set(qualified[k])
@@ -288,6 +302,8 @@ def selectField(rule, rounds, pools=None, labels=None):
         auto, rest = 0, []
         within = rule.get("ind_auto_within")
         for place, r in others:
+            if r[0] in field:           # a Golden Ticket already: not a regional place
+                continue
             takes = (auto < rule.get("ind_auto", 0) and (within is None or place <= within)) \
                 or place <= rule.get("ind_auto_top", 0)
             if takes:
@@ -296,17 +312,7 @@ def selectField(rule, rounds, pools=None, labels=None):
             else:
                 rest.append((place, r[0]))
         ind_queues[k] = rest
-    schools = {r[0]: r[1] for rows in rounds.values() for r in rows}
-    if rule.get("ind_at_large_by") == "rating":
-        # ★ GOLDEN TICKETS: the best-rated runners not already in (Brooks)
-        best = {}
-        for rows in rounds.values():
-            for r in rows:
-                if r[0] not in field and r[3] is not None:
-                    best[r[0]] = max(best.get(r[0], r[3]), r[3])
-        for pid in sorted(best, key=lambda p: -best[p])[:rule.get("ind_at_large", 0)]:
-            field[pid] = schools.get(pid)
-    else:
+    if not tickets_first:
         for pid in atLargeIndividuals(ind_queues, rule.get("ind_at_large", 0), n_teams):
             field[pid] = schools.get(pid)
     field = _capTeams(field, rounds, pools, size)
