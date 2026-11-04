@@ -453,3 +453,22 @@ def test_a_regions_best_runners_join_last_years_round():
     assert got == {29751562, 7}
     sql, args = next(a for a in asked if "ORDER  BY mean_rating DESC" in a[0])
     assert args[0] == 2026 and args[1] == "hs_m" and args[2] == ["FL", "GA"]   # CA: a stray
+
+
+def test_last_seasons_federation_meet_is_not_a_round_for_this_season(monkeypatch):
+    # the owner's qualifier_why run, 2026-11-04: last season's NYS Federation
+    # meet counted for the 2026 NXN through the past-round path
+    import last_edition as LE
+    rule = Q.ruleFor("Nike Cross Nationals", "anet")
+
+    class Cur:
+        def execute(self, sql, args=None):
+            pass
+
+        def fetchall(self):
+            return [(1, "NYS Federation Championships at NXR", "2025-11-22"),
+                    (2, "NXR Southeast Regional Championships", "2025-11-22")]
+    monkeypatch.setattr(LE, "editionRaces", lambda cur, mid, sport, src: [
+        {"div_id": 10 + mid, "label": "Boys Championship", "gender": "M"}])
+    got = Q.pastRounds(Cur(), rule, "2026-12-05", "M")
+    assert [m for m, _d, _on in got] == [2]
