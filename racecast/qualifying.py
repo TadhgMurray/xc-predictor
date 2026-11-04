@@ -242,7 +242,7 @@ def selectField(rule, rounds, pools=None):
     races at-large teams may also come from (rule["at_large_from"]), same
     shape -- no automatic places and no individuals from them."""
     size = rule.get("team_size", 7)
-    pools = pools or {}
+    rounds, pools = _oneSpelling(rounds, pools or {})
     orders = {k: teamOrder(v) for k, v in rounds.items()}
     qualified = {k: list(o[:rule["teams_auto"]]) for k, o in orders.items()}
     queues = {k: o[rule["teams_auto"]:] for k, o in orders.items()}
@@ -286,6 +286,31 @@ def selectField(rule, rounds, pools=None):
     for pid in atLargeIndividuals(ind_queues, rule.get("ind_at_large", 0), n_teams):
         field[pid] = schools.get(pid)
     return _capTeams(field, rounds, pools, size)
+
+
+def _oneSpelling(rounds, pools):
+    """The rounds' rows with each school under one spelling (owner,
+    2026-11-04: NCAA DI listed "Washington St." and "Washington State (WA)",
+    a runner each -- one feed's spelling a round that ran, the other's a
+    round predicted). Spellings that differ only in decoration
+    (school_name.sameKey: "St." and "State") take the commonest. Pure."""
+    from school_name import nameKey
+    counts = collections.defaultdict(collections.Counter)
+    for rows in list(rounds.values()) + list(pools.values()):
+        for r in rows:
+            if r[1]:
+                counts[nameKey(r[1]) or r[1]][r[1]] += 1
+    spell = {}
+    for _k, c in counts.items():
+        if len(c) > 1:
+            best = min(c.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))[0]
+            spell.update({name: best for name in c})
+
+    def fix(rows):
+        return [(r[0], spell.get(r[1], r[1])) + tuple(r[2:]) for r in rows]
+    if not spell:
+        return rounds, pools
+    return ({k: fix(v) for k, v in rounds.items()}, {k: fix(v) for k, v in pools.items()})
 
 
 def _capTeams(field, rounds, pools, size):
