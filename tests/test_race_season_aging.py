@@ -93,11 +93,3 @@ def test_a_small_group_of_individuals_by_its_name():
             {"person_id": 4, "school": "West", "season_school": "West"}]
     got = {r["person_id"]: r["school"] for r in P.unpackIndividuals(rows)}
     assert got == {1: "Neuqua Valley", 3: "West", 4: "West"}               # 2: no school known
-
-
-def test_an_individual_entrant_is_a_person_not_a_slot():
-    squads = {"Neuqua Valley": [{"person_id": 7}, {"person_id": 1}], "Jesuit": [{"person_id": 9}]}
-    originals = [{"person_id": 1, "school": "Neuqua Valley", "individual": True},
-                 {"person_id": 9, "school": "Jesuit"}]
-    P.keepIndividuals(squads, originals)
-    assert squads == {"Neuqua Valley": [{"person_id": 1}], "Jesuit": [{"person_id": 9}]}

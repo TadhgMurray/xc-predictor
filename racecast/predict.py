@@ -3732,7 +3732,6 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     #   which Amherst this is, on top of the level above.
     squads = _currentSquads(cur, at_meet, sport, season_year, gender=gender,
                             levels=levels, states=states)
-    keepIndividuals(squads, originals)
     current_ids = {e["person_id"] for sq in squads.values() for e in sq}
     # ★ A TRACK EVENT'S SQUAD IS WHO RUNS THAT DISTANCE (2026-10-10), best
     #   at it first; the school's other athletes wait under dropped
@@ -4642,7 +4641,6 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                         cur, [dict(r) for r in originals],
                                         _meetState(cur, target["meet_id"],
                                                    sport, source=src)))
-            keepIndividuals(squads, originals)
             # ★ THE SAME EVENT SQUADS AS meetField, for a track event
             track_m = None
             if sport != "XC" and ev is not None:
@@ -5156,24 +5154,6 @@ _GROUP_NAME = re.compile(
     r"individual|at[\s-]*large|\bindv?\b|^\s*(north|south|east|west|central|midwest|northeast|"
     r"northwest|southeast|southwest|heartland|pacific|mountain|great lakes|mid[\s-]*atlantic|"
     r"new england|mid[\s-]*west)(\s+region(al)?)?(\s*[-#]?\s*\d+)?\s*$", re.I)
-
-
-def keepIndividuals(squads, originals):
-    """A school that was at the meet only through its individuals keeps
-    just those runners this year, the ones still on its squad -- an
-    individual entrant is a person, not a slot the school's best fills
-    (owner, 2026-11-04: "still a lot of randoms"). In place."""
-    ind, team = collections.defaultdict(set), set()
-    for r in originals or []:
-        if not r.get("school"):
-            continue
-        if r.get("individual"):
-            ind[r["school"]].add(r.get("person_id"))
-        else:
-            team.add(r["school"])
-    for school, pids in ind.items():
-        if school not in team and school in squads:
-            squads[school] = [e for e in squads[school] if e.get("person_id") in pids]
 
 
 def unpackIndividuals(originals):

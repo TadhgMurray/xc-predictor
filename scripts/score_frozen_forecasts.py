@@ -40,6 +40,13 @@ READ ONLY.
   share, teams left out. frozen - rebuilt is the leak, plus whatever the
   engine and the models have changed since (so at most the leak's size).
 
+★ --vs-rating: DOES THE MODEL DO MORE THAN SORT BY RATING (owner,
+  2026-11-04: "it seems like the model basically just regurgitates
+  ratings"). The same runners of each frozen race, ordered by the rating the
+  page showed beside them, scored by the same rho and place error as the
+  model's order. The gap is what the model adds over the rating; times are
+  not compared (a rating is not a time at this course).
+
 ★ --against pred_meet_forecast: THE CLEAN HEAD-TO-HEAD. Two frozen archives
   of the same races (the site's, and the pre-race recorder's race model,
   build_meet_forecasts with XCP_FORECAST_TABLE), both made before the gun,
@@ -164,6 +171,17 @@ def rebuildRace(cur, fc, ids, predict=None):
     return dict(fc, runners=runners, teams=[])
 
 
+def ratingOrder(fc):
+    """The frozen race's runners that carry a rating, twice: as forecast,
+    and ordered by that rating alone (best first, as times). Pure."""
+    rated = [r for r in fc.get("runners") or []
+             if r.get("seconds") and r.get("rating") is not None]
+    model = dict(fc, runners=rated, teams=[])
+    by_rating = dict(fc, teams=[], runners=[dict(r, seconds=10000.0 - float(r["rating"]),
+                                                 lo=None, hi=None) for r in rated])
+    return model, by_rating
+
+
 def sharedRunners(a, b):
     """Two forecasts cut to the runners both have times for. Pure."""
     ka = {r["person_id"] for r in a.get("runners") or [] if r.get("seconds")}
@@ -201,6 +219,8 @@ def main():
     ap.add_argument("--against", default=None, metavar="TABLE",
                     help="a second frozen archive (pred_meet_forecast: the pre-race "
                          "recorder): both scored on the races and runners they share")
+    ap.add_argument("--vs-rating", action="store_true",
+                    help="the model's order against the same runners ordered by rating alone")
     ap.add_argument("--max-races", type=int, default=None,
                     help="with --rebuild: stop after this many races (about 2 s each)")
     a = ap.parse_args()
@@ -216,6 +236,7 @@ def main():
     groups = {}
     rebuilt = {}          # --rebuild: key -> [(frozen, rebuilt)] on shared runners
     versus = {}           # --against: key -> [(this table, that table)] on shared runners
+    vsrating = {}         # --vs-rating: key -> [(model, rating order)] on the rated runners
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
@@ -291,6 +312,11 @@ def main():
                        "level": (statistics.mode(levels).split("|")[0]
                                  if levels else "?")}[a.by]
                 groups.setdefault(key, []).append(m)
+                if a.vs_rating:
+                    fm, fr = ratingOrder(fc)
+                    mm, mr = frozenMetrics(fm, fin, []), frozenMetrics(fr, fin, [])
+                    if mm is not None and mr is not None:
+                        vsrating.setdefault(key, []).append((mm, mr))
                 if pair is not None:
                     rebuilt.setdefault(key, []).append(pair)
                 o = other.get((fc["source"], int(fc["meet_id"]), int(fc["div_id"])))
@@ -311,6 +337,18 @@ def main():
     allr = [m for v in groups.values() for m in v]
     if len(groups) > 1 and allr:
         print(_row("ALL", summarize(allr)))
+    if a.vs_rating:
+        print("\nTHE MODEL'S ORDER AGAINST RATING ORDER, the same runners (higher rho, "
+              "lower place error is better)")
+        print(f"{a.by:22} {'races':>5} {'runners':>7} {'rho model':>10} {'rho rating':>11} "
+              f"{'plc|err| model':>15} {'plc|err| rating':>16}")
+        keys = sorted(vsrating) + (["ALL"] if len(vsrating) > 1 else [])
+        for key in keys:
+            pairs = (vsrating[key] if key != "ALL" else [p for v in vsrating.values() for p in v])
+            sm, sr = summarize([p[0] for p in pairs]), summarize([p[1] for p in pairs])
+            print(f"{str(key):22} {sm['races']:>5} {sm['runners']:>7} "
+                  f"{_fmt(sm['rho'], '{:.3f}'):>10} {_fmt(sr['rho'], '{:.3f}'):>11} "
+                  f"{sm['place_err']:>15.1f} {sr['place_err']:>16.1f}")
     if a.against:
         print(f"\n{MF.TABLE} AGAINST {a.against}, the same races and runners, both frozen "
               f"before the race (teams left out)")
