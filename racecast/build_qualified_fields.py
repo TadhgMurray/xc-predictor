@@ -58,6 +58,9 @@ def targets(cur, today, champs):
         plan = U.pastPlan(cur, m["meet_id"], m["source"], m["date"])
         if plan:
             out.append(plan)
+        else:                       # on the page, and opens to nothing
+            print(f"  ! {m['date']}  {m['name']} ({m['source']} {m['meet_id']}): "
+                  f"no plan from last year's meet")
     hi = (today + datetime.timedelta(days=DAYS)).isoformat()
     cur.execute("""SELECT 'tfrrs' AS src, meet_id, meet_name, date AS d FROM meets_tfrrs
                    WHERE sport = 'XC' AND date ~ '^(19|20)[0-9]{2}-' AND date > %s AND date <= %s

@@ -332,9 +332,14 @@ def test_one_of_each_championship(monkeypatch):
         ("anet", "springfield girls state champs"): [{}]})
     monkeypatch.setattr(LE, "editionRaces", lambda cur, mid, sport, src: [
         {"div_id": 1, "gender": "F" if mid == 7 else "M"}])
+    monkeypatch.setattr(U, "pastPlan", lambda cur, mid, src, day: {"meet_id": mid})
     got = U.upcomingChampionships(Cur(), datetime.date(2026, 11, 3))
     assert sorted(m["meet_id"] for m in got) == [2, 4, 6, 7]   # the most results; boys and girls
     assert next(m for m in got if m["meet_id"] == 2)["also"] == [1]
+    # ...unless it cannot be opened: the copy that can (the nightly, 2026-11-04)
+    monkeypatch.setattr(U, "pastPlan", lambda cur, mid, src, day: None if mid == 2 else {"meet_id": mid})
+    got = U.upcomingChampionships(Cur(), datetime.date(2026, 11, 3))
+    assert 1 in [m["meet_id"] for m in got] and 2 not in [m["meet_id"] for m in got]
 
 
 def test_a_savepoint_the_prediction_ended_does_not_raise():

@@ -543,8 +543,8 @@ def pastPlan(cur, meet_id, source, day):
         # ! THE NAME FIRST, AND OUT AT ONCE FOR A MEET NO RULE OR ROUTE
         #   COVERS: every "this year" field asks with a date now
         if source == "tfrrs":
-            cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s LIMIT 1",
-                        (int(meet_id),))
+            cur.execute("SELECT meet_name FROM meets_tfrrs WHERE meet_id = %s "
+                        "ORDER BY (sport = 'XC') DESC LIMIT 1", (int(meet_id),))
         else:
             cur.execute("SELECT meet_name FROM meets WHERE meet_id = %s LIMIT 1", (int(meet_id),))
         row = cur.fetchone()
@@ -562,8 +562,11 @@ def pastPlan(cur, meet_id, source, day):
             return None
         races = LE.editionRaces(cur, int(meet_id), "XC", source)
         cur.execute("RELEASE SAVEPOINT up_past")
-    except Exception:                                   # noqa: BLE001
-        cur.execute("ROLLBACK TO SAVEPOINT up_past")
+    except Exception as exc:                            # noqa: BLE001
+        _undo(cur, "up_past")
+        print(f"past plan {source} {meet_id}: {type(exc).__name__}: {exc}", flush=True)
+        return None
+    if not races:
         return None
     # the meet is its own last edition: lastYearGender reads its runners
     return {"meet_id": int(meet_id), "source": source, "name": name,
@@ -674,11 +677,18 @@ def _oneEach(cur, rows):
                 except Exception:                       # noqa: BLE001
                     _endTransaction(cur)
             g.sort(key=lambda m: -n.get((m["source"], m["meet_id"]), 0))
+            # ★ AND ONE THE PAGE CAN OPEN (the nightly, 2026-11-04: NCAA DII
+            #   and DIII left the list once both feeds' copies were one
+            #   championship -- the tfrrs copy had the most results and no
+            #   plan): the first that pastPlan builds
+            ok = [m for m in g if pastPlan(cur, m["meet_id"], m["source"], m["date"])]
+            g = ok + [m for m in g if m not in ok]
             # ! UNLESS THE OTHER HOLDS A GENDER THE FIRST DOES NOT (a men's
-            #   page and a women's page of one championship): then both stay
+            #   page and a women's page of one championship): then both stay.
+            #   A copy whose genders are unknown says nothing either way.
             sexes = {(m["source"], m["meet_id"]): _gendersOf(cur, m) for m in g}
             first = sexes[(g[0]["source"], g[0]["meet_id"])]
-            keep = [m for m in g[1:] if sexes[(m["source"], m["meet_id"])] - first]
+            keep = [m for m in g[1:] if first and sexes[(m["source"], m["meet_id"])] - first]
             g = [g[0]] + [m for m in g[1:] if m not in keep]
             out.extend(dict(m, also=[]) for m in keep)
         out.append(dict(g[0], also=[m["meet_id"] for m in g[1:]]))
