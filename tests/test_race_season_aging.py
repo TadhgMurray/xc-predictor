@@ -83,3 +83,21 @@ def test_a_meets_group_of_individuals_is_not_a_school():
     assert got[10] == "Jesuit"                                          # a team stays a team
     assert got[20] == "Washington St."                                  # a spelling is not a group
     assert all(r.get("team_id") is None for r in P.unpackIndividuals(rows) if r.get("individual"))
+
+
+def test_a_small_group_of_individuals_by_its_name():
+    """owner, 2026-11-04: "Midwest (CO)" -- one runner under the label."""
+    rows = [{"person_id": 1, "school": "Midwest", "season_school": "Neuqua Valley"},
+            {"person_id": 2, "school": "SE Individuals -2", "season_school": None},
+            {"person_id": 3, "school": "West", "season_school": "West"},       # a real West HS
+            {"person_id": 4, "school": "West", "season_school": "West"}]
+    got = {r["person_id"]: r["school"] for r in P.unpackIndividuals(rows)}
+    assert got == {1: "Neuqua Valley", 3: "West", 4: "West"}               # 2: no school known
+
+
+def test_an_individual_entrant_is_a_person_not_a_slot():
+    squads = {"Neuqua Valley": [{"person_id": 7}, {"person_id": 1}], "Jesuit": [{"person_id": 9}]}
+    originals = [{"person_id": 1, "school": "Neuqua Valley", "individual": True},
+                 {"person_id": 9, "school": "Jesuit"}]
+    P.keepIndividuals(squads, originals)
+    assert squads == {"Neuqua Valley": [{"person_id": 1}], "Jesuit": [{"person_id": 9}]}
