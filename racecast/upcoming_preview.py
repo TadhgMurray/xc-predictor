@@ -523,6 +523,13 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
                                 "grade": e.get("grade"), "pool": e.get("pool"),
                                 "rating": e.get("rating"), "n_races": None})
     teams = sorted(by.values(), key=lambda t: (-len(t["runners"]), t["school"]))
+    # ★ HS-EQUIVALENT, LIKE EVERY OTHER CARD (owner, 2026-11-04: Washington
+    #   State's qualifiers read 125.5 and 126.0 -- their college ratings,
+    #   raw): the field's runners carry hs_rating beside the pool rating, as
+    #   meetField's do (pool_view.stampBoardRows), so rv() can show it
+    from pool_view import stampBoardRows
+    stampBoardRows([r for t in teams for r in t["runners"]], rating_keys=("rating",),
+                   sport="XC")
     for t in teams:
         t["runners"].sort(key=lambda r: -(r["rating"] or 0))
         t["entered"] = len(t["runners"])

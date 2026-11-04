@@ -483,3 +483,13 @@ def test_one_school_under_two_spellings_is_one_team():
                                              ("wsu-3", "Washington State", 990.0, 55.0)]
     field = Q.selectField(rule, {1: a, 2: b})
     assert {field.get(p) for p in ("wsu-1", "wsu-2")} == {"Washington State"}
+
+
+def test_the_sites_own_school_merges_apply(monkeypatch):
+    # owner, 2026-11-04: "make sure that they use those results" --
+    # school_name_alias (merge_school_names) before the decoration check
+    monkeypatch.setitem(Q._ALIAS, "map", {"La Jolla-CA": "La Jolla"})
+    field = Q.oneSpellingField({1: "La Jolla-CA", 2: "La Jolla", 3: "Washington St.",
+                                4: "Washington State", 5: "Washington State"})
+    assert field == {1: "La Jolla", 2: "La Jolla", 3: "Washington State",
+                     4: "Washington State", 5: "Washington State"}
