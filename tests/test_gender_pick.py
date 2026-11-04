@@ -107,7 +107,7 @@ def test_gender_pick():
        "and both join it")
     ok(BR.count("_pg.boardGenderExpr(") == 2,
        "the boards' two queries take a split person's row by its label")
-    ok("LEFT JOIN {pg_table} pg" in BR and "_PG_EMPTY" in BR,
+    ok("FULL JOIN {pg_table} pg" in BR and "_PG_EMPTY" in BR,
        "the boards' temp prefers person_gender and survives its absence")
     ok("FROM person_gender" in BF, "the backfill overlays person_gender")
     ok("split" in PG and "least(n_m, n_f) >= 5" in PG,

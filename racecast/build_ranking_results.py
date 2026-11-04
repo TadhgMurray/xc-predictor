@@ -189,7 +189,13 @@ _INDEX_JOBS = dbJobs(3)     # one at a time under XCP_DB_QUIET (2026-09-14)
 _GENDER_TEMP_SQL = """
     DROP TABLE IF EXISTS tmp_person_gender;
     CREATE TEMP TABLE tmp_person_gender AS
-    SELECT p.person_id,
+    -- ★ FULL JOIN (2026-11-04, the ICCAC women's championship: Sabrina
+    --   Salcedo's rows pooled college_unknown_gender, unranked and the
+    --   newest unpriced). A person minted from a tfrrs id (1,000,000,000 +
+    --   id) has no `athletes` row of their own, so a LEFT JOIN from the
+    --   profiles dropped the verdict person_gender HAD for them -- while the
+    --   engine, which joins person_gender directly, pooled them by it.
+    SELECT COALESCE(p.person_id, pg.person_id) AS person_id,
            COALESCE(pg.gender, p.gender)      AS gender,
            COALESCE(pg.split, false)          AS split
     FROM (
@@ -202,7 +208,7 @@ _GENDER_TEMP_SQL = """
         ) s
         ORDER BY person_id, n DESC, gender DESC
     ) p
-    LEFT JOIN {pg_table} pg ON pg.person_id = p.person_id;
+    FULL JOIN {pg_table} pg ON pg.person_id = p.person_id;
     CREATE UNIQUE INDEX ON tmp_person_gender (person_id);
     ANALYZE tmp_person_gender;
 """

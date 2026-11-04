@@ -102,3 +102,31 @@ def test_two_loose_candidates_stay_blank():
             {"school": "Saint Ignatius", "points": 91, "runners": ["b"]}]
     pub = [{"school": "Saint Ignatius Prep", "points": 95}]
     assert A._graftPublished(pub, comp) == {}
+
+
+class SibCur(Cur):
+    """No other feed's copy; the same meet's other division holds the race."""
+    def fetchall(self):
+        if "r.meet_id = %s AND r.source = %s" in " ".join(self.last.split()):
+            return self.twins
+        return []
+
+
+def test_a_sibling_division_of_the_same_meet_lends_its_rating(monkeypatch):
+    """owner, 2026-11-04: ICCAC 2026 "Women's D1" all dashes beside its rated
+    "Women's Combined" copy on the same athletic.net meet."""
+    monkeypatch.setattr(A, "_ratingPoolCol", lambda cur, t: "r.rating_pool")
+    sibs = [{"person_id": 27134426, "time_seconds": 992.1, "speed_rating": 124.4,
+             "rating_pool": "college_f", "name": None},
+            {"person_id": 5, "time_seconds": 1100.0, "speed_rating": 101.0,
+             "rating_pool": "college_f", "name": None}]
+    rows = [{"result_id": 77885009, "person_id": 27134426, "time_seconds": 992.1,
+             "speed_rating": None, "name": "Juliana Sakat", "date": "2026-10-30"},
+            {"result_id": 77885099, "person_id": 5, "time_seconds": 1130.0,
+             "speed_rating": None, "name": "Someone", "date": "2026-10-30"}]
+    assert A._borrowTwins(SibCur(sibs, canon=None), rows, "results", 288174, "anet") == 1
+    assert rows[0]["speed_rating"] == 124.4
+    assert rows[1]["speed_rating"] is None             # 30 s apart: another run
+    # never on the track, where another division is another event
+    rows[0]["speed_rating"] = None
+    assert A._borrowTwins(SibCur(sibs, canon=None), rows, "results_tf", 1, "anet") == 0

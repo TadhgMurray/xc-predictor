@@ -4268,9 +4268,31 @@ def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
                   AND  r.time_seconds IS NOT NULL
             """, (pids, source, day))
         else:
+            cur.execute("SELECT 1 WHERE false")
+        twins = cur.fetchall()
+        # ★ THE SAME RACE IN ANOTHER DIVISION OF THIS MEET (owner, 2026-11-04,
+        #   the ICCAC women: "Women's D1" and "Women's Combined" list the one
+        #   race twice on athletic.net). The copy is a twin and is never
+        #   priced, so its page was all dashes beside a rated Combined. The
+        #   same runner's rated row in a sibling division, within a second.
+        #   Cross country only: on the track another division is another event.
+        sibs = []
+        own = [int(r["result_id"]) for r in rows
+               if str(r.get("result_id") or "").lstrip("-").isdigit()]
+        if table == "results" and pids:
+            cur.execute(f"""
+                SELECT r.person_id, r.time_seconds, r.speed_rating,
+                       {_ratingPoolCol(cur, table)},
+                       NULL::text AS name
+                FROM   {table} r
+                WHERE  r.meet_id = %s AND r.source = %s AND r.person_id = ANY(%s)
+                  AND  r.result_id <> ALL(%s)
+                  AND  r.speed_rating IS NOT NULL AND r.time_seconds IS NOT NULL
+            """, (meet_id, source, pids, own))
+            sibs = cur.fetchall()
+        if not twins and not sibs:
             cur.execute("ROLLBACK TO SAVEPOINT twin_borrow")   # and the timeout
             return 0
-        twins = cur.fetchall()
         cur.execute("SET LOCAL statement_timeout = %s", (was,))
         cur.execute("RELEASE SAVEPOINT twin_borrow")
     except Exception:                                   # noqa: BLE001
@@ -4285,6 +4307,9 @@ def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
         if t.get("person_id") is not None:
             by_pid.setdefault(t["person_id"], []).append(t)
         by_name.setdefault(key(t.get("name")), []).append(t)
+    sib_pid = {}
+    for t in sibs:
+        sib_pid.setdefault(t["person_id"], []).append(t)
     n = 0
     for r in need:
         cands = by_pid.get(r.get("person_id")) if r.get("person_id") else None
@@ -4294,6 +4319,10 @@ def _borrowTwins(cur, rows, table, meet_id, source, name_key="name"):
                      and abs(float(t["time_seconds"]) - float(r["time_seconds"])) <= 1.0]
         if not cands:
             cands = [t for t in by_name.get(key(r.get(name_key)), [])
+                     if r.get("time_seconds") is not None
+                     and abs(float(t["time_seconds"]) - float(r["time_seconds"])) <= 1.0]
+        if not cands and r.get("person_id") is not None:
+            cands = [t for t in sib_pid.get(r["person_id"], ())
                      if r.get("time_seconds") is not None
                      and abs(float(t["time_seconds"]) - float(r["time_seconds"])) <= 1.0]
         if len(cands) != 1:

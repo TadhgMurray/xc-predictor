@@ -7,6 +7,7 @@ find_split_people.py -- one runner on two athlete pages, found in bulk.
     $P scripts/find_split_people.py --since 2024 --show 200
     $P scripts/find_split_people.py --write              # merge them (merge_pages' mechanism)
     $P scripts/link_profile_school.py --undo OLD         # undo one
+    $P scripts/find_split_people.py --why 16152289 29638265   # why not these two
 
 ★ WHY (owner, 2026-11-04: "linker needs mucho work ... There are too many of
   these issues"). Mya Curtis, Iowa Western sophomore: /athlete/16152289 holds
@@ -212,16 +213,66 @@ def _ruled(cur):
     return out
 
 
+def why(cur, a, b, since):
+    """Print why two pages are (not) proposed as one runner: each one's
+    seasons as findPairs keys them, the owner's rulings on either, and any
+    same-day race at different times."""
+    from person_name import personKey
+    from search_index import schoolFold
+    cur.execute(_SEASONS + " AND s.person_id = ANY(%(p)s)", {"since": since, "p": [a, b]})
+    cols = ("person_id", "school", "level", "gender", "year", "n_races", "grade")
+    seasons = [dict(zip(cols, r)) for r in cur.fetchall()]
+    names = _names(cur, {a, b})
+    for pid in (a, b):
+        print(f"  /athlete/{pid}  name {names.get(pid)!r} -> key "
+              f"{personKey(names.get(pid), keep_suffix=True)!r}")
+        mine = [s for s in seasons if s["person_id"] == pid]
+        if not mine:
+            print(f"    no athlete_season since {since} (unrated rows give no season: "
+                  f"nothing to pair on)")
+        for s in sorted(mine, key=lambda x: x["year"]):
+            print(f"    {s['year']}  school {s['school']!r} -> {schoolFold(s['school'])!r}  "
+                  f"{s['level']} {s['gender']}  grade {s['grade']!r} -> "
+                  f"{gradeKey(s['grade'], s['level'])!r}  {s['n_races']} races")
+    for label, sql in (("result_detach", "SELECT from_person, to_person FROM result_detach "
+                                         "WHERE from_person = ANY(%(p)s) OR to_person = ANY(%(p)s)"),
+                       ("profile_school_veto", "SELECT old_id, new_id FROM profile_school_veto "
+                                               "WHERE old_id = ANY(%(p)s) OR new_id = ANY(%(p)s)"),
+                       ("profile_school_merge", "SELECT old_id, new_id FROM profile_school_merge "
+                                                "WHERE old_id = ANY(%(p)s) OR new_id = ANY(%(p)s)")):
+        try:
+            cur.execute("SAVEPOINT w")
+            cur.execute(sql, {"p": [a, b]})
+            got = cur.fetchall()
+            cur.execute("RELEASE SAVEPOINT w")
+        except Exception as exc:                          # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT w")
+            got = f"(unreadable: {type(exc).__name__})"
+        print(f"  {label}: {got or 'nothing'}")
+    for s in seasons:
+        s["name"] = names.get(s["person_id"])
+    pairs = findPairs(seasons)
+    print(f"  findPairs: {pairs or 'no pair'}")
+    if pairs:
+        print(f"  same race, same day, different times: {'YES' if clashes(cur, pairs) else 'no'}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--since", type=int, default=2025, help="first season read (default 2025)")
     ap.add_argument("--show", type=int, default=60)
     ap.add_argument("--write", action="store_true")
+    ap.add_argument("--why", nargs=2, type=int, metavar=("A", "B"),
+                    help="two athlete ids: say why they are (not) proposed as one runner")
     a = ap.parse_args(argv)
     from database import getConn
     with getConn() as conn:
         with conn.cursor() as cur:
+            if a.why:
+                why(cur, a.why[0], a.why[1], a.since)
+                conn.rollback()
+                return 0
             cur.execute(_SEASONS, {"since": a.since})
             cols = ("person_id", "school", "level", "gender", "year", "n_races", "grade")
             seasons = [dict(zip(cols, r)) for r in cur.fetchall()]
