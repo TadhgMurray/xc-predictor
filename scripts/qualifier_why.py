@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""
+qualifier_why.py -- why a runner is or is not in a championship's qualifier
+field: every round the rule reads, run or predicted, and where they are in
+it. READ ONLY; runs the same code as the nightly (build_qualified_fields),
+predictions included, so it takes a few minutes.
+
+    set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
+    $P scripts/qualifier_why.py "Marcelo Mantecon"
+    $P scripts/qualifier_why.py "Natasza Dudek" --rule nxn --date 2026-12-05
+
+★ WHY (owner, 2026-11-04: "still no marcelo mantecon" in the NXN field --
+  "he would win if in"). The field is the rule applied to its rounds; this
+  prints each round with the runner's place and team in it, so a missing
+  runner is either a round not found, a race not read, or a place the rule
+  does not take.
+"""
+import argparse
+import os
+import sys
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for sub in ("racecast", "scripts", "engine", "model"):
+    p = os.path.join(_ROOT, sub)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("name", help="the runner's first and last name")
+    ap.add_argument("--rule", default="nxn", help="ncaa_d1, ncaa_d2, ncaa_d3 or nxn")
+    ap.add_argument("--date", default=None, help="the championship's date (default: NXN's, "
+                                                 "the first Saturday of December)")
+    a = ap.parse_args()
+
+    import datetime
+    import psycopg2.extras
+    import qualifying as Q
+    import upcoming_preview as U
+    from database import getConn
+
+    rule = next((r for r in Q.RULES if r["key"] == a.rule), None)
+    if rule is None:
+        sys.exit(f"no rule {a.rule!r}: {', '.join(r['key'] for r in Q.RULES)}")
+    day = a.date
+    if not day:
+        d = datetime.date(datetime.date.today().year, 12, 1)
+        day = (d + datetime.timedelta(days=(5 - d.weekday()) % 7)).isoformat()
+    src = rule["source"]
+
+    with getConn() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SET statement_timeout = '900s'")
+        cur.execute("""SELECT DISTINCT person_id, gender FROM athletes
+                       WHERE lower(btrim(first_name) || ' ' || btrim(last_name)) = lower(%s)
+                         AND person_id IS NOT NULL""", (a.name.strip(),))
+        people = cur.fetchall()
+        if not people:
+            sys.exit(f"no athlete named {a.name!r}")
+        ids = {int(p["person_id"]) for p in people}
+        gender = next((p["gender"] for p in people if p["gender"] in ("M", "F")), None)
+        print(f"{a.name}: person {', '.join(map(str, sorted(ids)))}, gender {gender or '?'}; "
+              f"{rule['key']} on {day}")
+        if gender not in ("M", "F"):
+            sys.exit("no gender on the athlete rows: cannot pick the race")
+
+        seen = []
+        orig = Q.roundResults
+
+        def ran(cur_, rule_, mid, g, season=None, every=False):
+            rows = orig(cur_, rule_, mid, g, season, every)
+            if not every:
+                seen.append(("ran", mid, None, rows))
+            return rows
+
+        def predicted(mid, g):
+            rows = U.predictedRound(cur, mid, g, src, live=True)
+            seen.append(("predicted (this season, posted)", mid, None, rows))
+            return rows
+
+        def past(mid, div, on):
+            rows = U.predictedPast(cur, mid, div, src, on)
+            seen.append((f"last season's run again on {on}", mid, div, rows))
+            return rows
+
+        Q.roundResults = ran
+        info = {}
+        try:
+            field, n_pred = Q.fieldFromRounds(cur, rule, day, gender, predict=predicted,
+                                              predict_past=past, info=info)
+        finally:
+            Q.roundResults = orig
+        names = {}
+        mids = sorted({m for _k, m, _d, _r in seen})
+        if mids:
+            table = "meets_tfrrs" if src == "tfrrs" else "meets"
+            cur.execute(f"SELECT DISTINCT meet_id, meet_name FROM {table} WHERE meet_id = ANY(%s)",
+                        (mids,))
+            names = {int(r["meet_id"]): r["meet_name"] for r in cur.fetchall()}
+        conn.rollback()
+
+    print(f"rounds counted {info.get('rounds', 0)} (this season found {info.get('this_season', 0)}, "
+          f"last season's {info.get('last_season', 0)}); field {len(field or {})}\n")
+    for kind, mid, div, rows in seen:
+        order = sorted(rows or [], key=lambda r: r[2])
+        at = next(((i, r) for i, r in enumerate(order, 1) if r[0] in ids), None)
+        teams = Q.teamOrder(order) if order else []
+        where = "not in it"
+        if at:
+            i, r = at
+            team = (f", team {teams.index(r[1]) + 1} of {len(teams)}" if r[1] in teams else "")
+            where = f"place {i} of {len(order)} for {r[1]!r}{team}"
+        print(f"  {names.get(mid, mid)!s:50.50} {kind}: {len(order)} runners; {a.name} {where}")
+    inn = sorted(ids & set(field or {}))
+    print(f"\n{a.name} {'IS' if inn else 'is NOT'} in the field"
+          + (f" (for {field[inn[0]]!r})" if inn else ""))
+
+
+if __name__ == "__main__":
+    main()

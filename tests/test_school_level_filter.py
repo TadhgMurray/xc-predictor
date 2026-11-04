@@ -106,15 +106,18 @@ def test_the_field_derives_it_and_hands_it_back():
     level off, so the field it is being added to lends its own."""
     pred = read("racecast", "predict.py")
     mf = body(pred, "meetField")
-    assert "_fieldLevels(cur" in mf, mf
+    # ★ _raceLevels: the level the race was run at (2026-11-04), then
+    #   _fieldLevels at its own season
+    assert "_raceLevels(cur" in mf, mf
     assert '"levels": sorted(levels)' in mf, mf
     # and the prediction path derives the same thing, for a request that
     # sends no explicit field
     tr = body(pred, "_teamRosters")
-    assert "_fieldLevels(" in tr, tr
+    assert "_raceLevels(" in tr, tr
     # ! AND IT VOTES ON THE LINEUP, not on the whole entry list. See
     #   test_the_level_is_read_off_the_lineup_not_the_archive.
-    assert "_lineupIds(originals)" in tr, tr
+    rl = body(pred, "_raceLevels")
+    assert "_lineupIds(originals)" in rl and "_fieldLevels(" in rl, rl
 
 
 class SeasonCursor:
