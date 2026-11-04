@@ -49,6 +49,19 @@ for _p in (_HERE, _ROOT, os.path.join(_ROOT, "engine"), os.path.join(_ROOT, "rac
 
 MINT_FLOOR = 1_000_000_000      # link_tfrrs_rows.MINT_BASE: a minted person
 
+# ★ NOT A SCHOOL, SO NOT A SHARED ONE (owner's --write, 2026-11-04: "Jayden
+#   Williams (Unattached)" merged). Two runners of one common name who both
+#   entered unattached share nothing; the rule's school is evidence only when
+#   it is a team.
+_NO_TEAM = {"unattached", "unaffiliated", "independent", "unknown", "none", "na", "n a",
+            "no team", "no school", "individual", "open"}
+
+
+def noTeam(fold):
+    """True for a school string that names no team. Pure."""
+    f = " ".join(str(fold or "").replace("-", " ").split())
+    return not f or f in _NO_TEAM or f.startswith("unattached ") or f.startswith("unaffiliated ")
+
 
 def gradeKey(grade, level):
     """A grade as one comparable token: 'SO-2', 'So', '14' -> 'so' in college,
@@ -82,7 +95,7 @@ def findPairs(seasons):
     for s in seasons:
         k = personKey(s.get("name"), keep_suffix=True)
         sch = schoolFold(s.get("school"))
-        if not k or not sch or not s.get("level") or not s.get("gender"):
+        if not k or not sch or noTeam(sch) or not s.get("level") or not s.get("gender"):
             continue
         p = by[(k, sch, s["level"], s["gender"])][s["person_id"]]
         p["years"][s["year"]] = gradeKey(s.get("grade"), s["level"]) or p["years"].get(s["year"])

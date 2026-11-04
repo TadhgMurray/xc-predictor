@@ -104,15 +104,26 @@ def test_a_venue_that_reads_fast_every_day_is_left_to_its_difficulty():
     assert v["action"] == "review"
 
 
-def test_upward_is_never_a_pin():
-    # men's 8K stored at the women's 5K: the men read slow (underrated, safe)
-    v = WD.judge(_div(5000, _x(8000, 5000), name="Men"),
-                 {"venue_meets": [0.0, 0.01], "sib_labels": [8000.0],
-                  "venue_labels": [8000.0], "sibs": [0.0]})
-    assert v["direction"] == "up" and v["proposed"] == 8000.0
-    assert v["action"] == "pin-up?"      # review only, never written by itself
+def test_upward_is_a_pin_only_on_overwhelming_evidence():
+    # men's 8K stored at the women's 5K: the men read slow. Owner, 2026-11-04
+    # ("yes, but ... slightly slow shouldn't count"): raised when 30+ runners,
+    # 95% slow, the meet runs the distance and its other races ran true
+    ctx = {"venue_meets": [0.0, 0.01], "sib_labels": [8000.0],
+           "venue_labels": [8000.0], "sibs": [0.0]}
+    v = WD.judge(_div(5000, _x(8000, 5000), name="Men"), dict(ctx))
+    assert v["direction"] == "up" and v["proposed"] == 8000.0 and v["action"] == "pin"
+    # a smaller field: listed, never written by itself
+    v = WD.judge(_div(5000, _x(8000, 5000), n=20, name="Men"), dict(ctx))
+    assert v["action"] == "pin-up?"
+    # the whole meet ran slow (mud, heat): no raise
+    v = WD.judge(_div(5000, _x(8000, 5000), name="Men"), dict(ctx, sibs=[0.3, 0.35]))
+    assert v["action"] != "pin"
+    # a distance nobody here runs: no raise
     v = WD.judge(_div(5000, _x(8000, 5000), name="Men"), {"sibs": [0.0, 0.0]})
     assert v["action"] in ("novote", "review")
+    # slightly slow is a label difference, never a raise (3 mi -> 5K)
+    v = WD.judge(_div(4828, 0.04), dict(ctx, sib_labels=[5000.0]))
+    assert v["action"] != "pin"
 
 
 def test_ambiguous_candidates_take_the_lower_distance():

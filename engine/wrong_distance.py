@@ -78,6 +78,18 @@ SUSPECT = 0.03           # pass 1: a division this far off is left out of refere
 THIN_FIELD = 12          # runners with 1+ OTHER race before a thin field testifies
 THIN_SHARE = 0.85        # ... and this share of them off the same way (3%+)
 
+# ---- a distance RAISED (owner, 2026-11-04, "yes, but like if they all run
+#      slightly slow, that shouldn't count and go from 3 mile to 5k"): the
+#      JV White race at Forest Park, listed 3000 m, 71 runners all ~69% slow,
+#      a 24:39 rated 57. Raised only to the LONGEST real distance the times
+#      reach (never past them: no rating above what was run), only by
+#      BIG_MOVE+ (3 mi -> 5K is a label difference, never a raise), only on a
+#      big, unanimous field, only to a distance the meet or the venue runs,
+#      and only when the meet's other races that day ran true (a muddy or
+#      hot day slows every race, not one) ----
+UP_FIELD = 30
+UP_SHARE = 0.95
+
 # ---- a division ----
 FIELD_MIN = 6            # runners with a reference before the field testifies
 PIN_MIN = 10             # ... and before it can be pinned (fewer: listed for review)
@@ -323,6 +335,14 @@ def judge(d, ctx):
         return out
     cands = candidates(ctx.get("venue_labels", ()))
     s = snap(imp, cands, list(ctx.get("sib_labels", ())) + list(ctx.get("venue_labels", ())))
+    if x > 0:
+        # slow: the longest real distance the times reach, never one past
+        # them -- when that is itself a real move; otherwise the verdict is
+        # what it always was (novote, review: a too-short label still stops
+        # voting on the course)
+        reach = [c for c in cands if math.log(c / imp) <= OVERSHOOT]
+        if reach and math.log(max(reach) / listed) >= BIG_MOVE:
+            s = max(reach)
     if s is None:
         out.update(kind="off_no_standard", action="review", evidence="; ".join(ev))
         return out
@@ -347,7 +367,9 @@ def judge(d, ctx):
     # ! THE MEET'S OTHER RACES TESTIFY ONLY WHEN THEY ARE NOT THE BASELINE:
     #   against the venue's usual when there is one, else against nothing
     sibs = ctx.get("sibs", [])
-    if sibs and abs(statistics.median(sibs) - (base if base_kind == "venue" else 0.0)) <= SIB_TRUE:
+    sib_true = bool(sibs) and abs(statistics.median(sibs)
+                                  - (base if base_kind == "venue" else 0.0)) <= SIB_TRUE
+    if sib_true:
         pts += 1
         ev.append(f"the meet's other {len(sibs)} races ran true")
     runs_it = False         # does this meet or venue actually run the proposal?
@@ -405,6 +427,10 @@ def judge(d, ctx):
     else:
         act = ("pin-up?" if conf == "high" and runs_it
                else "novote" if conf in ("high", "medium") else "review")
+        if n_ref >= UP_FIELD and (share or 0) >= UP_SHARE and sib_true and runs_it and not wide:
+            act = "pin"
+            ev.append(f"{n_ref} runners, {100 * share:.0f}% slow, the meet's other races "
+                      f"true: raised to {s:g}, the longest real distance the times reach")
         if wide:
             # ! EVERY DAY HERE READS SLOW: a hard course far more often than
             #   a label wrong every year (Steens Mountain +41%). novote on all
@@ -964,6 +990,15 @@ def keeps(row, v):
         return (v.get("kind") == "combined",
                 "still two races in one division" if v.get("kind") == "combined"
                 else "no longer two races in one division")
+    if row["action"] == "pin" and float(row["distance"]) > listed:
+        # a raise (UP_FIELD): kept while the field still reads slow and the
+        # pin is still within what the times reach
+        if x is None or x < STAY:
+            return False, f"the field now reads {100 * (x or 0):+.1f}% at the listed distance"
+        imp = implied(listed, x)
+        if math.log(float(row["distance"]) / imp) > OVERSHOOT:
+            return False, f"the pin {row['distance']:g} is now longer than the {imp:,.0f} the times say"
+        return True, f"the field still reads {100 * x:+.1f}%"
     if row["action"] == "pin":
         if x is None or x > -STAY:
             return False, f"the field now reads {100 * (x or 0):+.1f}% at the listed distance"

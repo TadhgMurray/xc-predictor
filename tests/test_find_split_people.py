@@ -59,3 +59,15 @@ def test_chains_and_forks_merge_into_one_page():
     assert {k for _o, k, *_x in got} == {1}             # all to the page with most races
     got = F.oneKeeper([(1_009_000_001, 7, "B", "S")], {1_009_000_001: 90, 7: 2})
     assert got == [(1_009_000_001, 7, "B", "S")]        # never a placeholder as keeper
+
+
+def test_unattached_is_no_shared_school():
+    """owner's --write, 2026-11-04: 'Jayden Williams (Unattached)' merged."""
+    import find_split_people as F
+    seasons = [dict(person_id=1, name="Jayden Williams", school="Unattached", level="hs",
+                    gender="m", year=2026, n_races=3, grade="11"),
+               dict(person_id=2, name="Jayden Williams", school="Unattached", level="hs",
+                    gender="m", year=2026, n_races=1, grade="11")]
+    assert F.findPairs(seasons) == []
+    assert F.noTeam("unattached") and F.noTeam("Unattached-Ohio".lower())
+    assert not F.noTeam("una vermont") and not F.noTeam("iowa western cc")

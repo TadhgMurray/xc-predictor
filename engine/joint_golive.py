@@ -148,6 +148,25 @@ def fieldCheckOn():
     return os.environ.get("XCP_FIELD_CHECK", "1").strip() not in ("0", "", "off")
 
 
+# ★ AND PER DIVISION (owner, 2026-11-04, Mt. SAC 2026 Race 53: "This is so
+#   fake" -- "yes, I think" to a race-level term). The check reads the
+#   solve's race key, a venue on a day, so Mt. SAC's Friday was one field of
+#   5,205 runners; Race 53 -- its runners 2.6% FASTER than their own other
+#   races on the raw times, credited a +4.7% course and a slow day -- rated
+#   7-9 above every other race of their seasons, and was diluted away. The
+#   same test, the same thresholds, on each division (D.subrace) with the
+#   min_field runners on each side; a division takes only the deflation
+#   BEYOND what its venue-day already took. One way only, as above.
+#   XCP_FIELD_CHECK_DIVISION=0 turns it off.
+def fieldCheckDivisionOn():
+    return os.environ.get("XCP_FIELD_CHECK_DIVISION", "1").strip() not in ("0", "", "off")
+
+
+def divisionExtra(div_corr, sub, race_corr, race):
+    """Per row, a division's field-check deflation beyond its race's. Pure."""
+    return np.maximum(np.asarray(div_corr)[sub] - np.asarray(race_corr)[race], 0.0)
+
+
 def _groupMedian(group, values, n_group):
     """(median, count) of values per group id; NaN where a group has none."""
     group = np.asarray(group, dtype=np.int64)
@@ -696,6 +715,19 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
         hit = field_corr > 0
         eff = eff - np.where(sport == 0, field_corr[D.race], 0.0)
         rows_hit = int((hit[D.race] & (sport == 0)).sum())
+        sub = getattr(D, "subrace", None)
+        if fieldCheckDivisionOn() and sub is not None and np.asarray(sub).size == D.race.size:
+            sub = np.asarray(sub, dtype=np.int64)
+            div_corr, *_x = fieldCheck(x, D.athlete, np.asarray(cols["days"][keep]),
+                                       sub, int(sub.max()) + 1 if sub.size else 0, fmask)
+            extra = np.where(sport == 0, divisionExtra(div_corr, sub, field_corr, D.race), 0.0)
+            eff = eff - extra
+            moved = extra > 0
+            print(f"[joint/live] field check by division: "
+                  f"{int(np.unique(sub[moved]).size):,} divisions rated above their runners' "
+                  f"earlier and later races beyond their venue-day, {int(moved.sum()):,} rows "
+                  f"pulled down a further median "
+                  f"{100 * float(np.median(extra[moved])) if moved.any() else 0:.2f}%")
         print(f"[joint/live] field check: {int(hit.sum()):,} XC races whose "
               f"field rated above both its earlier and its later races "
               f"(or, in an opener, above its later ones) "
