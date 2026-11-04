@@ -821,6 +821,7 @@ ENV_RULES = {
     **_all("XCP_RACE_KEY XCP_RACE_EFFECT_OWN XCP_DAY_DIVISION_GUARD XCP_DAY_DIVISION_SHRINK XCP_DAY_SOFT "
            "XCP_DAY_PRIOR", "REMOVED", RACE),
     "XCP_DAY_GUARD_NEAR_ZERO": ("REMOVED", RACE + " (ablation switch for the day guard's tie-break)"),
+    "XCP_QUALIFIED_BUILD": ("INFRA", "1 = build the qualified fields table (build_qualified_fields.py); 0 skips it"),
     "XCP_WX_RECENT_MIN": ("INFRA", "minutes the recent-weather fetch may run before the pipeline stops "
                                    "waiting on it (2026-11-03: a stuck fetch held a run 10 hours)"),
     "XCP_DAY_DISTANCE": ("REMOVED", RACE + " (the loop layer between venue and division; off until the "

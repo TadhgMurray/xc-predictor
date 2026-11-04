@@ -264,6 +264,15 @@ step 03b_age_bands    "$PY" -u engine/age_band_grades.py --write
 # one runner in both feeds is one person (run_pipeline.sh says why)
 [ "${XCP_LINK_FEED_TWINS:-1}" = "0" ] || \
   step 04a2b_feed_twins "$PY" -u scripts/link_feed_twins.py --write
+# ★ ONE RUNNER ON TWO PAGES (owner, 2026-11-04: "we can't just manually do
+#   all those links"): same name, school, level, gender and season, no grade
+#   clash, never one race at two times -> one page (scripts/
+#   find_split_people.py; undo one with link_profile_school.py --undo OLD).
+#   After the linkers, before the pins, never blocking the night.
+#   XCP_SPLIT_PEOPLE=0 turns it off.
+if [ "${XCP_SPLIT_PEOPLE:-1}" != "0" ]; then
+  step 04a2c_split_people "$PY" -u scripts/find_split_people.py --write --show 20 || true
+fi
 # the owner's "not mine" detaches, after the linkers (run_pipeline.sh says why)
 step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 step 04b_wheelchair   "$PY" -u engine/wheelchair_flag.py --write
