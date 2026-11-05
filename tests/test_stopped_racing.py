@@ -121,3 +121,19 @@ def test_a_row_given_last_seasons_grade_is_still_ungraded():
                     for i in range(2, 9) for m, d in MEETS]
     year = SY.academicYear(D(2026, 10, 18))
     assert 1 in P._stoppedRacing(Cur(), sq, "XC", year, today=D(2026, 10, 18))
+
+
+def test_a_qualified_team_that_loses_a_stopped_runner_sends_its_next(monkeypatch):
+    """owner, 2026-11-05: "now Loras only has 5" -- a team keeps its number."""
+    entries = ([{"person_id": 1, "school": "Loras", "pool": "college_m", "rating": 140.0}]
+               + [{"person_id": i, "school": "Loras", "pool": "college_m", "rating": 120.0 - i}
+                  for i in range(2, 8)]
+               + [{"person_id": 50, "school": "Solo U", "pool": "college_m", "rating": 130.0}])
+    monkeypatch.setattr(P, "_stoppedRacing", lambda cur, by, sport, yr: {1: 5, 50: 4})
+    monkeypatch.setattr(P, "_currentSquads", lambda cur, schools, sport, yr, gender=None,
+                        levels=None: {"Loras": [{"person_id": i, "rating": 125.0 - i,
+                                                 "pool": "college_m"} for i in range(1, 12)]})
+    got = P.dropStopped(None, entries, "XC", 2026)
+    loras = [e["person_id"] for e in got if e["school"] == "Loras"]
+    assert 1 not in loras and len(loras) == 7 and 8 in loras     # next best steps in
+    assert 50 not in [e["person_id"] for e in got]               # an individual is not refilled
