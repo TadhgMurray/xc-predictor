@@ -712,7 +712,8 @@ def stampTeamHrefs(teams, school_key="school", state_key="state"):
                 if str(t.get("pool") or "").startswith("college"):
                     full = collegeFullName(t[school_key], t.get(state_key))
                     if full:
-                        t["school_label"] = full
+                        from school_identity import withState
+                        t["school_label"] = withState(full, t.get(state_key))
             except Exception:                           # noqa: BLE001
                 pass
     return teams

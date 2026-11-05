@@ -54,3 +54,26 @@ def test_facilities_numbers_and_small_fits_keep_courses_apart():
     ok, _why = B.coreAgree(["Red Bud Country Club", "Red Bud Sports Complex"],
                            {"Red Bud Country Club": (0.100, 550), "Red Bud Sports Complex": (0.056, 186)})
     assert not ok
+
+
+def test_a_cluster_with_another_name_still_merges_its_core():
+    """owner, 2026-11-05: LaVern Gibson's spellings never reached the plan
+    because their cluster also held a name of another core."""
+    rows = _rows() + [("Terre Haute Gibson Park", 39.405, -87.405, 1, NAMES[0], 3, 50)]
+    old = dict(_old())
+    old[("Terre Haute Gibson Park", 39.405, -87.405)] = (12, "Terre Haute Gibson Park")
+    diffs = {NAMES[0]: (0.038, 5000), NAMES[1]: (0.041, 3000)}
+    out, _nv, _ni = B.keepIds(rows, old, merge_core=True, diffs=diffs)
+    ids = {r[0]: r[3] for r in out}
+    assert ids[NAMES[0]] == ids[NAMES[1]] == 10
+    assert ids["Terre Haute Gibson Park"] == 12
+    assert B.keepIds.merges == [(NAMES[0], 10, [11])]
+
+
+def test_the_merge_follows_an_id_into_another_cluster():
+    rows = _rows() + [(NAMES[1] + " ", 40.9, -88.9, 2, NAMES[1], 1, 10)]
+    old = dict(_old())
+    old[(NAMES[1] + " ", 40.9, -88.9)] = (11, NAMES[1])
+    diffs = {NAMES[0]: (0.038, 5000), NAMES[1]: (0.041, 3000)}
+    out, _nv, _ni = B.keepIds(rows, old, merge_core=True, diffs=diffs)
+    assert {r[3] for r in out} == {10}

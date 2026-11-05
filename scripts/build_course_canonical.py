@@ -602,6 +602,7 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
     """
     keepIds.refused = []
     keepIds.detail = []
+    remap = {}                      # core merges: {old id: (host id, host name)}
     by_cluster = {}
     for r in rows:
         by_cluster.setdefault(r[3], []).append(r)
@@ -613,20 +614,44 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
         mapped = [(old[(m[0], m[1], m[2])], m[6]) for m in members
                   if (m[0], m[1], m[2]) in old]
         one_name = len({expandAbbreviations(normalizeCourseName(m[0])) for m in members}) == 1
-        cores = {coreKey(expandAbbreviations(normalizeCourseName(m[0]))) for m in members}
-        one_core = len(cores) == 1 and None not in cores
         n_old = len({oid for (oid, _n), _r in mapped})
-        core_ok = False
-        if merge_core and one_core and not one_name and n_old > 1:
-            _names = sorted({nm for (_oid, nm), _r in mapped})
-            why = coreConflict(_names)
-            core_ok = why is None
-            if core_ok:
-                core_ok, why = coreAgree(_names, diffs or {})
-            if not core_ok:
-                getattr(keepIds, "refused", []).append(
-                    (sorted({nm for (_oid, nm), _r in mapped}), why))
-        if ((merge_same_name and one_name) or core_ok) and n_old > 1:
+        # ★ CORE MERGES ARE BY CORE, NOT BY CLUSTER (owner, 2026-11-05:
+        #   LaVern Gibson's spellings missing from the plan). A cluster
+        #   joins every venue the similarity and same-name rules reach, so
+        #   it can hold a name of another core too ("Gibson Course",
+        #   "Terre Haute"); asking the WHOLE cluster for one core then
+        #   skipped it without a word. The existing ids are grouped by
+        #   their own name's core, and each group of two or more joins
+        #   (or is KEPT APART, printed) on its own.
+        if merge_core and n_old > 1 and not (merge_same_name and one_name):
+            by_core = {}
+            for (oid, nm), n in mapped:
+                k = coreKey(expandAbbreviations(normalizeCourseName(nm)))
+                if k:
+                    e = by_core.setdefault(k, {}).setdefault(oid, [nm, 0])
+                    e[1] += n or 0
+            for _k, ids in sorted(by_core.items()):
+                names = sorted({v[0] for v in ids.values()})
+                if len(ids) < 2 or len(names) < 2:
+                    continue
+                why = coreConflict(names)
+                ok = why is None
+                if ok:
+                    ok, why = coreAgree(names, diffs or {})
+                if not ok:
+                    keepIds.refused.append((names, why))
+                    continue
+                host = max(ids, key=lambda o: (ids[o][1], -o))
+                gone = sorted(o for o in ids if o != host)
+                for o in gone:
+                    remap[o] = (host, ids[host][0])
+                merges.append((ids[host][0], host, gone))
+                d = diffs or {}
+                keepIds.detail.append((
+                    "core name",
+                    [f"{nm} ({d[nm][0]:+.3f}, {d[nm][1]} results)" if nm in d else nm
+                     for nm in names]))
+        if merge_same_name and one_name and n_old > 1:
             (host_id, host_name), _n = max(mapped, key=lambda t: t[1])
             gone = sorted({oid for (oid, _nm), _r in mapped} - {host_id})
             merges.append((host_name, host_id, gone))
@@ -634,7 +659,7 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
             # each one's fitted difficulty (diffs) where there is one
             d = diffs or {}
             keepIds.detail.append((
-                "same name" if (merge_same_name and one_name) else "core name",
+                "same name",
                 [f"{nm} ({d[nm][0]:+.3f}, {d[nm][1]} results)" if nm in d else nm
                  for nm in sorted({nm for (_oid, nm), _r in mapped})]))
             for m in members:
@@ -656,6 +681,8 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
                 oid, oname = host_id, host_name
                 n_new_v += 1
             out.append((m[0], m[1], m[2], oid, oname, 0, m[6]))
+    # an id may have venues in other clusters too: the merge follows them
+    out = [(a, b, c) + remap.get(d, (d, e)) + (f, g) for a, b, c, d, e, f, g in out]
     # ★ EXCEPT A DELIBERATE SPLIT THAT AN OLD BUILD MERGED (protectedSplit).
     #   "Keeps its id, always" would hand the rain course the main course's id
     #   on every rebuild, which is the bug. Where one id holds names with
@@ -713,6 +740,34 @@ def writeMapping(rows):
         conn.commit()
 
 
+def _explainVenue(text, venues, rows):
+    """--venue: the venues a name search would list, as the build sees them."""
+    from course_identity import haversineMeters
+    old = loadExisting()
+    cluster = {(r[0], r[1], r[2]): (r[3], r[5]) for r in rows}
+    t = text.lower()
+    hits = [v for v in venues if t in str(v["name"]).lower()]
+    print(f"\n  {len(hits)} venues whose name holds {text!r}")
+    for v in sorted(hits, key=lambda v: -v["n_rows"]):
+        k = (v["name"], v["gps_lat"], v["gps_long"])
+        oid = old.get(k)
+        cl, size = cluster.get(k, (None, None))
+        print(f"    {v['name']!r:<48} rows {v['n_rows']:>5}  ({v['gps_lat']:.5f}, {v['gps_long']:.5f})"
+              f"  id {oid[0] if oid else 'NEW'} {repr(oid[1]) if oid else ''}")
+        print(f"        normalised {v['canonical']!r}  core {coreKey(v['canonical'])}  "
+              f"far-name {farName(v['canonical'])}  cluster {cl} ({size} venues)")
+    for i in range(len(hits)):
+        for j in range(i + 1, len(hits)):
+            a, b = hits[i], hits[j]
+            d = haversineMeters(float(a["gps_lat"]), float(a["gps_long"]),
+                                float(b["gps_lat"]), float(b["gps_long"]))
+            if d < 50000:
+                print(f"    {d / 1000:7.2f} km  {a['name']!r} / {b['name']!r}")
+    print(f"\n  core pairs reach {SAME_NAME_FAR / 1000:g} km; same-name pairs "
+          f"{SAME_NAME_RADIUS / 1000:g} km, {SAME_NAME_FAR / 1000:g} km for a far name")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build the course_canonical mapping table.")
@@ -730,6 +785,11 @@ def main():
                              "filler (coreKey: 'LaVern Gibson Course' / '... Championship "
                              "Course') when their fitted difficulties agree within CORE_AGREE; "
                              "merges and refusals listed in the plan")
+    parser.add_argument("--venue", default=None,
+                        help="print every venue whose name holds this text (any case): its "
+                             "normalised name, core, point, rows, existing id, the cluster it "
+                             "lands in, and the distance between each pair -- why two "
+                             "spellings did or did not merge")
     parser.add_argument("--incremental", action="store_true",
                         help="keep every existing course's id; new venues join their "
                              "cluster's id or get a fresh one (the pipeline's mode, 06b)")
@@ -737,6 +797,8 @@ def main():
 
     venues = loadVenues()
     rows, stats = buildMapping(venues, args.radius, args.min_sim)
+    if args.venue:
+        return _explainVenue(args.venue, venues, rows)
     if args.incremental:
         old = loadExisting()
         diffs = loadDifficulties() if args.merge_core_name else {}

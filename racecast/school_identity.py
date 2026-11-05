@@ -290,8 +290,8 @@ def schoolLabelIn(school, state, trusted=False, pool=None):
     p = str(pool or "").lower()
     if p.startswith(("college", "pro")):
         st = teamState(school, pool, state)
-        return (collegeFullName(school, st) if p.startswith("college") else None) \
-            or withState(school, st)
+        return withState((collegeFullName(school, st) if p.startswith("college") else None)
+                         or school, st)
     st = contextState(school, state, trusted)
     return withState(school, st)
 
@@ -413,10 +413,14 @@ def schoolLabelFor(school, pool, state=None):
     if not school:
         return school
     st = teamState(school, pool, state)
+    # ★ THE FULL NAME KEEPS ITS STATE (owner, 2026-11-05: "Wake Forest
+    #   University" with no state beside "Tennessee (TN)" on the college
+    #   team board -- "I would rather have it"). Every college row reads
+    #   "<name> (ST)", whichever name it is called by.
     if str(pool or "").lower().startswith("college"):
         full = collegeFullName(school, st)
         if full:
-            return full
+            return withState(full, st)
     return withState(school, st)
 
 

@@ -31,8 +31,13 @@ import re
 import sys
 from collections import Counter, defaultdict
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "engine")
+for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "engine"),
+           os.path.join(_ROOT, "racecast")):
+    if _p not in sys.path:
+        sys.path.append(_p)
 
 from database import getConn                          # noqa: E402
 

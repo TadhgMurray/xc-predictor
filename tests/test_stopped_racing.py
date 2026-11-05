@@ -198,7 +198,9 @@ def test_a_college_a_high_school_shares_its_name_with_is_called_by_its_own(monke
     assert SI.collegeFullName("Calvin", "MI") == "Calvin University"
     assert SI.collegeFullName("Tufts", "MA") is None          # no namesake: stays Tufts
     monkeypatch.setattr(SI, "teamState", lambda school, pool=None, state=None, person_id=None: "MI")
-    assert SI.schoolLabelFor("Calvin", "college_m", "MI") == "Calvin University"
+    # ... with its state, like every college row (owner, 2026-11-05)
+    assert SI.schoolLabelFor("Calvin", "college_m", "MI") == "Calvin University (MI)"
+    assert SI.schoolLabelIn("Calvin", "OH", pool="college_m") == "Calvin University (MI)"
     assert SI.schoolLabelFor("Calvin", "hs_m", "OK").startswith("Calvin")
     assert "University" not in SI.schoolLabelFor("Calvin", "hs_m", "OK")
 
