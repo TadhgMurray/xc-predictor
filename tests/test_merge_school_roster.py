@@ -26,3 +26,9 @@ def test_a_transfer_or_two_is_not_a_team():
     # and high schools are never paired by roster
     ros = {"A HS": set(range(100)), "A High": set(range(100))}
     assert M.rosterPairs(ros, {n: "hs" for n in ros}) == []
+
+
+def test_unattached_for_a_college_is_not_its_team():
+    ros = {"Adams State": set(range(55)), "UNAT-Adams State": set(range(51)),
+           "Augustana (S.D.)": set(range(100, 127)), "UNA-Augustana (S.D.)": set(range(100, 127))}
+    assert M.rosterPairs(ros, {n: "college" for n in ros}) == []

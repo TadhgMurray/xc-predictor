@@ -345,8 +345,13 @@ _REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3, "roster": 4}
 #   entry: an alumni team's runners ARE its college's, and it is not the team.
 ROSTER_MIN_SHARED = 25
 ROSTER_MIN_FRACTION = 0.85
+# ! "UNAT-Adams State", "UNA-Augustana (S.D.)": that college's runners
+#   racing UNATTACHED (a redshirt, an open race) -- the college's people,
+#   never its team: folded in, they would score for it (owner's dry run,
+#   2026-11-05)
 _NOT_A_TEAM = re.compile(r"\bclub\b|alumni|unattached|unaffiliated|\belite\b|\btc\b|"
-                         r"track club|running club|striders|\baa\b|\bac\b", re.I)
+                         r"track club|running club|striders|\baa\b|\bac\b|"
+                         r"^\s*unat?\b|^\s*una?t?\s*-", re.I)
 
 
 def rosterPairs(rosters_by_name, level_of, min_shared=ROSTER_MIN_SHARED,
