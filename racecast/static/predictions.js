@@ -2081,13 +2081,16 @@ function showBasis(blocks) {
   const parts = [];
   if (b && b.kind === "qualified") {
     /* ★ THE QUALIFIERS, AND HOW MANY ROUNDS ARE STILL OUR FORECAST */
-    const pred = b.predicted
-      ? ` \u2014 ${b.predicted} of its ${b.rounds} qualifying rounds have not run, so their `
-        + `qualifiers are our prediction of them`
-      : ` (all ${b.rounds} have run)`;
-    parts.push(`This meet is one you qualify for, so the field is who earned a spot `
-      + `at this season's earlier rounds${pred}. Set "Field for qualifying meets" in the `
-      + `options to "Last year's teams" for the old field. Edit it below.`);
+    /* ★ SAID LIKE A PERSON WOULD (owner, 2026-11-05: "make the text blurb
+       for qualified meets more human-like") */
+    const n = b.rounds || 0, p = b.predicted || 0;
+    const rounds = `${n} qualifying meet${n === 1 ? "" : "s"}`;
+    const how = !p ? `All ${rounds} have been run, so these are the real qualifiers.`
+      : p >= n ? `None of the ${rounds} have been run yet, so this is our guess at who will qualify.`
+      : `${n - p} of the ${rounds} have been run; for the other ${p}, we've predicted who gets through.`;
+    parts.push(`You have to qualify for this meet, so we've filled the field with this `
+      + `season's qualifiers. ${how} Want last year's teams instead? Switch "Field for `
+      + `qualifying meets" in the options. You can also edit the field below.`);
   } else if (b) parts.push(b.kind === "last_edition"
     ? `No entries posted yet \u2014 the field is the teams from the last `
       + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`

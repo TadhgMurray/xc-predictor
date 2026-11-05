@@ -76,3 +76,24 @@ def test_a_graded_runner_who_skips_meets_is_still_on_the_team():
     assert P.stoppedFrom(sq, ran, 3) == {}
     sq["S"][0] = {"person_id": 1, "grade": "SR-5", "grade_inferred": True}
     assert P.stoppedFrom(sq, ran, 3) == {1: 3}     # ungraded (inferred): stopped
+
+
+def test_an_ungraded_race_off_the_boards_still_counts(monkeypatch):
+    """owner, 2026-11-05: "I still see Isaac Bourne" -- his one ungraded race
+    is not in ranking_results; its date comes from the results."""
+    import season_year as SY
+    sq = {"Loras": [{"person_id": 1, "grade": "SR-5", "grade_inferred": True}]
+          + [{"person_id": i, "grade": "JR-3"} for i in range(2, 9)]}
+
+    class Cur:
+        def execute(self, sql, args=None):
+            self.sql = sql
+
+        def fetchall(self):
+            if "FROM results" in self.sql:
+                return [{"person_id": 1, "d": "2026-09-04"}]
+            return [{"school": "Loras", "person_id": i, "meet_id": m, "day": d}
+                    for i in range(2, 9) for m, d in MEETS]
+    year = SY.academicYear(D(2026, 10, 18))
+    out = P._stoppedRacing(Cur(), sq, "XC", year, today=D(2026, 10, 18))
+    assert out.get(1) == 5                    # every varsity meet after Sep 4
