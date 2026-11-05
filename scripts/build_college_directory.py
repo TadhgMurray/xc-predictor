@@ -108,7 +108,12 @@ ALIASES = {
     "nau": "northern arizona", "unlv": "nevada las vegas",
 }
 
-_STRIP = re.compile(r"\b(the|university|college|of|at|in|and|state university)\b")
+# ★ NOT "state university" (owner, 2026-11-05: /school/Chicago read "NCAA
+#   DI"). Stripping the phrase took "Chicago State University" to "chicago",
+#   the University of Chicago's key, and "Ohio State University" to "ohio",
+#   Ohio University's; "Kent State University" to "kent", which no feed's
+#   "Kent State" matched. "state" stays; "university" goes alone.
+_STRIP = re.compile(r"\b(the|university|college|of|at|in|and)\b")
 
 
 # AP-style state abbreviations the feeds put in parentheses: "Central
@@ -147,11 +152,19 @@ def loadDirectory(cur, *fields):
     if cur.fetchone()[0] is None:
         return {}
     cols = ", ".join(fields) if fields else "state"
-    cur.execute(f"SELECT name_norm, state, {cols} FROM college_directory")
+    # ★ KEYED BY TODAY'S normName OF THE STORED NAME, not the name_norm the
+    #   build wrote: a fix to the normaliser (2026-11-05, "state university")
+    #   holds the moment the site restarts, not after a rebuild
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'college_directory' AND column_name = 'name'""")
+    has_name = cur.fetchone() is not None
+    key_col = "name" if has_name else "name_norm"
+    cur.execute(f"SELECT {key_col}, state, {cols} FROM college_directory")
     out = {}
     for row in cur.fetchall():
         value = row[2] if len(fields) <= 1 else tuple(row[2:])
-        out.setdefault(row[0], []).append((row[1], value))
+        key = normName(row[0]) if has_name else row[0]
+        out.setdefault(key, []).append((row[1], value))
     return out
 
 
@@ -338,6 +351,8 @@ def normName(name):
     college = bool(re.search(r"\bcollege\s*$", s.strip())) and not re.search(r"\buniversity\b", s)
     s = _STRIP.sub(" ", s)
     s = re.sub(r"\s+", " ", s).strip()
+    # "U. of Chicago", "Univ. of Iowa": the U is "University"
+    s = re.sub(r"^(?:u|univ)\s+(?=\S)", "", s)
     if college and s in _STATE_NAMES:
         return s + " college"
     return ALIASES.get(s, s)

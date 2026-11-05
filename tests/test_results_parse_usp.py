@@ -27,3 +27,20 @@ def test_the_whole_finish_list_reads():
     assert rows[-1]["place"] == 74                    # no team-block rows after the list
     assert out["meet"]["date"] == "2026-10-28"
     assert out["meet"]["name"] == "2026 Diamond State Conference XC Championships"
+
+
+def test_the_pages_structured_data_fills_the_venue_state_and_sport():
+    out = R.parse("fetched.htm", open(FIX, "rb").read())
+    assert out["meet"]["location"] == "White Clay Creek State Park, Newark"
+    assert out["meet"]["state"] == "DE" and out["sport"] == "XC"
+
+
+def test_every_listed_results_file_is_fetched():
+    import upload_fetch as UF
+    page = ('<a href="/meets/781840-dsac/results/1337192/raw">raw</a>'
+            '<script>let meetResultFiles = [{"id":1337192,"name":"Boys Junior Varsity"},'
+            '{"id":1337191,"name":"Boys Varsity"},{"id":1337200,"name":"Girls Junior Varsity"},'
+            '{"id":1337199,"name":"Girls Varsity"}];</script>')
+    got = UF._rawLinks(page, "https://de.milesplit.com/meets/781840-dsac/results?type=formatted")
+    assert [u.rsplit("/", 2)[-2] for u in got] == ["1337192", "1337191", "1337200", "1337199"]
+    assert all(u.startswith("https://de.milesplit.com/meets/781840-dsac/results/") for u in got)

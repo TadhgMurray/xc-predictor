@@ -13,7 +13,7 @@
 #     Crystal Reports HTML       the positioned <div>s rebuilt into lines
 #                                (sources/hytek.py), every "Next Page" file
 #                                of the report followed, as .txt
-#     a MileSplit results page   every "raw" results file it links to
+#     a MileSplit results page   every "raw" results file it links to or lists
 #                                (/results/<id>/raw, same host), joined, as
 #                                .htm -- results_parse reads their tables
 #     anything else              as it came: .htm for HTML (results_parse
@@ -111,15 +111,39 @@ def _pdfText(data):
 _RAW_LINK = re.compile(r'href="([^"]*/results/\d+/raw)"', re.I)
 
 
+_FILES = re.compile(r"meetResultFiles\s*=\s*(\[.*?\])\s*;", re.S)
+_MEET_PATH = re.compile(r"^(/meets/[^/]+)/results\b")
+
+
 def _rawLinks(page, base):
     """MileSplit: the page's links to its results files' raw text, same
-    host only, in page order, each once."""
+    host only, in page order, each once.
+
+    ★ AND EVERY FILE THE PAGE LISTS (owner, 2026-11-05: DSAC 2026, "the
+      parser now only grabs the jv race. Why would it not grab all of
+      them?"). A results page links one file -- the race it is showing --
+      and names the meet's others only in its meetResultFiles list (Boys
+      Varsity, Girls Varsity, Girls Junior Varsity), which the site's
+      dropdown is built from. Each is read too, at /results/<id>/raw."""
     host = urllib.parse.urlsplit(base).hostname
     out = []
     for href in _RAW_LINK.findall(page):
         u = urllib.parse.urljoin(base, href)
         if urllib.parse.urlsplit(u).hostname == host and u not in out:
             out.append(u)
+    m = _FILES.search(page)
+    mp = _MEET_PATH.match(urllib.parse.urlsplit(base).path or "")
+    if m and mp:
+        import json
+        try:
+            files = json.loads(m.group(1))
+        except ValueError:
+            files = []
+        for f in files:
+            if isinstance(f, dict) and str(f.get("id", "")).isdigit():
+                u = urllib.parse.urljoin(base, f"{mp.group(1)}/results/{f['id']}/raw")
+                if u not in out:
+                    out.append(u)
     return out
 
 

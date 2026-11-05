@@ -833,13 +833,59 @@ def parseTabTable(text, meta=None, fmt="tab_table"):
     return out
 
 
+_LDJSON = re.compile(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', re.S | re.I)
+
+
+def ldEvent(raw):
+    """The page's schema.org SportsEvent -> {name, date, date_end, location,
+    state, sport}, any of them None; None without one. ★ MileSplit prints
+    one on every results page (owner, 2026-11-05: DSAC 2026, "it also
+    doesn't parse the course name or location"): the venue -- "White Clay
+    Creek State Park", Newark, DE -- the dates and the sport. Pure."""
+    import json
+    for m in _LDJSON.finditer(raw or ""):
+        try:
+            d = json.loads(m.group(1))
+        except ValueError:
+            continue
+        for ev in (d if isinstance(d, list) else [d]):
+            if not isinstance(ev, dict) or ev.get("@type") != "SportsEvent":
+                continue
+            loc = ev.get("location") if isinstance(ev.get("location"), dict) else {}
+            addr = loc.get("address") if isinstance(loc.get("address"), dict) else {}
+            venue = (loc.get("name") or "").strip()
+            town = (addr.get("addressLocality") or "").strip()
+            region = (addr.get("addressRegion") or "").strip().upper()
+            sport = (ev.get("sport") or "").lower()
+            return {"name": (ev.get("name") or "").strip() or None,
+                    "date": parseDate(ev.get("startDate") or ""),
+                    "date_end": parseDate(ev.get("endDate") or ""),
+                    "location": ", ".join(x for x in (venue, town) if x) or None,
+                    "state": region if len(region) == 2 and region.isalpha() else None,
+                    "sport": ("XC" if "cross" in sport else
+                              "TF" if ("track" in sport or "field" in sport) else None)}
+    return None
+
+
 def parseHytekHtml(raw):
     text, title = htmlToText(raw)
     if isTabTable(text):
-        return parseTabTable(text, htmlMeta(raw), fmt="milesplit_raw")
-    out = parseHytekText(text, fmt="hytek_html")
-    if not out["meet"]["name"] and title:
-        out["meet"]["name"] = title
+        out = parseTabTable(text, htmlMeta(raw), fmt="milesplit_raw")
+    else:
+        out = parseHytekText(text, fmt="hytek_html")
+        if not out["meet"]["name"] and title:
+            out["meet"]["name"] = title
+    # the page's own structured data fills what the text did not say
+    ld = ldEvent(raw)
+    if ld:
+        meet = out["meet"]
+        for k in ("date", "date_end", "location"):
+            if not meet.get(k) and ld.get(k):
+                meet[k] = ld[k]
+        if ld.get("state") and not meet.get("state"):
+            meet["state"] = ld["state"]
+        if not out.get("sport") and ld.get("sport"):
+            out["sport"] = ld["sport"]
     return out
 
 

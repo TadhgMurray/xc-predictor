@@ -342,7 +342,7 @@ def checkMeta(form, parsed_meet, parsed_sport):
     date = RP.parseDate(form.get("meet_date") or "") or parsed_meet.get("date")
     date_end = RP.parseDate(form.get("meet_date_end") or "") or parsed_meet.get("date_end")
     loc = " ".join((form.get("location") or parsed_meet.get("location") or "").split())[:200]
-    state = (form.get("state") or "").strip().upper()[:20]
+    state = (form.get("state") or parsed_meet.get("state") or "").strip().upper()[:20]
     sport = (form.get("sport") or parsed_sport or "").strip().upper()
     dist = (form.get("distance_m") or "").strip()
     if not name:
