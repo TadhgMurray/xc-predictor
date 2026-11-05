@@ -214,6 +214,26 @@ def crestPath(school, state=None, level=None):
 
 
 def crestState(school, state=None, pool=None, trusted=False, level=None):
+    """(state, version, path, level) whose crest answers for this mention,
+    or None -- the name's own rows first (_crestStateFor), then, for a
+    college a school of another level shares its name with, the college
+    directory's full name ("Calvin" -> "Calvin University": the owner's
+    crest_check, 2026-11-05, found Calvin University's logo filed there
+    and the only "Calvin" logos Oklahoma's high school)."""
+    got = _crestStateFor(school, state, pool, trusted, level)
+    if got is not None:
+        return got
+    try:
+        from school_identity import collegeFullName
+        full = collegeFullName(school, state)
+    except Exception:                              # noqa: BLE001
+        full = None
+    if full and full != school and _CRESTS["map"].get(full):
+        return _crestStateFor(full, state, pool, trusted, level)
+    return None
+
+
+def _crestStateFor(school, state=None, pool=None, trusted=False, level=None):
     """(state, version) whose crest answers for this mention, or None.
 
     ★ THE SAME RESOLVER THE LABEL USES, and that is the whole point (owner,
@@ -228,16 +248,6 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
     _retryCrests()
     rows = _CRESTS["map"].get(school)
     if not rows:
-        # ★ A COLLEGE'S CREST UNDER ITS FULL NAME (owner, 2026-11-05: "It shows
-        #   Calvin University, but still no logo"): the logo scraper filed it
-        #   under the directory's name, the rows say "Calvin"
-        try:
-            from school_identity import collegeFullName
-            full = collegeFullName(school, state)
-        except Exception:                          # noqa: BLE001
-            full = None
-        if full and _CRESTS["map"].get(full):
-            return crestState(full, state, pool, trusted, level)
         return None
     try:
         from school_identity import contextState, teamState
@@ -297,7 +307,13 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
     #   level and one "college", are both WA, and len(rows) == 1 said no).
     #   Rows that all sit in one state are one school's, picked by level
     #   as above; two states is two schools and still no badge.
-    if len({row[0] for row in rows}) != 1:
+    one = {row[0] for row in rows}
+    if len(one) != 1:
+        return None
+    # ! NOT ANOTHER STATE'S SCHOOL (owner's crest_check, 2026-11-05: Calvin
+    #   University, MI, wore Calvin (OK) high school's logo). Rows that all
+    #   sit in a state other than the one asked about are that state's school.
+    if st and len(rows) > 1 and st not in one:
         return None
     try:
         from school_identity import splitsByState
