@@ -20,10 +20,9 @@ the state (and so the crest and the link) a page would give it.
                        with no level in hand shows) is not one of the
                        college directory's states for it: every such page
                        shows the college under a high school's state
-    college_unknown    a college-level name the directory does not know: no
+    college_unknown    a college-level name the directory does not know (a
+                       club, unattached or alumni entry is not one): no
                        state, crest or link can be resolved for it by level
-    school_as_college  a school-level name labelled with a college's state,
-                       where the name has a school cluster somewhere else
   READ-ONLY. Exit 1 when anything is listed, so the nightly's summary shows it.
 """
 import argparse
@@ -36,6 +35,11 @@ _ROOT = os.path.dirname(_HERE)
 for _p in (_HERE, _ROOT, os.path.join(_ROOT, "racecast"), os.path.join(_ROOT, "engine")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
+
+import re
+
+_NOT_COLLEGE = re.compile(r"\bclub\b|unattached|unaffiliated|unknown|alumni|\btc\b|"
+                          r"track club|running club|academy", re.I)
 
 _SQL = """
     SELECT school, split_part(split_part(pool, '|', 1), '_', 1) AS level,
@@ -52,13 +56,11 @@ def classify(school, level, primary, candidates, clusters):
     states for the name ([] when unknown); clusters: {state: share}."""
     if level in ("college", "pro"):
         if not candidates:
-            return "college_unknown"
+            # a club, an unattached entry or an alumni team is no college
+            return None if _NOT_COLLEGE.search(school or "") else "college_unknown"
         if primary and primary not in candidates:
             return "college_elsewhere"
         return None
-    if level in ("hs", "ms", "elem") and candidates and primary in candidates:
-        if any(st not in candidates for st in (clusters or {})):
-            return "school_as_college"
     return None
 
 
@@ -94,7 +96,6 @@ def main(argv=None):
     print(f"[school audit] {len(rows):,} (school, level) pairs raced in {a.year}")
     for kind, label in (("college_elsewhere", "college names a page without the level shows "
                                               "under another institution's state"),
-                        ("school_as_college", "school names labelled with a college's state"),
                         ("college_unknown", "college names the directory does not know")):
         got = sorted(found.get(kind, []), reverse=True)
         print(f"\n  {kind}: {len(got):,} {label}")

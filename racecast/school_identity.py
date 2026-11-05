@@ -240,16 +240,26 @@ def namesItsState(school):
     return inner in _AP_STATES or inner in _STATE_NAMES
 
 
-def schoolLabelIn(school, state, trusted=False):
+def schoolLabelIn(school, state, trusted=False, pool=None):
     """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
     Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
     labelled three Missouri schools WA, MI and CA).
 
     `trusted`: the state is the ROW's own answer (meet_compile
     .stampSchoolStates), not the meet's -- so it is used as given. See
-    contextState."""
+    contextState.
+
+    `pool`: the row's level, when the page knows it. ★ A COLLEGE ROW IS THE
+    COLLEGE'S (owner, 2026-11-05, school_label_audit: 152 college names --
+    Yale, Dartmouth, Notre Dame -- a page without the level shows under a
+    high school's state, e.g. a Yale runner at a Massachusetts meet read
+    "Yale (MI)"): with a college pool the college directory answers
+    (teamState); without one, as before."""
     if not school:
         return school
+    p = str(pool or "").lower()
+    if p.startswith(("college", "pro")):
+        return withState(school, teamState(school, pool, state))
     st = contextState(school, state, trusted)
     return withState(school, st)
 

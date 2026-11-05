@@ -16,7 +16,16 @@ def test_the_cases():
         == "college_elsewhere"
     assert A.classify("Tufts", "college", "MA", ["MA"], {"MA": 1.0}) is None
     assert A.classify("Nowhere CC", "college", "IA", [], {"IA": 1.0}) == "college_unknown"
-    # a high school row shown under a college's state, with its own cluster elsewhere
-    assert A.classify("Georgetown", "hs", "DC", ["DC", "KY"], {"TX": .4, "DC": .6}) \
-        == "school_as_college"
-    assert A.classify("Georgetown", "hs", "TX", ["DC", "KY"], {"TX": .8, "DC": .2}) is None
+    # school rows are not this audit's: a Washington high school in WA is right
+    assert A.classify("Washington", "hs", "WA", ["WA"], {"WA": 1.0}) is None
+    # a club or an unattached entry is no college
+    assert A.classify("Penn State University Club", "college", "PA", [], {}) is None
+    assert A.classify("Unattached", "college", "CA", [], {}) is None
+
+
+
+def test_race_pages_label_a_college_row_by_its_pool():
+    for t in ("race.html", "compiled.html"):
+        src = open(os.path.join(_ROOT, "racecast", "templates", t)).read()
+        assert "school_label_in(" in src
+        assert src.count("pool=(row.rating_pool or row.label_pool)") >= 3, t

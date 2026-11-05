@@ -60,9 +60,17 @@ _SEP = re.compile(r"^\s*[=\-_]{8,}\s*$")
 _RESULTS_WORD = re.compile(r"^\s*(Results|Final Results|Official Results)\b.*$", re.I)
 _ROUND = re.compile(r"^\s*(Finals|Preliminaries|Prelims|Semi-?Finals|Quarterfinals|"
                     r"(Section|Heat|Flight)\s+\d+.*|Timed Finals|Seeded Section.*)\s*$", re.I)
-_TEAM_SCORES = re.compile(r"^\s*(Team Scores|Team Rankings|Scores - )", re.I)
+_TEAM_SCORES = re.compile(r"^\s*(Team Scores|Team Rankings|Scores - )"
+                          # Ultimate Sports Productions' per-team blocks (DSAC 2026):
+                          # 'Newark Charter    Finish Position -     1', 'Team Score (places): 145'
+                          r"|^.+\bFinish Position\s*-|^\s*Team Score \(", re.I)
 _RECORD = re.compile(r"^\s*[A-Za-z][\w .'/&-]{0,40}:\s*[!*#@$%^&+]?\s*\d", re.I)
 _SPLITS = re.compile(r"^[\s\d:.()\[\]]+$")
+# the words a results header may print before the name column
+_LEAD_RX = (r"^\s*((?:(?:#|pl|pl\.|place|pos|o'all|overall|score|pts|points|bib|no|no\.)\s+)*)"
+            r"(name|athlete)\b")
+# a pace printed with its unit ('5:59/M', '6:13/mi', '3:42/km')
+_PACE_TOK = re.compile(r"^\d{1,2}:\d{2}(?:\.\d{1,2})?/(?:m|mi|mile|k|km)$", re.I)
 
 _TIME_COLON = re.compile(r"^[xX]?(?:\d{1,2}:){1,2}\d{1,2}(?:\.\d{1,3})?[A-Za-z*#@$!&+%^]{0,2}$")
 _TIME_DEC2 = re.compile(r"^[xX]?\d{1,3}\.\d{2,3}[A-Za-z*#@$!&+%^]{0,2}$")
@@ -275,7 +283,7 @@ class _Cols:
         after = []
         for w in words:
             if w in ("seed", "prelims", "prelim", "semis", "finals", "time", "mark",
-                     "points", "pts", "h#", "wind", "score", "avg", "mile"):
+                     "points", "pts", "h#", "wind", "score", "avg", "mile", "pace"):
                 after.append(w)
         res = next((i for i, w in enumerate(after) if w in ("finals", "time", "mark")), None)
         if res is None:
@@ -298,13 +306,28 @@ class _Cols:
         # ★ A BIB COLUMN BEFORE THE NAME (MileSplit's raw results, owner
         #   2026-11-02: '#  Athlete  Yr Team  Mark  H#', rows '1 2723 Declan
         #   Avestro 11 ...'): the number after the place is the bib
-        first = re.match(r"^\s*((?:(?:#|pl|pl\.|place|pos)\s+)*)(name|athlete)\b", low)
-        self.has_bib = bool(first and "#" in first.group(1).split())
+        first = re.match(_LEAD_RX, low)
+        lead = first.group(1).split() if first else []
+        self.has_bib = "#" in lead or "bib" in lead
+        # ★ NUMBER COLUMNS BETWEEN THE PLACE AND THE NAME (Ultimate Sports
+        #   Productions on MileSplit, DSAC 2026, owner 2026-11-05: "O'all /
+        #   Place  Score Bib No Name  Team  Time  Pace  Grade", rows "1  1
+        #   2272  Jainil Sheth ..."): a team score (blank for a non-scorer)
+        #   and a bib, each stripped when present
+        self.n_lead = (sum(1 for w in lead if w in ("score", "pts", "points"))
+                       + (1 if self.has_bib else 0))
+        # ★ AND A GRADE PRINTED AFTER THE TIME ('Time  Pace  Grade'): read off
+        #   the right of the row, not out of the name and team
+        yi = next((i for i, w in enumerate(words) if w in ("year", "yr", "gr", "grade", "class", "cl")), None)
+        ti = next((i for i, w in enumerate(words) if w in ("finals", "time", "mark")), None)
+        self.year_after = yi is not None and ti is not None and yi > ti
+        if self.year_after:
+            self.has_year = False
 
     @staticmethod
     def isHeader(line):
         low = line.lower()
-        return (re.match(r"^\s*(?:(?:#|pl|pl\.|place|pos)\s+)*(name|athlete)\b", low) is not None
+        return (re.match(_LEAD_RX, low) is not None
                 and any(w in low for w in ("school", "team", "affiliation", "club")))
 
 
@@ -322,6 +345,9 @@ def _peelRight(s, skip_times=0):
         if t.upper().rstrip(".") in STATUSES:
             idx = i
             break
+        if _PACE_TOK.match(t):
+            paces.append(i)
+            continue
         if _TIME_COLON.match(t) or _TIME_DEC2.match(t):
             if len(paces) < skip_times:
                 paces.append(i)
@@ -339,7 +365,8 @@ def _peelRight(s, skip_times=0):
         return None
     extras = toks[idx + 1:]
     if len(extras) > 4 + skip_times or not all(
-            _EXTRA.match(e) or (skip_times and (_TIME_COLON.match(e) or _TIME_DEC2.match(e)))
+            _EXTRA.match(e) or _PACE_TOK.match(e) or _YEAR.match(e)
+            or (skip_times and (_TIME_COLON.match(e) or _TIME_DEC2.match(e)))
             for e in extras):
         return None
     # cut the middle off the ORIGINAL string so its spacing survives
@@ -421,6 +448,7 @@ def parseHytekText(text, fmt="hytek_text"):
     rnd = "F"
     events_by_key = {}
     last_text = None                  # the last line that was not a row: a bare race title
+    recent_text = []                  # ... and the few before it (a two-line header's top half)
     whole = "\n".join(lines[:80])
     # ★ '5K RUN' IS CROSS COUNTRY (MileSplit's raw Shore Coaches, owner
     #   2026-11-02): Meet Manager titles a track 5000 '5000 Meter Run'; a race
@@ -479,6 +507,17 @@ def parseHytekText(text, fmt="hytek_text"):
             # ★ A RACE TITLED WITHOUT 'Event N' (MileSplit's raw results:
             #   'Boys JV-A 5K Run', a rule, the header): the text line just
             #   above the header's rule is the race
+            # ! THE NEAREST LINE THAT READS AS A RACE, a few back: a header
+            #   printed on two lines (" O'all" over " Place  Score ...") put
+            #   its top half between the title and the header (DSAC 2026)
+            #   -- only past such a stub (a short line with no digits), never
+            #   past a record line or a note
+            stub = (last_text and len(last_text.split()) <= 3 and not re.search(r"\d", last_text)
+                    and not (distanceOf(last_text) or genderOf(last_text)))
+            if stub and len(recent_text) >= 2:
+                prev = recent_text[-2]
+                if (distanceOf(prev) or genderOf(prev)) and not _RECORD.match(prev):
+                    last_text = prev
             if (last_text and (ev is None or last_text != ev.title)
                     and (distanceOf(last_text) or genderOf(last_text))):
                 key = (None, " ".join(last_text.split()).lower())
@@ -510,6 +549,8 @@ def parseHytekText(text, fmt="hytek_text"):
         pm = _PLACE.match(line)
         if not pm and not _peelRight(line):
             last_text = line.strip()          # a title, a team-score line, a note
+            recent_text.append(last_text)
+            del recent_text[:-4]
         if skipping or ev is None:
             continue
         if _RECORD.match(line) and not pm:
@@ -526,8 +567,12 @@ def parseHytekText(text, fmt="hytek_text"):
             place_tok = pm.group("place")
             place = int(place_tok) if place_tok.isdigit() else None
             rest = pm.group("rest")
-            if cols and cols.has_bib:
-                rest = re.sub(r"^\d{1,6}\s+", "", rest)
+            # a score column may read '(> 7)': a runner past a team's seventh
+            for _k in range(cols.n_lead if cols else 0):
+                lead = re.match(r"^(?:\d{1,6}|\(\s*>?\s*\d{1,2}\s*\))\s+", rest)
+                if not lead:
+                    break
+                rest = rest[lead.end():]
         got = _peelRight(rest, cols.n_after_times if cols else 0)
         if not got:
             if pm and re.search(r"[A-Za-z]{2}", rest):
@@ -539,6 +584,8 @@ def parseHytekText(text, fmt="hytek_text"):
             if mt and (_isResultToken(mt[-1]) or mt[-1].upper() in ("NT", "NH", "--")):
                 mid = mid[:mid.rfind(mt[-1])].rstrip()
         name_raw, year, school = _splitMiddle(mid, cols)
+        if cols and cols.year_after and not year and _extras and _YEAR.match(_extras[-1]):
+            year = _extras[-1]
         name = normName(name_raw)
         if not isName(name):
             warn.append({"line": i, "text": f"No name on this line: {line.strip()[:90]}"})
@@ -558,6 +605,19 @@ def parseHytekText(text, fmt="hytek_text"):
             raise ParseError(f"More than {MAX_ROWS:,} results: that is not one meet.")
 
     _meetFromHeader(out, header_lines)
+    # ★ NO BANNER, THE TOP OF THE PAGE (DSAC 2026, Ultimate Sports
+    #   Productions: "2026 Diamond State Conference XC Championships /
+    #   October 28, 2026"): the meet's name and date are its first lines
+    if not banner_seen:
+        top = [l.strip() for l in lines[:8] if l.strip() and not _SEP.match(l)]
+        if out["meet"]["date"] is None:
+            out["meet"]["date"] = next((d for d in (parseDate(t) for t in top) if d), None)
+        if (out["meet"]["name"] is None and top and not parseDate(top[0])
+                and not _RESULTS_WORD.match(top[0]) and not _peelRight(top[0])
+                # (a leading year is the meet's, not 2026 metres)
+                and not (distanceOf(re.sub(r"^(?:19|20)\d\d\s+", "", top[0]))
+                         or genderOf(top[0]))):
+            out["meet"]["name"] = top[0]
     _finish(out)
     return out
 
