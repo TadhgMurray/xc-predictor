@@ -351,7 +351,7 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
    && { step 05b_stragglers "$PY" -u scripts/fix_stragglers.py --apply || true; } \
    && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue --recheck-since "$(date -d '-150 days' +%F)" \
    && { step 09c_provisional_day "$PY" -u engine/provisional_day.py --write || true; } \
-   && { [ "${XCP_FIELD_GUARD:-1}" = 0 ] || step 09c2_field_guard "$PY" -u engine/field_guard.py --write || true; } \
+   && { [ "${XCP_FIELD_GUARD:-0}" = 0 ] || step 09c2_field_guard "$PY" -u engine/field_guard.py --write || true; } \
    && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 
   # ---- 4. publish: boards, rank lines, teams, search -------------------- #

@@ -1552,7 +1552,7 @@ stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue && $PY -u engi
 #   credit, two pool scales (engine/field_guard.py). Every season, on the
 #   ratings just written, before the outlier rule and the boards read them.
 #   Never blocks; XCP_FIELD_GUARD=0 turns it off.
-if [ "${XCP_FIELD_GUARD:-1}" != 0 ]; then
+if [ "${XCP_FIELD_GUARD:-0}" != 0 ]; then
   step 09c2_field_guard "$PY" -u engine/field_guard.py --write --since 2000-01-01 || true
 fi
 step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
