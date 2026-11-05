@@ -562,6 +562,7 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
     Pure. rows: buildMapping's tuples. Returns (rows, n_new_venues, n_new_ids).
     """
     keepIds.refused = []
+    keepIds.detail = []
     by_cluster = {}
     for r in rows:
         by_cluster.setdefault(r[3], []).append(r)
@@ -586,6 +587,13 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
             (host_id, host_name), _n = max(mapped, key=lambda t: t[1])
             gone = sorted({oid for (oid, _nm), _r in mapped} - {host_id})
             merges.append((host_name, host_id, gone))
+            # what the plan shows: every name joined, by which rule, and
+            # each one's fitted difficulty (diffs) where there is one
+            d = diffs or {}
+            keepIds.detail.append((
+                "same name" if (merge_same_name and one_name) else "core name",
+                [f"{nm} ({d[nm][0]:+.3f}, {d[nm][1]} results)" if nm in d else nm
+                 for nm in sorted({nm for (_oid, nm), _r in mapped})]))
             for m in members:
                 if (m[0], m[1], m[2]) not in old:
                     n_new_v += 1
@@ -691,8 +699,11 @@ def main():
         diffs = loadDifficulties() if args.merge_core_name else {}
         rows, n_new_v, n_new_ids = keepIds(rows, old, merge_same_name=args.merge_same_name,
                                            merge_core=args.merge_core_name, diffs=diffs)
-        for name, host, gone in getattr(keepIds, "merges", []):
+        detail = getattr(keepIds, "detail", [])
+        for i, (name, host, gone) in enumerate(getattr(keepIds, "merges", [])):
             print(f"  merge: {name}  ids {', '.join(map(str, gone))} -> {host}")
+            if i < len(detail):
+                print(f"      {detail[i][0]}: " + "  |  ".join(detail[i][1]))
         for names, why in getattr(keepIds, "refused", []):
             print(f"  KEPT APART: {' / '.join(names)}  -- {why}")
         print(f"\nincremental: {len(old):,} venues already mapped keep their ids; "
