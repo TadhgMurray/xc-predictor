@@ -330,6 +330,21 @@ step 04x_alive_dist "$PY" -u -m sources.athleticlive_xc distances --write || tru
 # a race a report moved to another course goes back there after every
 # scrape (scripts/set_race_course.py), before the new rows are priced
 step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply || true
+# ★ WRONG DISTANCES EVERY NIGHT, NOT ONLY ON SUNDAY (owner, 2026-11-05:
+#   "Lou Regions Splits", 28 runners 48% fast, a high-confidence pin to
+#   3218 m -- which only the full pipeline's 04g1b ever wrote, so the week's
+#   nightlies priced it at 5000 and an 8th grader sat #1 in the nation).
+#   --refresh clears the rows of every division whose pin is new, moved or
+#   retired; 05_normalize_new reads distance_pin and re-normalises them,
+#   09b prices them, the boards follow. 04g2 rebuilds dist_override, which
+#   the pages and ranking_results read the distance from. 20-60 min; off
+#   the chain (a failure leaves last night's pins). XCP_NIGHTLY_WRONG_DISTANCE=0
+#   turns it off.
+if [ "${XCP_NIGHTLY_WRONG_DISTANCE:-1}" = "1" ]; then
+  step 04g1b_wrong_distance "$PY" -u engine/wrong_distance.py --write --refresh --top 20 \
+       --csv "$LOGDIR/wrong_distance.csv" \
+    && step 04g2_dump_overrides "$PY" -u engine/dump_overrides.py || true
+fi
 
 # ★ 09c (2026-11-03, owner: "the no race day thing is killing me"): the
 #   races since the last full solve get a provisional race-day term read off

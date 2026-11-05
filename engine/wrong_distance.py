@@ -1117,7 +1117,57 @@ def write(cur, verdicts, allow_many=False):
     now = dict(cur.fetchall())
     print(f"[wrong_distance] distance_pin now: {now}; {len(upserts):,} written, "
           f"{len(retires):,} retired", flush=True)
-    return {"written": len(upserts), "retired": len(retires), "now": now}
+    return {"written": len(upserts), "retired": len(retires), "now": now,
+            "changed": changedKeys(upserts, retires, rows)}
+
+
+def changedKeys(upserts, retires, rows):
+    """The divisions whose distance the backfill reads differently after this
+    write: a new or re-activated pin, one whose action or distance moved, or
+    one retired. [(source, meet, div)], each once. Pure."""
+    out = []
+    for key, action, dist, _v in upserts:
+        old = rows.get(key)
+        if (old is None or old["status"] != "active" or old["action"] != action
+                or (old["distance"] or 0) != (dist or 0)):
+            out.append(key[:3])
+    out += [key[:3] for key, _why in retires]
+    return sorted(set(out))
+
+
+# ★ THE NIGHTLY RE-RATES WHAT A NEW PIN MOVES (owner, 2026-11-05,
+#   /athlete/33511944 and /athlete/52803750: "Lou Regions Splits", 28 runners
+#   48% fast, a high-confidence pin to 3218 m -- judged only by the Sunday
+#   pipeline, so the week's nightlies rated it at 5000 and an 8th grader sat
+#   #1 in the nation). --refresh clears normalized_time and speed_rating on a
+#   changed division's rows; the nightly's 05_normalize_new (--new-only reads
+#   rows with no normalized_time, and distance_pin directly) and 09b fill
+#   then price them at the pinned distance the same night.
+_REFRESH_SQL = """
+UPDATE results r SET normalized_time = NULL, speed_rating = NULL
+FROM   (SELECT unnest(%(s)s::text[]) AS source, unnest(%(m)s::bigint[]) AS meet_id,
+               unnest(%(d)s::bigint[]) AS div_id) k
+WHERE  r.source = k.source AND r.meet_id = k.meet_id AND r.div_id = k.div_id
+  AND  r.date >= %(since)s
+"""
+
+
+def refreshSince(today=None):
+    """The first day of LAST season (Aug 15): the nightly's --new-only
+    normalises no further back, so an older division is left for Sunday's
+    full run rather than cleared and left unpriced. Pure."""
+    import datetime
+    from season_year import academicYear, seasonStart      # backfill_normalize.newOnlySince's
+    t = today or datetime.date.today()
+    return seasonStart(academicYear(t) - 1).isoformat()
+
+
+def refresh(cur, keys):
+    if not keys:
+        return 0
+    cur.execute(_REFRESH_SQL, {"s": [k[0] for k in keys], "m": [int(k[1]) for k in keys],
+                               "d": [int(k[2]) for k in keys], "since": refreshSince()})
+    return cur.rowcount
 
 
 # dump_overrides' reading of distance_pin, here so it can be tested
@@ -1368,6 +1418,9 @@ def main(argv=None):
     ap.add_argument("--source", help="with --explain: anet or tfrrs")
     ap.add_argument("--work-mem", default=os.environ.get("XCP_WD_WORK_MEM", "512MB"))
     ap.add_argument("--write", action="store_true", help="the writer: distance_pin")
+    ap.add_argument("--refresh", action="store_true",
+                    help="with --write: clear the stored times and ratings of every division "
+                         "whose pin is new, moved or retired, for the nightly to re-price")
     ap.add_argument("--allow-many", action="store_true",
                     help=f"past the circuit breaker ({MAX_CHANGES} adds or retires)")
     for st in ("hold", "refuse", "release"):
@@ -1395,6 +1448,10 @@ def main(argv=None):
             report(verdicts, a.top, a.csv)
             if a.write:
                 done = write(cur, verdicts, a.allow_many)
+                if done and a.refresh:
+                    n = refresh(cur, done["changed"])
+                    print(f"[wrong_distance] refresh: {len(done['changed']):,} divisions changed, "
+                          f"{n:,} rows cleared for the nightly to re-price", flush=True)
                 conn.commit()
                 print(f"[wrong_distance] done in {(time.time() - t0) / 60:.0f} min. "
                       + ("Written." if done else "Nothing written (circuit breaker)."))
