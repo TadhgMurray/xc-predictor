@@ -228,6 +228,16 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
     _retryCrests()
     rows = _CRESTS["map"].get(school)
     if not rows:
+        # ★ A COLLEGE'S CREST UNDER ITS FULL NAME (owner, 2026-11-05: "It shows
+        #   Calvin University, but still no logo"): the logo scraper filed it
+        #   under the directory's name, the rows say "Calvin"
+        try:
+            from school_identity import collegeFullName
+            full = collegeFullName(school, state)
+        except Exception:                          # noqa: BLE001
+            full = None
+        if full and _CRESTS["map"].get(full):
+            return crestState(full, state, pool, trusted, level)
         return None
     try:
         from school_identity import contextState, teamState
