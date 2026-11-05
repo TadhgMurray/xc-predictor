@@ -3620,9 +3620,23 @@ def _stoppedRacing(cur, squads, sport, season_year, today=None):
     return stoppedFrom(squads, ran, CARRY_RACES)
 
 
+# ★ ONLY THE UNGRADED (owner, 2026-11-05: "this shouldn't be a thing in
+#   general"). A runner who skips meets -- rested, sick, held out for the
+#   championship -- is still on the team, and missing three meets says
+#   nothing. The general rule is the carry-forward's: someone who has not
+#   run at all by the team's third race (roster.carryingSchools). This one
+#   is the niche case beside it: a runner with NO GRADE this season (none
+#   stored, or only one we inferred) who raced once -- an alumnus or an
+#   unattached run (Isaac Bourne, Loras, one September race) -- and then sat
+#   out CARRY_RACES of the team's varsity meets.
+def _ungraded(r):
+    return not str(r.get("grade") or "").strip() or bool(r.get("grade_inferred"))
+
+
 def stoppedFrom(squads, ran, n_missed):
     """The pure half of _stoppedRacing: squads {school: [runners best
-    first]}, ran {(school, person_id): {(meet, day)}}."""
+    first]}, ran {(school, person_id): {(meet, day)}}. Ungraded runners
+    only (_ungraded)."""
     out = {}
     for school, sq in squads.items():
         top = [r.get("person_id") for r in sq[:7]]
@@ -3634,7 +3648,7 @@ def stoppedFrom(squads, ran, n_missed):
         for r in sq:
             pid = r.get("person_id")
             mine = ran.get((school, pid))
-            if not mine:
+            if not mine or not _ungraded(r):
                 continue
             last = max(d for _m, d in mine)
             missed = sum(1 for _m, d in varsity if d > last)
@@ -4648,6 +4662,21 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                          ev, src)
                 if track_m:
                     squads, _rest = _tfEventSquads(cur, squads, track_m, year)
+            # ★ AN UNGRADED RUNNER WHO STOPPED DOES NOT RUN (owner, 2026-11-05:
+            #   Isaac Bourne, Loras, second at D3 nationals off one ungraded
+            #   September race). meetField benches them for the page
+            #   (_stoppedRacing, ungraded only -- see stoppedFrom); a prediction
+            #   made without the page's field -- the previews, the qualifier
+            #   rounds -- leaves them out too.
+            if not track_m:
+                try:
+                    gone = _stoppedRacing(cur, squads, sport, year)
+                except Exception:                       # noqa: BLE001 -- keep the squad
+                    _rollback(cur)
+                    gone = {}
+                if gone:
+                    squads = {s: [r for r in sq if r.get("person_id") not in gone]
+                              for s, sq in squads.items()}
             # ★ AND THE SAME ORDER AS meetField'S (byPrediction)
             at_meet_counts = countsBySchool(originals)
             # ★ THE MEET PREVIEWS' FIELD RULES (upcoming_preview.fieldRules):

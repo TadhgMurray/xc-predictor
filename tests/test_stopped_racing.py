@@ -65,3 +65,14 @@ def test_skip_top_parsing():
     assert A._skipTop({"skip_top": "x"}) == 0
     assert A._skipTop({"skip_top": "99"}) == 20
     assert A._skipTop({}) == 0
+
+
+def test_a_graded_runner_who_skips_meets_is_still_on_the_team():
+    """owner, 2026-11-05: "this shouldn't be a thing in general" -- only an
+    ungraded runner (none stored, or inferred) counts as stopped."""
+    sq = {"S": [{"person_id": i, "grade": "JR-3"} for i in range(1, 9)]}
+    ran = {("S", i): set(MEETS) for i in range(2, 9)}
+    ran[("S", 1)] = set(MEETS[:2])                 # rested since meet 2
+    assert P.stoppedFrom(sq, ran, 3) == {}
+    sq["S"][0] = {"person_id": 1, "grade": "SR-5", "grade_inferred": True}
+    assert P.stoppedFrom(sq, ran, 3) == {1: 3}     # ungraded (inferred): stopped
