@@ -576,7 +576,9 @@ def buildChain(t):
             add("other", "Other", x,
                 "What the rating carries that this page cannot separate: the "
                 "altitude credit, the race-day term as the rest of the field "
-                "ran it, a rating priced without a solve, rounding.")
+                "ran it, a rating priced without a solve, the field guard (a "
+                "race whose whole field rated far above its own seasons is "
+                "brought down to a championship peak), rounding.")
     elif rating is None:
         notes.append("This result has no rating.")
     else:

@@ -834,7 +834,7 @@ ENV_RULES = {
     "XCP_OWN_SHIFT_SINCE": ("DATA", DISTSEP + " (the season own_race_shift starts judging from)"),
     "XCP_DAY_CENTRE": ("REMOVED", THETA + " (§5: season centring; a fast season is fitness)"),
     **_all("XCP_FIELD_CHECK XCP_FIELD_CHECK_MIN XCP_FIELD_CHECK_FLOOR XCP_FIELD_CHECK_CAP "
-           "XCP_FIELD_CHECK_FLOOR_OPENER XCP_FIELD_CHECK_DIVISION", "REMOVED", RACE + " read against the runners' θ (§5: field check)"),
+           "XCP_FIELD_CHECK_FLOOR_OPENER XCP_FIELD_CHECK_DIVISION XCP_FIELD_GUARD", "REMOVED", RACE + " read against the runners' θ (§5: field check)"),
     **_all("XCP_ISLAND_CHECK XCP_ISLAND_CHECK_MIN XCP_ISLAND_CHECK_FLOOR XCP_ISLAND_CHECK_CAP",
            "REMOVED", THETA + " + " + SDGATE + " (§5: island check)"),
     "XCP_XC_COURSE_SUSPECT": ("REMOVED", SDGATE + " (§5: course guard)"),

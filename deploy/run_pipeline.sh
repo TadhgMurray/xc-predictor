@@ -1545,6 +1545,16 @@ stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue && $PY -u engi
 #    XCP_OUTLIER_SLOW_SIGMA (slow cut), XCP_OUTLIER_FLOOR (spread floor in
 #    points), XCP_OUTLIER_K. The old fixed 4-point floor and 8-sigma bar
 #    are gone: the measured floor is the corpus's own race-to-race spread.
+# ★ 09c2 THE FIELD GUARD (owner, 2026-11-05: "find all things where this can
+#   happen ... and nuke it rn"): a division whose whole field rated 5%+ above
+#   its runners' own seasons is pulled down to +2%, whatever made it so -- a
+#   short course, a course number a mislabelled race taught, a course-day's
+#   credit, two pool scales (engine/field_guard.py). Every season, on the
+#   ratings just written, before the outlier rule and the boards read them.
+#   Never blocks; XCP_FIELD_GUARD=0 turns it off.
+if [ "${XCP_FIELD_GUARD:-1}" != 0 ]; then
+  step 09c2_field_guard "$PY" -u engine/field_guard.py --write --since 2000-01-01 || true
+fi
 step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
                       --streams "$XCP_STREAMS" \
                       ${XCP_OUTLIER_SIGMA:+--fast-sigma "$XCP_OUTLIER_SIGMA"} \

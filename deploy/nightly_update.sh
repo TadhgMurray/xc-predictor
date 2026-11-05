@@ -335,6 +335,10 @@ step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply || true
 #   races since the last full solve get a provisional race-day term read off
 #   their field and calibrated on the solve's own days (engine/provisional_day.py);
 #   written only when its backtest beats no term. Never blocks the boards.
+# ★ 09c2 (2026-11-05, owner: "find all things where this can happen ... and
+#   nuke it"): a division whose whole field rated 5%+ above its runners' own
+#   seasons is pulled down to +2%, whatever the cause (engine/field_guard.py).
+#   Last, on the ratings the boards will read. XCP_FIELD_GUARD=0 turns it off.
 # ★ 09b --recheck-since (2026-11-04, Florida Horse Park, 186.0): a row the
 #   backfill wrote on another pool's scale than the one it is priced in is
 #   moved onto it (anchor_repair's rescale) -- new rows as they are priced,
@@ -347,6 +351,7 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
    && { step 05b_stragglers "$PY" -u scripts/fix_stragglers.py --apply || true; } \
    && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue --recheck-since "$(date -d '-150 days' +%F)" \
    && { step 09c_provisional_day "$PY" -u engine/provisional_day.py --write || true; } \
+   && { [ "${XCP_FIELD_GUARD:-1}" = 0 ] || step 09c2_field_guard "$PY" -u engine/field_guard.py --write || true; } \
    && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 
   # ---- 4. publish: boards, rank lines, teams, search -------------------- #
