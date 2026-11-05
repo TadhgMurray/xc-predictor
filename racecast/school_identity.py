@@ -564,6 +564,22 @@ def levelChips(cur, school, state):
     return out
 
 
+def hasLevel(cur, school, state, level):
+    """Does this school name have athletes at `level` in this state
+    (school_level, any number)? A link that names the level is honoured
+    then, chips or not (school_page)."""
+    if not school or not level or not _tableExists(cur, "school_level"):
+        return False
+    try:
+        cur.execute("""SELECT 1 FROM school_level WHERE school = %s AND state = %s
+                         AND level = %s AND n_athletes > 0 LIMIT 1""",
+                    (school, state or "", level))
+        return cur.fetchone() is not None
+    except Exception:                                  # noqa: BLE001 -- optional
+        cur.connection.rollback()
+        return False
+
+
 def mainLevel(cur, school, state):
     """The level most of a school name's athletes in this state race at,
     or None. A page with one institution's chips-less view labels itself
