@@ -489,9 +489,62 @@ def schoolMeets(cur, school, sport, year=None, limit=2000,
           "lim": limit + 1, **sfp})
     rows = fetchCapped(cur, limit)
     for r in rows:
-        r["distance_labels"] = [distLabel(d) for d in sorted(r.get("distances") or [])]
         _stampMeetHs(r, sport)
+    rows = foldFeedCopies(rows)
+    for r in rows:
+        r["distance_labels"] = [distLabel(d) for d in sorted(r.get("distances") or [])]
     return rows
+
+
+# ★ ONE MEET, TWO FEEDS, ONE ROW (owner, 2026-11-05: NYU's Races tab listed
+#   "2026 UAA Cross Country Championships" (tfrrs, 18 runners) and "UAA
+#   Cross Country Championships" (athletic.net, 1 runner -- the twin rules
+#   had already taken the other copies) as two meets). Rows on one date
+#   whose names say the same thing, the year and the generic words aside,
+#   are one meet: the bigger copy's link, the counts added, the best kept.
+_GENERIC = {"cross", "country", "xc", "cc", "championship", "championships", "the",
+            "meet", "of", "and", "annual", "th", "st", "nd", "rd"}
+
+
+def _meetWords(name):
+    import re
+    w = re.findall(r"[a-z]+", (name or "").lower())
+    return {x for x in w if x not in _GENERIC}
+
+
+def foldFeedCopies(rows):
+    """rows of schoolMeets -> the same, a meet's other feed's copy folded
+    into the bigger one (same date; one's name words inside the other's).
+    Pure."""
+    out = []
+    for r in rows:
+        words = _meetWords(r.get("meet_name"))
+        twin = None
+        for o in out:
+            if o.get("date") != r.get("date") or not words:
+                continue
+            ow = _meetWords(o.get("meet_name"))
+            if ow and (words <= ow or ow <= words):
+                twin = o
+                break
+        if twin is None:
+            out.append(dict(r))
+            continue
+        big, small = (twin, r) if (twin.get("runners") or 0) >= (r.get("runners") or 0) else (r, twin)
+        n1, n2 = big.get("runners") or 0, small.get("runners") or 0
+        merged = dict(big)
+        merged["runners"] = n1 + n2
+        merged["divisions"] = (big.get("divisions") or 0) + (small.get("divisions") or 0)
+        for k in ("best_rating", "hs_best_rating"):
+            vals = [x for x in (big.get(k), small.get(k)) if x is not None]
+            merged[k] = max(vals) if vals else None
+        for k in ("avg_rating", "hs_avg_rating"):
+            a, b = big.get(k), small.get(k)
+            merged[k] = (round((float(a) * n1 + float(b) * n2) / (n1 + n2), 1)
+                         if a is not None and b is not None and n1 + n2 else (a if a is not None else b))
+        merged["distances"] = sorted(set(big.get("distances") or []) | set(small.get("distances") or []))
+        out[out.index(twin)] = merged
+    return out
 
 
 def _stampMeetHs(row, sport):
