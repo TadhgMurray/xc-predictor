@@ -3668,7 +3668,32 @@ def dropStopped(cur, entries, sport, season_year):
     except Exception:                                   # noqa: BLE001 -- keep the field
         _rollback(cur)
         gone = {}
-    return [e for e in entries if e.get("person_id") not in gone]
+    if not gone:
+        return entries
+    kept = [e for e in entries if e.get("person_id") not in gone]
+    # ★ A TEAM KEEPS ITS NUMBER (owner, 2026-11-05: "now Loras only has 5"):
+    #   a qualified TEAM that lost a runner here sends its next best now,
+    #   from its current squad; an individual's place is the individual's
+    for sch, rows in by.items():
+        lost = sum(1 for e in rows if e.get("person_id") in gone)
+        if not lost or len(rows) < 5 or not isTeam(sch):
+            continue
+        pools = collections.Counter(str(e.get("pool") or "").split("|")[0]
+                                    for e in rows if e.get("person_id") not in gone
+                                    and e.get("pool"))
+        pool = pools.most_common(1)[0][0] if pools else ""
+        gender = pool[-1:].upper() if pool[-2:-1] == "_" else None
+        level = pool.split("_")[0] or None
+        try:
+            sq = _currentSquads(cur, [sch], sport, season_year, gender=gender,
+                                levels={level} if level else None).get(sch, [])
+        except Exception:                               # noqa: BLE001 -- keep what is there
+            _rollback(cur)
+            continue
+        have = {e.get("person_id") for e in kept} | set(gone)
+        for r in [r for r in sq if r.get("person_id") not in have][:lost]:
+            kept.append(dict(r, school=sch, entered=rows[0].get("entered"), refill=True))
+    return kept
 
 
 # ★ ONLY THE UNGRADED (owner, 2026-11-05: "this shouldn't be a thing in
