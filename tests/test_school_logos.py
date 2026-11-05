@@ -2153,7 +2153,9 @@ class OneResolver(unittest.TestCase):
         """A season line knows its pool, and a college's own name beats its
         athletes' home states -- which is exactly what teamState is for."""
         sl = read("racecast", "school_logo.py")
-        i = sl.index("def crestState(")
+        # the resolver's body is _crestStateFor since 2026-11-05 (crestState
+        # wraps it with the college's full name)
+        i = sl.index("def _crestStateFor(")
         # the whole function, not 900 characters: its docstring grew
         self.assertIn("teamState(school, pool, state) if pool",
                       sl[i:sl.index("\ndef ", i + 1)])
