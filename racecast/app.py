@@ -7506,8 +7506,28 @@ def school_page(school_name):
                  ("hs_m" if g == "M" else "hs_f"))
              for g, c in pool_counts.items()}
 
+    # ★ THE PAGE'S LEVEL, ITS NAME AND ITS NAMESAKES (owner, 2026-11-05):
+    #   the crest asks with the level on screen (Calvin University's logo on
+    #   a bare /school/Calvin), a college a high school shares its name with
+    #   is called by its own name ("Calvin University"), and the other
+    #   states' schools of the name are linked when no state chip is
+    page_level = level
+    display_name = school_name
+    others_named = []
+    try:
+        with getConn() as _c2, _c2.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as _cur2:
+            from school_identity import mainLevel, namesakes, collegeFullName
+            page_level = level or mainLevel(_cur2, school_name, state or primary_state)
+            if not chips:
+                others_named = namesakes(_cur2, school_name, state or primary_state)
+            _c2.rollback()
+        if page_level == "college":
+            display_name = collegeFullName(school_name, state or primary_state) or school_name
+    except Exception:                                   # noqa: BLE001 -- the page without them
+        pass
     return render_template("school.html", school=school_name, header=header,
-                           units=units,
+                           units=units, page_level=page_level, display_name=display_name,
+                           others_named=others_named,
                            level_chips=lchips, level=level,
                            state_chips=chips, state=state,
                            has_hs_view=has_hs_view,

@@ -2456,7 +2456,7 @@ function renderFieldBlock(sumEl, gridEl) {
                t.school_href && t.school_href !== "#" ? esc(t.school_href)
                : `/school/${encodeURIComponent(t.school)}${
                    t.state ? `?state=${encodeURIComponent(t.state)}` : ""}`}"
-             >${esc(schoolWithState(t.school, t.state))}</a></span>
+             >${esc(t.school_label || schoolWithState(t.school, t.state))}</a></span>
           ${/* ★ AND THE SECOND LINE IS ALWAYS THERE IN A GROUPED RACE, even
                 for a school entered only once ("if they don't have one just
                 say so"). A note that only SOME cards carry gives every card

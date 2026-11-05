@@ -79,6 +79,17 @@ def loadLabels(conn_factory, force=False):
                 if _tableExists(cur, "college_directory"):
                     from build_college_directory import loadDirectory
                     _LABELS["college"] = loadDirectory(cur, "state")
+                    # and its full names, for a college a high school shares
+                    # its name with (collegeFullName)
+                    _LABELS["college_name"] = loadDirectory(cur, "name")
+                # ★ NAMES THAT ARE SCHOOLS OF MORE THAN ONE LEVEL (owner,
+                #   2026-11-05: Calvin the Michigan university and the Oklahoma
+                #   and Louisiana high schools), ten athletes or more a level
+                if _tableExists(cur, "school_level"):
+                    cur.execute("""SELECT school FROM school_level
+                                   WHERE NOT COALESCE(is_bucket, false) AND n_athletes >= 10
+                                   GROUP BY school HAVING count(DISTINCT level) > 1""")
+                    _LABELS["level_split"] = {r[0] for r in cur.fetchall()}
                 # ! WHETHER THE ASSIGNMENT TABLE EXISTS, asked once per
                 #   process here rather than per query: stateFilterSql is a
                 #   pure SQL builder with no cursor, and a clause naming a
@@ -241,6 +252,24 @@ def namesItsState(school):
     return inner in _AP_STATES or inner in _STATE_NAMES
 
 
+def collegeFullName(school, state=None):
+    """The college directory's own name for a college whose name a school
+    of another level also carries ("Calvin" -> "Calvin University"), else
+    None. Only those: Tufts stays Tufts (owner, 2026-11-05: "I'd prefer
+    them to show as Calvin University if they are in the University")."""
+    if not school or school not in (_LABELS.get("level_split") or ()):
+        return None
+    names = _LABELS.get("college_name")
+    if not names:
+        return None
+    try:
+        from build_college_directory import lookup
+        full = lookup(names, school, state)
+    except Exception:                                   # noqa: BLE001
+        return None
+    return full if full and str(full).strip() and full != school else None
+
+
 def schoolLabelIn(school, state, trusted=False, pool=None):
     """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
     Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
@@ -260,7 +289,9 @@ def schoolLabelIn(school, state, trusted=False, pool=None):
         return school
     p = str(pool or "").lower()
     if p.startswith(("college", "pro")):
-        return withState(school, teamState(school, pool, state))
+        st = teamState(school, pool, state)
+        return (collegeFullName(school, st) if p.startswith("college") else None) \
+            or withState(school, st)
     st = contextState(school, state, trusted)
     return withState(school, st)
 
@@ -382,6 +413,10 @@ def schoolLabelFor(school, pool, state=None):
     if not school:
         return school
     st = teamState(school, pool, state)
+    if str(pool or "").lower().startswith("college"):
+        full = collegeFullName(school, st)
+        if full:
+            return full
     return withState(school, st)
 
 
@@ -561,6 +596,30 @@ def levelChips(cur, school, state):
                          if isinstance(r, dict) else r)
         out.append({"level": lvl, "label": _LEVEL_LABEL.get(lvl, (lvl or "").title()),
                     "n": n, "share": float(share or 0)})
+    return out
+
+
+def namesakes(cur, school, state):
+    """[{state, level, n}] the name's schools in OTHER states, ten athletes
+    or more, not buckets, biggest first -- linked from the page of the one
+    on screen (owner, 2026-11-05: "what happened to the hs page?")."""
+    if not school or not _tableExists(cur, "school_level"):
+        return []
+    try:
+        cur.execute("""SELECT state, level, n_athletes FROM school_level
+                       WHERE school = %s AND state <> %s AND n_athletes >= 10
+                         AND NOT COALESCE(is_bucket, false)
+                       ORDER BY n_athletes DESC LIMIT 6""", (school, state or ""))
+        rows = cur.fetchall()
+    except Exception:                                  # noqa: BLE001 -- optional
+        cur.connection.rollback()
+        return []
+    out = []
+    for r in rows:
+        st, lvl, n = (r["state"], r["level"], r["n_athletes"]) if isinstance(r, dict) else r
+        if st and not any(o["state"] == st for o in out):
+            out.append({"state": st, "level": lvl, "n": n,
+                        "label": _LEVEL_LABEL.get(lvl, (lvl or "").title())})
     return out
 
 
