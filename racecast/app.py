@@ -10681,8 +10681,17 @@ def api_rankings():
     #   only the school cell prefers this. And an unknown school gets None,
     #   so the old behaviour is exactly what happens when the identity table
     #   has nothing to say.
+    # ★ BY THE ROW'S POOL (owner, 2026-11-05: "Katrina Coogan, Georgetown
+    #   TX", "Olivia Markezich, Notre Dame WI" on the college women's
+    #   board). primaryState is the name's biggest cluster of athletes, and
+    #   for "Georgetown" and "Notre Dame" that is a high school; a college
+    #   row takes the college directory's state (teamState, the athlete
+    #   page's answer since "Amherst (WI)"), anything else the primary.
     for _r in rows:
-        _r["school_state"] = school_identity.primaryState(_r.get("school"))
+        _pool = _r.get("pool") or _r.get("rating_pool")
+        _r["school_state"] = (school_identity.teamState(_r.get("school"), _pool, None,
+                                                         _r.get("person_id"))
+                              if _pool else None) or school_identity.primaryState(_r.get("school"))
     # the crest keys off school_state, not `state`: a result row's state is
     # the VENUE's, and a travel state would fetch the wrong school's crest
     stampCrests(rows, state_key="school_state")
