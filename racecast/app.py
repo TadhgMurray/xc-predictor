@@ -7376,6 +7376,15 @@ def school_page(school_name):
                         header["athletes"] = c["n"]
                 units = unitsFor(cur, school_name, state or primary_state,
                                  sport, long=True, level=level)
+            elif not lchips:
+                # ★ ONE LEVEL ON SCREEN, ITS OWN UNITS ONLY (owner, 2026-11-05:
+                #   Calvin's high school read "NCAA DIII"): a unit row of the
+                #   name's other institution is not this page's
+                from school_identity import mainLevel
+                _main = mainLevel(cur, school_name, state or primary_state)
+                if _main:
+                    units = unitsFor(cur, school_name, state or primary_state,
+                                     sport, long=True, level=_main)
 
             years = schoolYears(cur, school_name, state, primary_state)
 

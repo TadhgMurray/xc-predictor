@@ -35,6 +35,7 @@ import urllib.parse
 
 MIN_ATHLETES = 3
 MIN_SHARE = 0.10
+COLLEGE_CHIP_MIN = 25     # a college level's chip, whatever its share (levelChips)
 
 # the site-wide label cache: school -> primary state. Loaded once per
 # process from school_identity; a few MB for the whole school universe.
@@ -518,6 +519,12 @@ _LEVEL_LABEL = {"college": "College", "hs": "High school",
                 "ms": "Middle school", "elem": "Elementary", "pro": "Pro"}
 
 
+# ★ A COLLEGE IS AN INSTITUTION AT ANY SHARE (owner, 2026-11-05: "Calvin"
+#   in MI is Calvin University -- tfrrs's spelling -- and a high school; the
+#   university's runners are a sliver of 1,198 athletes over thirty years,
+#   under MIN_SHARE, so no chips, one mixed roster, and the college's NCAA
+#   DIII written over the high school). In levelChips a college level with
+#   COLLEGE_CHIP_MIN athletes always gets its chip.
 def levelChips(cur, school, state):
     """[{level, label, n, share}] widest first, or [] when this school is
     one institution (which is nearly all of them).
@@ -531,10 +538,11 @@ def levelChips(cur, school, state):
     sql = """
         SELECT level, n_athletes, share FROM school_level
         WHERE  school = %s AND state = %s
-          AND  n_athletes >= %s AND share >= %s{bucket}
+          AND  ((n_athletes >= %s AND share >= %s)
+                OR (level = 'college' AND n_athletes >= %s)){bucket}
         ORDER  BY n_athletes DESC
     """
-    args = (school, state or "", MIN_ATHLETES, MIN_SHARE)
+    args = (school, state or "", MIN_ATHLETES, MIN_SHARE, COLLEGE_CHIP_MIN)
     rows = None
     # a table built before is_bucket existed still answers the old query,
     # and chips without the filter beat no chips at all
@@ -554,6 +562,24 @@ def levelChips(cur, school, state):
         out.append({"level": lvl, "label": _LEVEL_LABEL.get(lvl, (lvl or "").title()),
                     "n": n, "share": float(share or 0)})
     return out
+
+
+def mainLevel(cur, school, state):
+    """The level most of a school name's athletes in this state race at,
+    or None. A page with one institution's chips-less view labels itself
+    with THAT level's units only (school_page)."""
+    if not school or not _tableExists(cur, "school_level"):
+        return None
+    try:
+        cur.execute("""SELECT level FROM school_level WHERE school = %s AND state = %s
+                       ORDER BY n_athletes DESC LIMIT 1""", (school, state or ""))
+        row = cur.fetchone()
+    except Exception:                                  # noqa: BLE001 -- optional
+        cur.connection.rollback()
+        return None
+    if not row:
+        return None
+    return row["level"] if isinstance(row, dict) else row[0]
 
 
 def levelOf(pool):
