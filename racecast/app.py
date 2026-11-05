@@ -7326,6 +7326,14 @@ def school_page(school_name):
             #   Massachusetts kids -- no longer exists.
             if chips and not state:
                 state = primary_state
+            # ★ AND A NAME WHOSE NAMESAKES ARE OTHER LEVELS IN OTHER STATES
+            #   (owner, 2026-11-05: Calvin's page listed the Oklahoma and
+            #   Louisiana high schools' boys above Calvin University's runners
+            #   -- too small a share for a chip, so nothing narrowed): the
+            #   bare page is the main school's too
+            from school_identity import namesakeElsewhere
+            if not state and primary_state and namesakeElsewhere(cur, school_name, primary_state):
+                state = primary_state
             # ! AFTER THE CHIP, so the span is this school's and not every
             #   namesake's (sweep 2026-10-10)
             header = schoolHeader(cur, school_name, state, primary_state)
@@ -7722,6 +7730,14 @@ def school_prs_page(school_name):
             # no merged PR page either -- same per-school rule as school_page
             if chips and not state:
                 state = primary_state
+            # ★ AND A NAME WHOSE NAMESAKES ARE OTHER LEVELS IN OTHER STATES
+            #   (owner, 2026-11-05: Calvin's page listed the Oklahoma and
+            #   Louisiana high schools' boys above Calvin University's runners
+            #   -- too small a share for a chip, so nothing narrowed): the
+            #   bare page is the main school's too
+            from school_identity import namesakeElsewhere
+            if not state and primary_state and namesakeElsewhere(cur, school_name, primary_state):
+                state = primary_state
             level = _subpageLevel(cur, school_name, state or primary_state)
             data = schoolPrData(cur, school_name, sport,
                                 year_label=year, course=course,
@@ -7839,6 +7855,14 @@ def school_records_page(school_name):
             if state and not any(c["state"] == state for c in chips):
                 state = None
             if chips and not state:
+                state = primary_state
+            # ★ AND A NAME WHOSE NAMESAKES ARE OTHER LEVELS IN OTHER STATES
+            #   (owner, 2026-11-05: Calvin's page listed the Oklahoma and
+            #   Louisiana high schools' boys above Calvin University's runners
+            #   -- too small a share for a chip, so nothing narrowed): the
+            #   bare page is the main school's too
+            from school_identity import namesakeElsewhere
+            if not state and primary_state and namesakeElsewhere(cur, school_name, primary_state):
                 state = primary_state
             level = _subpageLevel(cur, school_name, state)
             # the institution's own book where the name is several; the
