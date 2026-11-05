@@ -92,8 +92,48 @@ def test_an_ungraded_race_off_the_boards_still_counts(monkeypatch):
         def fetchall(self):
             if "FROM results" in self.sql:
                 return [{"person_id": 1, "d": "2026-09-04"}]
+            if "FROM athlete_season" in self.sql:          # graded this season
+                return [{"person_id": i} for i in range(2, 9)]
             return [{"school": "Loras", "person_id": i, "meet_id": m, "day": d}
                     for i in range(2, 9) for m, d in MEETS]
     year = SY.academicYear(D(2026, 10, 18))
     out = P._stoppedRacing(Cur(), sq, "XC", year, today=D(2026, 10, 18))
     assert out.get(1) == 5                    # every varsity meet after Sep 4
+
+
+def test_a_row_given_last_seasons_grade_is_still_ungraded():
+    """owner, 2026-11-05: "Isaac Bourne is still there" -- his row carried
+    SR-4 aged to SR-5; the season's record (athlete_season) has no grade."""
+    import season_year as SY
+    sq = {"Loras": [{"person_id": 1, "grade": "SR-5", "rating": 140.0}]
+          + [{"person_id": i, "grade": "JR-3", "rating": 120.0} for i in range(2, 9)]}
+
+    class Cur:
+        def execute(self, sql, args=None):
+            self.sql = sql
+
+        def fetchall(self):
+            if "FROM results" in self.sql:
+                return [{"person_id": 1, "d": "2026-09-04"}]
+            if "FROM athlete_season" in self.sql:
+                return [{"person_id": i} for i in range(2, 9)]
+            return [{"school": "Loras", "person_id": i, "meet_id": m, "day": d}
+                    for i in range(2, 9) for m, d in MEETS]
+    year = SY.academicYear(D(2026, 10, 18))
+    assert 1 in P._stoppedRacing(Cur(), sq, "XC", year, today=D(2026, 10, 18))
+
+
+def test_a_qualified_team_that_loses_a_stopped_runner_sends_its_next(monkeypatch):
+    """owner, 2026-11-05: "now Loras only has 5" -- a team keeps its number."""
+    entries = ([{"person_id": 1, "school": "Loras", "pool": "college_m", "rating": 140.0}]
+               + [{"person_id": i, "school": "Loras", "pool": "college_m", "rating": 120.0 - i}
+                  for i in range(2, 8)]
+               + [{"person_id": 50, "school": "Solo U", "pool": "college_m", "rating": 130.0}])
+    monkeypatch.setattr(P, "_stoppedRacing", lambda cur, by, sport, yr: {1: 5, 50: 4})
+    monkeypatch.setattr(P, "_currentSquads", lambda cur, schools, sport, yr, gender=None,
+                        levels=None: {"Loras": [{"person_id": i, "rating": 125.0 - i,
+                                                 "pool": "college_m"} for i in range(1, 12)]})
+    got = P.dropStopped(None, entries, "XC", 2026)
+    loras = [e["person_id"] for e in got if e["school"] == "Loras"]
+    assert 1 not in loras and len(loras) == 7 and 8 in loras     # next best steps in
+    assert 50 not in [e["person_id"] for e in got]               # an individual is not refilled
