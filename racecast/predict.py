@@ -3622,8 +3622,20 @@ def _stoppedRacing(cur, squads, sport, season_year, today=None):
     #   one September race is a season the boards left out, the squad found
     #   him in the results, and this read no race at all). Their last race
     #   this season comes from the results themselves.
+    # ★ UNGRADED IS THE SEASON'S RECORD, NOT THE ROW'S (owner, 2026-11-05:
+    #   "Isaac Bourne is still there" -- his row carried last season's SR-4
+    #   aged to SR-5, so the row looked graded). No athlete_season row this
+    #   season with a grade is ungraded, whatever the squad row was given.
+    ids = sorted({r.get("person_id") for sq in squads.values() for r in sq
+                  if r.get("person_id") is not None})
+    cur.execute("""SELECT DISTINCT person_id FROM athlete_season
+                   WHERE person_id = ANY(%s) AND sport = %s AND year = %s
+                     AND NULLIF(btrim(grade), '') IS NOT NULL""",
+                (ids, sport, season_year))
+    graded = {int(r["person_id"] if isinstance(r, dict) else r[0]) for r in cur.fetchall()}
+    ungraded = {p for p in ids if p not in graded}
     missing = {r.get("person_id"): s for s, sq in squads.items() for r in sq
-               if r.get("person_id") is not None and _ungraded(r)
+               if r.get("person_id") in ungraded
                and (s, r.get("person_id")) not in ran}
     if missing and (sport or "XC").upper() == "XC":
         from season_year import seasonStart
@@ -3639,7 +3651,24 @@ def _stoppedRacing(cur, squads, sport, season_year, today=None):
             except ValueError:
                 continue
             ran[(missing[pid], pid)] = {(None, day)}
-    return stoppedFrom(squads, ran, CARRY_RACES)
+    return stoppedFrom(squads, ran, CARRY_RACES, ungraded)
+
+
+def dropStopped(cur, entries, sport, season_year):
+    """entries less the ungraded runners who have stopped (_stoppedRacing),
+    for a field read from a list of people rather than squads -- the
+    qualifier field. Grouped by school, each school best first."""
+    by = {}
+    for e in entries:
+        by.setdefault(e.get("school"), []).append(e)
+    for sch in by:
+        by[sch].sort(key=lambda e: -(e.get("rating") or 0))
+    try:
+        gone = _stoppedRacing(cur, by, sport, season_year)
+    except Exception:                                   # noqa: BLE001 -- keep the field
+        _rollback(cur)
+        gone = {}
+    return [e for e in entries if e.get("person_id") not in gone]
 
 
 # ★ ONLY THE UNGRADED (owner, 2026-11-05: "this shouldn't be a thing in
@@ -3655,10 +3684,11 @@ def _ungraded(r):
     return not str(r.get("grade") or "").strip() or bool(r.get("grade_inferred"))
 
 
-def stoppedFrom(squads, ran, n_missed):
+def stoppedFrom(squads, ran, n_missed, ungraded=None):
     """The pure half of _stoppedRacing: squads {school: [runners best
     first]}, ran {(school, person_id): {(meet, day)}}. Ungraded runners
-    only (_ungraded)."""
+    only: `ungraded` (person_ids with no graded row this season, read from
+    athlete_season), else each row's own grade (_ungraded)."""
     out = {}
     for school, sq in squads.items():
         top = [r.get("person_id") for r in sq[:7]]
@@ -3670,7 +3700,8 @@ def stoppedFrom(squads, ran, n_missed):
         for r in sq:
             pid = r.get("person_id")
             mine = ran.get((school, pid))
-            if not mine or not _ungraded(r):
+            bare = (pid in ungraded) if ungraded is not None else _ungraded(r)
+            if not mine or not bare:
                 continue
             last = max(d for _m, d in mine)
             missed = sum(1 for _m, d in varsity if d > last)
@@ -4642,6 +4673,8 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         for e in entries:
             e["school"] = field.get(e["person_id"]) or e.get("school")
             e["entered"] = entered.get(e["school"], 0)
+        # an ungraded qualifier who has stopped racing does not run either
+        entries = dropStopped(cur, entries, sport, _currentSeason(cur, sport))
     elif target.get("meet_id") and len(div_ids) > 1:
         entries = _combinedRoster(cur, target, div_ids, sport, mode)
     elif target.get("meet_id"):
