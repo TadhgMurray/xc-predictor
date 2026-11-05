@@ -515,6 +515,11 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
         return None
     season = P._currentSeason(cur, "XC")
     entries = P._athleteEntries(cur, set(field), "XC", season)
+    # ★ AND NOT AN UNGRADED QUALIFIER WHO HAS STOPPED (owner, 2026-11-05: Isaac
+    #   Bourne): a stored field made before the rule, or a round that ran
+    #   with him in it, still lists him
+    entries = P.dropStopped(cur, [dict(e, school=field.get(e["person_id"]) or e.get("school"))
+                                  for e in entries], "XC", season)
     states = P._teamStates(cur, [dict(e, school=field.get(e["person_id"]) or e.get("school"))
                                  for e in entries], None)
     by = {}

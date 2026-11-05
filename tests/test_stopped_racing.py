@@ -92,8 +92,32 @@ def test_an_ungraded_race_off_the_boards_still_counts(monkeypatch):
         def fetchall(self):
             if "FROM results" in self.sql:
                 return [{"person_id": 1, "d": "2026-09-04"}]
+            if "FROM athlete_season" in self.sql:          # graded this season
+                return [{"person_id": i} for i in range(2, 9)]
             return [{"school": "Loras", "person_id": i, "meet_id": m, "day": d}
                     for i in range(2, 9) for m, d in MEETS]
     year = SY.academicYear(D(2026, 10, 18))
     out = P._stoppedRacing(Cur(), sq, "XC", year, today=D(2026, 10, 18))
     assert out.get(1) == 5                    # every varsity meet after Sep 4
+
+
+def test_a_row_given_last_seasons_grade_is_still_ungraded():
+    """owner, 2026-11-05: "Isaac Bourne is still there" -- his row carried
+    SR-4 aged to SR-5; the season's record (athlete_season) has no grade."""
+    import season_year as SY
+    sq = {"Loras": [{"person_id": 1, "grade": "SR-5", "rating": 140.0}]
+          + [{"person_id": i, "grade": "JR-3", "rating": 120.0} for i in range(2, 9)]}
+
+    class Cur:
+        def execute(self, sql, args=None):
+            self.sql = sql
+
+        def fetchall(self):
+            if "FROM results" in self.sql:
+                return [{"person_id": 1, "d": "2026-09-04"}]
+            if "FROM athlete_season" in self.sql:
+                return [{"person_id": i} for i in range(2, 9)]
+            return [{"school": "Loras", "person_id": i, "meet_id": m, "day": d}
+                    for i in range(2, 9) for m, d in MEETS]
+    year = SY.academicYear(D(2026, 10, 18))
+    assert 1 in P._stoppedRacing(Cur(), sq, "XC", year, today=D(2026, 10, 18))
