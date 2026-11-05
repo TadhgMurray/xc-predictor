@@ -287,6 +287,27 @@ def crestState(school, state=None, pool=None, trusted=False, level=None):
     #   level and one "college", are both WA, and len(rows) == 1 said no).
     #   Rows that all sit in one state are one school's, picked by level
     #   as above; two states is two schools and still no badge.
+    # ★ NOT ANOTHER STATE'S BADGE FOR A SCHOOL WE KNOW IS HERE (owner,
+    #   2026-11-05: Calvin University's runners wore an Oklahoma high
+    #   school's crest -- "Calvin" has crest files only under OK, the
+    #   college resolves to MI, and the one-state fallback below took OK).
+    #   A college mention first tries its fuller name in its own state
+    #   ("Calvin University", MI); then, when the resolved state is one of
+    #   the name's own homes, or the mention is a college, no badge.
+    if st and st not in {row[0] for row in rows}:
+        if lv in ("college", "pro"):
+            for alt in (f"{school} University", f"{school} College",
+                        f"University of {school}"):
+                for row in _CRESTS["map"].get(alt) or ():
+                    if row[0] == st:
+                        return row
+            return None
+        try:
+            from school_identity import _LABELS as _ID
+            if st in ((_ID.get("clusters") or {}).get(school) or {}):
+                return None
+        except Exception:                          # noqa: BLE001
+            pass
     if len({row[0] for row in rows}) != 1:
         return None
     try:
