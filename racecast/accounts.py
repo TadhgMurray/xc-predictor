@@ -43,6 +43,7 @@
 #
 # Env (all optional; a feature is off until its variables are set):
 #   XCP_MAIL_PROVIDER=resend|postmark  XCP_MAIL_KEY=...  XCP_MAIL_FROM="Racecast <login@racecast.co>"
+#   XCP_MAIL_REPLY_TO=results@racecast.co   (optional: where replies go; route it in Cloudflare)
 #   XCP_GOOGLE_CLIENT_ID=...  XCP_GOOGLE_CLIENT_SECRET=...
 #   XCP_TURNSTILE_SITEKEY=...  XCP_TURNSTILE_SECRET=...
 #   XCP_ADMIN_EMAILS=a@b.com,c@d.com
@@ -400,6 +401,16 @@ def sendMail(to, subject, text, headers=None, log_as=None, html=None):
       passes "account <id>": no address in a log)."""
     provider, key = _env("XCP_MAIL_PROVIDER").lower(), _env("XCP_MAIL_KEY")
     sender = _env("XCP_MAIL_FROM", "Racecast <login@racecast.co>")
+    # ★ WHERE A REPLY GOES (owner, 2026-11-05: "If they replied to this would
+    #   I actually see it?"). Without a Reply-To a reply goes to the sender,
+    #   and racecast.co's mail is Cloudflare Email Routing: it arrives only if
+    #   a route (or the catch-all) forwards that address. XCP_MAIL_REPLY_TO
+    #   names a site address routed to the owner -- a racecast.co address,
+    #   never the owner's own (CLAUDE.md: no page or email carries it).
+    reply_to = _env("XCP_MAIL_REPLY_TO")
+    if reply_to:
+        headers = dict(headers or {})
+        headers.setdefault("Reply-To", reply_to)
     try:
         if provider == "resend":
             body = {"from": sender, "to": [to], "subject": subject, "text": text}
