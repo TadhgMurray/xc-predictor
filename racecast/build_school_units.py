@@ -238,9 +238,53 @@ def directoryDivisions(cur, rows):
     return n
 
 
+_DIFF_COLS = ("conference", "region", "division")
+
+
+def diffRows(rows, live):
+    """{column: {"changed"|"lost"|"gained": [(votes, school, state, sport, old, new)]}}
+    for the college rows. rows: the writer's lists; live: {(school, state,
+    sport): (conference, region, division)}. Pure."""
+    i_col = {c: 3 + _COLS.index(c) for c in _DIFF_COLS}
+    i_college, i_votes = 3 + len(_COLS), 3 + len(_COLS) + 2
+    out = {c: {"changed": [], "lost": [], "gained": []} for c in _DIFF_COLS}
+    seen = set()
+    for row in rows:
+        if not row[i_college]:
+            continue
+        key = (row[0], row[1], row[2])
+        seen.add(key)
+        old = live.get(key, (None,) * len(_DIFF_COLS))
+        for j, c in enumerate(_DIFF_COLS):
+            a, b = old[j], row[i_col[c]]
+            if a == b:
+                continue
+            kind = "changed" if a and b else "lost" if a else "gained"
+            out[c][kind].append((row[i_votes] or 0, row[0], row[1], row[2], a, b))
+    for key, old in live.items():
+        if key not in seen:
+            for j, c in enumerate(_DIFF_COLS):
+                if old[j]:
+                    out[c]["lost"].append((0, key[0], key[1], key[2], old[j], None))
+    return out
+
+
+def printDiff(diff, show=40):
+    for c, kinds in diff.items():
+        print(f"\n  {c}: {len(kinds['changed']):,} changed, {len(kinds['lost']):,} lost, "
+              f"{len(kinds['gained']):,} gained (college rows)")
+        for kind in ("changed", "lost", "gained"):
+            for v, school, st, sport, a, b in sorted(kinds[kind], reverse=True)[:show]:
+                print(f"    {kind:<7} {sport} {school} ({st})  {a or '-'} -> {b or '-'}  [{v} votes]")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--diff", action="store_true",
+                    help="with --dry-run: every conference / region / division the build "
+                         "would change against the live school_unit, college rows")
+    ap.add_argument("--show", type=int, default=40)
 
     ap.add_argument("--sport", choices=("XC", "TF"))
     args = ap.parse_args()
@@ -280,6 +324,11 @@ def main():
         if n_dir:
             print(f"  divisions from the college directory: {n_dir:,} rows")
         if args.dry_run:
+            if args.diff:
+                cur.execute("SELECT school, state, sport, is_college, conference, region, division "
+                            "FROM school_unit WHERE is_college")
+                live = {(r[0], r[1], r[2]): r[4:] for r in cur.fetchall()}
+                printDiff(diffRows(rows, live), args.show)
             print("  DRY RUN -- nothing written.")
             return
 
