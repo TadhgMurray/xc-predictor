@@ -52,9 +52,16 @@ const editsFor = () => ({ field: { basis: { kind: "qualified", rounds: 9, predic
 const activeBlocks = () => [1];
 const showBasis = eval(`(${grab("showBasis")})`);
 showBasis([1]);
-ok(!els["mc-basis"].hidden && /earned a spot/.test(els["mc-basis"].textContent)
-   && /9 of its 9 qualifying rounds have not run/.test(els["mc-basis"].textContent),
-   "the line under the meet says the field is qualifiers, and how many rounds are predicted");
+ok(!els["mc-basis"].hidden && /this season's qualifiers/.test(els["mc-basis"].textContent)
+   && /None of the 9 qualifying meets have been run yet/.test(els["mc-basis"].textContent),
+   "the line under the meet says the field is qualifiers, and that none of the rounds have run");
+// said like a person would (owner, 2026-11-05): some run, some predicted
+editsFor.basis = null;
+const showSome = eval(`((editsFor) => (${grab("showBasis")}))`)(
+  () => ({ field: { basis: { kind: "qualified", rounds: 9, predicted: 4 } } }));
+showSome([1]);
+ok(/5 of the 9 qualifying meets have been run; for the other 4, we've predicted who gets through/
+     .test(els["mc-basis"].textContent), "...or how many have run and how many are our guess");
 
 if (fails) { console.log(`${fails} failed`); process.exit(1); }
 console.log("all ok");
