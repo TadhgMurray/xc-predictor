@@ -694,6 +694,24 @@ def _schoolLink(school, state, pool):
 #   college and a regional middle school, and they do not share a crest.
 # ! NO QUERY. Everything here is the start-up dict, which is why this can run
 #   once per row of a 400-runner championship.
+def stampTeamHrefs(teams, school_key="school", state_key="state"):
+    """Each team card's link, by its level (owner, 2026-11-05: "Calvin (MI)"
+    on D3 nationals opened Calvin's page on its high school roster -- the
+    card wrote /school/Calvin?state=MI and the page chose the bigger side).
+    school_identity.schoolHref with the team's pool says level=college."""
+    try:
+        from school_identity import schoolHref
+    except Exception:                                   # noqa: BLE001
+        return teams
+    for t in teams or []:
+        if t.get(school_key):
+            try:
+                t["school_href"] = schoolHref(t[school_key], t.get(state_key), t.get("pool"))
+            except Exception:                           # noqa: BLE001
+                pass
+    return teams
+
+
 def _stampCrests(rows, school_key, state_key, pool_key="pool", px=64):
     try:
         from school_logo import crestUrl
@@ -3962,6 +3980,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
         pools = {r.get("pool") for r in t.get("runners") or []}
         t["pool"] = next((p for p in pools if p), None)
     _stampCrests(teams, "school", "state")
+    stampTeamHrefs(teams)
 
     # ! THE PAGE NEEDS IT TOO, so "add from squad" and "add anyone" can offer
     #   the same side of the school this field is made of.

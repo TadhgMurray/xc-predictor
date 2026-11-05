@@ -2451,8 +2451,11 @@ function renderFieldBlock(sumEl, gridEl) {
                 is done as so"). Letting it wrap pushed the note down and
                 made the card taller than its neighbours. */""}
           <span class="t-name">${crest(t.crest)}<a class="lnk"
-             href="/school/${encodeURIComponent(t.school)}${
-               t.state ? `?state=${encodeURIComponent(t.state)}` : ""}"
+             href="${/* the server's link knows the level (predict.stampTeamHrefs):
+                       Calvin the university, not Calvin the high school */
+               t.school_href && t.school_href !== "#" ? esc(t.school_href)
+               : `/school/${encodeURIComponent(t.school)}${
+                   t.state ? `?state=${encodeURIComponent(t.state)}` : ""}`}"
              >${esc(schoolWithState(t.school, t.state))}</a></span>
           ${/* ★ AND THE SECOND LINE IS ALWAYS THERE IN A GROUPED RACE, even
                 for a school entered only once ("if they don't have one just

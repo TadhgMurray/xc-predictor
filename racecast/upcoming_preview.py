@@ -548,6 +548,7 @@ def qualifiedMeetField(cur, meet_id, div_id, source, day=None):
         pools = collections.Counter(r["pool"] for r in t["runners"] if r.get("pool"))
         t["pool"] = pools.most_common(1)[0][0] if pools else None
     P._stampCrests(teams, "school", "state")
+    P.stampTeamHrefs(teams)
     return {"season_year": season, "when": "thisyear", "teams": teams,
             "basis": dict(info, kind="qualified")}
 
