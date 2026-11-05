@@ -145,3 +145,19 @@ def test_a_team_card_links_to_its_level():
     teams = [{"school": "Calvin", "state": "MI", "pool": "college_m"}]
     P.stampTeamHrefs(teams)
     assert "level=college" in teams[0]["school_href"]
+
+
+def test_a_named_level_is_kept_without_chips(monkeypatch):
+    """owner, 2026-11-05: "I still see Calvin hs" -- the link's level=college
+    is honoured when the name has college athletes, chips or not."""
+    import school_identity as SI
+    monkeypatch.setattr(SI, "_tableExists", lambda cur, t: True)
+
+    class Cur:
+        def execute(self, sql, args=None):
+            self.args = args
+
+        def fetchone(self):
+            return (1,) if self.args[2] == "college" else None
+    assert SI.hasLevel(Cur(), "Calvin", "MI", "college")
+    assert not SI.hasLevel(Cur(), "Calvin", "MI", "ms")
