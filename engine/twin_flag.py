@@ -960,7 +960,13 @@ def dupCrossGenderSql(table, sport):
 #   day, both at the same labelled distance (2%), one SPLIT_RATIO or more
 #   faster than the other: nobody runs a 5000 twice in a day, 15% apart.
 #   The faster row is the one that cannot be a finish -- a split, or a
-#   course's lap -- and goes; the slower is the race. Meets with a known
+#   course's lap -- and goes; the slower is the race.
+#   ! AT ONE COURSE (owner's sample, 2026-11-05): a split is read at the
+#   race it splits, so both rows are at the same course (its name, or a
+#   point within ~1 km). Two meets at two courses one day -- Ocean State
+#   and Suffolk Coaches, Peoria and Solorio -- are two people on one page,
+#   or a wrong date, and the faster row there is often the real race.
+#   Meets with a known
 #   distance only (athletic.net and uploads: tfrrs keeps its distance on
 #   the meet, not the division). Cross country only.
 SPLIT_RATIO = 0.85
@@ -972,7 +978,9 @@ def xcSplitCopySql(table, sport):
     return f"""
         WITH base AS (
             SELECT r.result_id, r.person_id, substr(r.date, 1, 10) AS d, r.meet_id,
-                   r.time_seconds AS t, m.distance AS dist
+                   r.time_seconds AS t, m.distance AS dist,
+                   NULLIF(lower(btrim(m.course_name)), '') AS course,
+                   NULLIF(m.gps_lat, 0) AS la, NULLIF(m.gps_long, 0) AS lo
             FROM   {table} r
             JOIN   meets m ON m.div_id = r.div_id AND m.source = r.source
             WHERE  r.source <> 'tfrrs' AND r.person_id IS NOT NULL
@@ -987,6 +995,8 @@ def xcSplitCopySql(table, sport):
         JOIN   base b ON b.person_id = a.person_id AND b.d = a.d AND b.meet_id <> a.meet_id
                      AND abs(b.dist - a.dist) <= 0.02 * a.dist
                      AND a.t < {SPLIT_RATIO} * b.t
+                     AND (a.course = b.course
+                          OR (abs(a.la - b.la) < 0.01 AND abs(a.lo - b.lo) < 0.01))
     """
 
 

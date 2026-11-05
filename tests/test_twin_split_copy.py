@@ -34,10 +34,15 @@ def test_the_faster_row_of_one_day_is_flagged():
         cur.execute("CREATE TEMP TABLE results (result_id bigint, person_id bigint, source text, "
                     "meet_id bigint, div_id bigint, date text, time_seconds real)")
         cur.execute("CREATE TEMP TABLE meets (div_id bigint, meet_id bigint, source text, "
-                    "distance real)")
-        cur.executemany("INSERT INTO meets VALUES (%s,%s,%s,%s)",
-                        [(11, 1, "anet", 5000), (21, 2, "anet", 5000), (31, 3, "anet", 5000),
-                         (41, 4, "anet", 3000), (51, 5, "anet", 5000)])
+                    "distance real, course_name text, gps_lat real, gps_long real)")
+        park = ("Louisville Champions Park", 38.29, -85.65)
+        cur.executemany("INSERT INTO meets VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        [(11, 1, "anet", 5000) + park,
+                         (21, 2, "anet", 5000, "Champions Park", 38.291, -85.651),   # by its point
+                         (31, 3, "anet", 5000) + park,
+                         (41, 4, "anet", 3000) + park, (51, 5, "anet", 5000) + park,
+                         (61, 6, "anet", 5000, "Ocean State", 41.7, -71.4),
+                         (71, 7, "anet", 5000, "Sunken Meadow", 40.9, -73.25)])
         cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s,%s)", [
             (1, 7, "anet", 1, 11, "2026-10-24", 1290.0),     # the race, 21:30
             (2, 7, "anet", 2, 21, "2026-10-24", 804.4),      # the split, 13:24.4
@@ -45,7 +50,9 @@ def test_the_faster_row_of_one_day_is_flagged():
             (4, 8, "anet", 3, 31, "2026-10-24", 1070.0),
             (5, 9, "anet", 4, 41, "2026-10-24", 600.0),      # a 3000 and a 5000: two distances
             (6, 9, "anet", 5, 51, "2026-10-24", 1100.0),
-            (7, 7, "anet", 5, 51, "2026-10-25", 700.0)])      # another day
+            (7, 7, "anet", 5, 51, "2026-10-25", 700.0),       # another day
+            (8, 10, "anet", 6, 61, "2016-09-24", 1068.3),    # two courses: two people, or a
+            (9, 10, "anet", 7, 71, "2016-09-24", 1365.4)])   #   wrong date -- never a split
         cur.execute(T.xcSplitCopySql("results", "XC"))
         assert sorted(r[0] for r in cur.fetchall()) == [2]
         assert "WHERE false" in T.xcSplitCopySql("results_tf", "TF")
