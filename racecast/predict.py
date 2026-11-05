@@ -3617,6 +3617,28 @@ def _stoppedRacing(cur, squads, sport, season_year, today=None):
             zip(("school", "person_id", "meet_id", "day"), r))
         ran.setdefault((row["school"], row["person_id"]), set()).add(
             (row["meet_id"], row["day"]))
+    # ★ AN UNGRADED SEASON IS OFF THE BOARDS, SO ITS RACE IS NOT IN
+    #   ranking_results (owner, 2026-11-05: "I still see Isaac Bourne" -- his
+    #   one September race is a season the boards left out, the squad found
+    #   him in the results, and this read no race at all). Their last race
+    #   this season comes from the results themselves.
+    missing = {r.get("person_id"): s for s, sq in squads.items() for r in sq
+               if r.get("person_id") is not None and _ungraded(r)
+               and (s, r.get("person_id")) not in ran}
+    if missing and (sport or "XC").upper() == "XC":
+        from season_year import seasonStart
+        cur.execute("""SELECT person_id, max(date) AS d FROM results
+                       WHERE person_id = ANY(%s) AND date ~ '^(19|20)[0-9]{2}-'
+                         AND date >= %s
+                       GROUP BY person_id""",
+                    (sorted(missing), seasonStart(season_year).isoformat()))
+        for r in cur.fetchall():
+            pid, d = (r["person_id"], r["d"]) if isinstance(r, dict) else (r[0], r[1])
+            try:
+                day = datetime.date.fromisoformat(str(d)[:10])
+            except ValueError:
+                continue
+            ran[(missing[pid], pid)] = {(None, day)}
     return stoppedFrom(squads, ran, CARRY_RACES)
 
 
