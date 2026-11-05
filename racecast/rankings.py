@@ -1379,6 +1379,9 @@ def _orderBy(f, table, tiebreak, unique_key):
 #  3. THE PERFORMANCE BOARD
 # ------------------------------------------------------------------ #
 
+UNRATED_BELOW = 600     # metres: the engine rates nothing shorter (a sprint ranks by time)
+
+
 def getPerformanceRankings(cur, f):
     """Top single races.
 
@@ -1415,6 +1418,17 @@ def getPerformanceRankings(cur, f):
     # user-chosen sort must not be able to float unrated rows to the top.
     order = _orderBy(f, _SORTS_PERFORMANCE,
                      "p.speed_rating DESC NULLS LAST", "p.result_id")
+    # ★ A SPRINT IS RANKED BY TIME (slow-request mail, 2026-11-05: the hs_m
+    #   200 m performance board, 40 s). Ratings start at UNRATED_BELOW, so
+    #   "speed_rating IS NOT NULL ... ORDER BY speed_rating DESC" walked the
+    #   whole rating index for rows that cannot exist and returned nothing.
+    #   Below it the candidates are the fastest times and the board their order.
+    sprint = (f.get("distance") is not None and float(f["distance"]) < UNRATED_BELOW)
+    cand_where, cand_order, dup_order = (
+        ("time_seconds > 0", "time_seconds ASC", "time_seconds ASC") if sprint else
+        ("speed_rating IS NOT NULL", "speed_rating DESC", "speed_rating DESC"))
+    if sprint:
+        order = "p.time_seconds ASC, p.result_id"
 
     cur.execute(f"""
         WITH candidates AS (
@@ -1433,8 +1447,8 @@ def getPerformanceRankings(cur, f):
             -- ! EXCLUDED IN THE CANDIDATE SET, not filtered afterwards, for
             --   the same reason the PR board excludes its DNF sentinel here:
             --   a later filter still lets them consume the LIMIT.
-            WHERE  speed_rating IS NOT NULL {where}
-            ORDER  BY speed_rating DESC
+            WHERE  {cand_where} {where}
+            ORDER  BY {cand_order}
             LIMIT  %(cand)s
         ),
         deduped AS (
@@ -1447,7 +1461,7 @@ def getPerformanceRankings(cur, f):
                        PARTITION BY sport, person_id,
                                     COALESCE(canon_meet_id, -result_id),
                                     round(time_seconds::numeric, 1)
-                       ORDER BY speed_rating DESC) AS dup_rn
+                       ORDER BY {dup_order}) AS dup_rn
             FROM candidates
         )
         SELECT p.sport, p.result_id, p.person_id,
