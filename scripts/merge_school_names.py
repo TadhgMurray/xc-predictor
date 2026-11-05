@@ -62,6 +62,7 @@ WHAT IT WRITES, AND WHAT READS IT
 import argparse
 import os
 import sys
+import re
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -331,7 +332,47 @@ def genericColleges(cur, names, level_of):
             and len(candidateStates(directory, n)) > 1}
 
 
-_REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3}
+_REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3, "roster": 4}
+
+# ★ ONE TEAM BY ITS RUNNERS, WHATEVER THE NAMES (owner, 2026-11-05,
+#   /school/U.%20of%20Chicago: "U. of Chicago" and "Chicago", 622 of the
+#   smaller one's 646 runners in common, both college -- and no rule
+#   proposed them, because every rule starts from the NAME and the college
+#   directory placed neither). Two college-level spellings with
+#   ROSTER_MIN_SHARED+ runners in common, ROSTER_MIN_FRACTION of the smaller
+#   one's, are proposed as a pair; every veto in judge still applies (named
+#   states, anet states, levels). Never a club, an alumni or unattached
+#   entry: an alumni team's runners ARE its college's, and it is not the team.
+ROSTER_MIN_SHARED = 25
+ROSTER_MIN_FRACTION = 0.85
+_NOT_A_TEAM = re.compile(r"\bclub\b|alumni|unattached|unaffiliated|\belite\b|\btc\b|"
+                         r"track club|running club|striders|\baa\b|\bac\b", re.I)
+
+
+def rosterPairs(rosters_by_name, level_of, min_shared=ROSTER_MIN_SHARED,
+                min_fraction=ROSTER_MIN_FRACTION):
+    """[(a, b, 'roster')] for college-level spellings that share most of a
+    roster. Pure."""
+    names = [n for n, r in rosters_by_name.items()
+             if level_of.get(n) == "college" and len(r) >= min_shared
+             and mergeable(n) and not _NOT_A_TEAM.search(n)]
+    by_person = {}
+    for n in names:
+        for pid in rosters_by_name[n]:
+            by_person.setdefault(pid, []).append(n)
+    together = {}
+    for ns in by_person.values():
+        if 1 < len(ns) <= 6:
+            ns = sorted(ns)
+            for i, a in enumerate(ns):
+                for b in ns[i + 1:]:
+                    together[(a, b)] = together.get((a, b), 0) + 1
+    out = []
+    for (a, b), shared in together.items():
+        small = min(len(rosters_by_name[a]), len(rosters_by_name[b]))
+        if shared >= min_shared and shared >= min_fraction * small:
+            out.append((a, b, "roster"))
+    return sorted(out)
 
 
 _STATE_WORDS = {"alabama", "alaska", "arizona", "arkansas", "california", "colorado",
@@ -426,8 +467,10 @@ def judge(pairs, rosters_by_name, states_by_name,
         shared = len(ra & rb)
         small = min(len(ra), len(rb))
         frac = (shared / small) if small else 0.0
-        need_n = {"prefix": prefix_min_shared, "level": LEVEL_MIN_SHARED}.get(rel, min_shared)
-        need_f = {"prefix": prefix_min_fraction, "level": LEVEL_MIN_FRACTION}.get(rel, min_fraction)
+        need_n = {"prefix": prefix_min_shared, "level": LEVEL_MIN_SHARED,
+                  "roster": ROSTER_MIN_SHARED}.get(rel, min_shared)
+        need_f = {"prefix": prefix_min_fraction, "level": LEVEL_MIN_FRACTION,
+                  "roster": ROSTER_MIN_FRACTION}.get(rel, min_fraction)
         row = [a, b, rel, len(ra), len(rb), shared, round(frac, 4), None]
         sa = states_by_name.get(a) or set()
         sb = states_by_name.get(b) or set()
@@ -758,6 +801,10 @@ def main():
         print(f"  {len(generic):,} college spellings several colleges share")
         pairs = candidatesAll(by_name.keys(), want_prefix=a.prefix,
                               level_of=level_of, college_key=college_key)
+        # the runners propose too: college spellings sharing most of a roster
+        have = {(x, y) for x, y, _r in pairs}
+        pairs = sorted(pairs + [p for p in rosterPairs(by_name, level_of)
+                                if (p[0], p[1]) not in have and (p[1], p[0]) not in have])
         kinds = {}
         for _x, _y, rel in pairs:
             kinds[rel] = kinds.get(rel, 0) + 1
