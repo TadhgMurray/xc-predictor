@@ -64,7 +64,10 @@ def test_predict_school_state():
     card = JS[JS.index('<details class="team-card"'):JS.index('</details>')]
     # ! THE STATE RIDES AS ?state= since 21a8581 (Jesuit (CA) no longer opens
     #   Jesuit (LA)) -- a query parameter, never composed into the path.
-    ok('href="/school/${encodeURIComponent(t.school)}${' in card
+    # ★ AND THE SERVER'S LINK FIRST when it sent one (predict.stampTeamHrefs,
+    #   2026-11-05: Calvin the university, by level), the bare name after
+    ok(("t.school_href" in card or 'href="/school/${encodeURIComponent(t.school)}${' in card)
+       and "/school/${encodeURIComponent(t.school)}${" in card
        and "?state=${encodeURIComponent(t.state)}" in card,
        "the link still uses the BARE name")
     ok('data-team="${esc(t.school)}"' in card, "and so does the card's key")

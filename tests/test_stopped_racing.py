@@ -137,3 +137,11 @@ def test_a_qualified_team_that_loses_a_stopped_runner_sends_its_next(monkeypatch
     loras = [e["person_id"] for e in got if e["school"] == "Loras"]
     assert 1 not in loras and len(loras) == 7 and 8 in loras     # next best steps in
     assert 50 not in [e["person_id"] for e in got]               # an individual is not refilled
+
+
+def test_a_team_card_links_to_its_level():
+    """owner, 2026-11-05: "Calvin (MI)" on D3 nationals opened the high
+    school's roster."""
+    teams = [{"school": "Calvin", "state": "MI", "pool": "college_m"}]
+    P.stampTeamHrefs(teams)
+    assert "level=college" in teams[0]["school_href"]
