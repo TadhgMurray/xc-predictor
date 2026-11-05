@@ -700,13 +700,19 @@ def stampTeamHrefs(teams, school_key="school", state_key="state"):
     card wrote /school/Calvin?state=MI and the page chose the bigger side).
     school_identity.schoolHref with the team's pool says level=college."""
     try:
-        from school_identity import schoolHref
+        from school_identity import schoolHref, collegeFullName
     except Exception:                                   # noqa: BLE001
         return teams
     for t in teams or []:
         if t.get(school_key):
             try:
                 t["school_href"] = schoolHref(t[school_key], t.get(state_key), t.get("pool"))
+                # ★ AND ITS OWN NAME when a high school shares it (owner,
+                #   2026-11-05: "Calvin University", not "Calvin (MI)")
+                if str(t.get("pool") or "").startswith("college"):
+                    full = collegeFullName(t[school_key], t.get(state_key))
+                    if full:
+                        t["school_label"] = full
             except Exception:                           # noqa: BLE001
                 pass
     return teams
