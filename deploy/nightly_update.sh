@@ -382,6 +382,11 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
         step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py \
           && step 11_teams "$PY" -u racecast/build_team_season.py
         step 13c_search_index "$PY" -u racecast/search_index.py
+        # ★ every school name raced this season against the state a page would
+        #   give it (owner, 2026-11-05: Georgetown TX, Notre Dame WI). Report
+        #   only; FAILED in the summary means names to look at
+        #   (scripts/school_label_audit.py lists them)
+        step 13d_school_audit "$PY" -u scripts/school_label_audit.py --show 40 || true
         # ★ this week's state ranks for /movers (build_rank_snapshot.py,
         #   2026-10-10); off the && chain, so a failed snapshot never costs
         #   the team boards
