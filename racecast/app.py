@@ -7363,14 +7363,21 @@ def school_page(school_name):
             lchips = levelChips(cur, school_name, state or primary_state)
             level = (request.args.get("level") or "").strip().lower() or None
             if level and not any(c["level"] == level for c in lchips):
-                level = None
+                # ★ A LINK THAT NAMES THE LEVEL IS KEPT WITHOUT CHIPS TOO (owner,
+                #   2026-11-05: "I still see Calvin hs" -- the predictions card
+                #   asked for level=college, Calvin's college side is under the
+                #   chip threshold, and the page dropped the level and opened on
+                #   the high school): kept when the name has athletes there
+                from school_identity import hasLevel
+                if not hasLevel(cur, school_name, state or primary_state, level):
+                    level = None
             if lchips and not level:
                 level = lchips[0]["level"]
             # ★ THE HEADER IS THE CHOSEN INSTITUTION'S (owner, 2026-10-28:
             #   Washington's high school view read "NCAA DI · Athletes 3223"
             #   -- the units and count of the name, not of the school on
             #   screen). Its own count, and units only when they are its own.
-            if lchips and level:
+            if level:
                 for c in lchips:
                     if c["level"] == level:
                         header["athletes"] = c["n"]
@@ -7409,7 +7416,7 @@ def school_page(school_name):
                       if year else [])
             meets  = schoolMeets(cur, school_name, sport, year=picked_stored,
                                  state=state, primary=primary_state,
-                                 level=level if lchips else None)
+                                 level=level)
             # deeper than the old 25: the tables reveal in place now, and
             # the cap is what "show more" runs out against
             best   = schoolBest(cur, school_name, sport, limit=100,
@@ -7613,7 +7620,14 @@ def embed_school(school_name):
             lchips = levelChips(cur, school_name, state)
             level = (request.args.get("level") or "").strip().lower() or None
             if level and not any(c["level"] == level for c in lchips):
-                level = None
+                # ★ A LINK THAT NAMES THE LEVEL IS KEPT WITHOUT CHIPS TOO (owner,
+                #   2026-11-05: "I still see Calvin hs" -- the predictions card
+                #   asked for level=college, Calvin's college side is under the
+                #   chip threshold, and the page dropped the level and opened on
+                #   the high school): kept when the name has athletes there
+                from school_identity import hasLevel
+                if not hasLevel(cur, school_name, state or primary_state, level):
+                    level = None
             if lchips and not level:
                 level = lchips[0]["level"]
             year = currentSeason(cur, school_name, sport, state, primary_state)
