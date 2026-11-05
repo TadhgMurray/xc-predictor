@@ -690,6 +690,29 @@ def write(cur, grouped, rosters_by_name):
     return len(rows)
 
 
+def explainPair(x, y, by_name, level_mix, level_of, college_key, generic, by_state,
+                pairs, merged, refused):
+    """--pair: everything the rules saw about two spellings."""
+    for n in (x, y):
+        ros = by_name.get(n)
+        print(f"  {n!r}: {len(ros) if ros else 0} athletes"
+              f"{'' if ros else ' (fewer than 2: not a candidate at all)'}; "
+              f"level {level_of.get(n)} {level_mix.get(n)}; directory "
+              f"{college_key.get(n)}; shared-name college {n in generic}; "
+              f"anet states {sorted(by_state.get(n) or [])}; mergeable {mergeable(n)}")
+    if by_name.get(x) and by_name.get(y):
+        print(f"  shared athletes: {len(by_name[x] & by_name[y])}")
+    key = {x, y}
+    cand = [p for p in pairs if {p[0], p[1]} == key]
+    print(f"  candidate pair: {cand or 'NO -- no rule proposes them (same / level / college / prefix)'}")
+    for m in merged:
+        if {m[0], m[1]} == key:
+            print(f"  MERGED: {m}")
+    for r in refused:
+        if {r[0], r[1]} == key:
+            print(f"  REFUSED: {r[2]}: {r[-1]}  ({r[3]} / {r[4]} athletes, {r[5]} shared)")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -703,6 +726,9 @@ def main():
                          "higher bar, and off by default")
     ap.add_argument("--min-shared", type=int, default=MIN_SHARED)
     ap.add_argument("--min-fraction", type=float, default=MIN_FRACTION)
+    ap.add_argument("--pair", nargs=2, metavar=("A", "B"),
+                    help="two spellings: say whether they are a candidate pair and why "
+                         "they were or were not merged (no write)")
     a = ap.parse_args()
 
     from database import getConn
@@ -729,6 +755,10 @@ def main():
                                 min_shared=a.min_shared,
                                 min_fraction=a.min_fraction, level_of=level_of,
                                 level_mix=level_mix, generic=generic)
+        if a.pair:
+            explainPair(a.pair[0], a.pair[1], by_name, level_mix, level_of, college_key,
+                        generic, by_state, pairs, merged, refused)
+            return 0
         grouped = groups(merged, by_name, by_state, level_mix)
         n_variants = sum(len(v) for _c, v in grouped)
         print(f"  {len(merged):,} pairs agree -> {len(grouped):,} groups, "
