@@ -71,3 +71,17 @@ def test_unattached_is_no_shared_school():
     assert F.findPairs(seasons) == []
     assert F.noTeam("unattached") and F.noTeam("Unattached-Ohio".lower())
     assert not F.noTeam("una vermont") and not F.noTeam("iowa western cc")
+
+
+def test_a_nickname_and_a_one_off_grade_are_one_runner():
+    """owner, 2026-11-05: 'Joe (Whit) Carver' gr 10 (3 races) / 'Whit Carver' gr 9 (1)."""
+    import find_split_people as F
+    assert F.nameKeys("Joe (Whit) Carver") == ["joe whit carver", "joe carver", "whit carver"]
+    seasons = [dict(person_id=1, name="Joe (Whit) Carver", school="Roxboro Community", level="hs",
+                    gender="m", year=2026, n_races=3, grade="10"),
+               dict(person_id=2, name="Whit Carver", school="Roxboro Community", level="hs",
+                    gender="m", year=2026, n_races=1, grade="9")]
+    assert [(o, k) for o, k, *_x in F.findPairs(seasons)] == [(2, 1)]
+    # two well-raced pages a grade apart stay two runners
+    seasons[1]["n_races"] = 6
+    assert F.findPairs(seasons) == []

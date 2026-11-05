@@ -85,23 +85,72 @@ def gradeKey(grade, level):
     return n.group(1) if n else None
 
 
+import re as _re
+_NICK = _re.compile(r"""\s*(?:\(([^()]{1,24})\)|"([^"]{1,24})"|'([^']{1,24})')\s*""")
+
+
+def nameKeys(name):
+    """Every key a runner's name files under: the name as written, and for
+    a bracketed or quoted nickname ("Joe (Whit) Carver") the name without
+    it and with it as the first name ("Joe Carver", "Whit Carver"). Pure.
+    ★ owner, 2026-11-05: "Joe (Whit) Carver" (3 races) and "Whit Carver" (1),
+    one Roxboro Community runner on two pages."""
+    from person_name import personKey
+    out = []
+    k = personKey(name, keep_suffix=True)
+    if k:
+        out.append(k)
+    m = _NICK.search(name or "")
+    if m:
+        nick = next(g for g in m.groups() if g)
+        bare = (name[:m.start()] + " " + name[m.end():]).strip()
+        parts = bare.split()
+        for v in (bare, " ".join([nick] + parts[1:]) if len(parts) > 1 else None):
+            kk = personKey(v, keep_suffix=True) if v else None
+            if kk and kk not in out:
+                out.append(kk)
+    return out
+
+
+# ★ A ONE-GRADE GAP ON A ONE-OFF PAGE (owner, 2026-11-05, Whit Carver: grade
+#   10 on three races, grade 9 on the one the Great American XC Festival
+#   entered). A page with ONE_OFF_RACES or fewer that season may differ from
+#   the other by one grade; two pages both well raced at different grades
+#   are two runners, as before.
+ONE_OFF_RACES = 2
+
+
+def _gradeClash(a, b, na, nb):
+    """True when two grade keys for one season cannot be one runner. Pure."""
+    if not (a and b) or a == b:
+        return False
+    if a.isdigit() and b.isdigit() and abs(int(a) - int(b)) == 1 and min(na, nb) <= ONE_OFF_RACES:
+        return False
+    order = ("fr", "so", "jr", "sr")
+    if a in order and b in order and abs(order.index(a) - order.index(b)) == 1 \
+            and min(na, nb) <= ONE_OFF_RACES:
+        return False
+    return True
+
+
 def findPairs(seasons):
     """seasons: dicts (person_id, name, school, level, gender, year, n_races,
     grade) -> [(old, keep, name, school)] by the rule above, before the
     same-day check (clashes() is the database half). Pure."""
     from person_name import personKey
     from search_index import schoolFold
-    by = defaultdict(lambda: defaultdict(lambda: {"years": {}, "n": 0}))
+    by = defaultdict(lambda: defaultdict(lambda: {"years": {}, "n": 0, "ny": {}}))
     for s in seasons:
-        k = personKey(s.get("name"), keep_suffix=True)
         sch = schoolFold(s.get("school"))
-        if not k or not sch or noTeam(sch) or not s.get("level") or not s.get("gender"):
+        if not sch or noTeam(sch) or not s.get("level") or not s.get("gender"):
             continue
-        p = by[(k, sch, s["level"], s["gender"])][s["person_id"]]
-        p["years"][s["year"]] = gradeKey(s.get("grade"), s["level"]) or p["years"].get(s["year"])
-        p["n"] += int(s.get("n_races") or 0)
-        p["name"], p["school"] = s.get("name"), s.get("school")
-    out = []
+        for k in nameKeys(s.get("name")):
+            p = by[(k, sch, s["level"], s["gender"])][s["person_id"]]
+            p["years"][s["year"]] = gradeKey(s.get("grade"), s["level"]) or p["years"].get(s["year"])
+            p["ny"][s["year"]] = p["ny"].get(s["year"], 0) + int(s.get("n_races") or 0)
+            p["n"] += int(s.get("n_races") or 0)
+            p["name"], p["school"] = s.get("name"), s.get("school")
+    out, seen = [], set()
     for (_k, _sch, _lvl, _g), people in by.items():
         if len(people) < 2:
             continue
@@ -113,9 +162,12 @@ def findPairs(seasons):
             shared = set(a) & set(b)
             if not shared:
                 continue
-            if any(a[y] and b[y] and a[y] != b[y] for y in shared):
+            ka, kb = people[keep]["ny"], people[old]["ny"]
+            if any(_gradeClash(a[y], b[y], ka.get(y, 0), kb.get(y, 0)) for y in shared):
                 continue
-            out.append((old, keep, people[old]["name"], people[keep]["school"]))
+            if (old, keep) not in seen:
+                seen.add((old, keep))
+                out.append((old, keep, people[old]["name"], people[keep]["school"]))
     return out
 
 
