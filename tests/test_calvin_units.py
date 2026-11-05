@@ -35,25 +35,15 @@ def test_the_michigan_miaa_is_a_conference():
     assert ("conference", "MIAA") not in _u("MIAA Cross Country Championships", "MO")
 
 
-class _Cur:
-    def __init__(self, rows):
-        self.rows, self.out = rows, []
-
-    def execute(self, sql, args=None):
-        self.out = self.rows if "FROM results r" in sql and "meets m " in sql else []
-
-    def fetchall(self):
-        return self.out
-
-    def fetchone(self):
-        return (None,)
+def test_a_high_school_div_iii_is_no_ncaa_division():
+    assert not [f for f in _u("VPA Div III State Championships", "VT") if f[0] == "division"]
+    assert ("division", "NCAA DIII") in _u("NCAA Div III Regional")
 
 
-def test_a_lone_runner_votes_no_conference(monkeypatch):
-    monkeypatch.setattr(C, "_levelMaps", lambda cur: {})
-    monkeypatch.setattr(C, "_nameAliases", lambda cur: {})
-    rows = [("Calvin", "2019", "CIAA Cross Country Championships", "Men", "NC", "anet", 1.0, 1),
-            ("Hope", "2019", "Landmark Conference Championships", "Men", "PA", "anet", 1.0, 7)]
-    votes, *_x = C.buildVotes(_Cur(rows), "XC")
-    assert "conference" not in votes.get(("Calvin", "NC"), {})
-    assert votes[("Hope", "PA")]["conference"]
+def test_all_atlantic_keeps_its_name():
+    assert ("region", "ALL-ATLANTIC") in _u("All-Atlantic Region Track & Field Championships", "NY")
+
+
+def test_community_colleges_are_not_the_miaa():
+    assert ("conference", "MIAA") not in _u("MCCAA / MIAA Cross Country Championships", "MI")
+    assert C.JUCO_NAME_RX.search("Mott CC") and not C.JUCO_NAME_RX.search("Calvin")

@@ -252,7 +252,11 @@ def _isCollegeName(name):
 _ROMAN = {"1": "I", "2": "II", "3": "III"}
 _COLLEGE_ORG_RX = re.compile(r"\b(NCAA|NAIA|NJCAA|USCAA|CCCAA)\b")
 _COLLEGE_DIV_RX = re.compile(
-    r"\b(?:division\s*|div\.?\s*|D)[-. ]?(I{1,3}|[123])\b", re.I)
+    r"\b(?:division\s*|D)[-. ]?(I{1,3}|[123])\b", re.I)
+# "NCAA DIV III": the abbreviation counts only beside a college body --
+# "VPA Div III State Championships" is a high school's (2026-11-05 diff:
+# Woodstock Union and Middlesex School read NCAA DIII)
+_COLLEGE_DIVABBR_RX = re.compile(r"\bdiv\.?\s*[-. ]?(I{1,3}|[123])\b", re.I)
 
 # ★ AN NCAA REGION IS ONE OF THE NCAA'S (owner, 2026-11-05: Calvin read
 #   "GREAT LAKES VALLEY" -- an athletic.net regional titled "NCAA DIII Great
@@ -305,6 +309,12 @@ def _notAConference(unit):
     return notAConference(unit)
 
 
+# a meet that names the community colleges' bodies too is not the MIAA's own
+_MIAA_NOT_RX = re.compile(r"\b(?:MCCAA|NJCAA|JUCO|community|junior college|region(?:al)?)\b", re.I)
+# the Michigan MIAA's members are four-year colleges
+JUCO_NAME_RX = re.compile(r"\b(?:CC|JC|community college|junior college)\b", re.I)
+
+
 def _collegeUnits(name, state=None):
     facts = _collegeUnitsRaw(name)
     # ★ THE MICHIGAN MIAA (owner, 2026-11-05: Calvin's conference read CIAA
@@ -313,7 +323,7 @@ def _collegeUnits(name, state=None):
     #   rules above skip it; a college meet in Michigan, or one that says
     #   Michigan, is the Michigan Intercollegiate Athletic Association. The
     #   Mid-America MIAA (DII, Missouri / Kansas) keeps the old blank.
-    if not any(k == "conference" for k, _ in facts) and (
+    if not any(k == "conference" for k, _ in facts) and not _MIAA_NOT_RX.search(name) and (
             re.search(r"\bMichigan Intercollegiate\b", name, re.I)
             or (re.search(r"\bMIAA\b", name)
                 and ((state or "").upper() == "MI" or re.search(r"\bMichigan\b", name, re.I)))):
@@ -325,7 +335,7 @@ def _collegeUnitsRaw(name):
     facts = []
 
     org = _COLLEGE_ORG_RX.search(name)
-    dm = _COLLEGE_DIV_RX.search(name)
+    dm = _COLLEGE_DIV_RX.search(name) or (org and _COLLEGE_DIVABBR_RX.search(name))
     if dm:
         div = _ROMAN.get(dm.group(1).upper(), dm.group(1).upper())
         facts.append(("division",
@@ -360,7 +370,9 @@ def _collegeUnitsRaw(name):
                 if not _notAConference(unit):
                     facts.append(("conference", unit))
             else:
-                if org is None or org.group(1) == "NCAA":
+                # "All-Atlantic Region" is a championship's own name (the
+                # AARTFC), not the NCAA's Atlantic region
+                if (org is None or org.group(1) == "NCAA") and not unit.startswith("ALL"):
                     unit = _ncaaRegion(unit)
                 facts.append(("region", unit))
     for kind, rx, grp in _UNIT_RULES:
@@ -722,7 +734,7 @@ def _rows(cur, sport, lo, hi):
     if sport == "XC":
         cur.execute(f"""
             SELECT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}, count(*) AS n_runners
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
             FROM results r
             JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                         AND m.source = r.source
@@ -736,7 +748,7 @@ def _rows(cur, sport, lo, hi):
         cur.execute(f"""
             SELECT r.school, substr(r.date, 1, 4) AS yr,
                    mt.meet_name, NULL::text AS division, mt.state,
-                   'tfrrs'::text AS source, {_COLL_SHARE}, count(*) AS n_runners
+                   'tfrrs'::text AS source, {_COLL_SHARE}
             FROM results r
             JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                AND mt.source = 'tfrrs'
@@ -755,7 +767,7 @@ def _rows(cur, sport, lo, hi):
             --   modern college meets entirely (Tufts stopped at 2016).
             --   meet_name is meet-level, so any row of the meet names it.
             SELECT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}, count(*) AS n_runners
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
             FROM results_tf r
             JOIN LATERAL (
                 SELECT mm.meet_name, mm.division, mm.state
@@ -861,7 +873,6 @@ def _nameAliases(cur):
         return {}
 
 
-MIN_CONF_RUNNERS = 3                      # a college's runners before a meet votes its conference
 _DEBUG = {"school": None, "rows": []}     # --split: one school's voting meets
 
 
@@ -925,17 +936,8 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
             name_miss[meet_name] += 1
             continue
         name_hits[meet_name] += 1
-        # ★ A CONFERENCE IS A TEAM'S (owner, 2026-11-05: Calvin's stored
-        #   conference was CIAA, then Landmark, then South Coast -- one vote
-        #   each, a lone runner filed under "Calvin" at another league's
-        #   meet). A college enters its conference championship as a team;
-        #   under MIN_CONF_RUNNERS of its runners in the race is a stray
-        #   entry or a mislabelled one, and says nothing about membership.
-        n_run = rest[1] if len(rest) > 1 else None
-        if is_coll and n_run is not None and int(n_run) < MIN_CONF_RUNNERS:
-            facts = [f for f in facts if f[0] != "conference"]
-            if not facts:
-                continue
+        if ("conference", "MIAA") in facts and JUCO_NAME_RX.search(school or ""):
+            facts = [f for f in facts if f != ("conference", "MIAA")]
         # ★ A COLLEGE VOTES IN ITS OWN STATE (owner, 2026-10-30, Wake
         #   Forest's missing region): st is the MEET's state, and a college
         #   races its conference and its regional away -- the 2025 Southeast

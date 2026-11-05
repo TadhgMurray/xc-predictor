@@ -238,6 +238,17 @@ def directoryDivisions(cur, rows):
     return n
 
 
+# ★ A MARK OR A STATUS IS NO SCHOOL (2026-11-05 diff: "39.62", "DQ", "NT",
+#   "9:55.24" held conferences). A track feed's columns shifted put the
+#   time or the status in the school cell; isTeam reads words, not these.
+_NOT_A_SCHOOL_RX = re.compile(
+    r"[\d:.,\s+-]+|(?:DQ|DNS|DNF|NT|NH|NM|FS|FOUL|SCR|NP|ND|DSQ|X+)", re.I)
+
+
+def notASchool(school):
+    return bool(_NOT_A_SCHOOL_RX.fullmatch(str(school or "").strip()))
+
+
 _DIFF_COLS = ("conference", "region", "division")
 
 
@@ -247,7 +258,7 @@ def diffRows(rows, live):
     sport): (conference, region, division)}. Pure."""
     i_col = {c: 3 + _COLS.index(c) for c in _DIFF_COLS}
     i_college, i_votes = 3 + len(_COLS), 3 + len(_COLS) + 2
-    out = {c: {"changed": [], "lost": [], "gained": []} for c in _DIFF_COLS}
+    out = {c: {"changed": [], "lost": [], "gained": [], "gone": []} for c in _DIFF_COLS}
     seen = set()
     for row in rows:
         if not row[i_college]:
@@ -261,21 +272,37 @@ def diffRows(rows, live):
                 continue
             kind = "changed" if a and b else "lost" if a else "gained"
             out[c][kind].append((row[i_votes] or 0, row[0], row[1], row[2], a, b))
+    # a live row the build no longer makes at all: its school's other
+    # states in the build, or none (a junk name, a feed spelling now aliased)
+    states = {}
+    for row in rows:
+        if row[i_college]:
+            states.setdefault((row[0], row[2]), []).append(row[1])
     for key, old in live.items():
         if key not in seen:
             for j, c in enumerate(_DIFF_COLS):
                 if old[j]:
-                    out[c]["lost"].append((0, key[0], key[1], key[2], old[j], None))
+                    elsewhere = ",".join(sorted(states.get((key[0], key[2]), []))) or None
+                    out[c]["gone"].append((0, key[0], key[1], key[2], old[j], elsewhere))
     return out
 
 
 def printDiff(diff, show=40):
     for c, kinds in diff.items():
-        print(f"\n  {c}: {len(kinds['changed']):,} changed, {len(kinds['lost']):,} lost, "
-              f"{len(kinds['gained']):,} gained (college rows)")
+        gone = kinds["gone"]
+        junk = sum(1 for g in gone if notASchool(g[1]))
+        moved = sum(1 for g in gone if g[5] and not notASchool(g[1]))
+        print(f"\n  {c}: {len(kinds['changed']):,} changed, {len(kinds['lost']):,} emptied, "
+              f"{len(kinds['gained']):,} gained; {len(gone):,} live rows the build no longer makes "
+              f"({junk:,} junk names, {moved:,} under another state now, "
+              f"{len(gone) - junk - moved:,} other)")
         for kind in ("changed", "lost", "gained"):
             for v, school, st, sport, a, b in sorted(kinds[kind], reverse=True)[:show]:
                 print(f"    {kind:<7} {sport} {school} ({st})  {a or '-'} -> {b or '-'}  [{v} votes]")
+        other = [g for g in gone if not notASchool(g[1])]
+        for _v, school, st, sport, a, elsewhere in sorted(other, key=lambda g: (g[5] is None, g[1]))[:show]:
+            print(f"    gone    {sport} {school} ({st})  {a}"
+                  + (f"  -- now under {elsewhere}" if elsewhere else ""))
 
 
 def main():
@@ -300,7 +327,7 @@ def main():
             votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(cur, sport, split_level=True)
             n_ok = n_clash = n_coll = 0
             for (school, st, _coll), kinds in votes.items():
-                if not isTeam(school):
+                if not isTeam(school) or notASchool(school):
                     continue
                 row = _rowFor(school, st, kinds)
                 if row is None:

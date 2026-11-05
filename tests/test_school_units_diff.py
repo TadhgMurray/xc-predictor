@@ -24,6 +24,14 @@ def test_changed_lost_and_gained():
             ("Gone", "OH", "XC"): ("OAC", None, None)}
     d = B.diffRows(rows, live)
     assert [x[4:] for x in d["conference"]["changed"]] == [("CIAA", "MIAA")]
-    assert {x[1] for x in d["conference"]["lost"]} == {"Hope", "Gone"}
+    assert {x[1] for x in d["conference"]["lost"]} == {"Hope"}
+    assert [x[1] for x in d["conference"]["gone"]] == ["Gone"]
     assert [x[4:] for x in d["region"]["changed"]] == [("GREAT LAKES VALLEY", "GREAT LAKES")]
     assert not d["division"]["changed"]
+
+
+def test_marks_and_statuses_are_no_school():
+    for junk in ("39.62", "9:55.24", "DQ", "NT", "DNS", "FS", "4:02.08"):
+        assert B.notASchool(junk), junk
+    for real in ("Calvin", "Hope", "UC San Diego", "St. Mary's (CA)", "DNA Academy"):
+        assert not B.notASchool(real), real
