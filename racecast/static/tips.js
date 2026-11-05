@@ -55,27 +55,38 @@
     return { title: el.getAttribute("data-title") || "", blurb: el.getAttribute("data-blurb") || "" };
   }
 
-  /* ---- with a mouse: one floating tooltip on <body> ----------------- */
+  /* ---- with a mouse: the panel's own look, without its close ---------
+   * ★ ONE LOOK FOR HOVER AND PRESS (owner, 2026-11-05: "why does the pop up
+   *   behave different when you hover vs click for the rated not ranked and
+   *   prs and such"). The hover was the old dark bubble above the badge and
+   *   the press the panel beside it; now the hover shows that same panel,
+   *   placed the same way, and a press pins it (with its ×). */
+  function place(box, el) {
+    var r = el.getBoundingClientRect();
+    var vw = document.documentElement.clientWidth, vh = window.innerHeight;
+    var w = Math.min(320, vw - 16);
+    box.style.width = w + "px";
+    var h = box.offsetHeight;
+    var top = (vh - r.bottom - 12 >= h || r.top - 12 < h) ? r.bottom + 6 : r.top - 6 - h;
+    box.style.top = Math.max(8, top) + "px";
+    box.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, vw - w - 8)) + "px";
+  }
   function showFloat(el) {
     if (!floatEl) {
       floatEl = document.createElement("div");
-      floatEl.className = "rc-tipf";
+      floatEl.className = "rx-pop rx-tip rx-hover";
       floatEl.setAttribute("role", "tooltip");
+      floatEl.style.pointerEvents = "none";
       document.body.appendChild(floatEl);
     }
     var t = text(el);
-    floatEl.innerHTML = "";
-    if (t.title) { var b = document.createElement("b"); b.textContent = t.title; floatEl.appendChild(b); }
-    if (t.blurb) { var p = document.createElement("span"); p.textContent = t.blurb; floatEl.appendChild(p); }
-    floatEl.style.setProperty("--tip", getComputedStyle(el).getPropertyValue("--tip") || "#111");
+    floatEl.innerHTML = '<div class="rx-head"><div class="rx-title"></div></div>' +
+      '<div class="rx-body"><p></p></div>';
+    floatEl.querySelector(".rx-title").textContent = t.title;
+    floatEl.querySelector(".rx-body p").textContent = t.blurb;
+    if (!t.title) floatEl.querySelector(".rx-head").hidden = true;
     floatEl.hidden = false;
-    var r = el.getBoundingClientRect(), w = floatEl.offsetWidth, h = floatEl.offsetHeight;
-    var vw = document.documentElement.clientWidth, gap = 10;
-    var top = r.top - h - gap;
-    if (top < 8) top = r.bottom + gap;                     // no room above: below
-    var left = Math.min(Math.max(8, r.left), vw - w - 8);
-    floatEl.style.top = (top + window.pageYOffset) + "px";
-    floatEl.style.left = (left + window.pageXOffset) + "px";
+    place(floatEl, el);
     openFor = el;
   }
   function hideFloat() {
@@ -93,14 +104,7 @@
   }
   function placePanel() {
     if (!panel || panel.hidden || !panelFor) return;
-    var r = panelFor.getBoundingClientRect();
-    var vw = document.documentElement.clientWidth, vh = window.innerHeight;
-    var w = Math.min(320, vw - 16);
-    panel.style.width = w + "px";
-    var h = panel.offsetHeight;
-    var top = (vh - r.bottom - 12 >= h || r.top - 12 < h) ? r.bottom + 6 : r.top - 6 - h;
-    panel.style.top = Math.max(8, top) + "px";
-    panel.style.left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, vw - w - 8)) + "px";
+    place(panel, panelFor);
   }
   var raf = 0;
   function follow() {

@@ -441,6 +441,35 @@ app.jinja_env.globals["meet_logo"] = _unit_board.meetLogo
 _GENDER_WORD_RX = re.compile(r"\b(boys?|girls?|men|mens|women|womens|male|female)\b", re.I)
 
 
+# ★ A ROW WITH NO RATING STILL READS AT ITS RACE'S LEVEL (owner, 2026-11-05:
+#   the NESCAC men's DNS list, "Connecticut College 11", "Amherst 9" -- "these
+#   would usually be collegiate grades, but don't show as such due to them
+#   DNSing"). The grade is labelled by the row's rating_pool, and a DNS, DNF
+#   or unrated row has none, so the feed's raw number showed. Such a row takes
+#   label_pool, the pool the race's rated rows share -- only when LABEL_SHARE
+#   of them are one level, so an open race of high schoolers and collegians
+#   guesses nobody's grade.
+LABEL_SHARE = 0.8
+
+
+def fillLabelPools(rows):
+    """Set label_pool on each row with no rating_pool to the race's pool,
+    when LABEL_SHARE of its rated rows sit at one level. Returns the pool or
+    None. Pure (mutates rows)."""
+    from collections import Counter
+    pools = [str(r.get("rating_pool")).split("|")[0] for r in rows if r.get("rating_pool")]
+    if not pools:
+        return None
+    lv = Counter(p.split("_")[0] for p in pools).most_common(1)[0]
+    if lv[1] < LABEL_SHARE * len(pools):
+        return None
+    pool = Counter(p for p in pools if p.split("_")[0] == lv[0]).most_common(1)[0][0]
+    for r in rows:
+        if not r.get("rating_pool") and not r.get("label_pool"):
+            r["label_pool"] = pool
+    return pool
+
+
 def raceGenderWord(gender, rows):
     if gender not in ("M", "F"):
         return ""
@@ -4832,6 +4861,7 @@ def race_xc(meet_id, div_id):
             results = get_race_results(cur, meet_id, div_id, source=src)
             results = [dict(r) for r in results]
             _borrowTwins(cur, results, "results", meet_id, src)
+            fillLabelPools(results)
             # which rows' athlete links still need ?r= (athleteHref)
             g.rid_pins = _twinFlaggedIds(
                 cur, "XC", [r.get("result_id") for r in results])
@@ -6061,6 +6091,7 @@ def race_tf(meet_id, event_id, div_id):
             results = [dict(r) for r in results]
             _borrowTwins(cur, results, "results_tf", meet_id, race_src,
                          name_key="athlete_name")
+            fillLabelPools(results)
             # which rows' athlete links still need ?r= (athleteHref, D2)
             g.rid_pins = _twinFlaggedIds(
                 cur, "TF", [r.get("result_id") for r in results])
