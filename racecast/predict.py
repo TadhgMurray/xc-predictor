@@ -4648,6 +4648,20 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
                                          ev, src)
                 if track_m:
                     squads, _rest = _tfEventSquads(cur, squads, track_m, year)
+            # ★ WHO HAS STOPPED RACING DOES NOT RUN (owner, 2026-11-05: Isaac
+            #   Bourne, Loras, second at D3 nationals off one September race
+            #   -- "He is not running"). meetField benches them for the page
+            #   (_stoppedRacing); a prediction made without the page's field
+            #   -- the previews, the qualifier rounds -- leaves them out too.
+            if not track_m:
+                try:
+                    gone = _stoppedRacing(cur, squads, sport, year)
+                except Exception:                       # noqa: BLE001 -- keep the squad
+                    _rollback(cur)
+                    gone = {}
+                if gone:
+                    squads = {s: [r for r in sq if r.get("person_id") not in gone]
+                              for s, sq in squads.items()}
             # ★ AND THE SAME ORDER AS meetField'S (byPrediction)
             at_meet_counts = countsBySchool(originals)
             # ★ THE MEET PREVIEWS' FIELD RULES (upcoming_preview.fieldRules):
