@@ -41,6 +41,9 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
                   that a scraped feed also has: same day, same time, and the
                   same person, name or school (2026-10-10; see
                   twinUploadSql). The feed's copy survives.
+    dup_cross_gender one run listed in a men's and a women's division of one
+                  meet (same name, same time): the copy in the field that is
+                  not the runner's gender (2026-11-05, dupCrossGenderSql).
     dup_same_feed the later result_id of two rows in ONE feed that agree on
                   person, meet, division (and event, on track), date and
                   time to the tenth. Two rows, one run.
@@ -883,6 +886,65 @@ def xcTrackCopySql(table, sport):
 #   filed as a twin.
 import level_conflict as LC                                     # noqa: E402
 
+# ★ ONE RUN IN THE OTHER GENDER'S RACE (owner, 2026-11-05: "yes"; Trey
+#   Davidson, Al Carius and Paul Olsen Open 2026 -- 1st in the men's 8K and
+#   27th in the women's 6K at one 25:36.3; tfrrs meet 25972, sixteen women
+#   in the men's division at their women's-race times). Two rows of ONE
+#   feed, one meet, one day, the same name and the same time to the tenth,
+#   in two divisions whose fields are opposite genders (person_gender, 70%
+#   of 5+ known runners each): the row in the division that is not the
+#   runner's gender is the copy. The runner's gender is the better-evidenced
+#   of the two rows' persons. A DNF placeholder never pairs (60 s to 4 h).
+#   Read-only listing first: scripts/cross_division_dupes.py.
+def dupCrossGenderSql(table, sport):
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    key = "lower(regexp_replace(r.athlete_name, '[^A-Za-z]+', '', 'g'))"
+    return f"""
+        WITH k AS (
+            SELECT r.source, r.meet_id, left(r.date, 10) AS day, {key} AS nk,
+                   round(r.time_seconds::numeric, 1) AS rt
+            FROM   {table} r
+            WHERE  r.time_seconds BETWEEN 60 AND 14400
+              AND  NULLIF(btrim(r.athlete_name), '') IS NOT NULL
+            GROUP  BY 1, 2, 3, 4, 5
+            HAVING count(DISTINCT r.div_id) = 2),
+        rows AS (
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id, k.day, k.nk, k.rt
+            FROM   {table} r JOIN k ON k.source = r.source AND k.meet_id = r.meet_id
+                   AND left(r.date, 10) = k.day AND {key} = k.nk
+                   AND round(r.time_seconds::numeric, 1) = k.rt),
+        fld AS (
+            SELECT f.source, f.meet_id, f.div_id,
+                   CASE WHEN count(*) FILTER (WHERE pg.gender = 'M') >= 0.7 * count(pg.gender)
+                             AND count(pg.gender) >= 5 THEN 'M'
+                        WHEN count(*) FILTER (WHERE pg.gender = 'F') >= 0.7 * count(pg.gender)
+                             AND count(pg.gender) >= 5 THEN 'F' END AS g
+            FROM   {table} f
+            JOIN   (SELECT DISTINCT source, meet_id, div_id FROM rows) d
+                   ON d.source = f.source AND d.meet_id = f.meet_id AND d.div_id = f.div_id
+            LEFT   JOIN person_gender pg ON pg.person_id = f.person_id
+            GROUP  BY 1, 2, 3),
+        runner AS (
+            SELECT DISTINCT ON (x.source, x.meet_id, x.day, x.nk, x.rt)
+                   x.source, x.meet_id, x.day, x.nk, x.rt, pg.gender AS g
+            FROM   rows x JOIN person_gender pg ON pg.person_id = x.person_id
+            WHERE  pg.gender IN ('M', 'F')
+            ORDER  BY x.source, x.meet_id, x.day, x.nk, x.rt,
+                      COALESCE(pg.n_m, 0) + COALESCE(pg.n_f, 0) DESC)
+        SELECT x.result_id
+        FROM   rows x
+        JOIN   fld fx ON fx.source = x.source AND fx.meet_id = x.meet_id AND fx.div_id = x.div_id
+        JOIN   rows y ON y.source = x.source AND y.meet_id = x.meet_id AND y.day = x.day
+                     AND y.nk = x.nk AND y.rt = x.rt AND y.div_id <> x.div_id
+        JOIN   fld fy ON fy.source = y.source AND fy.meet_id = y.meet_id AND fy.div_id = y.div_id
+        JOIN   runner g ON g.source = x.source AND g.meet_id = x.meet_id AND g.day = x.day
+                       AND g.nk = x.nk AND g.rt = x.rt
+        WHERE  fx.g IS NOT NULL AND fy.g IS NOT NULL AND fx.g <> fy.g
+          AND  fx.g <> g.g
+    """
+
+
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("twin_same_day", twinSameDaySql),
          ("twin_race_rest", twinRaceRestSql),
@@ -896,6 +958,7 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_converted", dupConvertedSql),
          ("xc_placeholder", xcPlaceholderSql),
          ("xc_track_copy", xcTrackCopySql),
+         ("dup_cross_gender", dupCrossGenderSql),
          (LC.REASON, LC.ruleSql))
 
 
@@ -905,6 +968,13 @@ def prepareRule(cur, table, sport, reason, explain=False):
     rest."""
     if reason == "dup_cross_date":
         prepareCrossDate(cur, table, sport)
+    elif reason == "dup_cross_gender":
+        # ! a database the full pipeline has not built person_gender in yet:
+        #   an empty stand-in, so the rule flags nothing rather than failing
+        cur.execute("SELECT to_regclass('public.person_gender')")
+        if cur.fetchone()[0] is None:
+            cur.execute("CREATE TEMP TABLE IF NOT EXISTS person_gender "
+                        "(person_id bigint, gender text, n_m int, n_f int, split boolean)")
     elif reason == LC.REASON:
         LC.prepare(cur, table, sport, explain=explain)
 

@@ -381,6 +381,25 @@ def detachRows(cur, person, sport, since=None, until=None, write=False, actor=No
     return rows, to
 
 
+def _detachInto(cur, person, sport, since, until, write, actor, to):
+    """detachRows onto an existing new person `to` (or a fresh one)."""
+    if not to:
+        return detachRows(cur, person, sport, since, until, write=write, actor=actor)
+    table = dict(TABLES)[sport]
+    cur.execute(f"""SELECT result_id, date, school, meet_id FROM {table}
+                    WHERE person_id = %(p)s
+                      AND (%(a)s::text IS NULL OR date >= %(a)s)
+                      AND (%(b)s::text IS NULL OR date <= %(b)s) ORDER BY date""",
+                {"p": person, "a": since, "b": until})
+    rows = cur.fetchall()
+    for r in rows:
+        if write:
+            detach(cur, sport, _v(r, "result_id"), person, actor=actor, to_person=to)
+        print(f"    {_v(r, 'date', 1)}  {(_v(r, 'school', 2) or '')[:34]:<34} "
+              f"meet {_v(r, 'meet_id', 3)}  result {_v(r, 'result_id')}")
+    return rows, to
+
+
 def _list(cur):
     for table, cols in (("grade_pin", "person_id, season, grade, level, fix_request_id, pinned_by"),
                         ("school_pin", "person_id, season, sport, school, fix_request_id, pinned_by"),
@@ -441,13 +460,20 @@ def main(argv=None):
                 print(f"[pins] {kind} pin removed ({n}); the next rebuild reverts that season")
                 return 0
             if a.detach:
-                if not a.sport or not (a.since or a.until):
-                    ap.error("--detach PERSON --sport XC|TF --since/--until (one or both)")
+                if not (a.since or a.until):
+                    ap.error("--detach PERSON --since/--until (one or both) [--sport XC|TF]")
                 ensure(cur)
-                print(f"[pins] {a.sport} rows of person {a.detach}"
-                      f" from {a.since or 'the start'} to {a.until or 'now'}:")
-                rows, to = detachRows(cur, a.detach, a.sport, a.since, a.until,
-                                      write=a.write, actor=actor)
+                # ★ BOTH SPORTS ONTO ONE NEW PERSON when no --sport (owner,
+                #   2026-11-05: a 2006 Calvin runner's cross country AND track
+                #   rows on a 2026 junior's page -- two runs of this would have
+                #   made two pages for one person)
+                rows, to = [], None
+                for sp in ((a.sport,) if a.sport else ("XC", "TF")):
+                    print(f"[pins] {sp} rows of person {a.detach}"
+                          f" from {a.since or 'the start'} to {a.until or 'now'}:")
+                    got, t = _detachInto(cur, a.detach, sp, a.since, a.until, a.write, actor, to)
+                    rows += got
+                    to = to or t
                 if a.write:
                     conn.commit()
                     print(f"[pins] {len(rows)} rows detached to person {to} "
