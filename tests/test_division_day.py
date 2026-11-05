@@ -72,15 +72,18 @@ def test_it_never_adds_credit():
     its own reads slow, and the lean must not hand the tactics back."""
     r, w, race, sub, u_loo, _ = _world(0.03)
     new, _ = js.divisionDayRow(r, w, 1.0, race, sub, u_loo, SIG ** 2)
-    assert np.all(np.abs(new) <= np.abs(u_loo) + 1e-15)
-    assert np.all(new * u_loo >= 0)                    # never past zero
+    assert np.all(new <= np.maximum(u_loo, 0.0) + 1e-15)   # never more credit
+    # a debit taken past the venue's day stops at the cap
+    assert np.all(new >= np.minimum(u_loo, -js.RACE_DAY_CAP) - 1e-15)
     # tactical: venue day 0, the division ran 4% slow on its own
     race2 = np.zeros(80, dtype=int)
     sub2 = np.repeat([0, 1], 40)
     r2 = np.where(sub2 == 1, 0.04, -0.04)
     u0 = np.zeros(80)
     out, _ = js.divisionDayRow(r2, np.ones(80), 1.0, race2, sub2, u0, SIG ** 2)
-    assert np.all(out == 0.0)
+    assert np.all(out[sub2 == 1] == 0.0)                # the slow side gains nothing
+    # the fast side keeps a peak's worth and takes the rest (owner, 2026-11-05)
+    assert np.all(out[sub2 == 0] <= 0.0) and np.all(out[sub2 == 0] >= -0.04 + js.DAY_DEBIT_PEAK - 0.01)
     # the Midlothian shape: venue day dragged to +6% by another division,
     # this division's own day ~0 -> its credit falls toward 0
     r3 = np.where(sub2 == 1, 0.12, 0.0)
@@ -121,3 +124,20 @@ def test_course_plus_day_guard():
     u = np.array([0.0, 0.02, -0.03, 0.10, 0.0, 0.0])
     got = jg.xcTogetherSuspect(delta, cell, sport, solved, u, cap=0.15)
     assert got.tolist() == [False, False, False, True, False, False]
+
+
+def test_a_fast_division_takes_its_own_fast_day_beyond_a_peak(monkeypatch):
+    """owner, 2026-11-05, Big Sky 2026: the women's race (a short loop) took
+    only the 'fast 2.3%' the men's ordinary race shared with it."""
+    rng = np.random.default_rng(0)
+    n = 40
+    race = np.zeros(2 * n, dtype=int)
+    sub = np.r_[np.zeros(n, dtype=int), np.ones(n, dtype=int)]
+    r = np.r_[rng.normal(0.0, 0.02, n), rng.normal(-0.08, 0.02, n)]
+    u = np.full(2 * n, -0.023)
+    new, _ = js.divisionDayRow(r, np.ones(2 * n), 1.0, race, sub, u, 0.02 ** 2)
+    assert float(np.median(new[n:])) < -0.05            # the women: their own fast day
+    assert abs(float(np.median(new[:n]))) < 0.01        # the men: their own, ~level
+    monkeypatch.setenv("XCP_DAY_DIVISION_DEBIT", "0")
+    old, _ = js.divisionDayRow(r, np.ones(2 * n), 1.0, race, sub, u, 0.02 ** 2)
+    assert np.allclose(old[n:], -0.023)                 # the old clamp

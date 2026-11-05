@@ -463,6 +463,28 @@ DIVISION_TABLE_COLS = ("division", "race", "division_day", "info", "rows",
 #     varsity beside a long JV loop) loses the borrowed credit; a division
 #     slower or faster than its venue on its own gains nothing.
 #  XCP_DAY_DIVISION_SHRINK=0 turns it off (ablation).
+# ★ A FAST DIVISION TAKES ITS OWN FAST DAY (owner, 2026-11-05, Big Sky 2026
+#   at Buffalo Park: "the issue is the race day term is helping not hurting
+#   them. This is bcs the mens race was not particularly fast"). The lean
+#   below held each division between its venue-day and zero, so the women's
+#   race -- a short loop, its runners 4% faster than their own races at sea
+#   level -- took only the "fast 2.3%" the men's ordinary race shared with
+#   it. A division may now lean past its venue-day toward FAST by what its
+#   own day exceeds that by beyond DAY_DEBIT_PEAK (a championship field
+#   reads a little fast and keeps it), to RACE_DAY_CAP: that only ever
+#   lowers its ratings. Credit stays as it was
+#   -- never more than the venue's slow day, none on a fast one -- so a
+#   division slower than its venue still gains nothing (the tactics the
+#   venue key exists to stop). XCP_DAY_DIVISION_DEBIT=0 restores the old
+#   clamp.
+DAY_DEBIT_PEAK = float(os.environ.get("XCP_DAY_DEBIT_PEAK", "0.02"))
+
+
+def dayDivisionDebitOn():
+    return os.environ.get("XCP_DAY_DIVISION_DEBIT", "1").strip().lower() not in (
+        "0", "false", "off", "no")
+
+
 def dayDivisionShrinkOn():
     return os.environ.get("XCP_DAY_DIVISION_SHRINK", "1").strip().lower() not in (
         "0", "false", "off", "no")
@@ -571,9 +593,16 @@ def divisionDayRow(r_pre, w, h, race, sub, u_row, sigma2, keep=None,
     k = np.where(ok, W_loo / (W_loo + sigma2 / sigma_v2), 0.0)
     new = u_row + k * np.where(ok, m_loo - u_row, 0.0)
     if credit_only_down:
+        own = new
         # between the venue's day and zero: less credit, never more
-        new = np.where(u_row > 0, np.clip(new, 0.0, u_row),
-                       np.where(u_row < 0, np.clip(new, u_row, 0.0), 0.0))
+        new = np.where(u_row > 0, np.clip(own, 0.0, u_row),
+                       np.where(u_row < 0, np.clip(own, u_row, 0.0), 0.0))
+        if dayDivisionDebitOn():
+            # ... and a division FASTER than that takes the part of its own
+            # fast day beyond a peak (DAY_DEBIT_PEAK), to the cap
+            beyond = (new - own) - DAY_DEBIT_PEAK
+            new = np.where(beyond > 0,
+                           np.minimum(new, np.maximum(new - beyond, -RACE_DAY_CAP)), new)
     moved = ok & (k > 0)
     info["rows_moved"] = int(moved.sum())
     info["k_median"] = float(np.median(k[moved])) if moved.any() else 0.0

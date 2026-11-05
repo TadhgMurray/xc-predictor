@@ -566,6 +566,7 @@ RULES = {
                ENDUR + ": the event offsets by rating band were the population's guess at it"),
         "RACE_DAY_CAP": ("REMOVED", RACE + " (§5: all four of its jobs)"),
         "DAY_GUARD_MAJORITY": ("REMOVED", RACE + " (the day guard's tie-break: a close vote to the side near zero)"),
+        "DAY_DEBIT_PEAK": ("REMOVED", RACE + " (a fast division keeps a peak's worth of its own fast day; the rest is taken)"),
         "DIVISION_TABLE_COLS": ("INFRA", "division-guard table columns (the guard itself goes: " + RACE + ")"),
         **_all("THETA_RACE_PRIOR_N EFFORT_THETA_FLOOR EFFORT_SHORT_CUT EFFORT_INNER_ITERS "
                "EFFORT_FAST_BEFORE_DAY EFFORT_CLASS_NAMES EFFORT_GROUP_NAMES", "REMOVED",
@@ -834,7 +835,7 @@ ENV_RULES = {
     "XCP_OWN_SHIFT_SINCE": ("DATA", DISTSEP + " (the season own_race_shift starts judging from)"),
     "XCP_DAY_CENTRE": ("REMOVED", THETA + " (§5: season centring; a fast season is fitness)"),
     **_all("XCP_FIELD_CHECK XCP_FIELD_CHECK_MIN XCP_FIELD_CHECK_FLOOR XCP_FIELD_CHECK_CAP "
-           "XCP_FIELD_CHECK_FLOOR_OPENER XCP_FIELD_CHECK_DIVISION XCP_FIELD_GUARD", "REMOVED", RACE + " read against the runners' θ (§5: field check)"),
+           "XCP_FIELD_CHECK_FLOOR_OPENER XCP_FIELD_CHECK_DIVISION XCP_FIELD_GUARD XCP_DAY_DIVISION_DEBIT XCP_DAY_DEBIT_PEAK", "REMOVED", RACE + " read against the runners' θ (§5: field check)"),
     **_all("XCP_ISLAND_CHECK XCP_ISLAND_CHECK_MIN XCP_ISLAND_CHECK_FLOOR XCP_ISLAND_CHECK_CAP",
            "REMOVED", THETA + " + " + SDGATE + " (§5: island check)"),
     "XCP_XC_COURSE_SUSPECT": ("REMOVED", SDGATE + " (§5: course guard)"),
