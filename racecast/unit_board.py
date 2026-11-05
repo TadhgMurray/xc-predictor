@@ -710,6 +710,17 @@ _MEET_LOGO = {"of": None, "cache": {}}
 MEET_LOGO_CACHE = 20000
 
 
+# a meet name that says it is a high school meet: a CIF section, a state
+# high school association, a school level or a sub-varsity race
+_HS_MEET = __import__("re").compile(
+    r"\bcif\b|\bsection(al|s)?\b|\bhigh school\b|\bhs\b|\bmiddle school\b|\bms\b|"
+    r"\bjunior high\b|\bjv\b|\bfrosh\b|\bfreshm[ae]n\b|\bsophomore\b|"
+    r"\b(uil|ihsa|osaa|fhsaa|khsaa|mshsaa|mshsl|nysphsaa|piaa|vhsl|ghsa|wiaa|njsiaa|mpssaa|"
+    r"chsaa|ohsaa|mhsaa|ahsaa|tssaa|ncsaa|scisa|scshsl|nchsaa|ihsaa|iahsaa|kshsaa|nsaa|"
+    r"sdhsaa|ndhsaa|whsaa|wiaa|aia|nmaa|uhsaa|niaa|ciac|miaa|nhiaa|vpa|riil|mpa|diaa|wvssac|"
+    r"lhsaa|mhsaa|aaa|osaa|asaa|hhsaa|chsaa|fhsaa)\b", __import__("re").I)
+
+
 def meetLogoPick(meet_name, keys):
     """The (kind, stored name) of the unit `meet_name` is the championship
     of, among `keys` = {(kind, normKey): stored name}, or None. Pure.
@@ -726,9 +737,15 @@ def meetLogoPick(meet_name, keys):
     words = set(low)
     if not words or not any(w.startswith(_MEET_WORDS) for w in words):
         return None
+    # ★ A HIGH SCHOOL MEET IS NOT A COLLEGE CONFERENCE'S (owner, 2026-11-05:
+    #   "CIF North Coast Section ..." wore the North Coast Athletic
+    #   Conference's logo -- every word of "north coast" is in its name)
+    hs_meet = bool(_HS_MEET.search(raw))
     best, tie = None, False
     for (kind, key), name in keys.items():
         if kind not in MEET_UNIT_KINDS:
+            continue
+        if hs_meet and kind == "conference":
             continue
         kw = key.split()
         if not kw or not all(w in words for w in kw):

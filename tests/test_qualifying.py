@@ -533,3 +533,13 @@ def test_a_race_with_no_gender_named_takes_its_runners(monkeypatch):
     got = Q._gendered(Cur(), rule, 9, [{"div_id": 1, "label": "Championship"},
                                        {"div_id": 2, "label": "Girls 5K", "gender": None}])
     assert [r["gender"] for r in got] == ["M", "F"]         # runners, then the label
+
+
+def test_only_open_qualifiers_add_a_regions_runners():
+    # owner, 2026-11-05: D3 nationals full of non-D3 teams
+    assert Q.ruleFor("Nike Cross Nationals").get("region_adds")
+    assert Q.ruleFor("Brooks XC National Championships").get("region_adds")
+    for n in ("NCAA Division I Cross Country Championships",
+              "NCAA Division II Cross Country Championships",
+              "NCAA Division III Cross Country Championships"):
+        assert not Q.ruleFor(n).get("region_adds"), n

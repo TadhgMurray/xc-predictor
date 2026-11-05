@@ -91,6 +91,9 @@ RULES = (
      #   isn't its own thing anymore (starting this year)"): the Federation
      #   meet counts for the 2025 season and before only
      "round_last": ((r"federation", 2025),),
+     # a regional's best runners race it whether their school went last
+     # year or not (upcoming_preview.regionRunners): an open qualifier
+     "region_adds": True,
      # ! A REGIONAL'S MEET ALSO HOLDS ITS COMMUNITY, CITIZENS, KIDS AND
      #   MIDDLE SCHOOL RACES, and the NYS Federation runs "at NXR" (the
      #   server's 2025 list)
@@ -120,6 +123,7 @@ RULES = (
      "round_not": r"national|middle school|\bms\b|community|kids|open race", "window": 28,
      "teams_auto": 0, "teams_at_large": 0, "ind_auto": 10, "ind_at_large": 10,
      "ind_at_large_by": "rating", "teams_by_round": r"\b(northeast|midwest|south|west)\b",
+     "region_adds": True,
      "team_size": 7,
      "cite": "Brooks XC Championships (events.brooksrunning.com; Wikipedia's Foot Locker / "
              "Brooks entry): four regionals, the top 10 of each qualify; Golden Tickets "

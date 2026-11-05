@@ -455,10 +455,14 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
                 cur, rule, str(plan["date"])[:10], race.get("gender"),
                 predict=(lambda mid, g, every=False: predictedRound(cur, mid, g, src, live, every))
                 if forecast else None,
-                # a published rule's rounds are regions: their best runners now
-                # race the round whether or not their school went last year
-                predict_past=((lambda mid, div, on: predictedPast(cur, mid, div, src, on,
-                                                                  region=True))
+                # ★ AN OPEN QUALIFIER'S REGION RACES ITS ROUND (NXN, Brooks):
+                #   its best runners now, whether or not their school went last
+                #   year. ! NEVER AN NCAA REGIONAL (owner, 2026-11-05: "D3
+                #   nationals ... a ton of non-D3 teams" -- a state's best
+                #   college runners are mostly Division I): every team runs
+                #   its own division's regional, and last year's holds them
+                predict_past=((lambda mid, div, on: predictedPast(
+                                  cur, mid, div, src, on, region=bool(rule.get("region_adds"))))
                               if past else None), info=used)
             n_rounds = used.get("rounds", 0)
         else:

@@ -382,3 +382,17 @@ def test_an_nxr_region_wears_its_regionals_logo(monkeypatch):
     assert ("series", "NXR SOUTHEAST") in asked              # its own first, then NXR's
     UB.unitMark("nxr", "California (CIF State)", size=22)
     assert ("state", "CA") in asked                          # its flag (owner, 2026-11-04)
+
+
+def test_a_high_school_meet_never_wears_a_college_conferences_logo():
+    """owner, 2026-11-05: "CIF North Coast Section ..." wore the North Coast
+    Athletic Conference's logo."""
+    import unit_board as UB
+    keys = {("conference", "north coast"): "NORTH COAST ATHLETIC CONFERENCE",
+            ("league", "north coast"): "NORTH COAST LEAGUE"}
+    assert UB.meetLogoPick("CIF North Coast Section Championships", keys) == \
+        ("league", "NORTH COAST LEAGUE")
+    only_college = {("conference", "north coast"): "NORTH COAST ATHLETIC CONFERENCE"}
+    assert UB.meetLogoPick("CIF North Coast Section Championships", only_college) is None
+    assert UB.meetLogoPick("North Coast Athletic Conference Championships", only_college) == \
+        ("conference", "NORTH COAST ATHLETIC CONFERENCE")
