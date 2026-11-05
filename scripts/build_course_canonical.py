@@ -368,9 +368,68 @@ def coreNamePairs(venues):
                     continue
                 d = haversineMeters(float(a["gps_lat"]), float(a["gps_long"]),
                                     float(b["gps_lat"]), float(b["gps_long"]))
-                if d <= SAME_NAME_RADIUS:
+                # ★ AS FAR AS AN IDENTICAL NAME (owner, 2026-11-05: three
+                #   spellings of LaVern Gibson in the search box -- geocodes
+                #   further apart than SAME_NAME_RADIUS): a core is two
+                #   distinctive words, which is the bar SAME_NAME_FAR asks of
+                #   one name. keepIds' agreement test guards the merge.
+                if d <= SAME_NAME_FAR:
                     out.append((min(a["idx"], b["idx"]), max(a["idx"], b["idx"]), d, 1.0))
     return out
+
+
+# ★ THE TIMES MUST AGREE (owner, 2026-11-05: "how can we merge courses like
+#   these without merging things that are on the same location but perhaps a
+#   different course (like mt sac rain vs regular)"). Two existing courses a
+#   core-name merge would join keep their own ids when the solve has fitted
+#   each (CORE_MIN_RESULTS+) and their difficulties differ by more than
+#   CORE_AGREE: a loop that reads measurably faster or slower is another
+#   course, whatever it is called. A protected tag ("(rain course)") splits
+#   them before this is asked.
+CORE_AGREE = 0.02
+CORE_MIN_RESULTS = 200
+
+
+def loadDifficulties():
+    """{display course name: (results-weighted difficulty, results)} over
+    every era of the course; {} without the table."""
+    out = {}
+    try:
+        import os as _os
+        import sys as _sys
+        _rc = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "racecast")
+        if _rc not in _sys.path:
+            _sys.path.insert(0, _rc)
+        from courses import courseDisplayName
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('course_difficulties')")
+            if cur.fetchone()[0] is None:
+                return {}
+            cur.execute("""SELECT course_name, difficulty, n_results FROM course_difficulties
+                           WHERE course_name LIKE 'XC:%%' AND difficulty IS NOT NULL""")
+            acc = {}
+            for name, d, n in cur.fetchall():
+                k = courseDisplayName(name)
+                if k:
+                    a = acc.setdefault(k, [0.0, 0])
+                    a[0] += float(d) * (n or 0)
+                    a[1] += n or 0
+            out = {k: (v[0] / v[1], v[1]) for k, v in acc.items() if v[1]}
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"  (course difficulties not read: {type(exc).__name__}: {exc})")
+    return out
+
+
+def coreAgree(names, diffs, agree=CORE_AGREE, min_n=CORE_MIN_RESULTS):
+    """(ok, why) for joining these existing courses' names. Pure."""
+    known = [(n, diffs[n][0]) for n in names if n in diffs and diffs[n][1] >= min_n]
+    if len(known) < 2:
+        return True, "fewer than two fitted, nothing to disagree"
+    lo, hi = min(d for _n, d in known), max(d for _n, d in known)
+    spread = hi - lo
+    return (spread <= agree,
+            "difficulties " + ", ".join(f"{n} {d:+.3f}" for n, d in known)
+            + f" (spread {spread:.3f}, bar {agree})")
 
 
 def buildMapping(venues, radiusMeters, minNameSimilarity):
@@ -477,7 +536,7 @@ def loadExisting():
             return {(n, la, lo): (cid, cname) for n, la, lo, cid, cname in cursor.fetchall()}
 
 
-def keepIds(rows, old, merge_same_name=False):
+def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
     """The fresh clustering, renumbered so every course keeps the id it has.
 
     ★ WHY (2026-09-26: Penrose Park, raced this season, had no difficulty
@@ -502,6 +561,7 @@ def keepIds(rows, old, merge_same_name=False):
       merged course. Printed in the plan, opt-in, never in the nightly.
     Pure. rows: buildMapping's tuples. Returns (rows, n_new_venues, n_new_ids).
     """
+    keepIds.refused = []
     by_cluster = {}
     for r in rows:
         by_cluster.setdefault(r[3], []).append(r)
@@ -513,7 +573,16 @@ def keepIds(rows, old, merge_same_name=False):
         mapped = [(old[(m[0], m[1], m[2])], m[6]) for m in members
                   if (m[0], m[1], m[2]) in old]
         one_name = len({expandAbbreviations(normalizeCourseName(m[0])) for m in members}) == 1
-        if merge_same_name and one_name and len({oid for (oid, _n), _r in mapped}) > 1:
+        cores = {coreKey(expandAbbreviations(normalizeCourseName(m[0]))) for m in members}
+        one_core = len(cores) == 1 and None not in cores
+        n_old = len({oid for (oid, _n), _r in mapped})
+        core_ok = False
+        if merge_core and one_core and not one_name and n_old > 1:
+            core_ok, why = coreAgree(sorted({nm for (_oid, nm), _r in mapped}), diffs or {})
+            if not core_ok:
+                getattr(keepIds, "refused", []).append(
+                    (sorted({nm for (_oid, nm), _r in mapped}), why))
+        if ((merge_same_name and one_name) or core_ok) and n_old > 1:
             (host_id, host_name), _n = max(mapped, key=lambda t: t[1])
             gone = sorted({oid for (oid, _nm), _r in mapped} - {host_id})
             merges.append((host_name, host_id, gone))
@@ -605,6 +674,11 @@ def main():
     parser.add_argument("--merge-same-name", action="store_true",
                         help="with --incremental: merge existing ids that are one venue under "
                              "one name (see sameNamePairs); listed in the plan")
+    parser.add_argument("--merge-core-name", action="store_true",
+                        help="with --incremental: merge existing ids whose names differ only by "
+                             "filler (coreKey: 'LaVern Gibson Course' / '... Championship "
+                             "Course') when their fitted difficulties agree within CORE_AGREE; "
+                             "merges and refusals listed in the plan")
     parser.add_argument("--incremental", action="store_true",
                         help="keep every existing course's id; new venues join their "
                              "cluster's id or get a fresh one (the pipeline's mode, 06b)")
@@ -614,9 +688,13 @@ def main():
     rows, stats = buildMapping(venues, args.radius, args.min_sim)
     if args.incremental:
         old = loadExisting()
-        rows, n_new_v, n_new_ids = keepIds(rows, old, merge_same_name=args.merge_same_name)
+        diffs = loadDifficulties() if args.merge_core_name else {}
+        rows, n_new_v, n_new_ids = keepIds(rows, old, merge_same_name=args.merge_same_name,
+                                           merge_core=args.merge_core_name, diffs=diffs)
         for name, host, gone in getattr(keepIds, "merges", []):
             print(f"  merge: {name}  ids {', '.join(map(str, gone))} -> {host}")
+        for names, why in getattr(keepIds, "refused", []):
+            print(f"  KEPT APART: {' / '.join(names)}  -- {why}")
         print(f"\nincremental: {len(old):,} venues already mapped keep their ids; "
               f"{n_new_v:,} new venues ({n_new_ids:,} new courses, "
               f"{n_new_v - n_new_ids:,}-ish joining existing ones)")
