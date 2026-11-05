@@ -702,6 +702,20 @@ def explainPair(x, y, by_name, level_mix, level_of, college_key, generic, by_sta
               f"anet states {sorted(by_state.get(n) or [])}; mergeable {mergeable(n)}")
     if by_name.get(x) and by_name.get(y):
         print(f"  shared athletes: {len(by_name[x] & by_name[y])}")
+    # what the college directory holds for each spelling's key
+    try:
+        from build_college_directory import normName, _candidates, lookup
+        from database import getConn
+        import build_college_directory as BCD
+        with getConn() as conn, conn.cursor() as cur:
+            directory = BCD.loadDirectory(cur, "name", "state")
+        for n in (x, y):
+            key = normName(n)
+            cands = _candidates(directory, key)
+            print(f"  directory key {key!r}: {len(cands)} entr{'y' if len(cands) == 1 else 'ies'} "
+                  f"{cands[:6]}; lookup -> {lookup(directory, n, statedState(n))}")
+    except Exception as exc:                            # noqa: BLE001
+        print(f"  (directory not read: {type(exc).__name__}: {exc})")
     key = {x, y}
     cand = [p for p in pairs if {p[0], p[1]} == key]
     print(f"  candidate pair: {cand or 'NO -- no rule proposes them (same / level / college / prefix)'}")
