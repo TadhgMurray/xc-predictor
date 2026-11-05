@@ -246,7 +246,7 @@ _NOT_A_SCHOOL_RX = re.compile(
 
 
 # ... nor is an unattached entry ("UNA-Schoolcraft College") or "Unknown"
-_UNATTACHED_RX = re.compile(r"^(?:UNA|UNAT|UNATT)[- ]|^(?:unknown|unattached)\b", re.I)
+_UNATTACHED_RX = re.compile(r"^(?:UNA|UNAT|UNATT)-|^(?i:unknown|unattached)\b")
 
 
 def notASchool(school):
