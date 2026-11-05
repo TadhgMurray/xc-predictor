@@ -161,3 +161,59 @@ def test_a_named_level_is_kept_without_chips(monkeypatch):
             return (1,) if self.args[2] == "college" else None
     assert SI.hasLevel(Cur(), "Calvin", "MI", "college")
     assert not SI.hasLevel(Cur(), "Calvin", "MI", "ms")
+
+
+def test_a_colleges_out_of_state_runners_stay_on_its_campus_page(monkeypatch):
+    """owner, 2026-11-05, Calvin: home states put Calvin University's
+    Illinois and Indiana runners in "Calvin (IL)" and "(IN)"."""
+    import school_identity as SI
+    monkeypatch.setattr(SI, "_collegeState", lambda school, state=None, person_id=None:
+                        "MI" if school == "Calvin" else None)
+    clause, _p = SI.stateFilterSql("s", "MI", "MI", "Calvin")
+    assert "= 'college' OR" in clause
+    clause, _p = SI.stateFilterSql("s", "OK", "MI", "Calvin")       # the OK high school
+    assert "= 'college' OR" not in clause
+
+
+def test_a_bare_name_with_other_level_namesakes_elsewhere_narrows(monkeypatch):
+    import school_identity as SI
+    monkeypatch.setattr(SI, "_tableExists", lambda cur, t: True)
+
+    class Cur:
+        def execute(self, sql, args=None):
+            self.args = args
+
+        def fetchone(self):
+            return (1,) if self.args["s"] == "Calvin" else None
+    assert SI.namesakeElsewhere(Cur(), "Calvin", "MI")
+    assert not SI.namesakeElsewhere(Cur(), "Tufts", "MA")
+
+
+def test_a_college_a_high_school_shares_its_name_with_is_called_by_its_own(monkeypatch):
+    """owner, 2026-11-05: "I'd prefer them to show as Calvin University"."""
+    import school_identity as SI
+    monkeypatch.setitem(SI._LABELS, "level_split", {"Calvin"})
+    monkeypatch.setitem(SI._LABELS, "college_name",
+                        {"calvin": [("MI", "Calvin University")], "tufts": [("MA", "Tufts University")]})
+    assert SI.collegeFullName("Calvin", "MI") == "Calvin University"
+    assert SI.collegeFullName("Tufts", "MA") is None          # no namesake: stays Tufts
+    monkeypatch.setattr(SI, "teamState", lambda school, pool=None, state=None, person_id=None: "MI")
+    assert SI.schoolLabelFor("Calvin", "college_m", "MI") == "Calvin University"
+    assert SI.schoolLabelFor("Calvin", "hs_m", "OK").startswith("Calvin")
+    assert "University" not in SI.schoolLabelFor("Calvin", "hs_m", "OK")
+
+
+def test_the_names_other_schools_are_listed(monkeypatch):
+    """owner, 2026-11-05: "what happened to the hs page?" """
+    import school_identity as SI
+    monkeypatch.setattr(SI, "_tableExists", lambda cur, t: True)
+
+    class Cur:
+        def execute(self, sql, args=None):
+            pass
+
+        def fetchall(self):
+            return [{"state": "OK", "level": "hs", "n_athletes": 57},
+                    {"state": "LA", "level": "hs", "n_athletes": 33}]
+    got = SI.namesakes(Cur(), "Calvin", "MI")
+    assert [(g["state"], g["label"]) for g in got] == [("OK", "High school"), ("LA", "High school")]

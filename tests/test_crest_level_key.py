@@ -231,3 +231,28 @@ def test_a_name_whose_rows_are_all_one_state_is_one_school():
     assert L.crestState("Washington St.")[2] == "/x/wsu.png"
     assert L.crestState("Washington St.", pool="college_m")[2] == "/x/wsu-college.png"
     assert L.crestState("Oregon") is None                     # two states: two schools
+
+
+def test_a_colleges_crest_filed_under_its_full_name(monkeypatch):
+    """owner, 2026-11-05: "It shows Calvin University, but still no logo"."""
+    import school_identity as si
+    monkeypatch.setitem(si._LABELS, "level_split", {"Calvin"})
+    monkeypatch.setitem(si._LABELS, "college_name", {"calvin": [("MI", "Calvin University")]})
+    L._CRESTS.update({"loaded": True, "map": {
+        "Calvin University": [("MI", "eeeeeeee", "/x/calvin.png", "college")]}})
+    assert L.crestState("Calvin", "MI", pool="college_m")[2] == "/x/calvin.png"
+    assert L.crestUrl("Calvin", "MI", 64, "college_m")
+
+
+def test_another_states_namesake_is_not_the_colleges_logo(monkeypatch):
+    """owner's crest_check, 2026-11-05: "Calvin" had only Oklahoma's high
+    school logos; Calvin University's is under its full name."""
+    import school_identity as si
+    monkeypatch.setitem(si._LABELS, "level_split", {"Calvin"})
+    monkeypatch.setitem(si._LABELS, "college_name", {"calvin": [("MI", "Calvin University")]})
+    L._CRESTS.update({"loaded": True, "map": {
+        "Calvin": [("OK", "aaaaaaaa", "/x/okhs.png", ""), ("OK", "aaaaaaaa", "/x/okhs-hs.png", "hs")],
+        "Calvin University": [("MI", "bbbbbbbb", "/x/cu.png", "college"),
+                              ("MI", "bbbbbbbb", "/x/cu-plain.png", "")]}})
+    assert L.crestState("Calvin", "MI", pool="college_m")[2] == "/x/cu.png"
+    assert L.crestState("Calvin", "OK", level="hs")[2] == "/x/okhs-hs.png"

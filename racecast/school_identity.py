@@ -79,6 +79,17 @@ def loadLabels(conn_factory, force=False):
                 if _tableExists(cur, "college_directory"):
                     from build_college_directory import loadDirectory
                     _LABELS["college"] = loadDirectory(cur, "state")
+                    # and its full names, for a college a high school shares
+                    # its name with (collegeFullName)
+                    _LABELS["college_name"] = loadDirectory(cur, "name")
+                # ★ NAMES THAT ARE SCHOOLS OF MORE THAN ONE LEVEL (owner,
+                #   2026-11-05: Calvin the Michigan university and the Oklahoma
+                #   and Louisiana high schools), ten athletes or more a level
+                if _tableExists(cur, "school_level"):
+                    cur.execute("""SELECT school FROM school_level
+                                   WHERE NOT COALESCE(is_bucket, false) AND n_athletes >= 10
+                                   GROUP BY school HAVING count(DISTINCT level) > 1""")
+                    _LABELS["level_split"] = {r[0] for r in cur.fetchall()}
                 # ! WHETHER THE ASSIGNMENT TABLE EXISTS, asked once per
                 #   process here rather than per query: stateFilterSql is a
                 #   pure SQL builder with no cursor, and a clause naming a
@@ -241,6 +252,24 @@ def namesItsState(school):
     return inner in _AP_STATES or inner in _STATE_NAMES
 
 
+def collegeFullName(school, state=None):
+    """The college directory's own name for a college whose name a school
+    of another level also carries ("Calvin" -> "Calvin University"), else
+    None. Only those: Tufts stays Tufts (owner, 2026-11-05: "I'd prefer
+    them to show as Calvin University if they are in the University")."""
+    if not school or school not in (_LABELS.get("level_split") or ()):
+        return None
+    names = _LABELS.get("college_name")
+    if not names:
+        return None
+    try:
+        from build_college_directory import lookup
+        full = lookup(names, school, state)
+    except Exception:                                   # noqa: BLE001
+        return None
+    return full if full and str(full).strip() and full != school else None
+
+
 def schoolLabelIn(school, state, trusted=False, pool=None):
     """'Kingston' on a Missouri race -> 'Kingston (MO)', not the biggest
     Kingston's '(WA)' (owner, 2026-09-06: the Steelville race page
@@ -260,7 +289,9 @@ def schoolLabelIn(school, state, trusted=False, pool=None):
         return school
     p = str(pool or "").lower()
     if p.startswith(("college", "pro")):
-        return withState(school, teamState(school, pool, state))
+        st = teamState(school, pool, state)
+        return (collegeFullName(school, st) if p.startswith("college") else None) \
+            or withState(school, st)
     st = contextState(school, state, trusted)
     return withState(school, st)
 
@@ -382,6 +413,10 @@ def schoolLabelFor(school, pool, state=None):
     if not school:
         return school
     st = teamState(school, pool, state)
+    if str(pool or "").lower().startswith("college"):
+        full = collegeFullName(school, st)
+        if full:
+            return full
     return withState(school, st)
 
 
@@ -564,6 +599,50 @@ def levelChips(cur, school, state):
     return out
 
 
+def namesakes(cur, school, state):
+    """[{state, level, n}] the name's schools in OTHER states, ten athletes
+    or more, not buckets, biggest first -- linked from the page of the one
+    on screen (owner, 2026-11-05: "what happened to the hs page?")."""
+    if not school or not _tableExists(cur, "school_level"):
+        return []
+    try:
+        cur.execute("""SELECT state, level, n_athletes FROM school_level
+                       WHERE school = %s AND state <> %s AND n_athletes >= 10
+                         AND NOT COALESCE(is_bucket, false)
+                       ORDER BY n_athletes DESC LIMIT 6""", (school, state or ""))
+        rows = cur.fetchall()
+    except Exception:                                  # noqa: BLE001 -- optional
+        cur.connection.rollback()
+        return []
+    out = []
+    for r in rows:
+        st, lvl, n = (r["state"], r["level"], r["n_athletes"]) if isinstance(r, dict) else r
+        if st and not any(o["state"] == st for o in out):
+            out.append({"state": st, "level": lvl, "n": n,
+                        "label": _LEVEL_LABEL.get(lvl, (lvl or "").title())})
+    return out
+
+
+def namesakeElsewhere(cur, school, state):
+    """Does this name belong to another school of another LEVEL in another
+    state (school_level: ten or more athletes, not a bucket)? Calvin is the
+    Michigan university and the Oklahoma and Louisiana high schools; a page
+    for the bare name is then the main one's only (school_page)."""
+    if not school or not state or not _tableExists(cur, "school_level"):
+        return False
+    try:
+        cur.execute("""SELECT 1 FROM school_level o
+                       WHERE o.school = %(s)s AND o.state <> %(st)s
+                         AND NOT COALESCE(o.is_bucket, false) AND o.n_athletes >= 10
+                         AND o.level NOT IN (SELECT level FROM school_level
+                                             WHERE school = %(s)s AND state = %(st)s)
+                       LIMIT 1""", {"s": school, "st": state})
+        return cur.fetchone() is not None
+    except Exception:                                  # noqa: BLE001 -- optional
+        cur.connection.rollback()
+        return False
+
+
 def hasLevel(cur, school, state, level):
     """Does this school name have athletes at `level` in this state
     (school_level, any number)? A link that names the level is honoured
@@ -721,11 +800,23 @@ def stateFilterSql(alias, state, primary, school=None):
                     f" WHERE sa.person_id = {alias}.person_id"
                     f" AND sa.school = %(sf_school)s), ")
         params["sf_school"] = school
-    clause = (f" AND COALESCE({assigned}"
-              f"(SELECT ph.state FROM person_home_state ph"
-              f" WHERE ph.person_id = {alias}.person_id),"
-              f" %(sf_primary)s) = %(sf_state)s")
-    return clause, params
+    cond = (f"COALESCE({assigned}"
+            f"(SELECT ph.state FROM person_home_state ph"
+            f" WHERE ph.person_id = {alias}.person_id),"
+            f" %(sf_primary)s) = %(sf_state)s")
+    # ★ A COLLEGE'S RUNNERS ARE ITS CAMPUS'S (owner, 2026-11-05, Calvin): a
+    #   university recruits from other states, and their home states put
+    #   Calvin's Illinois and Indiana runners in "Calvin (IL)" and "(IN)".
+    #   On the page of the state the directory puts the college in, a college
+    #   row is the college's whoever's home it is.
+    try:
+        campus = _collegeState(school) if school else None
+    except Exception:                                   # noqa: BLE001
+        campus = None
+    if campus and str(campus).upper() == str(state).upper():
+        return (f" AND (split_part(split_part(COALESCE({alias}.pool, ''), '|', 1), '_', 1)"
+                f" = 'college' OR {cond})"), params
+    return f" AND {cond}", params
 
 
 def homeStates(cur, person_ids):
