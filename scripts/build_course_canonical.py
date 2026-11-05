@@ -387,7 +387,46 @@ def coreNamePairs(venues):
 #   course, whatever it is called. A protected tag ("(rain course)") splits
 #   them before this is asked.
 CORE_AGREE = 0.02
-CORE_MIN_RESULTS = 200
+# ! 40, NOT 200 (owner's dry run, 2026-11-05: Red Bud Country Club +0.100
+#   joined Red Bud Sports Complex +0.056 on 186 results, Lone Mountain Park
+#   +0.168 its Regional Park +0.110 on 185 -- under 200 the check abstained)
+CORE_MIN_RESULTS = 40
+
+# ★ ONE PLACE, TWO FACILITIES (the same dry run: Fort Snelling Golf Course /
+#   State Park, Buena Vista Golf Course / Lake, Credit Island Golf Course /
+#   Park, Rock Port City Park / Golf & Country Club). Names whose facility
+#   words fall in DIFFERENT classes are two courses whatever the times say; a
+#   name with no facility word ("Norris Dam") joins either.
+_FACILITY = (("golf", {"golf", "country club", "cc", "greens", "links", "driving range"}),
+             ("park", {"park", "state park", "regional park", "recreation area",
+                       "recreation center", "rec area", "preserve", "forest"}),
+             ("lake", {"lake"}),
+             ("sports", {"sports complex", "sports center", "soccer", "athletic complex",
+                         "fields", "field", "stadium"}),
+             ("school", {"university", "college", "high school", "school"}),
+             ("fair", {"fairgrounds", "fairground"}),
+             ("trail", {"trail", "trails"}))
+
+
+def _facilities(name):
+    import re as _re
+    low = " " + _re.sub(r"[^a-z0-9 ]+", " ", str(name or "").lower()) + " "
+    return {cls for cls, words in _FACILITY if any(f" {w} " in low for w in words)}
+
+
+def coreConflict(names):
+    """Why these existing courses' names are two places, or None. Pure."""
+    import re as _re
+    nums = {tuple(_re.findall(r"\d+", n)) for n in names}
+    nums.discard(())
+    if len(nums) > 1:
+        return "different numbers: " + ", ".join(sorted(" ".join(t) for t in nums))
+    classes = [c for c in (_facilities(n) for n in names) if c]
+    for i, a in enumerate(classes):
+        for b in classes[i + 1:]:
+            if not (a & b):
+                return f"different facilities: {sorted(a)} vs {sorted(b)}"
+    return None
 
 
 def loadDifficulties():
@@ -579,7 +618,11 @@ def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
         n_old = len({oid for (oid, _n), _r in mapped})
         core_ok = False
         if merge_core and one_core and not one_name and n_old > 1:
-            core_ok, why = coreAgree(sorted({nm for (_oid, nm), _r in mapped}), diffs or {})
+            _names = sorted({nm for (_oid, nm), _r in mapped})
+            why = coreConflict(_names)
+            core_ok = why is None
+            if core_ok:
+                core_ok, why = coreAgree(_names, diffs or {})
             if not core_ok:
                 getattr(keepIds, "refused", []).append(
                     (sorted({nm for (_oid, nm), _r in mapped}), why))

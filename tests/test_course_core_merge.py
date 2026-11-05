@@ -41,3 +41,16 @@ def test_off_by_default_and_rain_is_protected():
     assert {r[3] for r in out} == {10, 11}
     assert B.protectedSplit({"name": "Mt. San Antonio College (rain course)"},
                             {"name": "Mt. San Antonio College"})
+
+
+def test_facilities_numbers_and_small_fits_keep_courses_apart():
+    """owner's dry run, 2026-11-05."""
+    assert B.coreConflict(["Fort Snelling Golf Course", "Fort Snelling State Park"])
+    assert B.coreConflict(["Buena Vista Golf Course", "Buena Vista Lake"])
+    assert B.coreConflict(["IHSAA Cross Country Sectional #6", "IHSAA Cross Country Sectional #7"])
+    assert B.coreConflict(["Norris Dam", "Norris Dam State Park"]) is None
+    assert B.coreConflict(["Valley View Country Club", "Valley View Golf Course"]) is None
+    assert B.coreConflict(["HOT Soccer Complex", "HOT Soccer Fields"]) is None
+    ok, _why = B.coreAgree(["Red Bud Country Club", "Red Bud Sports Complex"],
+                           {"Red Bud Country Club": (0.100, 550), "Red Bud Sports Complex": (0.056, 186)})
+    assert not ok

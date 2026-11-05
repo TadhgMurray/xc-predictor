@@ -816,6 +816,9 @@ def _nameAliases(cur):
         return {}
 
 
+_DEBUG = {"school": None, "rows": []}     # --split: one school's voting meets
+
+
 def buildVotes(cur, sport, state_filter=None, split_level=False):
     """(votes, seasons, unit_eg, stats) over one sport's late season.
 
@@ -883,9 +886,13 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
         #   for. teamState is the boards' answer to "which college is this";
         #   it needs school_identity's labels loaded (build_school_units
         #   does), and without them the meet's state stands as before.
+        st_raced = st
         if split_level and is_coll:
             st = _collegeHome(school, st)
         key = (school, st, bool(is_coll)) if split_level else (school, st)
+        if _DEBUG["school"] and school == _DEBUG["school"]:
+            _DEBUG["rows"].append((yr, meet_name, div_title, st_raced, st, bool(is_coll), feed,
+                                   share, facts))
         for kind, unit in facts:
             if kind == "state" and unit == "STATE":
                 unit = st or "STATE"
@@ -905,11 +912,34 @@ def main():
                     help="restrict the sample table to one state")
     ap.add_argument("--conflicts", action="store_true",
                     help="what the ! flags actually disagree about")
+    ap.add_argument("--split", action="store_true",
+                    help="with --school: the WRITER's level-split votes (build_school_units), "
+                         "every meet that voted, the state it raced in and the state it voted for")
     ap.add_argument("--unparsed", action="store_true",
                     help="championship-gated names that yielded NO unit")
     ap.add_argument("--limit", type=int, default=40)
     args = ap.parse_args()
     lo, hi = _WINDOW[args.sport]
+
+    if args.split and args.school:
+        # the writer's own mode: identity labels loaded, levels split
+        from school_identity import loadLabels
+        loadLabels(getConn)
+        _DEBUG["school"] = args.school
+        with getConn() as conn, conn.cursor() as cur:
+            votes, *_x = buildVotes(cur, args.sport, None, split_level=True)
+        print(f"\n  {args.school}: {len(_DEBUG['rows']):,} voting rows (level-split, as the writer)")
+        agg = Counter()
+        for yr, meet, div, st_r, st_v, coll, feed, share, facts in _DEBUG["rows"]:
+            agg[(st_r, st_v, coll, feed, meet, tuple(facts))] += 1
+        for (st_r, st_v, coll, feed, meet, facts), n in agg.most_common(60):
+            print(f"    {n:>4}x  raced {st_r or '--'} -> votes {st_v or '--'}  "
+                  f"{'college' if coll else 'school '}  {feed:<6} {meet[:60]!r}  {list(facts)}")
+        for key, kinds in votes.items():
+            if key[0] == args.school:
+                print(f"  stored key {key}: " + "; ".join(
+                    f"{k} {dict(v.most_common(3))}" for k, v in kinds.items()))
+        return 0
 
     with getConn() as conn, conn.cursor() as cur:
         votes, seasons, unit_eg, (st_, name_hits, name_miss) = buildVotes(
