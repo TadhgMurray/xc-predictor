@@ -825,6 +825,15 @@ TRACK_NAME_RX = (r"\(\s*track\s*\)"
                  r"|\m(5000|3200|1600)\s*m?\s+track\M")
 
 
+# ★ A MEET OF SPLITS (owner, 2026-11-05, /athlete/33511944: "Lou Regions
+#   Splits (official Results on Milesplit)", a 13:24.4 two-mile split filed
+#   as a 5000 and rated 154.2 -- #1 in the nation for an 8th grader whose
+#   race that day was 21:30). A meet that calls itself splits is not a
+#   race's finish. Plural "splits" or "split times" only: "Split Rock
+#   Invitational" is a park.
+SPLITS_NAME_RX = r"\msplits\M|\msplit\s+times\M"
+
+
 def xcPlaceholderSql(table, sport):
     """A TRACK race put on the cross country calendar (owner's page,
     2026-09-28: "Mid-Season Mania 1600m Invitational (XC Calendar
@@ -846,7 +855,8 @@ def xcPlaceholderSql(table, sport):
         FROM   {table} r
         WHERE  r.meet_id IN (SELECT DISTINCT meet_id FROM meets
                              WHERE  (meet_name ILIKE '%%placeholder%%'
-                                     OR meet_name ~* '{TRACK_NAME_RX}')
+                                     OR meet_name ~* '{TRACK_NAME_RX}'
+                                     OR meet_name ~* '{SPLITS_NAME_RX}')
                                AND  meet_id IS NOT NULL)
     """
 
@@ -945,6 +955,41 @@ def dupCrossGenderSql(table, sport):
     """
 
 
+# ★ A SPLIT, WHATEVER ITS MEET IS CALLED (owner, 2026-11-05: "why does the
+#   nightly keep letting this happen"). The same person in two meets on one
+#   day, both at the same labelled distance (2%), one SPLIT_RATIO or more
+#   faster than the other: nobody runs a 5000 twice in a day, 15% apart.
+#   The faster row is the one that cannot be a finish -- a split, or a
+#   course's lap -- and goes; the slower is the race. Meets with a known
+#   distance only (athletic.net and uploads: tfrrs keeps its distance on
+#   the meet, not the division). Cross country only.
+SPLIT_RATIO = 0.85
+
+
+def xcSplitCopySql(table, sport):
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH base AS (
+            SELECT r.result_id, r.person_id, substr(r.date, 1, 10) AS d, r.meet_id,
+                   r.time_seconds AS t, m.distance AS dist
+            FROM   {table} r
+            JOIN   meets m ON m.div_id = r.div_id AND m.source = r.source
+            WHERE  r.source <> 'tfrrs' AND r.person_id IS NOT NULL
+              AND  r.time_seconds > 60 AND r.time_seconds < 100000
+              AND  m.distance > 0 AND r.date IS NOT NULL),
+        keys AS (
+            SELECT person_id, d FROM base
+            GROUP  BY 1, 2 HAVING min(meet_id) <> max(meet_id))
+        SELECT DISTINCT a.result_id
+        FROM   base a
+        JOIN   keys k ON k.person_id = a.person_id AND k.d = a.d
+        JOIN   base b ON b.person_id = a.person_id AND b.d = a.d AND b.meet_id <> a.meet_id
+                     AND abs(b.dist - a.dist) <= 0.02 * a.dist
+                     AND a.t < {SPLIT_RATIO} * b.t
+    """
+
+
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("twin_same_day", twinSameDaySql),
          ("twin_race_rest", twinRaceRestSql),
@@ -958,6 +1003,7 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_converted", dupConvertedSql),
          ("xc_placeholder", xcPlaceholderSql),
          ("xc_track_copy", xcTrackCopySql),
+         ("xc_split_copy", xcSplitCopySql),
          ("dup_cross_gender", dupCrossGenderSql),
          (LC.REASON, LC.ruleSql))
 

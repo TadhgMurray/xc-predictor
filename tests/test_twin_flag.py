@@ -45,7 +45,8 @@ def test_rules_key_on_the_right_things():
                                         "dup_cross_date", "dup_race_copy",
                                         "dup_same_day", "dup_adjacent_day",
                                         "dup_converted", "xc_placeholder",
-                                        "xc_track_copy", "dup_cross_gender",
+                                        "xc_track_copy", "xc_split_copy",
+                                        "dup_cross_gender",
                                         "level_conflict"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
@@ -117,6 +118,8 @@ _EXPECTED = {
     # XC race the same person ran another day)
     ("XC", "xc_track_copy"): [1121],
     ("TF", "xc_track_copy"): [],
+    ("XC", "xc_split_copy"): [],        # tests/test_twin_split_copy.py holds its case
+    ("TF", "xc_split_copy"): [],
     ("XC", "dup_cross_gender"): [],     # tests/test_twin_cross_gender.py holds its case
     ("TF", "dup_cross_gender"): [],
     # the NESCAC review (2026-09-29): 9005 the review's Middlesex League row,
