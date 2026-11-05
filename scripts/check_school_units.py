@@ -828,7 +828,10 @@ def current(counter, prefer=None):
     for (u, yr), n in counter.items():
         total[u] += n
         last[u] = max(last.get(u, ""), yr)
-    pool = [u for u in total if prefer and u in prefer] or list(total)
+    # a known conference wins the fallback only on two votes or more
+    #   (Marygrove: one guest run at the Michigan Intercollegiate meet in
+    #   2012 out-voted its own USCAA, 2 votes, the same season)
+    pool = [u for u in total if prefer and u in prefer and total[u] >= 2] or list(total)
     unit = max(pool, key=lambda u: (total[u], last[u]))
     return unit, last[unit], len(total) > 1
 

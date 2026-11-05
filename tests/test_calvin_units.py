@@ -47,3 +47,12 @@ def test_all_atlantic_keeps_its_name():
 def test_community_colleges_are_not_the_miaa():
     assert ("conference", "MIAA") not in _u("MCCAA / MIAA Cross Country Championships", "MI")
     assert C.JUCO_NAME_RX.search("Mott CC") and not C.JUCO_NAME_RX.search("Calvin")
+
+
+def test_one_guest_vote_for_a_known_conference_does_not_win():
+    """Marygrove: USCAA x2 and one MIAA in 2012."""
+    from collections import Counter
+    got = C.current(Counter({("USCAA", "2012"): 2, ("MIAA", "2012"): 1}), prefer={"MIAA"})
+    assert got[0] == "USCAA"
+    got = C.current(Counter({("JUNK", "2012"): 1, ("MIAA", "2011"): 3}), prefer={"MIAA"})
+    assert got[0] == "MIAA"
