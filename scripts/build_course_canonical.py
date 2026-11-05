@@ -64,7 +64,7 @@ from course_name_rules import expandAbbreviations, blocksMerge
 # normalised, because normalising would change nothing except the arithmetic.
 _LOAD_VENUES_SQL = """
 WITH venue_rows AS (
-    SELECT course_name, gps_lat, gps_long
+    SELECT course_name, gps_lat, gps_long, state
     FROM meets
     WHERE gps_lat  IS NOT NULL AND gps_lat  <> 0
       AND gps_long IS NOT NULL AND gps_long <> 0
@@ -75,7 +75,7 @@ WITH venue_rows AS (
 
     -- meets_tfrrs has no div_id: one row per (meet_id, sport), so no fan-out.
     -- sport is UPPERCASE here per invariant 0.6.
-    SELECT venue_name AS course_name, gps_lat, gps_long
+    SELECT venue_name AS course_name, gps_lat, gps_long, state
     FROM meets_tfrrs
     WHERE sport = 'XC'
       AND gps_lat  IS NOT NULL AND gps_lat  <> 0
@@ -86,7 +86,8 @@ WITH venue_rows AS (
 SELECT course_name,
        round(gps_lat::numeric,  5)::float8 AS lat,
        round(gps_long::numeric, 5)::float8 AS lng,
-       count(*) AS n_rows
+       count(*) AS n_rows,
+       mode() WITHIN GROUP (ORDER BY upper(NULLIF(btrim(state), ''))) AS state
 FROM venue_rows
 GROUP BY 1, 2, 3
 """
@@ -151,6 +152,7 @@ def loadVenues():
             "gps_lat": row["lat"],
             "gps_long": row["lng"],
             "n_rows": row["n_rows"],
+            "state": row.get("state"),
         })
 
     return venues
@@ -337,7 +339,13 @@ def coreKey(canonical):
     if _SCHOOL_WORDS & set(words):
         return None
     core = set()
+    last = words[-1] if words else ""
     for w in distinctive(canonical):
+        # a feed's truncated tail ("... Cross Country Cour") is the generic
+        # word it was cut from, not a word of the name
+        if w == last and len(w) >= 3 and any(
+                g.startswith(w) for g in _GENERIC_VENUE | _EVENT_WORDS if len(g) > len(w)):
+            continue
         if w in _EVENT_WORDS:
             continue
         w = _re.sub(r"[^a-z0-9]", "", w.lower())
@@ -488,7 +496,7 @@ def buildMapping(venues, radiusMeters, minNameSimilarity):
     """
     pairs = findMergePairs(venues, radiusMeters, minNameSimilarity,
                            blockFn=blocksMerge, venueBlockFn=protectedSplit)
-    pairs = pairs + sameNamePairs(venues) + coreNamePairs(venues)
+    pairs = pairs + sameNamePairs(venues) + coreNamePairs(venues) + farCorePairs(venues)
     clusters = buildClusters(len(venues), pairs)
 
     rows = []
@@ -573,6 +581,50 @@ def loadExisting():
                                      canonical_id, canonical_name
                               FROM course_canonical""")
             return {(n, la, lo): (cid, cname) for n, la, lo, cid, cname in cursor.fetchall()}
+
+
+# ★ A TINY VENUE WITH A BAD POINT (owner, 2026-11-05: the search box still
+#   listed "LaVern Gibson Championship XC Course" and "LaVern Gibson
+#   Championship Course" beside the NCAA course -- 1 row each, geocoded in
+#   California and in central Michigan, and a 2-row copy 12.8 km off in
+#   Terre Haute). A feed that cannot place a meet drops a pin anywhere; the
+#   name still says where it was. A venue of FAR_CORE_MAX_ROWS rows or fewer
+#   joins the one big course (FAR_CORE_MIN_HOST+ rows) of its core at any
+#   distance -- unless the core has big courses in two places, or the two
+#   venues' meets are filed in different states.
+FAR_CORE_MAX_ROWS = 10
+FAR_CORE_MIN_HOST = 100
+
+
+def farCorePairs(venues):
+    """[(idxA, idxB, metres, 1.0)] joining a tiny venue to the one big
+    course of its core beyond SAME_NAME_FAR. Pure."""
+    from course_identity import haversineMeters
+    by = {}
+    for v in venues:
+        k = coreKey(v.get("canonical"))
+        if k:
+            by.setdefault(k, []).append(v)
+    out = []
+    dist = lambda a, b: haversineMeters(float(a["gps_lat"]), float(a["gps_long"]),  # noqa: E731
+                                        float(b["gps_lat"]), float(b["gps_long"]))
+    for group in by.values():
+        big = [v for v in group if (v.get("n_rows") or 0) >= FAR_CORE_MIN_HOST]
+        if not big:
+            continue
+        host = max(big, key=lambda v: v["n_rows"])
+        if any(dist(host, b) > SAME_NAME_FAR for b in big):
+            continue                                # one name, two big places
+        for v in group:
+            if (v.get("n_rows") or 0) > FAR_CORE_MAX_ROWS or protectedSplit(v, host):
+                continue
+            d = dist(v, host)
+            if d <= SAME_NAME_FAR:
+                continue                            # coreNamePairs' reach
+            if v.get("state") and host.get("state") and v["state"] != host["state"]:
+                continue
+            out.append((min(v["idx"], host["idx"]), max(v["idx"], host["idx"]), d, 1.0))
+    return out
 
 
 def keepIds(rows, old, merge_same_name=False, merge_core=False, diffs=None):
@@ -753,6 +805,7 @@ def _explainVenue(text, venues, rows):
         oid = old.get(k)
         cl, size = cluster.get(k, (None, None))
         print(f"    {v['name']!r:<48} rows {v['n_rows']:>5}  ({v['gps_lat']:.5f}, {v['gps_long']:.5f})"
+              f"  {v.get('state') or '--'}"
               f"  id {oid[0] if oid else 'NEW'} {repr(oid[1]) if oid else ''}")
         print(f"        normalised {v['canonical']!r}  core {coreKey(v['canonical'])}  "
               f"far-name {farName(v['canonical'])}  cluster {cl} ({size} venues)")

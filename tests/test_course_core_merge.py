@@ -77,3 +77,31 @@ def test_the_merge_follows_an_id_into_another_cluster():
     diffs = {NAMES[0]: (0.038, 5000), NAMES[1]: (0.041, 3000)}
     out, _nv, _ni = B.keepIds(rows, old, merge_core=True, diffs=diffs)
     assert {r[3] for r in out} == {10}
+
+
+def _v(idx, name, lat, lng, n, state="IN"):
+    return {"idx": idx, "name": name, "canonical": B.expandAbbreviations(B.normalizeCourseName(name)),
+            "gps_lat": lat, "gps_long": lng, "n_rows": n, "state": state}
+
+
+def test_a_tiny_venue_with_a_bad_point_joins_its_course():
+    """owner, 2026-11-05: LaVern Gibson spellings pinned in California and
+    central Michigan, 1 row each."""
+    vs = [_v(0, "Laverne Gibson Course", 39.4601, -87.2599, 627),
+          _v(1, "LaVern Gibson Championship XC Course", 34.2321, -118.991, 1, None),
+          _v(2, "LaVern Gibson Championship Course", 42.5718, -84.4361, 1),
+          _v(3, "LaVern Gibson Championship Course", 42.5718, -84.4361, 1, "MI"),
+          _v(4, "LaVern Gibson Championship Course", 40.0, -80.0, 40)]
+    got = {(a, b) for a, b, _d, _s in B.farCorePairs(vs)}
+    assert got == {(0, 1), (0, 2)}          # other state and a 40-row course stay
+
+
+def test_a_core_with_two_big_places_is_left_alone():
+    vs = [_v(0, "Fox Hollow Park", 39.0, -87.0, 300), _v(1, "Fox Hollow Park", 44.0, -93.0, 200),
+          _v(2, "Fox Hollow Park", 41.0, -90.0, 2)]
+    assert B.farCorePairs(vs) == []
+
+
+def test_a_truncated_tail_is_not_a_word_of_the_name():
+    assert B.coreKey("lavern gibson championship cour") == ("gibson", "lavern")
+    assert B.coreKey("lavern gibson championship county cours") == ("gibson", "lavern")

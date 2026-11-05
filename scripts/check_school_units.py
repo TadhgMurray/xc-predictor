@@ -252,7 +252,27 @@ def _isCollegeName(name):
 _ROMAN = {"1": "I", "2": "II", "3": "III"}
 _COLLEGE_ORG_RX = re.compile(r"\b(NCAA|NAIA|NJCAA|USCAA|CCCAA)\b")
 _COLLEGE_DIV_RX = re.compile(
-    r"\b(?:division\s*|D)[-. ]?(I{1,3}|[123])\b", re.I)
+    r"\b(?:division\s*|div\.?\s*|D)[-. ]?(I{1,3}|[123])\b", re.I)
+
+# ★ AN NCAA REGION IS ONE OF THE NCAA'S (owner, 2026-11-05: Calvin read
+#   "GREAT LAKES VALLEY" -- an athletic.net regional titled "NCAA DIII Great
+#   Lakes Valley XC Regional" -- and "V III GREAT LAKES" from "NCAA DIV III
+#   Great Lakes Region"). The NCAA's cross country regions are a short
+#   fixed list; a captured phrase that holds one of them IS that region.
+_NCAA_REGIONS = sorted("""
+    GREAT LAKES|MID-ATLANTIC|MIDWEST|MOUNTAIN|NORTHEAST|SOUTH CENTRAL|SOUTHEAST|
+    SOUTH|WEST|ATLANTIC|CENTRAL|EAST|MIDEAST|NIAGARA|NEW ENGLAND|NEW YORK|
+    SOUTH/SOUTHEAST|SOUTHWEST|NORTHWEST
+""".replace("\n", " ").split("|"), key=lambda r: -len(r.strip()))
+_NCAA_REGIONS = [r.strip() for r in _NCAA_REGIONS if r.strip()]
+
+
+def _ncaaRegion(unit):
+    """The NCAA region a captured phrase names, else the phrase. Pure."""
+    for r in _NCAA_REGIONS:
+        if re.search(r"(?<![A-Z])" + re.escape(r) + r"(?![A-Z])", unit):
+            return r
+    return unit
 _COLLEGE_REGION_RX = re.compile(
     r"\b([\w .&'-]+?)\s+region(?:al)?s?\b", re.I)
 
@@ -285,7 +305,23 @@ def _notAConference(unit):
     return notAConference(unit)
 
 
-def _collegeUnits(name):
+def _collegeUnits(name, state=None):
+    facts = _collegeUnitsRaw(name)
+    # ★ THE MICHIGAN MIAA (owner, 2026-11-05: Calvin's conference read CIAA
+    #   off one stray vote, because its own was never voted). "MIAA" is an
+    #   association acronym everywhere else (Massachusetts, Maryland), so the
+    #   rules above skip it; a college meet in Michigan, or one that says
+    #   Michigan, is the Michigan Intercollegiate Athletic Association. The
+    #   Mid-America MIAA (DII, Missouri / Kansas) keeps the old blank.
+    if not any(k == "conference" for k, _ in facts) and (
+            re.search(r"\bMichigan Intercollegiate\b", name, re.I)
+            or (re.search(r"\bMIAA\b", name)
+                and ((state or "").upper() == "MI" or re.search(r"\bMichigan\b", name, re.I)))):
+        facts.append(("conference", "MIAA"))
+    return facts
+
+
+def _collegeUnitsRaw(name):
     facts = []
 
     org = _COLLEGE_ORG_RX.search(name)
@@ -304,7 +340,7 @@ def _collegeUnits(name):
     if rm:
         unit = _cleanUnit("region", rm.group(1).upper())
         unit = re.sub(r"^(?:NCAA|NAIA|NJCAA|USCAA|CCCAA)\s*", "", unit)
-        unit = re.sub(r"^D(?:IVISION)?[-. ]?(?:I{1,3}|[123])\s*", "",
+        unit = re.sub(r"^D(?:IV(?:ISION)?)?\.?[-. ]?(?:I{1,3}|[123])\s*", "",
                       unit).strip(" -")
         # sport words ride along on both ends ("MIAA XC Regional")
         unit = re.sub(r"^(?:MEN'S|WOMEN'S|OUTDOOR|INDOOR|XC|CROSS[- ]?"
@@ -324,6 +360,8 @@ def _collegeUnits(name):
                 if not _notAConference(unit):
                     facts.append(("conference", unit))
             else:
+                if org is None or org.group(1) == "NCAA":
+                    unit = _ncaaRegion(unit)
                 facts.append(("region", unit))
     for kind, rx, grp in _UNIT_RULES:
         if kind != "league":
@@ -486,10 +524,12 @@ def parseUnits(meet_name, div_title, college=False, state=None):
         return []
     if _NATIONALS_RX.search(name):
         # division is real evidence; conference/region are not named here
-        return [f for f in _collegeUnits(name)
-                if f[0] == "division"] if college else []
+        # ... and the Michigan MIAA, whose meets athletic.net titles
+        #   "NCAA DIII MIAA Championships" (see _collegeUnits)
+        return [f for f in _collegeUnits(name, state)
+                if f[0] == "division" or f == ("conference", "MIAA")] if college else []
     if college:
-        return _collegeUnits(name)
+        return _collegeUnits(name, state)
     # ★ A COMBINED MEET NAMES NO ONE LEAGUE. "Northern Conference /
     #   Longs Peak League Championships", "East Valley, Valley Mission,
     #   Northern, Western League Finals" and "EAL-SRL Championships" are
@@ -682,7 +722,7 @@ def _rows(cur, sport, lo, hi):
     if sport == "XC":
         cur.execute(f"""
             SELECT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}, count(*) AS n_runners
             FROM results r
             JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                         AND m.source = r.source
@@ -696,7 +736,7 @@ def _rows(cur, sport, lo, hi):
         cur.execute(f"""
             SELECT r.school, substr(r.date, 1, 4) AS yr,
                    mt.meet_name, NULL::text AS division, mt.state,
-                   'tfrrs'::text AS source, {_COLL_SHARE}
+                   'tfrrs'::text AS source, {_COLL_SHARE}, count(*) AS n_runners
             FROM results r
             JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                AND mt.source = 'tfrrs'
@@ -715,7 +755,7 @@ def _rows(cur, sport, lo, hi):
             --   modern college meets entirely (Tufts stopped at 2016).
             --   meet_name is meet-level, so any row of the meet names it.
             SELECT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}, count(*) AS n_runners
             FROM results_tf r
             JOIN LATERAL (
                 SELECT mm.meet_name, mm.division, mm.state
@@ -821,6 +861,7 @@ def _nameAliases(cur):
         return {}
 
 
+MIN_CONF_RUNNERS = 3                      # a college's runners before a meet votes its conference
 _DEBUG = {"school": None, "rows": []}     # --split: one school's voting meets
 
 
@@ -884,6 +925,17 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
             name_miss[meet_name] += 1
             continue
         name_hits[meet_name] += 1
+        # ★ A CONFERENCE IS A TEAM'S (owner, 2026-11-05: Calvin's stored
+        #   conference was CIAA, then Landmark, then South Coast -- one vote
+        #   each, a lone runner filed under "Calvin" at another league's
+        #   meet). A college enters its conference championship as a team;
+        #   under MIN_CONF_RUNNERS of its runners in the race is a stray
+        #   entry or a mislabelled one, and says nothing about membership.
+        n_run = rest[1] if len(rest) > 1 else None
+        if is_coll and n_run is not None and int(n_run) < MIN_CONF_RUNNERS:
+            facts = [f for f in facts if f[0] != "conference"]
+            if not facts:
+                continue
         # ★ A COLLEGE VOTES IN ITS OWN STATE (owner, 2026-10-30, Wake
         #   Forest's missing region): st is the MEET's state, and a college
         #   races its conference and its regional away -- the 2025 Southeast
@@ -937,7 +989,10 @@ def main():
         agg = Counter()
         for yr, meet, div, st_r, st_v, coll, feed, share, facts in _DEBUG["rows"]:
             agg[(st_r, st_v, coll, feed, meet, tuple(facts))] += 1
-        for (st_r, st_v, coll, feed, meet, facts), n in agg.most_common(60):
+        top = agg.most_common(60)
+        # every row that voted a conference too, wherever it ranks
+        top += [kv for kv in agg.most_common()[60:] if any(k == "conference" for k, _ in kv[0][5])]
+        for (st_r, st_v, coll, feed, meet, facts), n in top:
             print(f"    {n:>4}x  raced {st_r or '--'} -> votes {st_v or '--'}  "
                   f"{'college' if coll else 'school '}  {feed:<6} {meet[:60]!r}  {list(facts)}")
         for key, kinds in votes.items():
