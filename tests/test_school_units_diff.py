@@ -31,7 +31,8 @@ def test_changed_lost_and_gained():
 
 
 def test_marks_and_statuses_are_no_school():
-    for junk in ("39.62", "9:55.24", "DQ", "NT", "DNS", "FS", "4:02.08"):
+    for junk in ("39.62", "9:55.24", "DQ", "NT", "DNS", "FS", "4:02.08",
+                 "Unknown", "UNA-Schoolcraft College", "UNAT-Michigan State"):
         assert B.notASchool(junk), junk
-    for real in ("Calvin", "Hope", "UC San Diego", "St. Mary's (CA)", "DNA Academy"):
+    for real in ("Calvin", "Hope", "UC San Diego", "St. Mary's (CA)", "DNA Academy", "Una High School", "UNLV"):
         assert not B.notASchool(real), real

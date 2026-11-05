@@ -245,8 +245,13 @@ _NOT_A_SCHOOL_RX = re.compile(
     r"[\d:.,\s+-]+|(?:DQ|DNS|DNF|NT|NH|NM|FS|FOUL|SCR|NP|ND|DSQ|X+)", re.I)
 
 
+# ... nor is an unattached entry ("UNA-Schoolcraft College") or "Unknown"
+_UNATTACHED_RX = re.compile(r"^(?:UNA|UNAT|UNATT)[- ]|^(?:unknown|unattached)\b", re.I)
+
+
 def notASchool(school):
-    return bool(_NOT_A_SCHOOL_RX.fullmatch(str(school or "").strip()))
+    s = str(school or "").strip()
+    return bool(_NOT_A_SCHOOL_RX.fullmatch(s) or _UNATTACHED_RX.search(s))
 
 
 _DIFF_COLS = ("conference", "region", "division")
