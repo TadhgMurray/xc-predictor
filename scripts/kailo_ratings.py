@@ -222,16 +222,27 @@ def ourRatings(cur, pids, cut):
     return out
 
 
-def races(cur, lo, hi, min_field):
-    """[(meet, div, day, {pid: seconds})] of tfrrs XC races in [lo, hi)."""
-    cur.execute("""
+def races(cur, lo, hi, min_field, meet_like=None):
+    """[(meet, div, day, {pid: seconds})] of tfrrs XC races in [lo, hi);
+    meet_like: only meets whose name matches it (case-insensitive regex) --
+    one championship scored on its own (owner, 2026-11-06: "Specifically
+    NESCACs")."""
+    named = ""
+    args = [lo, hi]
+    if meet_like:
+        named = """AND meet_id IN (SELECT meet_id FROM meets_tfrrs
+                                   WHERE sport = 'XC' AND meet_name ~* %s)"""
+        args.append(meet_like)
+    args.append(min_field)
+    cur.execute(f"""
         SELECT meet_id, div_id, min(date)::text, array_agg(person_id), array_agg(time_seconds)
         FROM   results
         WHERE  source = 'tfrrs' AND person_id IS NOT NULL
           AND  date >= %s AND date < %s
           AND  time_seconds BETWEEN 600 AND 4500
+          {named}
         GROUP  BY meet_id, div_id
-        HAVING count(*) >= %s""", (lo, hi, min_field))
+        HAVING count(*) >= %s""", tuple(args))
     out = []
     for meet, div, day, pids, secs in cur.fetchall():
         best = {}
@@ -316,6 +327,8 @@ def main():
     ap.add_argument("--min-field", type=int, default=15, help="finishers in a race")
     ap.add_argument("--min-both", type=int, default=10, help="runners both rate, per race")
     ap.add_argument("--sleep", type=float, default=1.0)
+    ap.add_argument("--meet", default=None,
+                    help="only meets whose name matches this (e.g. NESCAC)")
     # ★ THE STATE-SPACE ENGINE IN PLACE OF OURS (2026-10-24): for each saved
     #   snapshot, scripts/ss_eval.py --mode asof --cuts <its cut> fitted on
     #   races before the cut alone and wrote every runner's flat-track 5K
@@ -358,7 +371,7 @@ def main():
             return
 
         if a.preseason or a.now:
-            rl = races(cur, start, today, a.min_field)
+            rl = races(cur, start, today, a.min_field, a.meet)
             pids = {p for _m, _d, _day, f in rl for p in f} & set(info)
             if a.preseason:
                 ours = ourRatings(cur, pids, start)
@@ -392,7 +405,7 @@ def main():
             kin = {int(p): x for p, x in s["kailo"].items()}
             kk = {p: x["fitness_5k_s"] for p, x in kin.items() if x.get("fitness_5k_s")}
             ours = {int(p): tuple(v) for p, v in s["ours"].items()}
-            rl = races(cur, s["cut"], today, a.min_field)
+            rl = races(cur, s["cut"], today, a.min_field, a.meet)
             score(f"SNAPSHOT {os.path.basename(path)} (both as of {s['cut']}) on races "
                   f"{s['cut']} .. {today}", rl, kk, ours, kin, a.min_both)
             alt = os.path.join(a.ours_dir or "", f"ours_asof_{s['cut']}.json")
