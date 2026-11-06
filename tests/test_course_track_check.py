@@ -15,3 +15,20 @@ def test_a_generous_course_reads_above_its_level():
     assert abs(base["hs_m"] - 0.03) < 1e-9
     assert out[0][1] == "LaVern Gibson" and abs(out[0][5] - 0.04) < 1e-9
     assert all(r[1] != "Tiny" for r in out)              # under --min
+
+
+def test_the_controls_tell_a_real_course_from_noise():
+    import random
+    rnd = random.Random(5)
+    real, noise = [], []
+    for c in range(40):
+        bias = 0.06 if c < 10 else 0.0                    # ten courses truly generous
+        for i in range(60):
+            pid = c * 1000 + i
+            real.append((f"C{c}", 5000, "hs_m", bias + rnd.gauss(0, 0.04), pid))
+            noise.append((f"C{c}", 5000, "hs_m", rnd.gauss(0, 0.04), pid))
+    r_real, n = C.splitHalf(real, 10)
+    r_noise, _ = C.splitHalf(noise, 10)
+    assert n == 40 and r_real > 0.7 and abs(r_noise) < 0.4
+    _b, null = C.shuffled(real, 20)
+    assert max(x[5] for x in null) < max(x[5] for x in C.readings(real, 20)[1])
