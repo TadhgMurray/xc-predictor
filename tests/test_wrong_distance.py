@@ -438,3 +438,24 @@ def test_the_dump_reads_the_pins_first():
     assert got[(5, 6)] == (6000.0, "_DISTANCE_PIN_GENDER") and (5, 6) in novote
     assert got[(7, 8)] == (3218.0, "novote") and (7, 8) in novote
     assert (9, 9) not in got
+
+
+def test_a_split_nothing_explains_is_pinned_runner_by_runner():
+    """owner, 2026-11-06 ("yes do that"): Sagebrush 2021, a women's division
+    of 13 runners 30% fast and 10 at the listed 7000 m, no gender or level
+    between them -- Madison Strasner 175.7, #1 all-time college women."""
+    random.seed(3)
+    rows = ([(random.gauss(_x(5000, 7000), 0.02), "f", "college", 100 + i) for i in range(13)]
+            + [(random.gauss(0.0, 0.02), "f", "college", 200 + i) for i in range(10)])
+    mix = WD.mixVerdict(rows, 7000.0, 0.0, WD.candidates())
+    assert mix and mix["by"] is None and mix["fast_ids"] == list(range(100, 113))
+    v = _v(listed=7000.0, action="split", kind="combined", mix=mix)
+    want = WD.wants(v)
+    assert ("", "novote", None) in want
+    assert sorted(p for p, _a, _d in want if p.startswith("r:")) == sorted(f"r:{i}" for i in range(100, 113))
+    snap = mix["clusters"][0]["snap"]
+    assert snap < 7000.0 and all(d == snap for p, _a, d in want if p.startswith("r:"))
+    # the old shape of a row (no result id) still judges, and pins nobody by name
+    old = WD.mixVerdict([r[:3] for r in rows], 7000.0, 0.0, WD.candidates())
+    assert old["fast_ids"] == [] and WD.wants(_v(listed=7000.0, action="split",
+                                                   kind="combined", mix=old)) == [("", "novote", None)]

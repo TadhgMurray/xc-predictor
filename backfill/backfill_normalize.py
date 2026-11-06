@@ -1165,11 +1165,15 @@ def _loadUploadDivGenders(cur):
 #                 pool is known, and only ever downward
 _DPIN_DIV = {}
 _DPIN_PART = {}
+#     _DPIN_ROW   {result_id: metres}  one runner of a combined division no
+#                 gender or level explains (part 'r:<result_id>'), downward only
+_DPIN_ROW = {}
 
 
 def _loadDistancePins(cur):
     _DPIN_DIV.clear()
     _DPIN_PART.clear()
+    _DPIN_ROW.clear()
     cur.execute("SELECT to_regclass('public.distance_pin')")
     if cur.fetchone()[0] is None:
         return 0
@@ -1180,6 +1184,11 @@ def _loadDistancePins(cur):
         key = (src, int(m), int(d))
         if not part:
             _DPIN_DIV[key] = (action, float(dist) if dist else None)
+        elif action == "pin" and dist and part.startswith("r:"):
+            try:
+                _DPIN_ROW[int(part[2:])] = float(dist)
+            except ValueError:
+                pass
         elif action == "pin" and dist and ":" in part:
             attr, val = part.split(":", 1)
             _DPIN_PART.setdefault(key, []).append((attr, val, float(dist)))
@@ -2356,8 +2365,11 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         # 3-part) ONE SIDE OF A COMBINED DIVISION (distance_pin part rows):
         #    the girls' 4000 inside the boys' 5000 -- the row's own pool says
         #    which side it is on
-        if _DPIN_PART:
+        if _DPIN_PART or _DPIN_ROW:
             pinned = _partPin((row[_SRC], row[_MEET], row[_DIV]), pool, distance)
+            mine = _DPIN_ROW.get(row[_ID])
+            if mine is not None and distance is not None and mine < float(distance):
+                pinned = min(pinned, mine) if pinned is not None else mine
             if pinned != distance:
                 distance = pinned
                 pace_insane = (not _paceSane(row[_TIME], distance)
@@ -3510,7 +3522,7 @@ def _buildLookups(read_conn, cfg):
             _loadUploadDivGenders(cur)
             n_pins = _loadDistancePins(cur)
             print(f"  distance_pin: {n_pins:,} rows ({len(_DPIN_DIV):,} divisions, "
-                  f"{len(_DPIN_PART):,} combined divisions' sides)")
+                  f"{len(_DPIN_PART):,} combined divisions' sides, {len(_DPIN_ROW):,} single runners)")
         tfrrs_distances = (_loadTfrrsBlobDistances(cur)
                            if cfg.sport == "XC" else {})
         # Canon dedup: the matched cross-source twins (drop the tfrrs copy) and

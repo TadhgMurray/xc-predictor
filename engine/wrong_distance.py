@@ -222,8 +222,8 @@ def split2(vals):
 
 
 def mixVerdict(rows, listed, base, cands):
-    """A division holding two races. rows: [(res, gender, level)] for the
-    referenced runners. Returns None, or a dict with each cluster's size,
+    """A division holding two races. rows: [(res, gender, level[, result_id])]
+    for the referenced runners. Returns None, or a dict with each cluster's size,
     implied and snapped distance, and the attribute that explains the
     split (if one does). Pure."""
     if len(rows) < MIX_MIN:
@@ -250,6 +250,9 @@ def mixVerdict(rows, listed, base, cands):
         out["clusters"].append({"name": name, "n": len(members), "res": med,
                                 "implied": imp, "snap": snap(imp, cands, (listed,))})
     # which attribute explains it
+    # the fast side's own rows, for a split no attribute explains
+    out["fast_ids"] = sorted(int(r[3]) for r in rows
+                             if len(r) > 3 and r[3] is not None and r[0] - base < cut)
     out["by"] = None
     for idx, attr in ((1, "gender"), (2, "level")):
         groups = {}
@@ -818,14 +821,14 @@ def gather(cur, pools, has_ovr):
     if mixc:
         cur.execute("""
             SELECT w.dk, w.e - f.m, COALESCE(right(w.pool, 1), lower(left(a.gender, 1))),
-                   w.pool, r.grade
+                   w.pool, r.grade, w.result_id
             FROM   wd_row w
             JOIN   wd_ref2 f ON f.person_id = w.person_id AND f.yr = w.yr
             JOIN   results r ON r.result_id = w.result_id
             LEFT   JOIN athletes a ON r.source = 'anet' AND a.athlete_id = r.athlete_id
             WHERE  w.dk = ANY(%s)""", ([c["dk"] for c in mixc],))
-        for dk, res, g, pool, grade in cur.fetchall():
-            rows_by.setdefault(dk, []).append((float(res), g, _level(pool, grade)))
+        for dk, res, g, pool, grade, rid in cur.fetchall():
+            rows_by.setdefault(dk, []).append((float(res), g, _level(pool, grade), rid))
     out = []
     for c in cand:
         out.append(judgeOne(c, by_meet, vh, pools, ovr, rows_by))
@@ -963,11 +966,22 @@ def wants(v):
         by = mix.get("by")
         fast = next((cl for cl in mix.get("clusters", ()) if cl["name"] == "fast"), None)
         s = fast and fast.get("snap")
-        if (by and s and s < listed and math.log(listed / s) >= BIG_MOVE
-                and math.log(s / fast["implied"]) <= OVERSHOOT):
+        ok = (s and s < listed and math.log(listed / s) >= BIG_MOVE
+              and math.log(s / fast["implied"]) <= OVERSHOOT)
+        if by and ok:
             attr = "g" if by[0] == "gender" else "lvl"
             for val in by[1]:
                 out.append((f"{attr}:{val}", "pin", float(s)))
+        elif ok and len(mix.get("fast_ids") or ()) >= MIX_CLUSTER:
+            # ★ RUNNER BY RUNNER WHEN NOTHING EXPLAINS IT (owner, 2026-11-06,
+            #   "yes do that"): Sagebrush 2021's women's division, 13 runners
+            #   30% fast (a 5K) and 10 at its 7000 m, no gender or level
+            #   between them -- Madison Strasner 175.7, #1 all-time. Each
+            #   fast runner's own row is pinned (part "r:<result_id>"); a
+            #   runner with no season to place them stays at the listed
+            #   distance, and the division votes on no course either way.
+            for rid in mix["fast_ids"]:
+                out.append((f"r:{rid}", "pin", float(s)))
         out.append(("", "novote", None))
     elif v["action"] == "novote":
         out.append(("", "novote", None))
