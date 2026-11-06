@@ -392,12 +392,17 @@ def _prSql(qs):
 
 def test_the_pr_board_reads_one_distance_at_a_time():
     sql, _ = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
-    assert "WITH RECURSIVE dists" in sql and "distance = dists.d" in sql
+    flat = " ".join(sql.split())
+    assert "dists(p, d) AS" in flat and "distance = dists.d" in flat
+    assert "pools(p) AS" not in flat                      # one pool: no pool walk
+    allp, _ = _prSql("board=pr&sport=XC&pool=all&distance=5000&limit=50")
+    flat = " ".join(allp.split())
+    assert "pools(p) AS" in flat and "pool IS NULL" in flat
 
 
-def test_without_a_pool_or_on_a_field_event_it_keeps_the_plain_query():
+def test_on_a_field_event_it_keeps_the_plain_query():
     import rankings
-    assert not rankings._prPerDistance({"distance": 5000, "pool": "all"}, False)
+    assert rankings._prPerDistance({"distance": 5000, "pool": "all"}, False)
     assert not rankings._prPerDistance({"distance": 5000, "pool": "hs_m"}, True)
     assert not rankings._prPerDistance({"distance": None, "pool": "hs_m"}, False)
 
@@ -423,10 +428,18 @@ def test_the_pr_board_answers_the_same_and_uses_the_index(pg):
                 " FROM generate_series(0, 4999) g")
     cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
     cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    # a row with no pool: pool=all must still find it (its own branch)
+    cur.execute("""INSERT INTO ranking_results (pool, sport, distance, time_seconds, result_id,
+                       person_id, speed_rating, race_date, year, state, school, grade, meet_id, div_id)
+                   VALUES (NULL, 'XC', 5000, 850, 999999, 4999, 160, '2024-10-01', 2024,
+                           'WI', 'S', '11', 1, 1)""")
     cur.execute("ANALYZE ranking_results")
     for qs in ("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50",
                "board=pr&sport=XC&pool=hs_m&distance=5000&limit=50&offset=200",
-               "board=pr&sport=both&pool=hs_f&distance=5000&limit=50"):
+               "board=pr&sport=both&pool=hs_f&distance=5000&limit=50",
+               "board=pr&sport=XC&pool=all&distance=5000&limit=50",
+               "board=pr&sport=both&pool=all&distance=5000&limit=50&offset=100",
+               "board=pr&sport=XC&pool=all&gender=m&distance=5000&limit=50"):
         new_sql, params = _prSql(qs)
         cur.execute(new_sql, params)
         new = [dict(r) for r in cur.fetchall()]
@@ -439,6 +452,8 @@ def test_the_pr_board_answers_the_same_and_uses_the_index(pg):
         cur.execute(old_sql, params)
         assert new == [dict(r) for r in cur.fetchall()], qs
         assert len(new) == 50
+        if "pool=all&distance" in qs and "offset" not in qs:
+            assert new[0]["result_id"] == 999999           # the row with no pool
     sql, params = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
     cur.execute("SET enable_seqscan = off")
     cur.execute("EXPLAIN " + sql, params)
@@ -658,3 +673,44 @@ def test_comps_min_is_shared_across_workers(tmp_path, monkeypatch):
     assert comps._minRaces(C(), "XC", "hs_m") == 3
     assert C.n == 1
     comps._MIN_CACHE.clear()
+
+
+# --------------------------------------------------------------- 12 --
+# The events-filtered ability board: the season median by windows, not by a
+# CTE self-join the planner turned into a nested loop (26-55 s live).
+
+def test_the_events_source_has_no_self_join():
+    import rankings as R
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    params = {}
+    src = R._abilitySource({"dist_min": 3000, "dist_max": None}, params, " AND pool = %(pool)s")
+    assert "JOIN" not in src.upper()
+    assert "OVER (PARTITION BY person_id, pool, sport, year" in " ".join(src.split())
+    assert "r.*" not in src
+
+
+def test_the_window_median_is_percentile_cont_exactly(pg):
+    """Group by group, the mean of the middle one or two (the rewrite) and
+    percentile_cont(0.5) (the old med CTE) are the same double."""
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE m AS
+        SELECT (g % 997)::bigint AS k,
+               (100 + ((g::bigint * 7919) % 100003) / 997.0)::real AS v
+        FROM generate_series(1, 40000) g""")
+    cur.execute("""
+        WITH r AS (
+            SELECT k, v, row_number() OVER (PARTITION BY k ORDER BY v) AS rn,
+                   count(*) OVER (PARTITION BY k) AS n FROM m),
+        w AS (
+            SELECT DISTINCT k,
+                   (max(v::float8) FILTER (WHERE rn = (n + 1) / 2) OVER (PARTITION BY k)
+                    + max(v::float8) FILTER (WHERE rn = (n + 2) / 2) OVER (PARTITION BY k)) / 2
+                       AS med FROM r),
+        p AS (SELECT k, percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS med FROM m GROUP BY k)
+        SELECT count(*) AS groups,
+               count(*) FILTER (WHERE w.med IS DISTINCT FROM p.med) AS differ,
+               count(*) FILTER (WHERE (SELECT count(*) FROM m WHERE m.k = p.k) % 2 = 0) AS even
+        FROM p JOIN w USING (k)""")
+    row = cur.fetchone()
+    assert row["groups"] > 500 and row["even"] > 100
+    assert row["differ"] == 0

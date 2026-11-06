@@ -908,17 +908,44 @@ def _abilitySource(f, params, where=""):
     #   query too: duplicated they cost a plan node, dropped they would be
     #   a correctness bug the first time this helper is called without
     #   them.
+    # ★ THE MEDIAN BY WINDOWS, NOT BY A SELF-JOIN (2026-11-06: the events
+    #   board at 26-55 s, the statement timeout, for dist_min=3000 on hs_m and
+    #   ms_m). `med` was a GROUP BY over the `ev` CTE joined back to `ev` on
+    #   the season's key; the planner cannot estimate a CTE's rows, guessed
+    #   ~34 groups and one row, and joined them with a NESTED LOOP -- every
+    #   season against every race, quadratic (a 2M-row stand-in ran past ten
+    #   minutes). Now one sorted pass: each race's rank and its season's race
+    #   count by window, the median as the mid-point of the middle one or two --
+    #   exactly percentile_cont(0.5), which interpolates halfway between
+    #   them, and exact in double precision for real-valued ratings -- and the
+    #   outlier cut on the row itself. No join, so no join to misplan.
+    #  ! ONLY THE COLUMNS THE AGGREGATE READS, not r.*: ranking_results'
+    #    rows are wide and this scan reads a season of a pool.
+    ev_cols = ", ".join(["r.person_id", "r.pool", "r.sport", "r.year", "r.speed_rating",
+                         "r.race_date", "r.state", "r.school", "r.grade"]
+                        + [f'r."{c}"' for c in cols if c in have])
     return f"""(
         WITH ev AS (
-            SELECT r.*
+            SELECT {ev_cols}
             FROM   ranking_results r
             WHERE  r.speed_rating IS NOT NULL AND {where_dist} {where}
         ),
-        med AS (
-            SELECT person_id, pool, sport, year,
-                   percentile_cont(0.5) WITHIN GROUP (ORDER BY speed_rating)
-                       AS m
-            FROM   ev GROUP BY person_id, pool, sport, year
+        ranked AS (
+            SELECT ev.*,
+                   row_number() OVER (PARTITION BY person_id, pool, sport, year
+                                      ORDER BY speed_rating) AS rn_,
+                   count(*) OVER (PARTITION BY person_id, pool, sport, year) AS n_
+            FROM   ev
+        ),
+        withmed AS (
+            SELECT ranked.*,
+                   -- the lower and upper middle (the same race when n_ is
+                   -- odd), halved in double precision: percentile_cont(0.5)
+                   (max(speed_rating::float8) FILTER (WHERE rn_ = (n_ + 1) / 2)
+                        OVER (PARTITION BY person_id, pool, sport, year)
+                    + max(speed_rating::float8) FILTER (WHERE rn_ = (n_ + 2) / 2)
+                        OVER (PARTITION BY person_id, pool, sport, year)) / 2 AS m_
+            FROM   ranked
         )
         SELECT e.person_id, e.pool, e.sport, e.year,
                {seasonQuantileSql("e.speed_rating", _SEASON_Q)}::real
@@ -933,10 +960,8 @@ def _abilitySource(f, params, where=""):
                {"".join((f'mode() WITHIN GROUP (ORDER BY e."{c}") AS "{c}", '
                           if c in have else f'NULL::text AS "{c}", ')
                          for c in cols)[:-2] or "NULL AS _no_units"}
-        FROM   ev e
-        JOIN   med ON med.person_id = e.person_id AND med.pool = e.pool
-                  AND med.sport = e.sport AND med.year = e.year
-        WHERE  e.speed_rating >= med.m - {_SEASON_OUTLIER_PTS}
+        FROM   withmed e
+        WHERE  e.speed_rating >= e.m_ - {_SEASON_OUTLIER_PTS}
         GROUP  BY e.person_id, e.pool, e.sport, e.year
     ) s"""
 
@@ -1538,39 +1563,82 @@ def getPerformanceRankings(cur, f):
 #    fastest n, so the candidate set is the same one the single query chose
 #    (ties at the cut aside, which were never ordered).
 #
-#  ! ONLY WITH A POOL EQUALITY (both indexes lead on pool; pool=all would
-#    turn the skip into a scan) and only on the clock boards -- a field
-#    event ranks by mark, through its own index.
+#  ! ONLY ON THE CLOCK BOARDS -- a field event ranks by mark, through its
+#    own index. pool=all walks the pools first (both indexes lead on pool).
 def _prPerDistance(f, is_field):
     return (not is_field and f.get("distance") is not None
-            and f.get("pool") not in (None, "all"))
+            and f.get("pool") is not None)
 
 
 def _prCandidatesPerDistance(f, cols, cand_where, where, cand_order):
     """The candidates CTE body (see above). Binds the same params the plain
-    query does: pool, sport (unless 'both'), dist_lo, dist_hi, cand."""
-    keys = "pool = %(pool)s" + ("" if f["sport"] == "both" else " AND sport = %(sport)s")
-    return f"""
-            WITH RECURSIVE dists(d) AS (
-                SELECT min(distance) FROM ranking_results
-                WHERE  {keys} AND distance BETWEEN %(dist_lo)s AND %(dist_hi)s
+    query does: pool (unless 'all'), sport (unless 'both'), dist_lo,
+    dist_hi, cand.
+
+    ★ pool=all (2026-11-06: the all-levels PR boards at 4.7-7.6 s) walks the
+      pools first -- each the next pool after the last, one probe on the
+      pool-leading index -- then each pool's stored distances, so every
+      (pool, distance) is read in time order. A row with NO pool cannot be
+      walked to and is read by its own branch (pool IS NULL is an index
+      condition too); it is there only so the set cannot differ from the
+      plain query's."""
+    sport = "" if f["sport"] == "both" else " AND sport = %(sport)s"
+    if f["pool"] != "all":
+        walk = f"""
+            dists(p, d) AS (
+                SELECT %(pool)s::text, (SELECT min(distance) FROM ranking_results
+                        WHERE  pool = %(pool)s{sport}
+                          AND  distance BETWEEN %(dist_lo)s AND %(dist_hi)s)
                 UNION ALL
-                SELECT (SELECT min(distance) FROM ranking_results
-                        WHERE  {keys} AND distance > dists.d
-                          AND  distance <= %(dist_hi)s)
+                SELECT p, (SELECT min(distance) FROM ranking_results
+                           WHERE  pool = dists.p{sport} AND distance > dists.d
+                             AND  distance <= %(dist_hi)s)
                 FROM   dists WHERE dists.d IS NOT NULL
-            )
-            SELECT c.*
-            FROM   dists
-            CROSS  JOIN LATERAL (
-                SELECT {cols}
-                FROM   ranking_results
-                WHERE  {cand_where} {where} AND distance = dists.d
-                ORDER  BY {cand_order}
-                LIMIT  %(cand)s
-            ) c
-            WHERE  dists.d IS NOT NULL
-            ORDER  BY c.{cand_order}
+            )"""
+        no_pool = ""
+    else:
+        walk = f"""
+            pools(p) AS (
+                SELECT min(pool) FROM ranking_results
+                UNION ALL
+                SELECT (SELECT min(pool) FROM ranking_results WHERE pool > pools.p)
+                FROM   pools WHERE pools.p IS NOT NULL
+            ),
+            dists(p, d) AS (
+                SELECT p, (SELECT min(distance) FROM ranking_results
+                           WHERE  pool = pools.p{sport}
+                             AND  distance BETWEEN %(dist_lo)s AND %(dist_hi)s)
+                FROM   pools WHERE pools.p IS NOT NULL
+                UNION ALL
+                SELECT p, (SELECT min(distance) FROM ranking_results
+                           WHERE  pool = dists.p{sport} AND distance > dists.d
+                             AND  distance <= %(dist_hi)s)
+                FROM   dists WHERE dists.d IS NOT NULL
+            )"""
+        no_pool = f"""
+                UNION ALL
+                (SELECT {cols}
+                 FROM   ranking_results
+                 WHERE  {cand_where} {where} AND pool IS NULL
+                 ORDER  BY {cand_order}
+                 LIMIT  %(cand)s)"""
+    return f"""
+            WITH RECURSIVE {walk}
+            SELECT u.*
+            FROM (
+                SELECT c.*
+                FROM   dists
+                CROSS  JOIN LATERAL (
+                    SELECT {cols}
+                    FROM   ranking_results
+                    WHERE  {cand_where} {where}
+                      AND  pool = dists.p AND distance = dists.d
+                    ORDER  BY {cand_order}
+                    LIMIT  %(cand)s
+                ) c
+                WHERE  dists.d IS NOT NULL{no_pool}
+            ) u
+            ORDER  BY u.{cand_order}
             LIMIT  %(cand)s"""
 
 

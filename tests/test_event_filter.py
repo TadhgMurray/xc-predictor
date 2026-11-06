@@ -74,7 +74,12 @@ def test_event_filter():
     ok(seasonQuantileSql("speed_rating", rankings._SEASON_Q) in BRR
        or 'seasonQuantileSql("speed_rating", _SEASON_Q)' in BRR,
        "the build must use the same season quantile expression")
-    ok(f"med.m - {rankings._SEASON_OUTLIER_PTS}" in src,
+    # ★ THE GUARD BY WINDOW SINCE 2026-11-06 (the CTE self-join was planned
+    #   as a nested loop, 26-55 s): m_ is the season median, the mid-point of
+    #   the middle race or two -- percentile_cont(0.5) exactly
+    #   (test_perf_2026_11_06 proves it on Postgres).
+    ok(f"e.m_ - {rankings._SEASON_OUTLIER_PTS}" in src
+       and "rn_ = (n_ + 1) / 2" in src and "rn_ = (n_ + 2) / 2" in src,
        "the restricted board must apply the same outlier guard as the build")
     ok("avg(" not in src, "no plain average: that is the estimator the build rejected")
 
