@@ -112,8 +112,11 @@ def modelVersion():
     try:
         from predict import MODEL_PATH, _predictBasis
         path = MODEL_PATH
-        if _predictBasis() == "race":
+        b = _predictBasis()
+        if b in ("race", "race_mix"):
             from race_model import MODEL_PATH as path        # the race model's own file
+        elif b == "race_raw":
+            from race_model import RAW_MODEL_PATH as path
         st = os.stat(path)
     except (ImportError, OSError):
         return None

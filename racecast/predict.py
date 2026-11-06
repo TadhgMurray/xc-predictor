@@ -1314,7 +1314,12 @@ _RATING_SIGMA_STALE_MAX = 0.12
 
 def _predictBasis():
     b = (os.environ.get("XCP_PREDICT_BASIS") or "rating").strip().lower()
-    return b if b in ("guard", "model", "rating", "blend", "trend", "race") else "rating"
+    return b if b in RACE_BASES + ("guard", "model", "rating", "blend", "trend") else "rating"
+
+
+# the race model's bases (racecast/race_model.py): on the ratings, on raw
+# times with nothing from the engine (race_raw), the two averaged (race_mix)
+RACE_BASES = ("race", "race_raw", "race_mix")
 
 
 _BLEND_MIN_PAIRS = 5
@@ -1500,7 +1505,7 @@ def _servedTimes(cur, person_ids, target):
     #    "trend" is "rating" with the rating's times moved (trendApply);
     #    "race" is "rating" with the rated field re-predicted by the race
     #    model (racecast/race_model.py).
-    if basis in ("rating", "trend", "race"):
+    if basis in ("rating", "trend") + RACE_BASES:
         need = [pid for pid in person_ids if pid not in rated]
         with _stage(f"model-{len(need)}"):
             got = (dict(zip(need, _predictTimes(cur, need, target, spec=spec)))
@@ -1512,7 +1517,7 @@ def _servedTimes(cur, person_ids, target):
         preds = _predictTimes(cur, person_ids, target, spec=spec)
     for pid, entry in zip(person_ids, preds):
         r = rated.get(pid)
-        if basis in ("rating", "trend", "race") and r is not None:
+        if basis in ("rating", "trend") + RACE_BASES and r is not None:
             continue                   # served from the rating, model never run
         secs, sig = entry.get("seconds"), entry.get("sigma_pct")
         if r is None:
@@ -1555,14 +1560,16 @@ def _servedTimes(cur, person_ids, target):
                 if e.get(k):
                     e[k] = round(float(e[k]) * f, nd)
             e["level_shift_pct"] = round(100.0 * (f - 1.0), 2)
-    if basis == "race":
+    if basis in RACE_BASES:
         # ★ THE RACE MODEL, ON THE RATED FIELD (review 2026-10). Whole field
         #   or nothing: race_model.predictRace returns {} when it cannot read
         #   the race, and the ratings stand.
         try:
             import race_model
             with _stage("race-model"):
-                got = race_model.predictRace(cur, person_ids, spec, cut, rated)
+                got = race_model.predictRace(
+                    cur, person_ids, spec, cut, rated,
+                    {"race": "ratings", "race_raw": "raw", "race_mix": "mix"}[basis])
         except Exception:                               # noqa: BLE001
             # ! no _rollback here: predictRace keeps its reads under its own
             #   savepoint, and a whole rollback would end the caller's

@@ -589,8 +589,11 @@ def _xcDistance():
 DIST_OK = (1500.0, 15000.0)
 
 
-def _sql(has_outliers):
+def _sql(has_outliers, by_ids=False):
+    """(cross country, track) row queries the table reads; by_ids: only
+    the people in %(ids)s (the page's raw history, rawHistory)."""
     from feature_extraction import escapeLiteralPercent
+    ids = "AND r.person_id = ANY(%(ids)s)" if by_ids else ""
     dist, joins = _xcDistance()
     skip = ("AND NOT EXISTS (SELECT 1 FROM rating_outlier ro WHERE ro.sport = '{s}' "
             "AND ro.result_id = r.result_id)")
@@ -601,6 +604,7 @@ def _sql(has_outliers):
         FROM   results r
 {joins}
         WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
+          {ids}
           AND  r.time_seconds > 0 AND r.time_seconds < 19999
           AND  NOT EXISTS (SELECT 1 FROM result_twin x
                            WHERE x.sport = 'XC' AND x.result_id = r.result_id)
@@ -617,6 +621,40 @@ def _sql(has_outliers):
           {skip.format(s='TF') if has_outliers else ''}
         ORDER  BY r.person_id, r.date"""
     return xc, tf
+
+
+def rawPoint(row):
+    """(date, ln 5K-equivalent) for one cross country row of _sql, or None:
+    a timed race at a sane distance, put on a 5K by Riegel alone. Pure."""
+    if row[10] != 0 or not row[4] or not row[11]:
+        return None
+    if not DIST_OK[0] <= float(row[11]) <= DIST_OK[1]:
+        return None
+    return math.log(float(row[4])) - RIEGEL * math.log(float(row[11]) / 5000.0)
+
+
+RAW_DAYS = 800           # rawFeatures reads this season, last season and the last 6
+
+
+def rawHistory(cur, ids, cut, has_outliers):
+    """{pid: [(date, ln 5K-equivalent)]} oldest first, from results before
+    `cut` -- the table's raw clock (rawPoint) for the page's race model on
+    raw times (race_model, a model with clock "raw")."""
+    xc, _tf = _sql(has_outliers, by_ids=True)
+    lo = (cut - datetime.timedelta(days=RAW_DAYS)).isoformat()
+    cur.execute(xc, {"lo": lo, "hi": cut.isoformat(), "ids": sorted(int(i) for i in ids)})
+    out = {}
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        x = rawPoint(row)
+        if x is None:
+            continue
+        try:
+            day = datetime.date.fromisoformat(str(row[1])[:10])
+        except ValueError:
+            continue
+        out.setdefault(int(row[0]), []).append((day, x))
+    return out
 
 
 def _people(conn, lo, hi, has_outliers):
@@ -776,8 +814,9 @@ def build(conn, a):
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
                 if r[10] == 0 and r[4] and r[5] is not None and r[6] is not None:
                     past.append((day, raceHash(r[5], r[6], r[7], day_s), math.log(float(r[4]))))
-                if r[10] == 0 and r[4] and r[11] and DIST_OK[0] <= float(r[11]) <= DIST_OK[1]:
-                    raw.append((day, math.log(float(r[4])) - RIEGEL * math.log(float(r[11]) / 5000.0)))
+                x = rawPoint(r)
+                if x is not None:
+                    raw.append((day, x))
             i = j
         if n_people % 100_000 == 0:
             print(f"  {n_people:,} people, {len(races):,} races so far", flush=True)
