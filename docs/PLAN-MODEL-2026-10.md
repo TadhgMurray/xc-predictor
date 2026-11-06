@@ -934,3 +934,79 @@ less than the held-out fit the ranges came from), so
 hold 68% on the last four weeks' frozen forecasts and appends it to
 `race_calibration.json`; `race_model.rangeScale` scales every range made
 from that day. The weekly rebuild runs it after the swap.
+
+## 9. No hindsight (owner, 2026-11-06): the plan
+
+> "you just performed the most insane data leakage of all time ... there
+> shouldnt be any hindsight"
+
+The target is clean (the real finishing time). The hindsight is in the
+INPUTS: every training race, and the validation season, reads today's
+ratings and course numbers, from a solve that has seen that race and every
+race after it. Found 2026-10-29 (§8 "Leakage", ~0.4 points of time miss,
+~0.01 rho of order), not fixed then. It is the likeliest reason the model
+cannot learn its live misses: college and middle school run 1-3% slow on
+the frozen forecasts while high school is level -- the pools that race
+least, whose ratings lag most live and lag not at all in training.
+
+### The audit, input by input
+
+| Input | Hindsight? | How bad |
+|---|---|---|
+| `course_cell`, `has_cell` | Yes: today's cell is fitted on every result, this race's included | **Worst.** Straight into the level, and into the base the level target is measured from. A course run once a year nearly sets its own number. |
+| `form_ln`, every `*_minus_form`, `form_sigma`, `stale_years`, `tf_*` | Partly: earlier races only, but scored with today's course and day terms, which saw later races | Moderate on the level, small on order |
+| `own_*`, `team_rec_*`, `crs/dif/dst/hot_*`, `clv_*`, `h2h_vs_base`, `team_slope`, `team_summer` | As-of in time, but measured against the hindsight base | Second-hand |
+| `raw_*`, dates, counts, grade, level, distance, meet type, weather, `h2h_n`, `h2h_share`, `div_type` | No | Clean |
+| The validation season | Same inputs | Every offline number is flattered; only frozen forecasts are honest |
+
+### The fixes, best first
+
+1. **Replay the engine as of each date (THE FIX).** Re-solve with only
+   results before each cutoff (every two weeks in season, three seasons,
+   ~24 cutoffs at ~1 h a solve; never 04:30-07:00), save the ratings and
+   course cells as they stood to a side table (never the live ratings),
+   and build race_rows from the snapshot in force at each row's cut
+   (race day - lead_days, so the 7- and 28-day forecast copies read what
+   was known 7 and 28 days out). Validation becomes honest too. The engine
+   already fits on rows before a date (forward_holdout); the work is a
+   snapshot mode.
+2. **The level from the no-ratings model** as a stopgap, if its honest
+   times are close to the ratings model's flattered ones. Test running
+   (owner, 2026-11-06): `race_trees --no-ratings` against the ratings run,
+   rows_weekly, `--train-frac 0.35 --without dist_vs_course`, logs
+   /srv/pred/t_ratings.log, /srv/pred/t_raw.log.
+3. **Learn from live errors.** Live: the weekly level shift by pool
+   (range_calibration "level", PR #81). Saving: every race-model input as
+   the page had it, the night before each race (nightly 13h,
+   XCP_RACE_INPUTS_DIR=/srv/pred/race_inputs, PR #82) -- a season of it is
+   a training table nothing after the forecast touched.
+
+### Then, judged on the honest table only
+
+- **Courses that look new but are not.** "A course with no history" is
+  11,119 training races at a 2.42% level miss (1.87% otherwise); some are
+  failed matches (Cowboy Jamboree's Greiner Family XC Course, run every
+  year, has no cell). A data fix that pays everywhere.
+- **Fit Kailo's statistic.** Their number is the mean |% miss| per runner;
+  the runner trees minimise squared error. Try absolute error.
+- **A sturdier race level.** raceTable's target is the field's MEAN
+  ln(actual) - mean base, dragged slow by walkers; the median fits the
+  typical runner.
+- **Same-day sister races.** First measure, on frozen forecasts, how
+  closely two races of one meet (same course, same day) miss their level
+  together; if strongly, a men's race predicted after the women's results
+  is fair (before the gun) and Kailo's "final" is published by morning.
+  Live use needs results during the meet.
+
+### Order
+
+1. The two test runs (fix 2 or not).
+2. The replay mode (fix 1).
+3. The three switches above, each tested on the honest table.
+
+### Far-ahead races are unchanged
+
+Every fix changes only what TRAINING sees. A race months ahead is
+predicted as now (squads aged by season, predict.raceDate); the forecast
+copies at 7 and 28 days get more honest, since a 28-day copy will read the
+ratings of 28 days before rather than today's.
