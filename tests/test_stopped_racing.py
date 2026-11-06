@@ -219,3 +219,20 @@ def test_the_names_other_schools_are_listed(monkeypatch):
                     {"state": "LA", "level": "hs", "n_athletes": 33}]
     got = SI.namesakes(Cur(), "Calvin", "MI")
     assert [(g["state"], g["label"]) for g in got] == [("OK", "High school"), ("LA", "High school")]
+
+
+def test_a_race_as_it_ran_leaves_out_who_did_not_start():
+    """owner, 2026-11-06: "for predictions in the past if someone DNSs we
+    probably shouldn't let them run"."""
+    seen = {}
+
+    class Cur:
+        def execute(self, sql, args=None):
+            seen["sql"] = sql
+
+        def fetchall(self):
+            return []
+    P._exactField(Cur(), 1, 2, "XC", source="anet", started_only=True)
+    assert "NOT IN ('DNS', 'SCR', 'WD')" in seen["sql"]
+    P._exactField(Cur(), 1, 2, "XC", source="anet")
+    assert "'DNS'" not in seen["sql"]                    # the other readers: unchanged
