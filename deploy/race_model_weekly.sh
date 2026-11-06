@@ -96,6 +96,27 @@ mv -f "$ROWS_NEW" "$DIR/rows_weekly.npz"
 rm -f "$DIR/rows_weekly.npz".records-*.npz "$ROWS_NEW".records-*.npz
 echo "[race model] swapped in $MODEL (the last one is $MODEL.prev)" | tee -a "$LOGDIR/summary.log"
 
+# ★ AND THE NO-RATINGS MODEL (owner, 2026-11-06: "there shouldnt be any
+#   hindsight"; docs/PLAN-MODEL-2026-10.md §9): the same table, nothing from
+#   the engine's solve. The nightly freezes its forecasts beside the served
+#   ones (13h_raw_forecasts, pred_raw_meet_forecast); the site serves it only
+#   with XCP_PREDICT_BASIS=race_raw or race_mix. A failure keeps the last
+#   file. XCP_RACE_RAW=0 skips it.
+RAW="${XCP_RACE_MODEL_RAW:-$(dirname "$MODEL")/race_trees_raw.pkl}"
+if [ "${XCP_RACE_RAW:-1}" = "1" ]; then
+  say "fitting the no-ratings model (about 1.5 h): tail -f $LOGDIR/race_trees_raw.log"
+  if "$PY" -u model/race_trees.py --rows "$DIR/rows_weekly.npz" --val-from "$VAL_FROM" \
+       --without dist_vs_course --refit-all --no-ratings --out "$RAW.new" \
+       > "$LOGDIR/race_trees_raw.log" 2>&1; then
+    [ -f "$RAW" ] && cp -p "$RAW" "$RAW.prev"
+    mv -f "$RAW.new" "$RAW"
+    say "no-ratings model swapped in: $RAW"
+  else
+    rm -f "$RAW.new"
+    say "no-ratings model failed, the last one kept: $LOGDIR/race_trees_raw.log"
+  fi
+fi
+
 # ★ THE RANGES, ON WHAT HAPPENED: the factor that makes +-1 sigma hold 68% on
 #   the last four weeks' frozen forecasts (scripts/range_calibration.py,
 #   race_model.rangeScale). A failure leaves the factor in force.

@@ -1010,3 +1010,29 @@ Every fix changes only what TRAINING sees. A race months ahead is
 predicted as now (squads aged by season, predict.raceDate); the forecast
 copies at 7 and 28 days get more honest, since a 28-day copy will read the
 ratings of 28 days before rather than today's.
+
+### 9a. Results and what was built (2026-11-06)
+
+`race_trees --no-ratings` (rows_weekly, train-frac 0.35, validation 2025-26),
+nothing from the engine, so the one honest offline number:
+
+| | Median | Mean (Kailo's) | Bias | Pairs |
+|---|---|---|---|---|
+| The ratings as the page prints them (flattered) | 3.69% | 5.36% | +1.57% | 87.64% |
+| Raw times alone | — | — | — | 86.76% |
+| **Trees, no ratings (honest)** | **3.19%** | **5.26%** | **+0.03%** | **87.99%** |
+
+The honest model orders better than the hindsight-flattered ratings. Built:
+- `race_trees --no-ratings --out` saves it (clock "raw"); the weekly job
+  fits it after the served model (`race_trees_raw.pkl`, XCP_RACE_RAW=0 skips).
+- `race_model`: `onRawClock`, `race_rows.rawHistory` (one SQL with the
+  table's), bases `race_raw` and `race_mix` (geometric mean of the two).
+  The level shift and range factor are the ratings model's and are not
+  applied to it.
+- Nightly 13h_raw_forecasts: its forecasts frozen in `pred_raw_meet_forecast`
+  beside the served ones, once its file exists.
+- Forecast copies at 90/180/330 days; no weather past 16 days (it was the
+  day's actual weather on 28-day copies: hindsight).
+- Also hindsight, minor: training drops rows the engine flagged as outliers
+  (`rating_outlier`, from the full solve), which flatters the validation
+  mean on both sides.

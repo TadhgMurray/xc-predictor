@@ -33,8 +33,15 @@ if _MODEL_DIR not in sys.path:
 
 MODEL_PATH = os.environ.get("XCP_RACE_MODEL") or os.path.join(_ROOT, "model", "data",
                                                                "race_trees.pkl")
+# ★ THE NO-RATINGS MODEL (owner, 2026-11-06: "there shouldnt be any
+#   hindsight"; docs/PLAN-MODEL-2026-10.md §9): race_trees --no-ratings
+#   --out, nothing from the engine's solve in it. XCP_PREDICT_BASIS=race_raw
+#   serves it alone, race_mix the geometric mean of the two; the recorders
+#   keep all three so the frozen forecasts can say which to serve.
+RAW_MODEL_PATH = os.environ.get("XCP_RACE_MODEL_RAW") or os.path.join(
+    os.path.dirname(MODEL_PATH), "race_trees_raw.pkl")
 MIN_FIELD = 3
-_CACHE = {"mtime": None, "model": None}
+_CACHE = {}
 _GRADES = ("FR", "SO", "JR", "SR")
 
 
@@ -47,14 +54,15 @@ def loadModel(path=None):
         mtime = os.path.getmtime(path)
     except OSError:
         return None
-    if _CACHE["mtime"] != mtime:
+    got = _CACHE.get(path)
+    if got is None or got[0] != mtime:
         try:
             with open(path, "rb") as fh:
-                _CACHE["model"] = pickle.load(fh)
+                got = (mtime, pickle.load(fh))
         except Exception:                                # noqa: BLE001
-            _CACHE["model"] = None
-        _CACHE["mtime"] = mtime
-    return _CACHE["model"]
+            got = (mtime, None)
+        _CACHE[path] = got
+    return got[1]
 
 
 # ★ THE RANGES, CALIBRATED ON WHAT HAPPENED (owner's run, 2026-11-02: the
@@ -296,6 +304,8 @@ def predictField(model, field, race):
     for r in field:
         r.setdefault("secs", math.exp(r["base_ln"]))     # raceFeatures' y; unused
     RR.raceFeatures(field, race)
+    if model.get("clock") == "raw":
+        onRawClock(field)
     # ★ EACH RUNNER'S OWN RECORD AGAINST THE RATINGS (race_trees OWN_FEATURES),
     #   carried from the table's last day to this race; a runner the table
     #   never saw reads as "no record", which is what the trees learned for
@@ -357,8 +367,12 @@ def predictField(model, field, race):
                       if any(not math.isnan(r["f"].get(k, math.nan)) for r in field)
                       else math.nan for k in lf]], dtype=np.float32)
     level = float(model["level"].predict(lrow)[0])
+    # ! THE CALIBRATIONS ARE THE RATINGS MODEL'S (measured on its frozen
+    #   forecasts, model_basis 'race'); the raw model's ranges and level were
+    #   fitted on a season it never saw, so it takes neither
+    rated_clock = model.get("clock", "ratings") == "ratings"
     pool = fieldPool([r.get("pool") for r in field], race.get("source"))
-    shift = levelShift(pool)
+    shift = levelShift(pool) if rated_clock else 0.0
     mean_base = float(np.mean([r["base_ln"] for r in field]))
     by_lead = model.get("sigmas_by_lead") or {}
     sig = (by_lead[min(by_lead, key=lambda ld: abs(ld - lead))] if by_lead
@@ -367,7 +381,7 @@ def predictField(model, field, race):
     spread = model.get("spread")
     own_ps = (np.clip(spread.predict(X), RT.SPREAD_MIN, RT.SPREAD_MAX)
               if spread is not None else None)
-    k, k_place = rangeScale(), rangeScale(key="k_place")
+    k, k_place = (rangeScale(), rangeScale(key="k_place")) if rated_clock else (1.0, 1.0)
     out = {}
     for i, (r, x) in enumerate(zip(field, rel)):
         band = RT.bandOf(r["f"]["opener"], r["f"]["last_days"])
@@ -380,21 +394,44 @@ def predictField(model, field, race):
                          "hi": round(secs * math.exp(ts), 1),
                          "sigma_pct": round(100.0 * ps, 2),
                          "time_sigma_pct": round(100.0 * ts, 2),
-                         "is_race_time": True, "basis": "race", "time_basis": "race",
+                         "is_race_time": True,
+                         "basis": "race" if rated_clock else "race_raw",
+                         "time_basis": "race" if rated_clock else "race_raw",
                          "race_band": band, "race_level_pct": round(100.0 * level, 2),
                          "race_level_shift_pct": round(100.0 * shift, 2)}
     return out
 
 
-def predictRace(cur, person_ids, spec, cut, rated):
+def onRawClock(field):
+    """The field moved onto race_rows' raw clock, as race_trees --no-ratings
+    trains: base and base_ln from raw times (raceFeatures' base_raw), and
+    the field inputs that are orders of the base rebuilt on it
+    (race_trees.FIELD_FROM_BASE, fieldFromBase's definitions). In place."""
+    import numpy as np
+    import race_trees as RT
+    for r in field:
+        r["base"], r["base_ln"] = r["base_raw"], r["base_raw_abs"]
+    keys = RT.FIELD_FROM_BASE
+    X = np.full((len(field), len(keys)), np.nan)
+    RT.fieldFromBase(X, np.array([r["base"] for r in field], dtype=np.float64),
+                     [(0, len(field))], {k: i for i, k in enumerate(keys)})
+    for r, row in zip(field, X):
+        r["f"].update({k: float(v) for k, v in zip(keys, row)})
+    return field
+
+
+def predictRace(cur, person_ids, spec, cut, rated, which="ratings"):
     """{pid: entry} from the race model for the rated runners of one race,
     or {} when the trees cannot read the field (see the header). Its reads
     sit under one savepoint, so a failure leaves the caller's transaction
     as it was."""
-    model = loadModel()
+    if which == "mix":
+        return mixed(predictRace(cur, person_ids, spec, cut, rated, "ratings"),
+                     predictRace(cur, person_ids, spec, cut, rated, "raw"))
+    model = loadModel(RAW_MODEL_PATH if which == "raw" else MODEL_PATH)
     if model is None or not spec or not spec.get("distance_meters"):
         return {}
-    say = f"{spec.get('meet_id')}/{spec.get('div_id')}"
+    say = f"{spec.get('meet_id')}/{spec.get('div_id')}/{which}"
     try:
         return _guarded(cur, "race_model",
                         lambda: _predictRace(cur, model, person_ids, spec, cut, rated),
@@ -402,6 +439,26 @@ def predictRace(cur, person_ids, spec, cut, rated):
     except Exception as exc:                             # noqa: BLE001
         print(f"race model {say}: {type(exc).__name__}: {exc}", flush=True)
         return {}
+
+
+def mixed(a, b):
+    """The geometric mean of two race-model fields, runner by runner; a
+    field one side could not read is the other's. Pure."""
+    if not a or not b:
+        out = {p: dict(e, basis="race_mix") for p, e in (a or b or {}).items()}
+        return out
+    out = {}
+    for pid in set(a) | set(b):
+        x, y = a.get(pid), b.get(pid)
+        if not x or not y:
+            continue
+        e = dict(x)
+        for k in ("seconds", "lo", "hi"):
+            if x.get(k) and y.get(k):
+                e[k] = round(math.sqrt(float(x[k]) * float(y[k])), 1)
+        e["basis"] = e["time_basis"] = "race_mix"
+        out[pid] = e
+    return out
 
 
 def _predictRace(cur, model, person_ids, spec, cut, rated):
@@ -415,6 +472,11 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
     rows = P._ratingRows(cur, ids, None, cut.isoformat())
     latest = _latest(cur, ids, cut)
     past = _pastRaces(cur, ids, cut)
+    raw = (_guarded(cur, "race_raw", lambda: RR.rawHistory(
+               cur, ids, cut, bool(P._outlierFilter(cur, "XC"))), default=None)
+           if model.get("clock") == "raw" else None)
+    if model.get("clock") == "raw" and raw is None:
+        return {}
     name, champ = _meetFacts(cur, spec)
     field = []
     for pid in ids:
@@ -422,7 +484,8 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
         g, school, then = latest.get(pid, (None, None, None))
         got = RR.runnerFeatures(_history(rows.get(pid)), day,
                                 {"pool": _targetPool(e.get("form_pool"), spec),
-                                 "grade": gradeAt(g, then, day)})
+                                 "grade": gradeAt(g, then, day)},
+                                raw.get(pid, []) if raw is not None else None)
         if got is None:
             continue
         field.append({"pid": pid, "school": school, "base_ln": math.log(float(e["seconds"])),

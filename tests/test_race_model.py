@@ -86,7 +86,7 @@ def test_basis_race_replaces_the_rated_runners_only(monkeypatch):
             "is_race_time": True, "basis": "rating", "form_pool": "hs_m"} for p, s in rated.items()})
     monkeypatch.setattr(P, "_predictTimes", lambda cur, ids, target, spec=None: [
         {"seconds": 1200.0, "sigma_pct": 3.0, "is_race_time": True} for _i in ids])
-    monkeypatch.setattr(M, "predictRace", lambda cur, ids, spec, cut, rated: {
+    monkeypatch.setattr(M, "predictRace", lambda cur, ids, spec, cut, rated, *_which: {
         1: {"seconds": 910.0, "basis": "race"}, 2: {"seconds": 940.0, "basis": "race"}})
     monkeypatch.setenv("XCP_PREDICT_BASIS", "race")
     out = P._servedTimes(None, [1, 2, 3], {"mode": "rerun"})
@@ -157,3 +157,33 @@ def test_the_inputs_are_kept_as_the_page_had_them(tmp_path):
     r = lines[0]["runners"][0]
     assert r["pid"] == 7 and r["f"] == {"opener": 0.0, "x": None} and lines[0]["lead_days"] == 2
     assert M.keepInputs("/proc/no/such", {}, race, field, {}) is None      # never raises
+
+
+# ---- the no-ratings model on the page (2026-11-06, PLAN-MODEL §9) ---- #
+
+def test_the_raw_clock_replaces_the_base_and_its_field_orders():
+    field = [{"base": 0.0, "base_ln": 7.0, "base_raw": b, "base_raw_abs": 7.0 + b,
+              "f": {"rank_pct": 9.0}} for b in (0.02, -0.01, 0.0)]
+    M.onRawClock(field)
+    assert [r["base"] for r in field] == [0.02, -0.01, 0.0]
+    assert [r["base_ln"] for r in field] == [7.02, 6.99, 7.0]
+    assert [r["f"]["rank_pct"] for r in field] == [1.0, 0.0, 0.5]   # fastest raw first
+    assert abs(field[0]["f"]["gap_to_median"] - 0.02) < 1e-12
+
+
+def test_the_mix_is_the_geometric_mean_and_falls_back_to_one_side():
+    a = {1: {"seconds": 900.0, "lo": 880.0, "hi": 920.0, "basis": "race"}}
+    b = {1: {"seconds": 1000.0, "lo": 980.0, "hi": 1020.0, "basis": "race_raw"}}
+    got = M.mixed(a, b)[1]
+    assert got["seconds"] == round((900.0 * 1000.0) ** 0.5, 1) and got["basis"] == "race_mix"
+    assert M.mixed(a, {})[1]["seconds"] == 900.0 and M.mixed({}, {}) == {}
+
+
+def test_each_model_file_is_cached_on_its_own(tmp_path):
+    import pickle
+    pa, pb = tmp_path / "a.pkl", tmp_path / "b.pkl"
+    pa.write_bytes(pickle.dumps({"clock": "ratings"}))
+    pb.write_bytes(pickle.dumps({"clock": "raw"}))
+    assert M.loadModel(str(pa))["clock"] == "ratings"
+    assert M.loadModel(str(pb))["clock"] == "raw"
+    assert M.loadModel(str(tmp_path / "none.pkl")) is None

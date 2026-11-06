@@ -1032,8 +1032,11 @@ def main():
                          "_ leaves out every input it starts (crs_,dif_,dst_,hot_,div_type "
                          "is the model before 1.7's new information)")
     a = ap.parse_args()
-    if a.no_ratings and a.out:
-        raise SystemExit("--no-ratings is a test, not a model to serve: drop --out")
+    # ★ THE NO-RATINGS MODEL CAN BE SERVED (owner, 2026-11-06: "there
+    #   shouldnt be any hindsight"; docs/PLAN-MODEL-2026-10.md §9). Nothing in
+    #   it came from the engine's solve, so it is the one model whose
+    #   training saw nothing after each race. Its file says clock "raw";
+    #   race_model reads raw times for it (race_rows.rawHistory).
 
     T = loadTable(a.rows, a.val_from, a.own, a.no_ratings, a.seed, a.train_frac,
                   [w for w in a.without.split(",") if w], drop_odd=a.drop_odd)
@@ -1343,7 +1346,7 @@ def main():
                          "spread": spread, "spread_z90": z90_r,
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
-                         "clip": CLIP,
+                         "clip": CLIP, "clock": "raw" if a.no_ratings else "ratings",
                          "val_from": a.val_from, "made": datetime.date.today().isoformat()}, fh)
         print(f"\nwrote {a.out}")
     print(f"\n({datetime.datetime.now() - t0})")
