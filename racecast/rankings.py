@@ -364,6 +364,24 @@ def namedName(expr):
 
 
 UNNAMED_OUT = " AND a.name IS NOT NULL"
+# ★ THE PAGE FIRST, THEN ITS NAMES (2026-11-06: /api/rankings 51.8 s, the
+#   ability board sorted by best, offset 50). A WHERE on the name made the
+#   database look up a name for EVERY row of the board before it could sort
+#   and take fifty. The page is cut from the board first -- with UNNAMED_SLACK
+#   rows to spare, so a nameless one dropped still leaves a full page -- and
+#   only those rows are named. A sort BY name still names everything first.
+UNNAMED_SLACK = 25
+
+
+def pageThenName(alias, base_from, base_where, order):
+    """The FROM ... LIMIT tail of a board query (see the note above)."""
+    lat = nameLateral(alias)
+    if "a.name" in order:
+        return (f"FROM {base_from} {lat} WHERE {base_where}{UNNAMED_OUT} "
+                f"ORDER BY {order} OFFSET %(offset)s LIMIT %(limit)s")
+    return (f"FROM (SELECT {alias}.* FROM {base_from} WHERE {base_where} ORDER BY {order} "
+            f"OFFSET %(offset)s LIMIT %(limit)s + {UNNAMED_SLACK}) {alias} {lat} "
+            f"WHERE a.name IS NOT NULL ORDER BY {order} LIMIT %(limit)s")
 
 _NAME_LATERAL = """
     LEFT JOIN LATERAL (
@@ -1491,12 +1509,7 @@ def getPerformanceRankings(cur, f):
                p.state, p.school, p.grade,
                p.meet_id, p.div_id, p.event_id, p.time_seconds,
                COALESCE(a.name, 'Unknown')          AS name
-        FROM   deduped p
-        {nameLateral("p")}
-        WHERE  p.dup_rn = 1{UNNAMED_OUT}
-        ORDER  BY {order}
-        OFFSET %(offset)s
-        LIMIT  %(limit)s
+        {pageThenName("p", "deduped p", "p.dup_rn = 1", order)}
     """, params)
     return cur.fetchall()
 
@@ -1602,12 +1615,7 @@ def getPrRankings(cur, f):
                p.state, p.school, p.grade,
                p.meet_id, p.div_id, p.event_id,
                COALESCE(a.name, 'Unknown')          AS name
-        FROM   best p
-        {nameLateral("p")}
-        WHERE  p.person_rn = 1{UNNAMED_OUT}
-        ORDER  BY {order}
-        OFFSET %(offset)s
-        LIMIT  %(limit)s
+        {pageThenName("p", "best p", "p.person_rn = 1", order)}
     """, params)
     return cur.fetchall()
 
@@ -1651,12 +1659,7 @@ def getAbilityRankings(cur, f):
                to_char(s.first_race, 'YYYY-MM-DD')  AS first_race,
                to_char(s.last_race,  'YYYY-MM-DD')  AS last_race,
                COALESCE(a.name, 'Unknown')          AS name
-        FROM   {source}
-        {nameLateral("s")}
-        WHERE  {floorSql(f['min_races_explicit'])} {where}{UNNAMED_OUT}
-        ORDER  BY {order}
-        OFFSET %(offset)s
-        LIMIT  %(limit)s
+        {pageThenName("s", source, floorSql(f['min_races_explicit']) + " " + where, order)}
     """, params)
     return cur.fetchall()
 
@@ -1956,8 +1959,8 @@ def rankOf(cur, f, person_id):
             SELECT s.person_id,
                    row_number() OVER (ORDER BY {order}) AS rn
             FROM   {source}
-            {nameLateral("s")}
-            WHERE  {floorSql(f['min_races_explicit'])} {where}{UNNAMED_OUT}
+            {nameLateral("s") if "a.name" in order else ""}
+            WHERE  {floorSql(f['min_races_explicit'])} {where}
         )
         SELECT min(rn) FROM ranked WHERE person_id = %(person_id)s
     """, params)

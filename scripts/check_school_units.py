@@ -734,7 +734,7 @@ def _rows(cur, sport, lo, hi):
     if sport == "XC":
         cur.execute(f"""
             SELECT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}, count(*) AS n_runners
             FROM results r
             JOIN meets m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                         AND m.source = r.source
@@ -748,7 +748,7 @@ def _rows(cur, sport, lo, hi):
         cur.execute(f"""
             SELECT r.school, substr(r.date, 1, 4) AS yr,
                    mt.meet_name, NULL::text AS division, mt.state,
-                   'tfrrs'::text AS source, {_COLL_SHARE}
+                   'tfrrs'::text AS source, {_COLL_SHARE}, count(*) AS n_runners
             FROM results r
             JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id
                                AND mt.source = 'tfrrs'
@@ -767,7 +767,7 @@ def _rows(cur, sport, lo, hi):
             --   modern college meets entirely (Tufts stopped at 2016).
             --   meet_name is meet-level, so any row of the meet names it.
             SELECT r.school, substr(r.date, 1, 4) AS yr,
-                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}
+                   m.meet_name, m.division, m.state, r.source, {_COLL_SHARE}, count(*) AS n_runners
             FROM results_tf r
             JOIN LATERAL (
                 SELECT mm.meet_name, mm.division, mm.state
@@ -876,6 +876,7 @@ def _nameAliases(cur):
         return {}
 
 
+TEAM_RUNNERS = 5                          # runners in one race that make a school's entry a team
 _DEBUG = {"school": None, "rows": []}     # --split: one school's voting meets
 
 
@@ -955,10 +956,20 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
         if _DEBUG["school"] and school == _DEBUG["school"]:
             _DEBUG["rows"].append((yr, meet_name, div_title, st_raced, st, bool(is_coll), feed,
                                    share, facts))
+        # ★ A TEAM AT ITS CONFERENCE MEET IS NO STRAY (owner, 2026-11-06:
+        #   Oregon and Washington under the PAC-12 in 2026). One championship
+        #   race is ONE row here, so a season's conference often has one vote
+        #   -- and current() passes over a season of one vote (Lyndon State's
+        #   lone runner). A college conference vote from a race the school
+        #   entered with TEAM_RUNNERS+ runners counts two: the Big Ten
+        #   championship decides 2025, a guest at another league's meet
+        #   (Calvin's CIAA) still does not.
+        n_run = rest[1] if len(rest) > 1 else None
+        team = bool(is_coll and n_run is not None and int(n_run) >= TEAM_RUNNERS)
         for kind, unit in facts:
             if kind == "state" and unit == "STATE":
                 unit = st or "STATE"
-            votes[key][kind][(unit, yr)] += 1
+            votes[key][kind][(unit, yr)] += 2 if (team and kind == "conference") else 1
             unit_eg.setdefault((kind, unit), (meet_name or "", school, st))
         seasons[key].add(yr)
     st_["hits"] = sum(name_hits.values())
@@ -1002,8 +1013,11 @@ def main():
                   f"{'college' if coll else 'school '}  {feed:<6} {meet[:60]!r}  {list(facts)}")
         for key, kinds in votes.items():
             if key[0] == args.school:
+                # the newest seasons (what decides) and the verdict
+                def newest(v):
+                    return dict(sorted(v.items(), key=lambda kv: kv[0][1], reverse=True)[:4])
                 print(f"  stored key {key}: " + "; ".join(
-                    f"{k} {dict(v.most_common(3))}" for k, v in kinds.items()))
+                    f"{k} {newest(v)} -> {(current(v) or ('-',))[0]}" for k, v in kinds.items()))
         return 0
 
     with getConn() as conn, conn.cursor() as cur:

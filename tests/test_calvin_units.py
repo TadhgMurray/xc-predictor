@@ -56,3 +56,32 @@ def test_one_guest_vote_for_a_known_conference_does_not_win():
     assert got[0] == "USCAA"
     got = C.current(Counter({("JUNK", "2012"): 1, ("MIAA", "2011"): 3}), prefer={"MIAA"})
     assert got[0] == "MIAA"
+
+
+class _Cur:
+    def __init__(self, rows):
+        self.rows, self.out = rows, []
+
+    def execute(self, sql, args=None):
+        self.out = self.rows if "FROM results r" in sql and "meets m " in sql else []
+
+    def fetchall(self):
+        return self.out
+
+    def fetchone(self):
+        return (None,)
+
+
+def test_a_team_at_its_conference_meet_decides_its_season(monkeypatch):
+    """owner, 2026-11-06: Oregon under the PAC-12 in 2026."""
+    monkeypatch.setattr(C, "_levelMaps", lambda cur: {})
+    monkeypatch.setattr(C, "_nameAliases", lambda cur: {})
+    rows = [("Oregon", "2019", "Pac-12 Cross Country Championships", "Men", "OR", "anet", 1.0, 7),
+            ("Oregon", "2019", "Pac-12 Cross Country Championships", "Men", "OR", "tfrrs", 1.0, 7),
+            ("Oregon", "2025", "Big Ten Cross Country Championships", "Men", "OR", "anet", 1.0, 7),
+            ("Calvin", "2019", "CIAA Cross Country Championships", "Men", "NC", "anet", 1.0, 1)]
+    votes, *_x = C.buildVotes(_Cur(rows), "XC")
+    conf = votes[("Oregon", "OR")]["conference"]
+    assert C.current(conf)[0] == "BIG TEN"
+    assert C.current(votes[("Calvin", "NC")]["conference"]) is None or \
+        votes[("Calvin", "NC")]["conference"][("CIAA", "2019")] == 1
