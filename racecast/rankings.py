@@ -1518,6 +1518,61 @@ def getPerformanceRankings(cur, f):
 #  3b. THE PR BOARD
 # ------------------------------------------------------------------ #
 
+# ★★ THE PR BOARD'S CANDIDATES, ONE STORED DISTANCE AT A TIME (2026-11-06:
+#    /api/rankings?board=pr&sport=XC&pool=hs_m&distance=5000 took 12.6-16.9 s
+#    on the live site, every time -- MISS after MISS). The board ranks the
+#    clock at a distance give or take PR_DISTANCE_TOL, so the candidate query
+#    is `pool = ? AND sport = ? AND distance BETWEEN lo AND hi ORDER BY
+#    time_seconds LIMIT n`. rr_pr_sport_time_idx (pool, sport, distance,
+#    time_seconds) cannot hand that back in time order: a RANGE on distance
+#    sits between the equalities and the ordering, so Postgres read every
+#    hs_m XC 5K in the table (a parallel seq scan, ~205k pages on a 6M-row
+#    stand-in) and top-N sorted it.
+#
+#  ★ THE RANGE HOLDS A HANDFUL OF STORED VALUES (5000, 4999.9, 5001 ...), and
+#    for each ONE the index IS in time order. So: find the stored distances in
+#    the range with a skip over the index (one probe each, the recursive CTE
+#    below), take each one's fastest n rows in index order, and keep the
+#    fastest n of those. The fastest n overall are among the per-distance
+#    fastest n, so the candidate set is the same one the single query chose
+#    (ties at the cut aside, which were never ordered).
+#
+#  ! ONLY WITH A POOL EQUALITY (both indexes lead on pool; pool=all would
+#    turn the skip into a scan) and only on the clock boards -- a field
+#    event ranks by mark, through its own index.
+def _prPerDistance(f, is_field):
+    return (not is_field and f.get("distance") is not None
+            and f.get("pool") not in (None, "all"))
+
+
+def _prCandidatesPerDistance(f, cols, cand_where, where, cand_order):
+    """The candidates CTE body (see above). Binds the same params the plain
+    query does: pool, sport (unless 'both'), dist_lo, dist_hi, cand."""
+    keys = "pool = %(pool)s" + ("" if f["sport"] == "both" else " AND sport = %(sport)s")
+    return f"""
+            WITH RECURSIVE dists(d) AS (
+                SELECT min(distance) FROM ranking_results
+                WHERE  {keys} AND distance BETWEEN %(dist_lo)s AND %(dist_hi)s
+                UNION ALL
+                SELECT (SELECT min(distance) FROM ranking_results
+                        WHERE  {keys} AND distance > dists.d
+                          AND  distance <= %(dist_hi)s)
+                FROM   dists WHERE dists.d IS NOT NULL
+            )
+            SELECT c.*
+            FROM   dists
+            CROSS  JOIN LATERAL (
+                SELECT {cols}
+                FROM   ranking_results
+                WHERE  {cand_where} {where} AND distance = dists.d
+                ORDER  BY {cand_order}
+                LIMIT  %(cand)s
+            ) c
+            WHERE  dists.d IS NOT NULL
+            ORDER  BY c.{cand_order}
+            LIMIT  %(cand)s"""
+
+
 def getPrRankings(cur, f):
     """Fastest times at one distance -- each athlete's best, once.
 
@@ -1569,25 +1624,35 @@ def getPrRankings(cur, f):
             #   curve per row on the site's slowest board, and buys
             #   nothing the build has not already done (owner, 2026-09-14).
             f"time_seconds IS NOT NULL AND time_seconds < {DNF_SENTINEL}",
-            "time_seconds ASC", "round(time_seconds::numeric, 1)")
+            # ! result_id BREAKS A TIE (2026-11-06): two rows at one time --
+            #   the candidate cut, an athlete's two races at the same PR --
+            #   had no order, so which one the board kept followed the plan
+            #   (a parallel scan's workers, or the per-distance read).
+            "time_seconds ASC, result_id", "round(time_seconds::numeric, 1)")
         order = _orderBy(f, _SORTS_PR, "p.time_seconds ASC", "p.result_id")
         # ! NULL, NOT p.mark: an older ranking_results has no mark column,
         #   and a flat board must keep serving until step 10 rebuilds it.
         mark_col = "NULL::real"
 
-    cur.execute(f"""
-        WITH candidates AS (
-            SELECT sport, result_id, person_id, pool, speed_rating,
+    cand_cols = f"""sport, result_id, person_id, pool, speed_rating,
                    race_date, year, state, school, grade,
                    meet_id, div_id, canon_meet_id, time_seconds, distance,
-                   event_id{", mark" if is_field else ""}
+                   event_id{", mark" if is_field else ""}"""
+    # ! THE SENTINEL IS EXCLUDED IN cand_where, not filtered out later. A
+    #   later filter would still let 999999 into the candidate set and waste
+    #   the LIMIT on rows that cannot rank.
+    if _prPerDistance(f, is_field):
+        candidates = _prCandidatesPerDistance(f, cand_cols, cand_where, where,
+                                              cand_order)
+    else:
+        candidates = f"""
+            SELECT {cand_cols}
             FROM   ranking_results
-            -- ! THE SENTINEL IS EXCLUDED HERE, not filtered out later. A
-            --   later filter would still let 999999 into the candidate set
-            --   and waste the LIMIT on rows that cannot rank.
             WHERE  {cand_where} {where}
             ORDER  BY {cand_order}
-            LIMIT  %(cand)s
+            LIMIT  %(cand)s"""
+    cur.execute(f"""
+        WITH RECURSIVE candidates AS ({candidates}
         ),
         deduped AS (
             SELECT *, row_number() OVER (

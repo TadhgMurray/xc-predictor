@@ -64,6 +64,17 @@ for _setting, _env in (("lock_timeout", "XCP_DB_LOCK_TIMEOUT_MS"),
     _v = os.environ.get(_env)
     if _v and _v.isdigit():
         _opts.append(f"-c {_setting}={int(_v)}")
+# ★ AND NO JIT FOR THE SITE (2026-11-06). Postgres compiles a plan whose
+#   ESTIMATED cost passes jit_above_cost (100k; optimise and inline past
+#   500k) -- and a board query over ranking_results' 61M rows is estimated
+#   that high even when the index reads a few thousand pages. Measured on
+#   the PR board's per-distance query: 25 ms with jit off, 1,155 ms on, the
+#   difference all compile time, paid again on every request. The pipeline's
+#   real scans can earn it back; a page cannot. app.py defaults this to off
+#   for the web process; XCP_DB_JIT=on turns it back on.
+_jit = (os.environ.get("XCP_DB_JIT") or "").strip().lower()
+if _jit in ("on", "off"):
+    _opts.append(f"-c jit={_jit}")
 if _opts:
     _PG_CONFIG_WITH_TIMEOUT["options"] = " ".join(_opts)
 _PG_CONFIG_WITH_TIMEOUT["application_name"] = os.environ.get("XCP_DB_APP") or "xcp"

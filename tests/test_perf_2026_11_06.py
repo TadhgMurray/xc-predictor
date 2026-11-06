@@ -364,3 +364,103 @@ def test_the_pipeline_purges_after_the_swap_and_at_the_end():
     assert sh.rindex("\nbgwait\n") < sh.index("step 19_edge_purge") < sh.rindex("\nsummarise")
     assert "edge_purge.py --delay 960" in sh
     assert "step 14_edge_purge" in _read("deploy", "nightly_update.sh")
+
+
+# ---------------------------------------------------------------- 7 --
+# The PR board's candidates, one stored distance at a time (12.6-16.9 s live
+# on board=pr&sport=XC&pool=hs_m&distance=5000).
+
+def _prSql(qs):
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    import rankings
+
+    class C:
+        def execute(self, sql, params=None):
+            self.sql, self.params = sql, params
+
+        def fetchall(self):
+            return []
+    rankings._hasEventKind = lambda cur=None: True
+    rankings._rowHasUnit = lambda c, t="ranking_results": False
+    f, err = rankings.parseFilters(MultiDict(parse_qsl(qs)))
+    assert not err, err
+    c = C()
+    rankings.getPrRankings(c, f)
+    return c.sql, c.params
+
+
+def test_the_pr_board_reads_one_distance_at_a_time():
+    sql, _ = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
+    assert "WITH RECURSIVE dists" in sql and "distance = dists.d" in sql
+
+
+def test_without_a_pool_or_on_a_field_event_it_keeps_the_plain_query():
+    import rankings
+    assert not rankings._prPerDistance({"distance": 5000, "pool": "all"}, False)
+    assert not rankings._prPerDistance({"distance": 5000, "pool": "hs_m"}, True)
+    assert not rankings._prPerDistance({"distance": None, "pool": "hs_m"}, False)
+
+
+def test_the_pr_board_answers_the_same_and_uses_the_index(pg):
+    import rankings
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE ranking_results AS
+        SELECT CASE WHEN g % 3 = 0 THEN 'hs_f' ELSE 'hs_m' END AS pool,
+               CASE WHEN g % 4 = 0 THEN 'TF' ELSE 'XC' END AS sport,
+               (ARRAY[5000, 4999.9, 5001, 8000])[1 + g % 4]::real AS distance,
+               (900 + (g * 7919) % 900)::real AS time_seconds,
+               g::bigint AS result_id, (g % 5000)::bigint AS person_id,
+               (150 + g % 40)::real AS speed_rating, date '2024-10-01' AS race_date,
+               2024 AS year, 'WI'::text AS state, 'S'::text AS school, '11'::text AS grade,
+               (g / 300)::bigint AS meet_id, 1::bigint AS div_id, NULL::bigint AS canon_meet_id,
+               NULL::bigint AS event_id, NULL::text AS event_kind, NULL::real AS mark
+        FROM generate_series(1, 60000) g""")
+    cur.execute("CREATE INDEX ON ranking_results (pool, sport, distance, time_seconds)")
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint,"
+                " first_name text, last_name text, gender text)")
+    cur.execute("INSERT INTO athletes SELECT g, g, 'A', 'B' || g, 'M'"
+                " FROM generate_series(0, 4999) g")
+    cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
+    cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    cur.execute("ANALYZE ranking_results")
+    for qs in ("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50",
+               "board=pr&sport=XC&pool=hs_m&distance=5000&limit=50&offset=200",
+               "board=pr&sport=both&pool=hs_f&distance=5000&limit=50"):
+        new_sql, params = _prSql(qs)
+        cur.execute(new_sql, params)
+        new = [dict(r) for r in cur.fetchall()]
+        old = rankings._prPerDistance
+        rankings._prPerDistance = lambda f, is_field: False
+        try:
+            old_sql, params = _prSql(qs)
+        finally:
+            rankings._prPerDistance = old
+        cur.execute(old_sql, params)
+        assert new == [dict(r) for r in cur.fetchall()], qs
+        assert len(new) == 50
+    sql, params = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
+    cur.execute("SET enable_seqscan = off")
+    cur.execute("EXPLAIN " + sql, params)
+    plan = "\n".join(r["QUERY PLAN"] for r in cur.fetchall())
+    assert "distance = dists.d" in plan and "Seq Scan on ranking_results" not in plan
+
+
+# ---------------------------------------------------------------- 8 --
+
+def test_the_web_process_connects_without_jit():
+    """~1 s of JIT compile per board query (25 ms off, 1,155 ms on, the PR
+    board's per-distance plan): the site's connections carry jit=off, the
+    service unit's timeouts stay beside it, and XCP_DB_JIT=on still wins."""
+    import subprocess
+    code = ("import sys; sys.path[:0] = ['racecast', 'scripts', 'tests']; import _env; "
+            "import app, database; print(database._PG_CONFIG_WITH_TIMEOUT.get('options'))")
+
+    def opts(**env):
+        e = {k: v for k, v in os.environ.items() if k != "XCP_DB_JIT"}
+        e.update(env, XCP_DB_QUIET="1")
+        out = subprocess.run([sys.executable, "-W", "ignore", "-c", code], cwd=_ROOT,
+                             env=e, capture_output=True, text=True, timeout=300)
+        return out.stdout.strip().splitlines()[-1]
+    assert opts(XCP_DB_STATEMENT_TIMEOUT_MS="55000") == "-c statement_timeout=55000 -c jit=off"
+    assert opts(XCP_DB_JIT="on") == "-c jit=on"
