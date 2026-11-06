@@ -73,6 +73,7 @@ def test_the_tools_menu_links(A):
         ("/conversions#paces", "Training paces"),
         ("/scale", "Rating to time"),
         ("/goal", "Goal calculator"),
+        ("/data", "Download ratings"),
     ]
     assert links(ref) == [("/about", "About"), ("/report", "Report an issue"), ("/contact", "Contact us"),
                           ("/account/uploads/new", "Add missing results")]

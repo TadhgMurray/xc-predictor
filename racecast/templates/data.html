@@ -1,0 +1,73 @@
+{# =====================================================================
+  data.html -- the dated snapshots and their downloads (data_snapshots.py,
+  owner 2026-11-06). No rating is printed here: the CSVs carry them, on
+  the HS-equivalent scale.
+===================================================================== #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('pages2.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('tools.css') }}">
+{% set meta_title = "Download ratings and course difficulties" %}
+{% set meta_description = "Dated, frozen copies of the season's Racecast ratings and every course's difficulty, to download as spreadsheets." %}
+{% set meta_path = "/data" %}
+{% set meta_crumbs = [("About", "/about"), ("Data", none)] %}
+{% include "_meta.html" %}
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide p2-page rc data-page">
+  <header class="rc-hd"><div class="rc-hgrid rc-hone">
+    <div class="rc-left">
+      <div class="rc-sport"><span class="sport-tag">Data</span></div>
+      <h1>Download ratings and course difficulties</h1>
+      <p class="rc-story">
+        Ratings are recalculated every week as results come in and data is corrected. A snapshot
+        is a frozen copy taken on one date: every athlete's season rating and every course's
+        difficulty as they stood that day. It never changes afterwards, so a selection made from
+        it can always be checked against the same numbers.
+      </p>
+    </div>
+  </div></header>
+
+  <div class="rc-grid rc-grid-one"><div class="rc-mainc">
+  {% if snaps %}
+    <table class="rc-table data-tbl">
+      <thead><tr><th>Snapshot</th><th>Taken</th><th>Athletes</th><th>Courses</th><th>Download</th></tr></thead>
+      <tbody>
+      {% for s in snaps %}
+        <tr>
+          <td>{{ s.label }}</td>
+          <td>{{ s.taken_at.strftime("%b %-d, %Y") }}</td>
+          <td class="n">{{ "{:,}".format(s.n_athletes or 0) }}</td>
+          <td class="n">{{ "{:,}".format(s.n_courses or 0) }}</td>
+          <td>
+            <a href="/data/{{ s.id }}/athletes.csv">All ratings</a>
+            · <a href="/data/{{ s.id }}/courses.csv">Courses</a>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <form class="data-filter" action="/data/{{ snaps[0].id }}/athletes.csv" method="get">
+      <p class="p2-foot">One state and level from the newest snapshot:
+        <label>State <input name="state" maxlength="2" size="3" placeholder="WI"></label>
+        <label>Level <select name="level"><option value="">All</option>
+          {% for lv, words in levels %}<option value="{{ lv }}">{{ words }}</option>{% endfor %}
+        </select></label>
+        <button type="submit">Download</button></p>
+    </form>
+    <p class="p2-foot">Ratings are on the high-school-equivalent scale the site shows. A course's
+      difficulty is how much slower than a flat track it runs, in percent.</p>
+  {% else %}
+    <p>No snapshot has been taken yet.</p>
+  {% endif %}
+  </div></div>
+</main>
+</body>
+</html>

@@ -11264,6 +11264,10 @@ for _bp in (_scale.bp, _goal.bp, _h2h.bp, _meet_track.bp):
 #   their own blueprint too, see pages3.py.
 import pages3 as _pages3                                       # noqa: E402
 app.register_blueprint(_pages3.bp)
+# ★ DATED SNAPSHOTS AND THEIR DOWNLOADS (owner, 2026-11-06): /data, see
+#   data_snapshots.py.
+import data_snapshots as _data_snapshots                       # noqa: E402
+app.register_blueprint(_data_snapshots.bp)
 # ★ THE NCAA CHAMPIONSHIPS PROJECTION (owner, 2026-10-10): /ncaa and its
 #   card, see ncaa_pages.py.
 import ncaa_pages as _ncaa_pages                               # noqa: E402
