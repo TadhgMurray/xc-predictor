@@ -156,3 +156,17 @@ def test_division_types():
     assert R.divType("JV Girls") == 0 and R.divType("Boys Junior Varsity") == 0
     assert R.divType("Frosh/Soph Boys") == 0
     assert R.divType("Middle School Boys") == 1 and R.divType(None) == 1
+
+
+def test_far_ahead_copies_have_their_own_share():
+    assert R.parseLeads("7,28,90:0.1", 0.25) == [(7, 0.25), (28, 0.25), (90, 0.1)]
+    assert R.parseLeads("7,28", 0) == []
+    key = (1, 2, "anet", "2025-10-11")
+    assert R.leadsFor(key, [(7, 1.0), (330, 0.0)], 0.25) == [0, 7]
+    assert R.leadsFor(key, [7, 28], 1.0) == [0, 7, 28]      # the old form still reads
+
+
+def test_no_weather_past_the_forecasts_reach():
+    wx = {"temp_c": 20.0}
+    assert R.weatherAt(wx, 0) is wx and R.weatherAt(wx, R.WX_HORIZON_DAYS) is wx
+    assert R.weatherAt(wx, 28) is None
