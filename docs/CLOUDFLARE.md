@@ -34,14 +34,21 @@ One rule: when the hostname equals `www.racecast.co`, redirect 301 to
 `https://racecast.co` with the path preserved (the "Redirect from WWW to
 Root" template does exactly this). Google then sees one copy of each page.
 
-## 4. Caching (Caching > Configuration)
+## 4. Caching (Caching > Configuration, Caching > Cache Rules)
 
-Leave the defaults. Cloudflare caches static files (CSS, JS, images,
-fonts) and not HTML, which is what the site needs: the boards change
-after every pipeline run and `/api/rankings` must never be served stale.
-Do **not** add a "Cache Everything" rule. After a deploy the static
-files carry a new version in their URL (`static_v`), so no purge is
-needed.
+The pages and the board APIs are public and say how long the edge may keep
+them (`app.PUBLIC_CACHE_CONTROL`: `public, max-age=300, s-maxage=900,
+stale-if-error=86400`). A Cache Rule marks the HTML pages and the four board
+APIs "Eligible for cache" with the edge TTL taken from the origin's header;
+errors are always `no-store` and are never kept. `/api/` paths other than
+the boards, `/search`, `/account` and `/debug` are `no-store`.
+
+After a deploy the static files carry a new version in their URL
+(`static_v`), so no purge is needed for them. After a pipeline or nightly
+run, `scripts/edge_purge.py` purges everything once `XCP_CF_ZONE_ID` and
+`XCP_CF_API_TOKEN` (a token with Zone > Cache Purge on this zone only) are in
+`/etc/xc-predictor.env`; with that in place `XCP_PAGE_S_MAXAGE` can be raised
+well past 15 minutes. See docs/PERF-2026-11-06.md.
 
 Browser Cache TTL: "Respect Existing Headers" (nginx sends 7 days for
 /static/).

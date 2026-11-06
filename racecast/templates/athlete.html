@@ -218,20 +218,23 @@
                            /race/tf/None/... 404s for those). A nameless
                            race still links, as "Race results". #}
                         {% if race.sport == 'XC' and race.meet_id and race.div_id is not none %}
-                            <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}?r={{ race.result_id }}"
+                            {# ★ ?r= ONLY WHERE IT PICKS THE FEED (app._stampFeedPins): a meet one
+                               feed holds is the bare URL plus #r<id>, one edge copy per
+                               race instead of one per finisher #}
+                            <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}{% if race.feed_pin is sameas false %}#r{% else %}?r={% endif %}{{ race.result_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ meet_logo(race.meet) }}{{ race.meet or 'Race results →' }}</a>
                         {% elif race.sport == 'TF' and race.meet_id and race.event_id is not none and race.div_id is not none %}
                             {# ?r= pins the page to THIS row's source: the
                                feeds' id spaces collide, and a bare URL can
                                resolve to the other feed's event #}
-                            <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}?r={{ race.result_id }}"
+                            <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}{% if race.feed_pin is sameas false %}#r{% else %}?r={% endif %}{{ race.result_id }}"
                                title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
                         {% elif race.meet_id %}
                             {# ?r= ON BOTH SPORTS NOW. The XC meet page pins on it too -- the
                                anet and tfrrs id spaces collide on 15,096 XC meet_ids,
                                and without the pin the bigger feed's meet always won
                                (owner, 2026-09-17: races that 404). #}
-                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}?r={{ race.result_id }}"
+                            <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}{% if race.sport == 'XC' and race.feed_pin is sameas false %}#r{% else %}?r={% endif %}{{ race.result_id }}"
                                title="{{ race.meet or 'Meet' }}">{{ race.meet or 'Meet results →' }}</a>
                         {% else %}
                             <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or " - " }}</span>

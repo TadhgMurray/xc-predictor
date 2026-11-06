@@ -138,6 +138,17 @@ WANTED = [
     #   report: not the round trips, which are already parallel, but a full
     #   scan behind each of them.
     ("athlete_season",  "person_id", "idx_athlete_season_person", None),
+    # ★ THE ABILITY BOARD SORTED ON THE SEASON BEST (2026-11-06: /api/rankings
+    #   51.8 s, board=ability&pool=hs_m&sport=XC&sort=best). The year filter
+    #   defaults to Any, so as_board_best_idx (pool, sport, year, best_rating)
+    #   cannot reach its ordering column and every hs_m XC season was read
+    #   from the heap and sorted for one page. Same names and columns as
+    #   build_ranking_results._CANONICAL_INDEXES, which builds them on every
+    #   rebuild's shadow; these build them on the live table now.
+    ("athlete_season",  "pool", "as_pool_sport_best_idx",
+     "(pool, sport, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
+    ("athlete_season",  "pool", "as_pool_best_idx",
+     "(pool, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
     # ★ THE EVENTS WINDOW ON THE ATHLETES BOARD (2026-09-08,
     #   rankings._abilitySource). That board re-aggregates ranking_results
     #   over a distance range, and with sport='both' there is NO sport
@@ -253,8 +264,27 @@ WANTED = [
     #   70-race career was thousands of random reads -- 55 s measured,
     #   17:27. Covering, so the count is an index-only read of one race's
     #   entries, and the heap is touched only on pages not yet vacuumed.
-    ("results",         "meet_id", "idx_results_meet_div_place",
-     "(meet_id, div_id) INCLUDE (time_seconds, school)"),
+    # ★★ AND THE FEED, THE ID AND THE STATUS (2026-11-06: /athlete 55 s, 24x
+    #    since Oct 11; /race/xc 63 s on meet_sources). The place lateral
+    #    filters `r2.source = r.source`, orders ties by result_id and keeps
+    #    only placedSql rows (status) -- three columns the first version of
+    #    this index (meet_id, div_id) INCLUDE (time_seconds, school) did not
+    #    carry, so every competitor of every race was still a heap fetch.
+    #    And app.meet_sources' `count(*) ... WHERE meet_id = X GROUP BY
+    #    source`, run on every race and meet page view (up to three times
+    #    per race view), read every row of the meet from the heap for the
+    #    one column. With source in the key both are index-only reads, and
+    #    "does this meet have a second feed" (the athlete page's link pins)
+    #    is one probe.
+    #  ! (meet_id, source, div_id): every caller pins meet_id; meet_sources
+    #    groups by source in key order; the place lateral and the race
+    #    page's division probe pin all three.
+    #  ! A NEW NAME, NOT THE OLD ONE WITH NEW COLUMNS: where the narrower
+    #    idx_results_meet_div_place was built it would read as "usable"
+    #    under its own name. Once this one is valid, drop that one
+    #    (docs/PERF-2026-11-06.md).
+    ("results",         "meet_id", "idx_results_meet_src_cover",
+     "(meet_id, source, div_id) INCLUDE (time_seconds, result_id, school, status)"),
     ("results_tf",      "meet_id", "idx_results_tf_meet_ev_place",
      "(meet_id, event_id, div_id) INCLUDE (time_seconds, school)"),
     # ★ THE DATA WATCHDOG'S SCOPE (2026-10-10): "rows scraped since the last

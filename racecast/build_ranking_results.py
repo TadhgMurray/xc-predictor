@@ -2258,6 +2258,21 @@ _CANONICAL_INDEXES = {
         ("as_pool_sport_mean_idx", "(pool, sport, mean_rating DESC NULLS LAST, person_id)"),
         # the same boards sorted on the season best instead
         ("as_board_best_idx", "(pool, sport, year, best_rating DESC NULLS LAST)"),
+        # ★ AND THE SEASON-BEST SORT WITH NO YEAR (2026-11-06: /api/rankings
+        #   51.8 s, board=ability&pool=hs_m&sport=XC&sort=best, 6x since
+        #   Oct 16). The Academic year filter defaults to Any, so `year`
+        #   sits between the equalities and the ordering in
+        #   as_board_best_idx and the planner bitmap-scanned every hs_m XC
+        #   season in the heap and top-N sorted them for one page. The
+        #   ORDER BY is _orderBy's exactly -- best_rating DESC NULLS LAST,
+        #   then the tiebreak mean_rating DESC (nulls first, Postgres'
+        #   default for DESC), then person_id -- so the page is the first
+        #   rows of the index. Two shapes, as the mean pair: sport='both'
+        #   emits no sport predicate.
+        ("as_pool_sport_best_idx",
+         "(pool, sport, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
+        ("as_pool_best_idx",
+         "(pool, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
         # school.py roster/years/currentSeason: WHERE school = %s
         #   (+ sport/year equality) -- every school page view
         ("as_school_idx", "(school, sport, year)"),

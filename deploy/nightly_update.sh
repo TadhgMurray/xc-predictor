@@ -542,6 +542,16 @@ if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
        --step-name 13k_watchdog --failed "$FAILED" --send --ensure-indexes
 fi
 
+# ★ THE EDGE FORGETS LAST NIGHT'S PAGES (2026-11-06, scripts/edge_purge.py):
+#   now, and again once the workers' 15-minute board copies have run out.
+#   A no-op until XCP_CF_ZONE_ID / XCP_CF_API_TOKEN are set.
+if [ "$PUBLISH" -eq 1 ]; then
+  step 14_edge_purge "$PY" -u scripts/edge_purge.py || true
+  if [ "$DRY" -ne 1 ]; then
+    nohup "$PY" -u scripts/edge_purge.py --delay 960 >> "$LOGDIR/14_edge_purge_again.log" 2>&1 &
+  fi
+fi
+
 # ---- summary ------------------------------------------------------------ #
 TOTAL=$(( $(date +%s) - T_START ))
 echo ""
