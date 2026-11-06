@@ -23,7 +23,7 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
     c = psycopg2.connect(DSN)
     cur = c.cursor()
     try:
-        for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course",
+        for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course", "school_unit",
                   "athlete_season", "athletes", "results", "results_tf", "course_difficulties"):
             cur.execute(f"DROP TABLE IF EXISTS {t}")
         cur.execute("CREATE TABLE athlete_season (person_id bigint, sport text, pool text, year int, "
@@ -34,6 +34,9 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
         cur.execute("CREATE TABLE results_tf (person_id bigint, athlete_name text)")
         cur.execute("CREATE TABLE course_difficulties (course_name text, distance_m real, "
                     "difficulty real, n_results int)")
+        cur.execute("CREATE TABLE school_unit (school text, state text, sport text, league text, "
+                    "conference text, is_college boolean)")
+        cur.execute("INSERT INTO school_unit VALUES ('Horlick','WI','XC','Southeast',NULL,false)")
         cur.execute("INSERT INTO athlete_season VALUES (1,'XC','hs_m',2026,140,145,6,'WI','Horlick','12'),"
                     "(2,'XC','hs_f',2026,120,125,5,'IL','X','11'),(3,'XC','hs_m',2026,150,150,1,'WI','Y','10')")
         cur.execute("INSERT INTO athletes VALUES (1,1,'Josh','Runner','M'),(2,2,'Ann','Lee','F')")
@@ -60,10 +63,17 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
         client = app.test_client()
         body = client.get(f"/data/{snap}/athletes.csv?state=WI&level=hs_m").get_data(as_text=True)
         lines = body.strip().splitlines()
-        assert lines[0].startswith("level,name,school,state,grade,rating_hs_equivalent")
+        assert lines[0].startswith("level,name,school,state,grade,league,conference,rating_hs_equivalent")
         assert len(lines) == 2 and "Josh Runner" in lines[1] and ",141.0," in lines[1]
         courses = client.get(f"/data/{snap}/courses.csv").get_data(as_text=True)
         assert "Lake Park,5000.0,5.1,900" in courses
+        # schools and a league (owner, 2026-11-06)
+        by_school = client.get(f"/data/{snap}/athletes.csv?state=WI&school=horlick,Case").get_data(as_text=True)
+        assert "Josh Runner" in by_school and ",Southeast," in by_school
+        assert len(client.get(f"/data/{snap}/athletes.csv?state=WI&school=Case").get_data(
+            as_text=True).strip().splitlines()) == 1
+        by_league = client.get(f"/data/{snap}/athletes.csv?state=WI&league=southeast").get_data(as_text=True)
+        assert "Josh Runner" in by_league
         assert client.get("/data/999/athletes.csv?state=WI").status_code == 404
         # one state at a time (owner, 2026-11-06): no whole-season download
         assert client.get(f"/data/{snap}/athletes.csv").status_code == 400
@@ -78,7 +88,7 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
         assert [r[0] for r in cur.fetchall()] == ["2026 end of season", f"{D.AUTO_PREFIX}Nov 2"]
     finally:
         c.rollback()
-        for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course",
+        for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course", "school_unit",
                   "athlete_season", "athletes", "results", "results_tf", "course_difficulties"):
             cur.execute(f"DROP TABLE IF EXISTS {t}")
         c.commit()
