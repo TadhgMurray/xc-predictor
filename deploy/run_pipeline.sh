@@ -1695,7 +1695,13 @@ fi
 #   nothing after it reads the table. OFF until XCP_FORECASTS=1 (run it by hand once first).
 #   See racecast/build_meet_forecasts.py.
 if [ "${XCP_FORECASTS:-0}" = "1" ]; then
-  step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
+  # ★ AND EVERY INPUT AS THE PAGE HAD IT, BEFORE THE RACE (owner, 2026-11-06:
+  #   "there shouldnt be any hindsight"). The race model trains on today's
+  #   ratings and course numbers, which have seen the races it learns from;
+  #   these files (race_model.keepInputs, one .jsonl.gz a day) are the table
+  #   nothing after the forecast touched. XCP_RACE_INPUTS_DIR= (empty) stops it.
+  step 13h_meet_forecasts env XCP_RACE_INPUTS_DIR="${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}" \
+    "$PY" -u racecast/build_meet_forecasts.py
 fi
 # ★ AND THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS, as the nightly
 #   (racecast/build_qualified_fields.py); XCP_QUALIFIED_BUILD=0 skips it
