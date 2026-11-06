@@ -76,3 +76,9 @@ def test_pick_division_without_apostrophes():
     assert K.pickDivision(ours, 6000, "F", "Women's Navy Championship 6K") == 1
     assert K.pickDivision(ours, 8000, "M", "Men's Navy Championship 8K") == 3
     assert K.pickDivision(ours, 8000, "M", "Men's Open 8K") == 4
+
+
+def test_level_line_splits_out_each_races_level():
+    assert K.levelLine([]) is None
+    lv = K.levelLine([(2.0, -0.5), (-0.3, 1.0), (0.1, 0.2), (None, 1.0)])
+    assert lv == (0.3, 0.5, 2, 3)

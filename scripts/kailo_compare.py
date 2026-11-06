@@ -10,6 +10,7 @@ database; Kailo's public API.
     /srv/venv/bin/python scripts/kailo_compare.py --record       # save OUR predictions for
                                                                  # their upcoming races, now
     /srv/venv/bin/python scripts/kailo_compare.py --basis model  # score one basis of ours
+    /srv/venv/bin/python scripts/kailo_compare.py --basis race --recorded-only --from 2026-09-01
     sudo bash deploy/install_kailo_record_timer.sh               # --record every 6 hours
 
   The RATINGS alone (no course, no day): scripts/kailo_ratings.py.
@@ -325,6 +326,24 @@ def spread(miss_by_race):
     return sum(xs) / len(xs) if xs else None
 
 
+def levelLine(levels):
+    """levels: [(level ours, level Kailo)] per race, each the race's mean
+    signed miss in % (+ = predicted slow). (median |ours|, median |Kailo|,
+    races where ours is closer, races) or None. Pure.
+
+    ★ WHY (owner, 2026-11-06: "I want to roflstomp Kailo"). Their headline
+      is the average miss per runner, and a whole field predicted 2% slow
+      (NESCAC 2026) costs 2% on every runner however good the order. This
+      splits a race's miss into its LEVEL (here) and the runners against
+      each other (spread), so a loss reads as one or the other."""
+    levels = [(o, t) for o, t in levels if o is not None and t is not None]
+    if not levels:
+        return None
+    return (statistics.median(abs(o) for o, _t in levels),
+            statistics.median(abs(t) for _o, t in levels),
+            sum(abs(o) < abs(t) for o, t in levels), len(levels))
+
+
 def matchRunners(kailo_rows, athletes, ours):
     """[(kailo predicted, our person, actual)] for the runners on both sides.
     kailo_rows: Kailo's rows; athletes: Kailo's athlete dict; ours:
@@ -349,18 +368,20 @@ def matchRunners(kailo_rows, athletes, ours):
 #  the two modes
 # ------------------------------------------------------------------ #
 
-def compareSeason(cur, season, sleep, show, csv_path=None, basis=None):
+def compareSeason(cur, season, sleep, show, csv_path=None, basis=None, since=None,
+                  recorded_only=False):
     tr = fetch("/track-record", sleep, params={"season": season} if season else None)
     today = datetime.date.today().isoformat()
     races = [r for r in tr.get("races", []) if r.get("state") in SCORED
-             and (r.get("race_date") or "9999") < today]
+             and (r.get("race_date") or "9999") < today
+             and (since is None or (r.get("race_date") or "") >= since)]
     print(f"[kailo] season {tr.get('season')}: {len(races)} races run "
           f"({sum(r.get('state') == 'scored' for r in races)} scored by Kailo); their published "
           f"average miss {tr.get('avg_miss_pct') or 0:.2f}% (backtests "
           f"{(tr.get('benchmark') or {}).get('avg_miss_pct', float('nan')):.2f}%)")
     meets = {}
     all_o, all_t, order = [], [], [0, 0, 0]
-    per_race = []
+    per_race, levels = [], []
     recs, by_race_o, by_race_t, csv_rows = [], [], [], []
     for r in races:
         mk = r["meet_key"]
@@ -403,6 +424,9 @@ def compareSeason(cur, season, sleep, show, csv_path=None, basis=None):
                 how = "recorded" if recorded else "rebuilt"
             except (OSError, ValueError, KeyError):
                 recorded = {}
+        if not recorded and recorded_only:
+            print(f"  ✗ {label}: no recording of ours from before the race")
+            continue
         if not recorded:
             target = {"mode": "meet", "meet_id": mid, "div_id": div, "sport": "XC",
                       "source": "tfrrs", "history_before": r["race_date"]}
@@ -429,14 +453,16 @@ def compareSeason(cur, season, sleep, show, csv_path=None, basis=None):
         so, st = summary(mo), summary(mt_)
         per_race.append((label, how, len(rows), so, st, go / n if n else None,
                          gt / n if n else None))
+        levels.append((so["bias"], st["bias"]))
     if not per_race:
         print("[kailo] nothing to score yet")
         return
     print(f"\n  {'race':<62}{'how':<10}{'runners':>8}  {'miss ours':>10}{'theirs':>8}"
-          f"  {'order ours':>11}{'theirs':>8}")
+          f"  {'order ours':>11}{'theirs':>8}  {'level ours':>11}{'theirs':>8}")
     for label, how, n, so, st, oo, ot in per_race[:show] if show else per_race:
         print(f"  {label[:61]:<62}{how:<10}{n:>8}  {so['mean']:>9.2f}%{st['mean']:>7.2f}%"
-              f"  {100 * (oo or 0):>10.1f}%{100 * (ot or 0):>7.1f}%")
+              f"  {100 * (oo or 0):>10.1f}%{100 * (ot or 0):>7.1f}%"
+              f"  {so['bias']:>+10.2f}%{st['bias']:>+7.2f}%")
     so, st = summary(all_o), summary(all_t)
     print(f"\n  ALL {so['n']:,} runners in {len(per_race)} races "
           f"({sum(1 for p in per_race if p[1] == 'recorded')} recorded before the race, "
@@ -451,6 +477,10 @@ def compareSeason(cur, season, sleep, show, csv_path=None, basis=None):
     if so_ is not None:
         print(f"    with each race's own level taken off: ours {so_:.2f}%   Kailo {st_:.2f}%"
               "   (the runners against each other; the course and day aside)")
+    lv = levelLine(levels)
+    if lv:
+        print(f"    race level (each race's mean signed miss): median |level| ours {lv[0]:.2f}%   "
+              f"Kailo {lv[1]:.2f}%   ours closer in {lv[2]} of {lv[3]} races")
     print("  (miss = |predicted - actual| / actual; Kailo's own track record uses the "
           "average. 'rebuilt' = ours from results before race day only.)")
     if recs and any(g for g, _a, _b in recs):
@@ -579,6 +609,10 @@ def main():
     ap.add_argument("--show", type=int, default=0, help="races listed (0 = all)")
     ap.add_argument("--sleep", type=float, default=1.0)
     ap.add_argument("--csv", default=None, help="write every runner's row here")
+    ap.add_argument("--from", dest="since", default=None,
+                    help="only races on or after this date (YYYY-MM-DD)")
+    ap.add_argument("--recorded-only", action="store_true",
+                    help="only races we recorded before the gun (the fair test)")
     ap.add_argument("--basis", choices=BASES, default=None,
                     help="score this basis of ours (default: what the site serves, "
                          "XCP_PREDICT_BASIS)")
@@ -591,7 +625,8 @@ def main():
         if a.record:
             recordUpcoming(cur, a.season, a.sleep)
         else:
-            compareSeason(cur, a.season, a.sleep, a.show, a.csv, a.basis)
+            compareSeason(cur, a.season, a.sleep, a.show, a.csv, a.basis, a.since,
+                          a.recorded_only)
         conn.rollback()
 
 
