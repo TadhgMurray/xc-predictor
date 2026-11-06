@@ -94,6 +94,12 @@ LEFT JOIN cs_seasons sr ON sr.person_id = s.person_id AND sr.sport = s.sport
                        AND sr.g = 12 AND sr.year = s.year + (12 - s.g)
 LEFT JOIN college_recruit cr ON cr.person_id = s.person_id AND cr.sport = s.sport
 WHERE  s.g BETWEEN 9 AND 12
+-- ★ STORED IN THE ORDER THE PAGE READS IT (2026-11-06). The comps search
+--   (comps._runnersLikeYou) reads one (sport, pool, grade) band of ratings
+--   -- ~10k rows -- through idx_season_comps_match; in the join's order those
+--   rows sat on ~4,400 different pages, in this order on ~230 (a stand-in,
+--   measured). Run thousands of times an hour by crawlers on /recruit.
+ORDER  BY s.sport, s.pool, s.g, s.rating
 """
 
 # pooled within-season sd: sum of squared deviations over sum of (n - 1),

@@ -76,6 +76,10 @@ def main(argv=None):
     ap.add_argument("--hours", type=float, default=24)
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--log", default=LOG)
+    ap.add_argument("--worst", type=int, default=0, metavar="N",
+                    help="also list the N slowest single statements with their full URL")
+    ap.add_argument("--path", default="",
+                    help="with --worst: only URLs starting with this, e.g. /api/rankings")
     a = ap.parse_args(argv)
     if not os.path.exists(a.log):
         print(f"no log at {a.log}")
@@ -87,7 +91,30 @@ def main(argv=None):
     print(table(by_page, a.top))
     print("\nby statement:")
     print(table(by_sql, a.top))
+    if a.worst:
+        with open(a.log, encoding="utf-8", errors="replace") as fh:
+            rows = worst(fh, since, a.worst, a.path)
+        print(f"\nthe {len(rows)} slowest single statements"
+              + (f" under {a.path}" if a.path else "") + ":")
+        for ms, at, path, sql in rows:
+            print(f"{ms / 1000:8.2f} s  {at}  {path}\n           {sql[:150]}")
     return 0
+
+
+def worst(lines, since, n, prefix=""):
+    """The n slowest log lines since `since` whose URL starts with prefix:
+    [(ms, time, full path, sql head)], slowest first."""
+    import heapq
+    keep = []
+    for ln in lines:
+        m = _LINE.match(ln.rstrip("\n"))
+        if not m or not m.group(3).startswith(prefix):
+            continue
+        at = dt.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+        if since and at < since:
+            continue
+        keep.append((float(m.group(2)), m.group(1), m.group(3), " ".join(m.group(4).split())))
+    return heapq.nlargest(n, keep)
 
 
 if __name__ == "__main__":
