@@ -52,6 +52,10 @@ LEVELS = ("hs_m", "hs_f", "college_m", "college_f", "ms_m", "ms_f")
 
 def ensure(cur):
     cur.execute(_DDL)
+    # the athlete's league and conference as of the snapshot (school_unit),
+    # for the league / conference filter (owner, 2026-11-06)
+    cur.execute("ALTER TABLE data_snapshot_athlete ADD COLUMN IF NOT EXISTS league text")
+    cur.execute("ALTER TABLE data_snapshot_athlete ADD COLUMN IF NOT EXISTS conference text")
 
 
 AUTO_PREFIX = "Week of "
@@ -78,24 +82,35 @@ def take(cur, label, sport, year):
     cur.execute("INSERT INTO data_snapshot (label, sport, year) VALUES (%s, %s, %s) "
                 "RETURNING snap_id", (label, sport, year))
     snap = cur.fetchone()[0]
+    cur.execute("SELECT to_regclass('school_unit')")
+    has_units = cur.fetchone()[0] is not None
+    units = ("""LEFT JOIN LATERAL (
+                    SELECT u.league, u.conference FROM school_unit u
+                    WHERE  u.school = s.school AND u.state = s.state AND u.sport = s.sport
+                    ORDER  BY (u.is_college = (split_part(s.pool, '|', 1) LIKE 'college%%')) DESC
+                    LIMIT  1) un ON TRUE""" if has_units else "")
+    cols = "un.league, un.conference" if has_units else "NULL::text, NULL::text"
     cur.execute(f"""
         SELECT s.person_id, a.name, s.school, s.state, split_part(s.pool, '|', 1) AS level,
-               s.grade, s.mean_rating, s.best_rating, s.n_races
+               s.grade, s.mean_rating, s.best_rating, s.n_races, {cols}
         FROM   athlete_season s
         {nameLateral("s")}
+        {units}
         WHERE  s.sport = %(sport)s AND s.year = %(year)s AND s.mean_rating IS NOT NULL
           AND  a.name IS NOT NULL""", {"sport": sport, "year": year})
     rows = []
-    for pid, name, school, state, level, grade, mean, best, n in cur.fetchall():
+    for pid, name, school, state, level, grade, mean, best, n, league, conf in cur.fetchall():
         hs = pool_view.toHs(mean, level, sport)
         hs_best = pool_view.toHs(best, level, sport)
         rows.append((snap, pid, name, school, state, level, grade,
                      round(hs if hs is not None else float(mean), 1),
                      round(hs_best if hs_best is not None else float(best or 0), 1) if best else None,
-                     n))
+                     n, league, conf))
     from psycopg2.extras import execute_values
     if rows:
-        execute_values(cur, "INSERT INTO data_snapshot_athlete VALUES %s", rows, page_size=5000)
+        execute_values(cur, """INSERT INTO data_snapshot_athlete
+                               (snap_id, person_id, name, school, state, level, grade, rating,
+                                best, n_races, league, conference) VALUES %s""", rows, page_size=5000)
     cur.execute("SELECT to_regclass('course_difficulties')")
     courses = []
     if cur.fetchone()[0] is not None:
@@ -165,26 +180,39 @@ def athletes_csv(snap_id):
     if not state or not state.isalpha():
         return Response("Pick a state: /data/<id>/athletes.csv?state=WI (athletes whose team is "
                         "in that state).\n", status=400, mimetype="text/plain")
+    # ★ SCHOOLS AND A LEAGUE (owner, 2026-11-06: "you can do those"): an
+    #   All-County meeting lists its county's schools; a coach pulls a
+    #   conference. Schools repeat (?school=A&school=B) or come comma-
+    #   separated; a league matches the athlete's league OR conference.
+    schools = [x.strip().lower() for v in request.args.getlist("school")
+               for x in v.split(",") if x.strip()][:60] or None
+    group = (request.args.get("league") or "").strip().lower() or None
     with getConn() as conn, conn.cursor() as cur:
         snap = _snapshot(cur, snap_id) if _exists(cur) else None
         if not snap:
             abort(404)
-        cur.execute("""SELECT level, name, school, state, grade, rating, best, n_races, person_id
+        ensure(cur)
+        cur.execute("""SELECT level, name, school, state, grade, rating, best, n_races,
+                              league, conference, person_id
                        FROM data_snapshot_athlete
                        WHERE snap_id = %(s)s
                          AND (%(st)s::text IS NULL OR state = %(st)s)
                          AND (%(lv)s::text IS NULL OR level = %(lv)s)
+                         AND (%(sc)s::text[] IS NULL OR lower(school) = ANY(%(sc)s))
+                         AND (%(gr)s::text IS NULL OR lower(league) = %(gr)s
+                              OR lower(conference) = %(gr)s)
                        ORDER BY level, rating DESC NULLS LAST""",
-                    {"s": snap_id, "st": state, "lv": level})
+                    {"s": snap_id, "st": state, "lv": level, "sc": schools, "gr": group})
         rows = cur.fetchall()
         conn.rollback()
     site = request.host_url.rstrip("/")
-    out = ((lv, nm, sc, st, gr, r, b, n, f"{site}/athlete/{pid}")
-           for lv, nm, sc, st, gr, r, b, n, pid in rows)
+    out = ((lv, nm, sc, st, gr, lg, cf, r, b, n, f"{site}/athlete/{pid}")
+           for lv, nm, sc, st, gr, r, b, n, lg, cf, pid in rows)
     name = f"racecast-{snap[2].lower()}-{snap[3]}-ratings-{snap_id}" \
            + (f"-{state}" if state else "") + (f"-{level}" if level else "") + ".csv"
-    return _csv(["level", "name", "school", "state", "grade", "rating_hs_equivalent",
-                 "best_race_hs_equivalent", "races", "athlete_page"], out, name)
+    return _csv(["level", "name", "school", "state", "grade", "league", "conference",
+                 "rating_hs_equivalent", "best_race_hs_equivalent", "races", "athlete_page"],
+                out, name)
 
 
 @bp.route("/data/<int:snap_id>/courses.csv")

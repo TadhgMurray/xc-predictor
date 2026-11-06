@@ -55,6 +55,8 @@
       <p class="p2-foot">Ratings from the newest snapshot, one state at a time (athletes whose
         team is in that state, wherever they raced):
         <label>State <input name="state" maxlength="2" size="3" placeholder="WI" required pattern="[A-Za-z]{2}"></label>
+        <label>Schools <input name="school" size="28" placeholder="Horlick, Case, Park"></label>
+        <label>League or conference <input name="league" size="16" placeholder="Southeast"></label>
         <label>Level <select name="level"><option value="">All</option>
           {% for lv, words in levels %}<option value="{{ lv }}">{{ words }}</option>{% endfor %}
         </select></label>
