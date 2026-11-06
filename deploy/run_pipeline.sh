@@ -7,6 +7,7 @@
 #
 #   bash deploy/run_pipeline.sh                  # everything
 #   bash deploy/run_pipeline.sh --from 10        # rankings and after
+#   bash deploy/run_pipeline.sh --fast           # ratings + boards, no reports (iteration)
 #   bash deploy/run_pipeline.sh --skip-backfill  # corrections/rules unchanged
 #   bash deploy/run_pipeline.sh --dry-run        # print the plan, run nothing
 #
@@ -56,10 +57,13 @@ XCP_STREAMS="${XCP_STREAMS:-4}"
 XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-6}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
-FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""
+FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""; FAST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --from) FROM="$2"; shift 2 ;;
+    # --fast: the ratings and the boards, nothing that only reports on them
+    #   (see FAST_SKIP below)
+    --fast) FAST=1; shift ;;
     # --skip 04_grade_sanity,04b_wheelchair : named steps to leave out of
     # this run (2026-09-06, the owner: "you're gonna need to make step 4
     # 100 times faster if we're starting there" -- nothing in 04 changed,
@@ -70,6 +74,31 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# ★ --fast: AN ITERATION RUN (owner, 2026-11-06: "if we're gonna iterate
+#   like this we gotta do better"; the last full run took ~10 h). Everything
+#   that changes a rating or a board still runs -- links, twins, distances,
+#   normalise, pack, solve, go-live, fill, boards, search, panels. Left out:
+#   the checks and reports nothing on the site reads, and the slow
+#   background jobs whose last output stands in for a run:
+#     evidence holdouts/ladder (XCP_EVIDENCE), backtest, LACCTiC, Kailo,
+#     scoreboard, qualified fields, the raw forecast, social cards, the
+#     rowguard diagnostics, course pages (the previous ones stay up), the
+#     recruit projection, the level graph (the next full run restages it),
+#     the weather fetch (the nightly's provisional weather covers new meets),
+#     and the pro flags (last run's stand: they change when a pro appears).
+#   An env var set by hand still wins over these defaults.
+FAST_SKIP="01c_level_graph,04e_weather_grid,04e2_weather_recent,03_pro_flag,05c_pro_ability"
+FAST_SKIP="$FAST_SKIP,10f2_projection,12b_course_pages,13j_record_books"
+FAST_SKIP="$FAST_SKIP,15_rowguard_diag_xc,15_rowguard_diag_tf,15_rowguard_triage_xc,15_rowguard_triage_tf"
+if [ "$FAST" -eq 1 ]; then
+  SKIP="${SKIP:-,}${FAST_SKIP},"
+  for v in XCP_EVIDENCE XCP_BACKTEST XCP_LACCTIC XCP_KAILO XCP_SCOREBOARD \
+           XCP_QUALIFIED_BUILD XCP_SOCIAL XCP_FORECAST_RAW XCP_RECORD_BOOKS; do
+    eval "[ -n \"\${$v+x}\" ] || export $v=0"
+  done
+  echo "  --fast: skipping ${FAST_SKIP//,/, } and the evidence/report steps"
+fi
 
 # ---- preflight ------------------------------------------------------ #
 # ★ EVERY ONE OF THESE HAS COST A RUN. A missing corrections.py does not
