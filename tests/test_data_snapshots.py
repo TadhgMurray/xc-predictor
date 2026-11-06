@@ -64,7 +64,18 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
         assert len(lines) == 2 and "Josh Runner" in lines[1] and ",141.0," in lines[1]
         courses = client.get(f"/data/{snap}/courses.csv").get_data(as_text=True)
         assert "Lake Park,5000.0,5.1,900" in courses
-        assert client.get("/data/999/athletes.csv").status_code == 404
+        assert client.get("/data/999/athletes.csv?state=WI").status_code == 404
+        # one state at a time (owner, 2026-11-06): no whole-season download
+        assert client.get(f"/data/{snap}/athletes.csv").status_code == 400
+        assert client.get(f"/data/{snap}/athletes.csv?level=hs_m").status_code == 400
+        # the weekly ones are pruned, a hand-labelled one stays
+        for i in range(3):
+            D.take(cur, f"{D.AUTO_PREFIX}Nov {i}", "XC", 2026)
+        c.commit()
+        assert D.prune(cur, 1) == 2
+        c.commit()
+        cur.execute("SELECT label FROM data_snapshot ORDER BY snap_id")
+        assert [r[0] for r in cur.fetchall()] == ["2026 end of season", f"{D.AUTO_PREFIX}Nov 2"]
     finally:
         c.rollback()
         for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course",
@@ -101,7 +112,7 @@ def test_the_data_page_renders(monkeypatch):
                      datetime.datetime(2026, 11, 22), 412345, 9876)]
 
     for has, want in ((False, "No snapshot has been taken yet"),
-                      (True, "/data/3/athletes.csv")):
+                      (True, "/data/3/courses.csv")):
         class Conn:
             def cursor(self, *a, **k):
                 return Cur(has)

@@ -265,7 +265,7 @@ def test_a_genuinely_mixed_field_is_not_forced():
 def test_squad_queries_filter_on_the_pool_letter():
     cur = FakeCursorSQL()
     predict._squadsForYear(cur, ["Alpha"], "XC", 2025, gender="F")
-    assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql, cur.sql
+    assert "upper(right(split_part(s.pool, '|', 1), 1)) = %(gender)s" in cur.sql, cur.sql
     assert cur.params["gender"] == "F"
 
     plain = FakeCursorSQL()
@@ -296,7 +296,7 @@ def test_schoolSquad_filters_too():
     squad_queries = [(q, p) for q, p in cur.queries
                      if "athlete_season" in q and "ranking_results" not in q]
     first_sql, first_params = squad_queries[0]
-    assert "upper(right(s.pool, 1)) = %(gender)s" in first_sql, first_sql
+    assert "upper(right(split_part(s.pool, '|', 1), 1)) = %(gender)s" in first_sql, first_sql
     assert first_params["gender"] == "M"
     # and it really is the shared path, not a copy that happens to match
     assert first_params.get("schools") == ["Alpha"], first_params
@@ -308,7 +308,7 @@ def test_schoolSquad_filters_too():
     # FOUR, not two: _currentSquads reads the current season and then carries
     # last season's returners in (#82), and the other-gender count repeats
     # that pair without the filter.
-    gendered = ["upper(right(s.pool, 1))" in q for q, _ in squad_queries]
+    gendered = ["upper(right(split_part(s.pool, '|', 1), 1))" in q for q, _ in squad_queries]
     assert gendered == [True, True, False, False], (gendered,
                                                     len(squad_queries))
     # ⚠ AND THE WINDOW WAS ACTUALLY CONSULTED. This fake reports no meets, so

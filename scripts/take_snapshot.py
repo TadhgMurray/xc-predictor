@@ -31,6 +31,10 @@ def main(argv=None):
     ap.add_argument("--year", type=int, help="athlete_season.year (default: the newest)")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--delete", type=int, metavar="SNAP_ID")
+    ap.add_argument("--weekly", action="store_true",
+                    help="the pipeline's: label 'Week of <today>', both sports' newest season, "
+                         "and keep only the newest --keep weekly ones")
+    ap.add_argument("--keep", type=int, default=8)
     a = ap.parse_args(argv)
     from database import getConn
     import data_snapshots as D
@@ -48,6 +52,21 @@ def main(argv=None):
                 cur.execute(f"DELETE FROM {t} WHERE snap_id = %s", (a.delete,))
             conn.commit()
             print(f"[snapshot] deleted {a.delete}")
+            return 0
+        if a.weekly:
+            import datetime
+            label = D.AUTO_PREFIX + datetime.date.today().strftime("%b %-d, %Y")
+            for sport in ("XC", "TF"):
+                cur.execute("SELECT max(year) FROM athlete_season WHERE sport = %s", (sport,))
+                year = cur.fetchone()[0]
+                if year is None:
+                    continue
+                snap, n_a, n_c = D.take(cur, f"{label} ({'cross country' if sport == 'XC' else 'track'})",
+                                        sport, int(year))
+                print(f"[snapshot] {snap}: {sport} {year}: {n_a:,} athletes, {n_c:,} courses")
+            n = D.prune(cur, a.keep * 2)                 # two sports a week
+            conn.commit()
+            print(f"[snapshot] weekly taken; {n} older weekly snapshots dropped")
             return 0
         if not a.label:
             ap.error("--label is required to take a snapshot")

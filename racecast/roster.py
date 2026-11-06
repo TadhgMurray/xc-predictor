@@ -156,7 +156,7 @@ def carryingSchools(cur, schools, sport, year, gender=None):
     if not schools or year is None:
         return set()
     from rankings import gradeKeySql
-    gclause = ("AND upper(right(s.pool, 1)) = %(gender)s"
+    gclause = ("AND upper(right(split_part(s.pool, '|', 1), 1)) = %(gender)s"
                if gender in ("M", "F") else "")
     cur.execute(f"""
         WITH top AS (

@@ -36,7 +36,10 @@
 #   - team: the school page's order, count of strictly faster + 1, any
 #     level, any race count (rank(), not row_number()) -- but ONE GENDER,
 #     the pool's suffix (_m / _f). Owner, 2026-10-24: "the team rankings
-#     include opposite gender on athlete page".
+#     include opposite gender on athlete page". The suffix is read off the
+#     pool's own name ("hs_m|XC" -> "_m"): right(pool, 2) of a pool with its
+#     sport attached is "XC" for both genders, which put the girls back on
+#     the boys' team (owner, 2026-11-06).
 
 import argparse
 import sys
@@ -102,7 +105,7 @@ def rankSql(unit_cols=True, grade_col=True):
                CASE WHEN ranked AND rg IS NOT NULL THEN {rn('rg')} END::int AS region,
                CASE WHEN ranked AND cf IS NOT NULL THEN {rn('cf')} END::int AS conference,
                CASE WHEN school IS NOT NULL THEN
-                    rank() OVER (PARTITION BY school, sport, year, right(pool, 2) ORDER BY mean_rating DESC) END::int AS team,
+                    rank() OVER (PARTITION BY school, sport, year, right(split_part(pool, '|', 1), 2) ORDER BY mean_rating DESC) END::int AS team,
                gk AS grade_key,
                CASE WHEN ranked AND us AND gk IS NOT NULL THEN {rn('gk')} END::int AS grade_nation,
                CASE WHEN ranked AND us AND gk IS NOT NULL THEN count(*) OVER (PARTITION BY pool, sport, year, ranked, us, gk) END::int AS grade_nation_total,
