@@ -23,6 +23,15 @@ pre-race recorder) against what happened.
   {"from": today, "k": ..., "k_place": ...}; every range made from today is
   scaled by them (race_model.rangeScale).
 
+★ AND THE LEVEL, BY POOL (owner, 2026-11-06). Each race's level miss is
+  the median ln(actual / predicted) of its listed finishers, with the shift
+  in force the day it was made put back (race_model.levelOn), so a pool's
+  miss is always measured on the unshifted trees. Per pool (the field's
+  most common, race_model.fieldPool): the median of its races' misses,
+  times n / (n + LEVEL_PRIOR_RACES), kept within +-LEVEL_MAX; a pool with
+  under LEVEL_MIN_RACES races gets none. Written as "level": {pool: shift}
+  in the same entry; race_model.levelShift moves every race by it.
+
 ! ONLY ON ENOUGH: at least MIN_RACES races and MIN_RUNNERS runners in the
   window, and the factor is kept within [K_MIN, K_MAX]. Otherwise it says so
   and writes nothing. READ ONLY on the database.
@@ -42,6 +51,47 @@ for sub in ("racecast", "scripts", "engine", "model"):
 
 MIN_RACES, MIN_RUNNERS = 50, 2000
 K_MIN, K_MAX = 0.5, 1.5
+LEVEL_PRIOR_RACES, LEVEL_MIN_RACES, LEVEL_MAX = 20, 5, 0.03
+
+
+def raceLevel(fc, finishers, history):
+    """(pool, unshifted level miss) for one frozen race: the median
+    ln(actual / predicted) over its listed finishers, plus the level shift
+    in force when it was made; None under 8 finishers. Pure."""
+    import statistics
+    import race_model as M
+    act = {}
+    for f in finishers:
+        if f.get("person_id") is not None and f["person_id"] not in act:
+            act[f["person_id"]] = float(f["time_seconds"])
+    runners = fc.get("runners") or []
+    ds = [math.log(act[r["person_id"]] / float(r["seconds"])) for r in runners
+          if act.get(r.get("person_id")) and r.get("seconds") and float(r["seconds"]) > 0]
+    if len(ds) < 8:
+        return None
+    pool = M.fieldPool([r.get("pool") for r in runners], fc.get("source"))
+    if not pool:
+        return None
+    made = str(fc.get("made_on"))[:10]
+    return pool, statistics.median(ds) + M.levelOn(history, made, pool)
+
+
+def levelShifts(levels):
+    """levels: [(pool, unshifted miss)] -> {pool: (races, median miss,
+    shift)}: the median shrunk by n / (n + LEVEL_PRIOR_RACES), within
+    +-LEVEL_MAX, for pools with LEVEL_MIN_RACES races or more. Pure."""
+    import statistics
+    by = {}
+    for pool, d in levels:
+        by.setdefault(pool, []).append(d)
+    out = {}
+    for pool, ds in sorted(by.items()):
+        if len(ds) < LEVEL_MIN_RACES:
+            continue
+        med = statistics.median(ds)
+        shift = max(-LEVEL_MAX, min(LEVEL_MAX, med * len(ds) / (len(ds) + LEVEL_PRIOR_RACES)))
+        out[pool] = (len(ds), med, shift)
+    return out
 
 
 def zScores(fc, finishers, history):
@@ -102,7 +152,7 @@ def main():
         cal = {"history": []}
     today = datetime.date.today()
     lo = (today - datetime.timedelta(days=a.days)).isoformat()
-    zs, pzs, races = [], [], 0
+    zs, pzs, races, levels = [], [], 0, []
     with getConn() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("SET statement_timeout = '600s'")
@@ -128,6 +178,9 @@ def main():
                     zs += z
                     pzs += pz
                     races += 1
+                lv = raceLevel(fc, actual.get(int(fc["div_id"])) or [], cal.get("history"))
+                if lv:
+                    levels.append(lv)
         conn.rollback()
 
     print(f"{races} races, {len(zs):,} runners since {lo} ({a.table}, race basis)")
@@ -148,10 +201,17 @@ def main():
     else:
         print(f"  place spread: {len(pzs):,} runners carry it so far (need {MIN_RUNNERS:,}); "
               f"left as it is")
+    shifts = levelShifts(levels)
+    print(f"  the level by pool ({len(levels)} races; + = predicted fast; shift - = faster):")
+    for pool, (n, med, sh) in shifts.items():
+        print(f"    {pool:<12} {n:>4} races  median miss {100 * med:+.2f}%  shift {100 * sh:+.2f}% "
+              f"(in force now {100 * M.levelOn(cal.get('history'), today.isoformat(), pool):+.2f}%)")
     if a.dry_run:
         return
     entry = {"from": today.isoformat(), "k": round(k, 4), "races": races,
-             "runners": len(zs), "window_from": lo}
+             "runners": len(zs), "window_from": lo,
+             "level": {p: round(sh, 5) for p, (_n, _m, sh) in shifts.items()},
+             "level_races": {p: n for p, (n, _m, _s) in shifts.items()}}
     if k_place is not None:
         entry["k_place"] = round(k_place, 4)
     cal.setdefault("history", []).append(entry)

@@ -84,13 +84,13 @@ def scaleOn(history, day, key="k"):
     return k
 
 
-def rangeScale(day=None, key="k"):
-    """The factor `key` for ranges made today (or on `day`), from CAL_PATH."""
+def _calHistory():
+    """CAL_PATH's history, re-read when the file changes; [] without one."""
     import json
     try:
         mtime = os.path.getmtime(CAL_PATH)
     except OSError:
-        return 1.0
+        return []
     if _CAL["mtime"] != mtime:
         try:
             with open(CAL_PATH) as fh:
@@ -98,7 +98,53 @@ def rangeScale(day=None, key="k"):
         except Exception:                                # noqa: BLE001
             _CAL["history"] = []
         _CAL["mtime"] = mtime
-    return scaleOn(_CAL["history"], day or datetime.date.today().isoformat(), key)
+    return _CAL["history"]
+
+
+def rangeScale(day=None, key="k"):
+    """The factor `key` for ranges made today (or on `day`), from CAL_PATH."""
+    hist = _calHistory()
+    if not hist:
+        return 1.0
+    return scaleOn(hist, day or datetime.date.today().isoformat(), key)
+
+
+# ★ THE LEVEL, CALIBRATED ON WHAT HAPPENED, BY POOL (owner, 2026-11-06:
+#   "can we not compare to ourself and try to get better?"). On the race
+#   model's frozen forecasts (09-01..11-05) high school was level (bias
+#   +0.01% / -0.18%) while college ran +1.2% / +2.9% slow and middle school
+#   +2.6%: the level trees learn mostly from high-school races, and a pool's
+#   in-season drift (college and middle school peaking late) is not theirs.
+#   scripts/range_calibration.py measures each pool's median race-level miss
+#   on the last weeks' frozen forecasts, shrunk by how many races it has
+#   (LEVEL_PRIOR_RACES), and appends {"level": {pool: shift}} to CAL_PATH;
+#   every race made from that day moves by its pool's shift (ln seconds,
+#   - = faster). A pool the entry does not name moves by nothing.
+#   XCP_RACE_LEVEL_SHIFT=0 turns it off.
+def fieldPool(pools, source):
+    """A race's pool: the most common of its runners' pools in THIS race
+    (_targetPool, 'pool|...' cut to the pool), or None. Pure."""
+    from collections import Counter
+    got = [(_targetPool(p, {"source": source}) or "").split("|")[0] for p in pools if p]
+    got = [p for p in got if p]
+    return Counter(got).most_common(1)[0][0] if got else None
+
+
+def levelOn(history, day, pool):
+    """The level shift (ln seconds) for `pool` in force on `day`: the last
+    entry on or before it that carries "level"; 0.0 otherwise. Pure."""
+    s = 0.0
+    for h in sorted(history or [], key=lambda h: h["from"]):
+        if h["from"] <= day and h.get("level") is not None:
+            s = float((h["level"] or {}).get(pool) or 0.0)
+    return s
+
+
+def levelShift(pool, day=None):
+    """The shift for a race of `pool` made today (or on `day`)."""
+    if os.environ.get("XCP_RACE_LEVEL_SHIFT", "1") == "0" or not pool:
+        return 0.0
+    return levelOn(_calHistory(), day or datetime.date.today().isoformat(), pool)
 
 
 def gradeAt(grade, then, day):
@@ -311,6 +357,8 @@ def predictField(model, field, race):
                       if any(not math.isnan(r["f"].get(k, math.nan)) for r in field)
                       else math.nan for k in lf]], dtype=np.float32)
     level = float(model["level"].predict(lrow)[0])
+    pool = fieldPool([r.get("pool") for r in field], race.get("source"))
+    shift = levelShift(pool)
     mean_base = float(np.mean([r["base_ln"] for r in field]))
     by_lead = model.get("sigmas_by_lead") or {}
     sig = (by_lead[min(by_lead, key=lambda ld: abs(ld - lead))] if by_lead
@@ -327,13 +375,14 @@ def predictField(model, field, race):
                else float(sig.get(band, sig.get("_all", 0.03))))
         ps = k_place * ps0
         ts = k * math.sqrt(ps0 * ps0 + float(sig.get("_level", 0.0)) ** 2)
-        secs = math.exp(mean_base + level + float(x))
+        secs = math.exp(mean_base + level + shift + float(x))
         out[r["pid"]] = {"seconds": round(secs, 1), "lo": round(secs * math.exp(-ts), 1),
                          "hi": round(secs * math.exp(ts), 1),
                          "sigma_pct": round(100.0 * ps, 2),
                          "time_sigma_pct": round(100.0 * ts, 2),
                          "is_race_time": True, "basis": "race", "time_basis": "race",
-                         "race_band": band, "race_level_pct": round(100.0 * level, 2)}
+                         "race_band": band, "race_level_pct": round(100.0 * level, 2),
+                         "race_level_shift_pct": round(100.0 * shift, 2)}
     return out
 
 
@@ -377,7 +426,8 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
         if got is None:
             continue
         field.append({"pid": pid, "school": school, "base_ln": math.log(float(e["seconds"])),
-                      "f": got[2], "past": past.get(pid) or []})
+                      "f": got[2], "past": past.get(pid) or [],
+                      "pool": _targetPool(e.get("form_pool"), spec)})
     if len(field) < MIN_FIELD:
         return {}
     race = {"distance": float(spec["distance_meters"]), "day": day, "meet_name": name,
