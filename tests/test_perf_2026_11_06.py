@@ -624,3 +624,37 @@ def test_pr_small_first_pass_answers_the_same_on_postgres(pg):
             assert small == full, qs
     finally:
         R.PR_FIRST_FACTOR = before
+
+
+# --------------------------------------------------------------- 11 --
+# season_comps stored in the order the comps search reads it; its min()
+# computed once for the box
+
+def test_season_comps_is_written_in_the_search_order():
+    import build_comps
+    sql = " ".join(build_comps._BUILD.split()) if hasattr(build_comps, "_BUILD") else \
+        " ".join(_read("racecast", "build_comps.py").split())
+    assert "ORDER BY s.sport, s.pool, s.g, s.rating" in sql
+    # the order matches the index the search reads through
+    assert "(sport, pool, grade, rating)" in _read("racecast", "build_comps.py")
+
+
+def test_comps_min_is_shared_across_workers(tmp_path, monkeypatch):
+    import comps
+    import sharedcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "c"))
+
+    class C:
+        n = 0
+
+        def execute(self, sql, params=None):
+            C.n += 1
+
+        def fetchone(self):
+            return {"n": 3}
+    comps._MIN_CACHE.clear()
+    assert comps._minRaces(C(), "XC", "hs_m") == 3
+    comps._MIN_CACHE.clear()                       # another worker: no memory copy
+    assert comps._minRaces(C(), "XC", "hs_m") == 3
+    assert C.n == 1
+    comps._MIN_CACHE.clear()

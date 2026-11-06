@@ -56,6 +56,14 @@ import sys
 
 import pytest
 
+# ★ A FRESH SHARED-CACHE DIRECTORY PER RUN (racecast/sharedcache.py): its
+#   default is a fixed directory in /tmp the site's workers share, and a test
+#   that reached it would read the last run's values (or leave its own for
+#   the next run). Set before any test file imports the module.
+import tempfile as _tempfile
+os.environ.setdefault("XCP_SHARED_CACHE_DIR",
+                      _tempfile.mkdtemp(prefix="racecast-shared-test-"))
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 _REPO = _ROOT + os.sep

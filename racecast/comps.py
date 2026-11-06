@@ -124,11 +124,17 @@ def _minRaces(cur, sport, pool, now=None):
     hit = _MIN_CACHE.get((sport, pool))
     if hit and now - hit[1] < MIN_TTL:
         return hit[0]
-    cur.execute("SELECT min(n_races) AS n FROM season_comps WHERE sport = %s AND pool = %s",
-                (sport, pool))
-    row = cur.fetchone()
-    n = row.get("n") if isinstance(row, dict) else (row[0] if row else None)
-    val = max(int(n or 1), 1)
+    # ★ AND ONCE FOR THE BOX (2026-11-06: still 428 runs over 250 ms in 3 h --
+    #   24 workers, each once an hour, and again whenever one restarts):
+    #   sharedcache hands every worker the first one's answer.
+    def compute():
+        cur.execute("SELECT min(n_races) AS n FROM season_comps WHERE sport = %s AND pool = %s",
+                    (sport, pool))
+        row = cur.fetchone()
+        n = row.get("n") if isinstance(row, dict) else (row[0] if row else None)
+        return max(int(n or 1), 1)
+    import sharedcache
+    val, _at = sharedcache.get(f"comps-min-{sport}-{pool}", compute, ttl=MIN_TTL)
     _MIN_CACHE[(sport, pool)] = (val, now)
     return val
 
