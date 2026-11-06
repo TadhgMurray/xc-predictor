@@ -162,3 +162,11 @@ if(t==="dark"){document.write('<link rel="stylesheet" id="rc-dark-css" href="'+w
 {% if meta_ld %}
 <script type="application/ld+json">{{ meta_ld | ld_json }}</script>
 {% endif %}
+{# ★ A RETURNING VISITOR IS KNOWN BY A COOKIE THE PAGE SETS (owner,
+   2026-11-06: a scraper of ~1,500 requests a minute, one per address, no
+   referrer; "most people do not search it up, they have bookmarks").
+   Cloudflare challenges a data page with no referrer unless this cookie is
+   there, so a bookmark from any earlier visit goes straight through.
+   Set by script, not by a Set-Cookie header, so pages stay cacheable at the
+   edge, and only a browser that runs the page gets it. #}
+<script>try{if(document.cookie.indexOf("rc_v=")<0){document.cookie="rc_v=1; max-age=31536000; path=/; SameSite=Lax; Secure";}}catch(e){}</script>
