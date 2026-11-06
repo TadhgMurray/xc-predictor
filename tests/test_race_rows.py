@@ -156,3 +156,34 @@ def test_division_types():
     assert R.divType("JV Girls") == 0 and R.divType("Boys Junior Varsity") == 0
     assert R.divType("Frosh/Soph Boys") == 0
     assert R.divType("Middle School Boys") == 1 and R.divType(None) == 1
+
+
+def test_far_ahead_copies_have_their_own_share():
+    assert R.parseLeads("7,28,90:0.1", 0.25) == [(7, 0.25), (28, 0.25), (90, 0.1)]
+    assert R.parseLeads("7,28", 0) == []
+    key = (1, 2, "anet", "2025-10-11")
+    assert R.leadsFor(key, [(7, 1.0), (330, 0.0)], 0.25) == [0, 7]
+    assert R.leadsFor(key, [7, 28], 1.0) == [0, 7, 28]      # the old form still reads
+
+
+def test_no_weather_past_the_forecasts_reach():
+    wx = {"temp_c": 20.0}
+    assert R.weatherAt(wx, 0) is wx and R.weatherAt(wx, R.WX_HORIZON_DAYS) is wx
+    assert R.weatherAt(wx, 28) is None
+
+
+def test_one_raw_point_definition_for_the_table_and_the_page():
+    import math
+    row = (1, "2025-10-11", 150.0, "hs_m", 1000.0, 5, 6, "anet", "X", "11", 0, 5000.0)
+    assert R.rawPoint(row) == math.log(1000.0)
+    assert R.rawPoint(row[:10] + (1, 5000.0)) is None          # a track row
+    assert R.rawPoint(row[:11] + (800.0,)) is None              # not a sane distance
+    assert R.rawPoint(row[:11] + (None,)) is None
+
+
+def test_the_raw_history_sql_reads_only_the_field():
+    import pytest
+    pytest.importorskip("torch")                     # feature_extraction imports it
+    xc, _tf = R._sql(False, by_ids=True)
+    assert "ANY(%(ids)s)" in xc
+    assert "ANY(" not in R._sql(False)[0]

@@ -488,7 +488,23 @@ fi
 #   hand once first (the catch-up predicts every posted meet) to see its
 #   time on the server.
 if [ "${XCP_FORECASTS:-0}" = "1" ]; then
-  step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
+  # ★ AND EVERY INPUT AS THE PAGE HAD IT, BEFORE THE RACE (owner, 2026-11-06:
+  #   "there shouldnt be any hindsight"). The race model trains on today's
+  #   ratings and course numbers, which have seen the races it learns from;
+  #   these files (race_model.keepInputs, one .jsonl.gz a day) are the table
+  #   nothing after the forecast touched. XCP_RACE_INPUTS_DIR= (empty) stops it.
+  step 13h_meet_forecasts env XCP_RACE_INPUTS_DIR="${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}" \
+    "$PY" -u racecast/build_meet_forecasts.py
+  # ★ THE NO-RATINGS RACE MODEL, FROZEN BESIDE IT (owner, 2026-11-06, PLAN-MODEL
+  #   §9): the same posted meets, its own table, so score_frozen_forecasts can
+  #   hold the two side by side before the site serves either. Only when its
+  #   file exists (a missing one would record the ratings under its name).
+  #   XCP_FORECAST_RAW=0 skips it.
+  RAW_MODEL="${XCP_RACE_MODEL_RAW:-$(dirname "${XCP_RACE_MODEL:-$ROOT/model/data/race_trees.pkl}")/race_trees_raw.pkl}"
+  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then
+    step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
+      "$PY" -u racecast/build_meet_forecasts.py
+  fi
 fi
 
 # ★ THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS (owner, 2026-11-03:

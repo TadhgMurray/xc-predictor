@@ -500,14 +500,52 @@ def raceDistance(dists):
 #   `lead` days before the gun -- the same finishers, the same result, only
 #   less known -- and lead_days says how far ahead it was asked. Each copy
 #   is its own field (its centring, its ranks) and never adds a result.
+# ★ AND FAR AHEAD (owner, 2026-11-06: "are you still gonna provide it
+#   training examples as such" -- races months out, a race set in next
+#   season). Copies at 90, 180 and 330 days, a smaller share each, so the
+#   trees have seen a forecast made a season ahead; before this the longest
+#   was 28 days and anything further read as 28.
+DEFAULT_LEADS = "7,28,90:0.1,180:0.1,330:0.1"
+
+
+def parseLeads(text, frac):
+    """"7,28,90:0.1" -> [(7, frac), (28, frac), (90, 0.1)]; [] when frac is
+    0. A lead without its own share takes `frac`. Pure."""
+    if not frac or frac <= 0:
+        return []
+    out = []
+    for item in (text or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        lead, _, share = item.partition(":")
+        out.append((int(lead), float(share) if share else float(frac)))
+    return out
+
+
 def leadsFor(key, leads, frac):
     """[0] and each lead in `leads` this race is copied at (crc32 of the key
-    and the lead, so a rerun copies the same races)."""
+    and the lead, so a rerun copies the same races). `leads` holds ints (at
+    `frac` each) or (lead, share) pairs."""
     out = [0]
-    for lead in leads:
-        if (zlib.crc32(repr((key, lead)).encode()) % 10000) < frac * 10000:
+    for item in leads:
+        lead, share = item if isinstance(item, tuple) else (item, frac)
+        if (zlib.crc32(repr((key, int(lead))).encode()) % 10000) < share * 10000:
             out.append(int(lead))
     return out
+
+
+# ★ NO WEATHER PAST THE FORECAST'S REACH (2026-11-06, the hindsight audit,
+#   docs/PLAN-MODEL-2026-10.md §9). A forecast copy made 28+ days out used
+#   to carry the day's ACTUAL weather -- known only on the day. Past
+#   WX_HORIZON_DAYS the page has no forecast either, so both the table and
+#   the page (race_model._predictRace) leave the weather unknown there.
+WX_HORIZON_DAYS = 16
+
+
+def weatherAt(weather, lead_days):
+    """The weather a forecast made `lead_days` out could know. Pure."""
+    return weather if (lead_days or 0) <= WX_HORIZON_DAYS else None
 
 
 def keepRace(key, day, val_from, train_frac):
@@ -551,8 +589,11 @@ def _xcDistance():
 DIST_OK = (1500.0, 15000.0)
 
 
-def _sql(has_outliers):
+def _sql(has_outliers, by_ids=False):
+    """(cross country, track) row queries the table reads; by_ids: only
+    the people in %(ids)s (the page's raw history, rawHistory)."""
     from feature_extraction import escapeLiteralPercent
+    ids = "AND r.person_id = ANY(%(ids)s)" if by_ids else ""
     dist, joins = _xcDistance()
     skip = ("AND NOT EXISTS (SELECT 1 FROM rating_outlier ro WHERE ro.sport = '{s}' "
             "AND ro.result_id = r.result_id)")
@@ -563,6 +604,7 @@ def _sql(has_outliers):
         FROM   results r
 {joins}
         WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
+          {ids}
           AND  r.time_seconds > 0 AND r.time_seconds < 19999
           AND  NOT EXISTS (SELECT 1 FROM result_twin x
                            WHERE x.sport = 'XC' AND x.result_id = r.result_id)
@@ -579,6 +621,40 @@ def _sql(has_outliers):
           {skip.format(s='TF') if has_outliers else ''}
         ORDER  BY r.person_id, r.date"""
     return xc, tf
+
+
+def rawPoint(row):
+    """(date, ln 5K-equivalent) for one cross country row of _sql, or None:
+    a timed race at a sane distance, put on a 5K by Riegel alone. Pure."""
+    if row[10] != 0 or not row[4] or not row[11]:
+        return None
+    if not DIST_OK[0] <= float(row[11]) <= DIST_OK[1]:
+        return None
+    return math.log(float(row[4])) - RIEGEL * math.log(float(row[11]) / 5000.0)
+
+
+RAW_DAYS = 800           # rawFeatures reads this season, last season and the last 6
+
+
+def rawHistory(cur, ids, cut, has_outliers):
+    """{pid: [(date, ln 5K-equivalent)]} oldest first, from results before
+    `cut` -- the table's raw clock (rawPoint) for the page's race model on
+    raw times (race_model, a model with clock "raw")."""
+    xc, _tf = _sql(has_outliers, by_ids=True)
+    lo = (cut - datetime.timedelta(days=RAW_DAYS)).isoformat()
+    cur.execute(xc, {"lo": lo, "hi": cut.isoformat(), "ids": sorted(int(i) for i in ids)})
+    out = {}
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        x = rawPoint(row)
+        if x is None:
+            continue
+        try:
+            day = datetime.date.fromisoformat(str(row[1])[:10])
+        except ValueError:
+            continue
+        out.setdefault(int(row[0]), []).append((day, x))
+    return out
 
 
 def _people(conn, lo, hi, has_outliers):
@@ -738,8 +814,9 @@ def build(conn, a):
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
                 if r[10] == 0 and r[4] and r[5] is not None and r[6] is not None:
                     past.append((day, raceHash(r[5], r[6], r[7], day_s), math.log(float(r[4]))))
-                if r[10] == 0 and r[4] and r[11] and DIST_OK[0] <= float(r[11]) <= DIST_OK[1]:
-                    raw.append((day, math.log(float(r[4])) - RIEGEL * math.log(float(r[11]) / 5000.0)))
+                x = rawPoint(r)
+                if x is not None:
+                    raw.append((day, x))
             i = j
         if n_people % 100_000 == 0:
             print(f"  {n_people:,} people, {len(races):,} races so far", flush=True)
@@ -771,6 +848,7 @@ def build(conn, a):
         day = datetime.date.fromisoformat(key[3])
         rmeta = dict(meta.get(key[:4]) or {}, day=day, source=key[2],
                      lead_days=key[4] if len(key) > 4 else 0)
+        rmeta["weather"] = weatherAt(rmeta.get("weather"), rmeta["lead_days"])
         field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
                   "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool,
                   "past": list(zip(ph, pt))}
@@ -817,14 +895,15 @@ def main():
     # ! NOT A SMOKE RUN: a race's runners are spread over every person id,
     #   so the first N people complete almost no race (2026-10-25: 0 rows).
     #   Narrow the dates instead (the docstring's smoke line).
-    ap.add_argument("--leads", default="7,28",
-                    help="forecast copies: history cut this many days before the race")
+    ap.add_argument("--leads", default=DEFAULT_LEADS,
+                    help="forecast copies: history cut this many days before the race; "
+                         "lead:share gives a lead its own share")
     ap.add_argument("--lead-frac", type=float, default=0.25,
                     help="share of races copied at each lead (0 = none)")
     ap.add_argument("--max-persons", type=int, default=None,
                     help="stop after N people (a code check only; completes few races)")
     a = ap.parse_args()
-    a.leads = [int(x) for x in a.leads.split(",") if x.strip()] if a.lead_frac > 0 else []
+    a.leads = parseLeads(a.leads, a.lead_frac)
 
     import numpy as np
     from database import getConn

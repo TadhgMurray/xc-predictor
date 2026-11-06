@@ -7,6 +7,7 @@ READ ONLY.
     set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
     $P scripts/field_audit.py --from 2026-09-01 --to 2026-11-01
     XCP_FORECAST_TABLE=pred_meet_forecast $P scripts/field_audit.py --from 2026-10-27 --to 2026-11-01
+    XCP_FORECAST_TABLE=pred_meet_forecast $P scripts/field_audit.py --from 2026-11-03 --to 2026-11-10 --made-from 2026-11-03
 
 ★ WHY (owner's run, 2026-11-02). score_frozen_forecasts' "listed" said our
   fields held 58% of the runners who finished. Places and team scores are
@@ -83,6 +84,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--from", dest="lo", required=True)
     ap.add_argument("--to", dest="hi", required=True)
+    ap.add_argument("--made-from", default=None,
+                    help="only forecasts made on or after this day (a field rule's start: "
+                         "the JV / open rule went in 2026-11-02)")
     a = ap.parse_args()
 
     import psycopg2.extras
@@ -99,7 +103,9 @@ def main():
                                runners, teams, state, model_basis, model_version
                         FROM   {MF.TABLE}
                         WHERE  meet_date >= %s AND meet_date <= %s
-                          AND  meet_date < CURRENT_DATE""", (a.lo, a.hi))
+                          AND  meet_date < CURRENT_DATE
+                          AND  (%s::date IS NULL OR made_on::date >= %s::date)""",
+                    (a.lo, a.hi, a.made_from, a.made_from))
         stored = [MF._rowOut(r) for r in cur.fetchall()]
         by_meet = {}
         for fc in stored:

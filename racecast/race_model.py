@@ -33,8 +33,15 @@ if _MODEL_DIR not in sys.path:
 
 MODEL_PATH = os.environ.get("XCP_RACE_MODEL") or os.path.join(_ROOT, "model", "data",
                                                                "race_trees.pkl")
+# ★ THE NO-RATINGS MODEL (owner, 2026-11-06: "there shouldnt be any
+#   hindsight"; docs/PLAN-MODEL-2026-10.md §9): race_trees --no-ratings
+#   --out, nothing from the engine's solve in it. XCP_PREDICT_BASIS=race_raw
+#   serves it alone, race_mix the geometric mean of the two; the recorders
+#   keep all three so the frozen forecasts can say which to serve.
+RAW_MODEL_PATH = os.environ.get("XCP_RACE_MODEL_RAW") or os.path.join(
+    os.path.dirname(MODEL_PATH), "race_trees_raw.pkl")
 MIN_FIELD = 3
-_CACHE = {"mtime": None, "model": None}
+_CACHE = {}
 _GRADES = ("FR", "SO", "JR", "SR")
 
 
@@ -47,14 +54,15 @@ def loadModel(path=None):
         mtime = os.path.getmtime(path)
     except OSError:
         return None
-    if _CACHE["mtime"] != mtime:
+    got = _CACHE.get(path)
+    if got is None or got[0] != mtime:
         try:
             with open(path, "rb") as fh:
-                _CACHE["model"] = pickle.load(fh)
+                got = (mtime, pickle.load(fh))
         except Exception:                                # noqa: BLE001
-            _CACHE["model"] = None
-        _CACHE["mtime"] = mtime
-    return _CACHE["model"]
+            got = (mtime, None)
+        _CACHE[path] = got
+    return got[1]
 
 
 # ★ THE RANGES, CALIBRATED ON WHAT HAPPENED (owner's run, 2026-11-02: the
@@ -84,13 +92,13 @@ def scaleOn(history, day, key="k"):
     return k
 
 
-def rangeScale(day=None, key="k"):
-    """The factor `key` for ranges made today (or on `day`), from CAL_PATH."""
+def _calHistory():
+    """CAL_PATH's history, re-read when the file changes; [] without one."""
     import json
     try:
         mtime = os.path.getmtime(CAL_PATH)
     except OSError:
-        return 1.0
+        return []
     if _CAL["mtime"] != mtime:
         try:
             with open(CAL_PATH) as fh:
@@ -98,7 +106,53 @@ def rangeScale(day=None, key="k"):
         except Exception:                                # noqa: BLE001
             _CAL["history"] = []
         _CAL["mtime"] = mtime
-    return scaleOn(_CAL["history"], day or datetime.date.today().isoformat(), key)
+    return _CAL["history"]
+
+
+def rangeScale(day=None, key="k"):
+    """The factor `key` for ranges made today (or on `day`), from CAL_PATH."""
+    hist = _calHistory()
+    if not hist:
+        return 1.0
+    return scaleOn(hist, day or datetime.date.today().isoformat(), key)
+
+
+# ★ THE LEVEL, CALIBRATED ON WHAT HAPPENED, BY POOL (owner, 2026-11-06:
+#   "can we not compare to ourself and try to get better?"). On the race
+#   model's frozen forecasts (09-01..11-05) high school was level (bias
+#   +0.01% / -0.18%) while college ran +1.2% / +2.9% slow and middle school
+#   +2.6%: the level trees learn mostly from high-school races, and a pool's
+#   in-season drift (college and middle school peaking late) is not theirs.
+#   scripts/range_calibration.py measures each pool's median race-level miss
+#   on the last weeks' frozen forecasts, shrunk by how many races it has
+#   (LEVEL_PRIOR_RACES), and appends {"level": {pool: shift}} to CAL_PATH;
+#   every race made from that day moves by its pool's shift (ln seconds,
+#   - = faster). A pool the entry does not name moves by nothing.
+#   XCP_RACE_LEVEL_SHIFT=0 turns it off.
+def fieldPool(pools, source):
+    """A race's pool: the most common of its runners' pools in THIS race
+    (_targetPool, 'pool|...' cut to the pool), or None. Pure."""
+    from collections import Counter
+    got = [(_targetPool(p, {"source": source}) or "").split("|")[0] for p in pools if p]
+    got = [p for p in got if p]
+    return Counter(got).most_common(1)[0][0] if got else None
+
+
+def levelOn(history, day, pool):
+    """The level shift (ln seconds) for `pool` in force on `day`: the last
+    entry on or before it that carries "level"; 0.0 otherwise. Pure."""
+    s = 0.0
+    for h in sorted(history or [], key=lambda h: h["from"]):
+        if h["from"] <= day and h.get("level") is not None:
+            s = float((h["level"] or {}).get(pool) or 0.0)
+    return s
+
+
+def levelShift(pool, day=None):
+    """The shift for a race of `pool` made today (or on `day`)."""
+    if os.environ.get("XCP_RACE_LEVEL_SHIFT", "1") == "0" or not pool:
+        return 0.0
+    return levelOn(_calHistory(), day or datetime.date.today().isoformat(), pool)
 
 
 def gradeAt(grade, then, day):
@@ -250,6 +304,8 @@ def predictField(model, field, race):
     for r in field:
         r.setdefault("secs", math.exp(r["base_ln"]))     # raceFeatures' y; unused
     RR.raceFeatures(field, race)
+    if model.get("clock") == "raw":
+        onRawClock(field)
     # ★ EACH RUNNER'S OWN RECORD AGAINST THE RATINGS (race_trees OWN_FEATURES),
     #   carried from the table's last day to this race; a runner the table
     #   never saw reads as "no record", which is what the trees learned for
@@ -311,6 +367,12 @@ def predictField(model, field, race):
                       if any(not math.isnan(r["f"].get(k, math.nan)) for r in field)
                       else math.nan for k in lf]], dtype=np.float32)
     level = float(model["level"].predict(lrow)[0])
+    # ! THE CALIBRATIONS ARE THE RATINGS MODEL'S (measured on its frozen
+    #   forecasts, model_basis 'race'); the raw model's ranges and level were
+    #   fitted on a season it never saw, so it takes neither
+    rated_clock = model.get("clock", "ratings") == "ratings"
+    pool = fieldPool([r.get("pool") for r in field], race.get("source"))
+    shift = levelShift(pool) if rated_clock else 0.0
     mean_base = float(np.mean([r["base_ln"] for r in field]))
     by_lead = model.get("sigmas_by_lead") or {}
     sig = (by_lead[min(by_lead, key=lambda ld: abs(ld - lead))] if by_lead
@@ -319,7 +381,7 @@ def predictField(model, field, race):
     spread = model.get("spread")
     own_ps = (np.clip(spread.predict(X), RT.SPREAD_MIN, RT.SPREAD_MAX)
               if spread is not None else None)
-    k, k_place = rangeScale(), rangeScale(key="k_place")
+    k, k_place = (rangeScale(), rangeScale(key="k_place")) if rated_clock else (1.0, 1.0)
     out = {}
     for i, (r, x) in enumerate(zip(field, rel)):
         band = RT.bandOf(r["f"]["opener"], r["f"]["last_days"])
@@ -327,25 +389,49 @@ def predictField(model, field, race):
                else float(sig.get(band, sig.get("_all", 0.03))))
         ps = k_place * ps0
         ts = k * math.sqrt(ps0 * ps0 + float(sig.get("_level", 0.0)) ** 2)
-        secs = math.exp(mean_base + level + float(x))
+        secs = math.exp(mean_base + level + shift + float(x))
         out[r["pid"]] = {"seconds": round(secs, 1), "lo": round(secs * math.exp(-ts), 1),
                          "hi": round(secs * math.exp(ts), 1),
                          "sigma_pct": round(100.0 * ps, 2),
                          "time_sigma_pct": round(100.0 * ts, 2),
-                         "is_race_time": True, "basis": "race", "time_basis": "race",
-                         "race_band": band, "race_level_pct": round(100.0 * level, 2)}
+                         "is_race_time": True,
+                         "basis": "race" if rated_clock else "race_raw",
+                         "time_basis": "race" if rated_clock else "race_raw",
+                         "race_band": band, "race_level_pct": round(100.0 * level, 2),
+                         "race_level_shift_pct": round(100.0 * shift, 2)}
     return out
 
 
-def predictRace(cur, person_ids, spec, cut, rated):
+def onRawClock(field):
+    """The field moved onto race_rows' raw clock, as race_trees --no-ratings
+    trains: base and base_ln from raw times (raceFeatures' base_raw), and
+    the field inputs that are orders of the base rebuilt on it
+    (race_trees.FIELD_FROM_BASE, fieldFromBase's definitions). In place."""
+    import numpy as np
+    import race_trees as RT
+    for r in field:
+        r["base"], r["base_ln"] = r["base_raw"], r["base_raw_abs"]
+    keys = RT.FIELD_FROM_BASE
+    X = np.full((len(field), len(keys)), np.nan)
+    RT.fieldFromBase(X, np.array([r["base"] for r in field], dtype=np.float64),
+                     [(0, len(field))], {k: i for i, k in enumerate(keys)})
+    for r, row in zip(field, X):
+        r["f"].update({k: float(v) for k, v in zip(keys, row)})
+    return field
+
+
+def predictRace(cur, person_ids, spec, cut, rated, which="ratings"):
     """{pid: entry} from the race model for the rated runners of one race,
     or {} when the trees cannot read the field (see the header). Its reads
     sit under one savepoint, so a failure leaves the caller's transaction
     as it was."""
-    model = loadModel()
+    if which == "mix":
+        return mixed(predictRace(cur, person_ids, spec, cut, rated, "ratings"),
+                     predictRace(cur, person_ids, spec, cut, rated, "raw"))
+    model = loadModel(RAW_MODEL_PATH if which == "raw" else MODEL_PATH)
     if model is None or not spec or not spec.get("distance_meters"):
         return {}
-    say = f"{spec.get('meet_id')}/{spec.get('div_id')}"
+    say = f"{spec.get('meet_id')}/{spec.get('div_id')}/{which}"
     try:
         return _guarded(cur, "race_model",
                         lambda: _predictRace(cur, model, person_ids, spec, cut, rated),
@@ -353,6 +439,26 @@ def predictRace(cur, person_ids, spec, cut, rated):
     except Exception as exc:                             # noqa: BLE001
         print(f"race model {say}: {type(exc).__name__}: {exc}", flush=True)
         return {}
+
+
+def mixed(a, b):
+    """The geometric mean of two race-model fields, runner by runner; a
+    field one side could not read is the other's. Pure."""
+    if not a or not b:
+        out = {p: dict(e, basis="race_mix") for p, e in (a or b or {}).items()}
+        return out
+    out = {}
+    for pid in set(a) | set(b):
+        x, y = a.get(pid), b.get(pid)
+        if not x or not y:
+            continue
+        e = dict(x)
+        for k in ("seconds", "lo", "hi"):
+            if x.get(k) and y.get(k):
+                e[k] = round(math.sqrt(float(x[k]) * float(y[k])), 1)
+        e["basis"] = e["time_basis"] = "race_mix"
+        out[pid] = e
+    return out
 
 
 def _predictRace(cur, model, person_ids, spec, cut, rated):
@@ -366,6 +472,11 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
     rows = P._ratingRows(cur, ids, None, cut.isoformat())
     latest = _latest(cur, ids, cut)
     past = _pastRaces(cur, ids, cut)
+    raw = (_guarded(cur, "race_raw", lambda: RR.rawHistory(
+               cur, ids, cut, bool(P._outlierFilter(cur, "XC"))), default=None)
+           if model.get("clock") == "raw" else None)
+    if model.get("clock") == "raw" and raw is None:
+        return {}
     name, champ = _meetFacts(cur, spec)
     field = []
     for pid in ids:
@@ -373,20 +484,26 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
         g, school, then = latest.get(pid, (None, None, None))
         got = RR.runnerFeatures(_history(rows.get(pid)), day,
                                 {"pool": _targetPool(e.get("form_pool"), spec),
-                                 "grade": gradeAt(g, then, day)})
+                                 "grade": gradeAt(g, then, day)},
+                                raw.get(pid, []) if raw is not None else None)
         if got is None:
             continue
         field.append({"pid": pid, "school": school, "base_ln": math.log(float(e["seconds"])),
-                      "f": got[2], "past": past.get(pid) or []})
+                      "f": got[2], "past": past.get(pid) or [],
+                      "pool": _targetPool(e.get("form_pool"), spec)})
     if len(field) < MIN_FIELD:
         return {}
+    lead = max(0, (day - datetime.date.today()).days)
     race = {"distance": float(spec["distance_meters"]), "day": day, "meet_name": name,
             "canonical_id": spec.get("canonical_id"),
             "division": _division(cur, spec),
             "source": spec.get("source"), "is_champ": champ, "cell": spec.get("venue_cell"),
-            "page_base": True, "weather": _weather(cur, spec),
+            # past the forecast's reach the weather is unknown, as the table
+            # has it (race_rows.weatherAt)
+            "page_base": True,
+            "weather": (_weather(cur, spec) if lead <= RR.WX_HORIZON_DAYS else None),
             # how far ahead this is asked: the forecast copies' lead_days
-            "lead_days": max(0, (day - datetime.date.today()).days)}
+            "lead_days": lead}
     out = predictField(model, field, race)
     if os.environ.get("XCP_RACE_INPUTS_DIR"):
         keepInputs(os.environ["XCP_RACE_INPUTS_DIR"], spec, race, field, model)

@@ -83,7 +83,7 @@ UPCOMING = {"published", "locked"}
 # trend and race (review 2026-10: predict.trendApply, racecast/race_model.py):
 #   recorded beside the others before race day, so the clean test can judge
 #   them before anyone serves them
-BASES = ("rating", "guard", "model", "blend", "trend", "race")
+BASES = ("rating", "guard", "model", "blend", "trend", "race", "race_raw", "race_mix")
 _STOP = {"the", "of", "and", "at", "xc", "cross", "country", "invitational",
          "invite", "meet", "championship", "championships", "college", "open"}
 

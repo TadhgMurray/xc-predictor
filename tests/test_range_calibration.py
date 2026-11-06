@@ -67,3 +67,48 @@ def test_the_page_scales_its_ranges(monkeypatch, tmp_path):
     assert M.rangeScale() == 0.5
     monkeypatch.setattr(M, "CAL_PATH", str(tmp_path / "none.json"))
     assert M.rangeScale() == 1.0
+
+
+def test_the_level_shift_in_force_by_pool():
+    h = [{"from": "2026-11-02", "k": 0.8},
+         {"from": "2026-11-09", "k": 0.8, "level": {"college_f": -0.01}}]
+    assert M.levelOn(h, "2026-11-05", "college_f") == 0.0
+    assert M.levelOn(h, "2026-11-10", "college_f") == -0.01
+    assert M.levelOn(h, "2026-11-10", "hs_f") == 0.0
+
+
+def test_a_race_pool_is_its_runners_pool_in_that_race():
+    # a high-school form in a college (tfrrs) race reads as a first college season
+    assert M.fieldPool(["hs_f|x", "college_f|y", "hs_f"], "tfrrs") == "college_f"
+    assert M.fieldPool(["hs_f|x", "hs_f", "ms_f"], "anet") == "hs_f"
+    assert M.fieldPool([None, ""], "anet") is None
+
+
+def test_the_level_miss_is_read_on_the_unshifted_trees():
+    # predicted under a -1% shift, ran 1% slower than predicted: unshifted, level
+    fc = {"made_on": "2026-11-10", "source": "anet",
+          "runners": [{"person_id": i, "seconds": 1000.0, "pool": "ms_f"} for i in range(9)]}
+    fin = [{"person_id": i, "time_seconds": 1000.0 * math.exp(0.01)} for i in range(9)]
+    h = [{"from": "2026-11-09", "level": {"ms_f": -0.01}}]
+    pool, d = C.raceLevel(fc, fin, h)
+    assert pool == "ms_f" and d == pytest.approx(0.0, abs=1e-9)
+    assert C.raceLevel(fc, fin[:5], h) is None
+
+
+def test_the_level_shift_is_shrunk_by_races_and_capped():
+    got = C.levelShifts([("college_f", -0.03)] * 10 + [("hs_f", 0.0)] * 300
+                        + [("ms_m", -0.02)] * 4 + [("ms_f", -0.5)] * 80)
+    assert got["college_f"][2] == pytest.approx(-0.03 * 10 / 30)
+    assert got["hs_f"][2] == 0.0
+    assert "ms_m" not in got                         # too few races
+    assert got["ms_f"][2] == -C.LEVEL_MAX
+
+
+def test_the_page_moves_a_race_by_its_pool(monkeypatch, tmp_path):
+    p = tmp_path / "cal.json"
+    p.write_text(json.dumps({"history": [{"from": "2000-01-01", "level": {"ms_f": -0.02}}]}))
+    monkeypatch.setattr(M, "CAL_PATH", str(p))
+    M._CAL["mtime"] = None
+    assert M.levelShift("ms_f") == -0.02 and M.levelShift("hs_f") == 0.0
+    monkeypatch.setenv("XCP_RACE_LEVEL_SHIFT", "0")
+    assert M.levelShift("ms_f") == 0.0
