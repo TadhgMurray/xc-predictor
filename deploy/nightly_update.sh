@@ -484,7 +484,13 @@ fi
 #   hand once first (the catch-up predicts every posted meet) to see its
 #   time on the server.
 if [ "${XCP_FORECASTS:-0}" = "1" ]; then
-  step 13h_meet_forecasts "$PY" -u racecast/build_meet_forecasts.py
+  # ★ AND EVERY INPUT AS THE PAGE HAD IT, BEFORE THE RACE (owner, 2026-11-06:
+  #   "there shouldnt be any hindsight"). The race model trains on today's
+  #   ratings and course numbers, which have seen the races it learns from;
+  #   these files (race_model.keepInputs, one .jsonl.gz a day) are the table
+  #   nothing after the forecast touched. XCP_RACE_INPUTS_DIR= (empty) stops it.
+  step 13h_meet_forecasts env XCP_RACE_INPUTS_DIR="${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}" \
+    "$PY" -u racecast/build_meet_forecasts.py
 fi
 
 # ★ THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS (owner, 2026-11-03:
