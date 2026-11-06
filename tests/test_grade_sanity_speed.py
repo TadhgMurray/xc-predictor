@@ -313,21 +313,31 @@ def test_write_sends_the_rows_the_inserts_sent(seed):
     assert GS.write(cur, resolved) == len(resolved)
     want_fix, want_untrusted = old_write_rows(resolved)
     (copy_sql, data), = cur.copies.items()
-    assert copy_sql == ("COPY grade_fix (person_id, season, grade, level, method, trust) "
+    # ★ INTO THE SHADOW (2026-11-06): grade_fix_new is loaded and keyed while
+    #   the live grade_fix still answers the athlete page; see write().
+    assert copy_sql == ("COPY grade_fix_new (person_id, season, grade, level, method, trust) "
                         "FROM STDIN")
     # same rows, same order (the table's physical order is the dict's, as before)
     assert _readCopy(data) == _asText(want_fix)
     # grade_untrusted: every key, sorted -- now copied server-side from grade_fix
     assert {(p, s) for p, s, *_ in want_fix} == set(want_untrusted)
     ins = [s for s in cur.sql if s.startswith("INSERT INTO grade_untrusted")]
-    assert ins == ["INSERT INTO grade_untrusted (person_id, season) SELECT person_id, "
-                   "season FROM grade_fix ORDER BY person_id, season"]
+    assert ins == ["INSERT INTO grade_untrusted_new (person_id, season) SELECT person_id, "
+                   "season FROM grade_fix_new ORDER BY person_id, season"]
     # both keys, and each one after its rows
     order = cur.sql
-    assert order.index("ALTER TABLE grade_fix ADD PRIMARY KEY (person_id, season)") \
+    assert order.index("ALTER TABLE grade_fix_new ADD PRIMARY KEY (person_id, season)") \
         > order.index(copy_sql)
-    assert order.index("ALTER TABLE grade_untrusted ADD PRIMARY KEY (person_id, season)") \
+    assert order.index("ALTER TABLE grade_untrusted_new ADD PRIMARY KEY (person_id, season)") \
         > order.index(ins[0])
+    # ★ AND THE LIVE TABLES ARE DROPPED ONLY AT THE END: nothing the page
+    #   reads is locked while 31M rows load
+    for t in ("grade_fix", "grade_untrusted"):
+        drop = order.index(f"DROP TABLE IF EXISTS {t}")
+        assert drop > order.index(f"ANALYZE {t}_new")
+        assert drop > order.index(copy_sql)
+        assert order[drop + 1] == f"ALTER TABLE {t}_new RENAME TO {t}"
+        assert order[drop + 2] == f"ALTER INDEX {t}_new_pkey RENAME TO {t}_pkey"
 
 
 # ------------------------------------------------------------------ #

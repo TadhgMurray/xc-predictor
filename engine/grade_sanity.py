@@ -3489,44 +3489,56 @@ def write(cur, resolved):
       it academically; renaming it would break correct code. speed_ratings'
       poolOf is the consumer that had to move.
     """
-    cur.execute("DROP TABLE IF EXISTS grade_fix")
+    # ★ BUILT BESIDE THE LIVE TABLE, RENAMED IN AT THE END (2026-11-06: the
+    #   site's slow log showed the athlete page's grade_fix lookup at exactly
+    #   5.00 s, 660 times in a week -- its lock_timeout). The old write began
+    #   with DROP TABLE grade_fix, which holds ACCESS EXCLUSIVE until the
+    #   commit, so every athlete page waited out the whole 31M-row COPY and
+    #   then failed. The shadows load with nothing locked; the DROP and the
+    #   RENAMEs come last, a moment before the caller's commit.
+    cur.execute("DROP TABLE IF EXISTS grade_fix_new")
     # ⚠ `trust` IS A COLUMN, NOT A SEPARATE TABLE. A consumer that does not
     #   know about it still reads grade and level exactly as before and is
     #   simply not filtering -- which is the old behaviour, not a broken one.
     # ★ THE KEY IS ADDED AFTER THE ROWS (2026-10-25, with the COPY above
     #   copyText). Built once from sorted keys instead of grown by 31M
-    #   inserts in dict order. ADD PRIMARY KEY names it grade_fix_pkey, the
-    #   name the inline constraint had, on the same two columns, so the table
-    #   a consumer sees is the same table; a duplicate key would fail here
-    #   instead of at the INSERT, and abort the same transaction.
-    cur.execute("""CREATE TABLE grade_fix (
+    #   inserts in dict order. The key is renamed to grade_fix_pkey with the
+    #   table, the name the inline constraint had, on the same two columns,
+    #   so the table a consumer sees is the same table; a duplicate key would
+    #   fail here instead of at the INSERT, and abort the same transaction.
+    cur.execute("""CREATE TABLE grade_fix_new (
                        person_id bigint NOT NULL,
                        season    int    NOT NULL,
                        grade     text,
                        level     text,
                        method    text   NOT NULL,
                        trust     text   NOT NULL DEFAULT 'high')""")
-    _copyRows(cur, "grade_fix",
+    _copyRows(cur, "grade_fix_new",
               ("person_id", "season", "grade", "level", "method", "trust"),
               ((p, s, v["grade"], v["level"], v["method"], v.get("trust", "high"))
                for (p, s), v in resolved.items()))
-    cur.execute("ALTER TABLE grade_fix ADD PRIMARY KEY (person_id, season)")
-    cur.execute("ANALYZE grade_fix")
+    cur.execute("ALTER TABLE grade_fix_new ADD PRIMARY KEY (person_id, season)")
+    cur.execute("ANALYZE grade_fix_new")
 
     # ! FROM grade_fix, NOT FROM PYTHON AGAIN. Its rows are every key of
     #   `resolved` -- sorted(resolved.keys()) was exactly that set -- so the
     #   server copies the two columns across in the same sorted order rather
     #   than Python sorting and sending 31M pairs a second time. The key goes
     #   on after the rows, as grade_fix's does.
-    cur.execute("DROP TABLE IF EXISTS grade_untrusted")
-    cur.execute("""CREATE TABLE grade_untrusted (
+    cur.execute("DROP TABLE IF EXISTS grade_untrusted_new")
+    cur.execute("""CREATE TABLE grade_untrusted_new (
                        person_id bigint NOT NULL,
                        season    int    NOT NULL)""")
-    cur.execute("""INSERT INTO grade_untrusted (person_id, season)
-                   SELECT person_id, season FROM grade_fix
+    cur.execute("""INSERT INTO grade_untrusted_new (person_id, season)
+                   SELECT person_id, season FROM grade_fix_new
                    ORDER  BY person_id, season""")
-    cur.execute("ALTER TABLE grade_untrusted ADD PRIMARY KEY (person_id, season)")
-    cur.execute("ANALYZE grade_untrusted")
+    cur.execute("ALTER TABLE grade_untrusted_new ADD PRIMARY KEY (person_id, season)")
+    cur.execute("ANALYZE grade_untrusted_new")
+
+    for t in ("grade_fix", "grade_untrusted"):
+        cur.execute(f"DROP TABLE IF EXISTS {t}")
+        cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
+        cur.execute(f"ALTER INDEX {t}_new_pkey RENAME TO {t}_pkey")
     return len(resolved)
 
 

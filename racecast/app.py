@@ -10,6 +10,10 @@ import json
 import urllib.parse
 
 sys.path.insert(0, "scripts")
+# ★ NO JIT IN THE WEB PROCESS (scripts/database.py says why: ~1 s of compile
+#   per board query, for plans that read a few thousand pages). Set before
+#   the first `database` import, which reads it into the pool's options.
+os.environ.setdefault("XCP_DB_JIT", "off")
 # ★ db_timing BEFORE every other racecast import: it patches
 #   database.getConn so every module's queries are timed. /debug/queries
 #   reads the buffer; slow_queries.log keeps the >250ms offenders.

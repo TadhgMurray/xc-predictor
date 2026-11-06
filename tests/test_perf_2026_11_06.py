@@ -364,3 +364,263 @@ def test_the_pipeline_purges_after_the_swap_and_at_the_end():
     assert sh.rindex("\nbgwait\n") < sh.index("step 19_edge_purge") < sh.rindex("\nsummarise")
     assert "edge_purge.py --delay 960" in sh
     assert "step 14_edge_purge" in _read("deploy", "nightly_update.sh")
+
+
+# ---------------------------------------------------------------- 7 --
+# The PR board's candidates, one stored distance at a time (12.6-16.9 s live
+# on board=pr&sport=XC&pool=hs_m&distance=5000).
+
+def _prSql(qs):
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    import rankings
+
+    class C:
+        def execute(self, sql, params=None):
+            self.sql, self.params = sql, params
+
+        def fetchall(self):
+            return []
+    rankings._hasEventKind = lambda cur=None: True
+    rankings._rowHasUnit = lambda c, t="ranking_results": False
+    f, err = rankings.parseFilters(MultiDict(parse_qsl(qs)))
+    assert not err, err
+    c = C()
+    rankings.getPrRankings(c, f)
+    return c.sql, c.params
+
+
+def test_the_pr_board_reads_one_distance_at_a_time():
+    sql, _ = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
+    assert "WITH RECURSIVE dists" in sql and "distance = dists.d" in sql
+
+
+def test_without_a_pool_or_on_a_field_event_it_keeps_the_plain_query():
+    import rankings
+    assert not rankings._prPerDistance({"distance": 5000, "pool": "all"}, False)
+    assert not rankings._prPerDistance({"distance": 5000, "pool": "hs_m"}, True)
+    assert not rankings._prPerDistance({"distance": None, "pool": "hs_m"}, False)
+
+
+def test_the_pr_board_answers_the_same_and_uses_the_index(pg):
+    import rankings
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE ranking_results AS
+        SELECT CASE WHEN g % 3 = 0 THEN 'hs_f' ELSE 'hs_m' END AS pool,
+               CASE WHEN g % 4 = 0 THEN 'TF' ELSE 'XC' END AS sport,
+               (ARRAY[5000, 4999.9, 5001, 8000])[1 + g % 4]::real AS distance,
+               (900 + (g * 7919) % 900)::real AS time_seconds,
+               g::bigint AS result_id, (g % 5000)::bigint AS person_id,
+               (150 + g % 40)::real AS speed_rating, date '2024-10-01' AS race_date,
+               2024 AS year, 'WI'::text AS state, 'S'::text AS school, '11'::text AS grade,
+               (g / 300)::bigint AS meet_id, 1::bigint AS div_id, NULL::bigint AS canon_meet_id,
+               NULL::bigint AS event_id, NULL::text AS event_kind, NULL::real AS mark
+        FROM generate_series(1, 60000) g""")
+    cur.execute("CREATE INDEX ON ranking_results (pool, sport, distance, time_seconds)")
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint,"
+                " first_name text, last_name text, gender text)")
+    cur.execute("INSERT INTO athletes SELECT g, g, 'A', 'B' || g, 'M'"
+                " FROM generate_series(0, 4999) g")
+    cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
+    cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    cur.execute("ANALYZE ranking_results")
+    for qs in ("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50",
+               "board=pr&sport=XC&pool=hs_m&distance=5000&limit=50&offset=200",
+               "board=pr&sport=both&pool=hs_f&distance=5000&limit=50"):
+        new_sql, params = _prSql(qs)
+        cur.execute(new_sql, params)
+        new = [dict(r) for r in cur.fetchall()]
+        old = rankings._prPerDistance
+        rankings._prPerDistance = lambda f, is_field: False
+        try:
+            old_sql, params = _prSql(qs)
+        finally:
+            rankings._prPerDistance = old
+        cur.execute(old_sql, params)
+        assert new == [dict(r) for r in cur.fetchall()], qs
+        assert len(new) == 50
+    sql, params = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
+    cur.execute("SET enable_seqscan = off")
+    cur.execute("EXPLAIN " + sql, params)
+    plan = "\n".join(r["QUERY PLAN"] for r in cur.fetchall())
+    assert "distance = dists.d" in plan and "Seq Scan on ranking_results" not in plan
+
+
+# ---------------------------------------------------------------- 8 --
+
+def test_the_web_process_connects_without_jit():
+    """~1 s of JIT compile per board query (25 ms off, 1,155 ms on, the PR
+    board's per-distance plan): the site's connections carry jit=off, the
+    service unit's timeouts stay beside it, and XCP_DB_JIT=on still wins."""
+    import subprocess
+    code = ("import sys; sys.path[:0] = ['racecast', 'scripts', 'tests']; import _env; "
+            "import app, database; print(database._PG_CONFIG_WITH_TIMEOUT.get('options'))")
+
+    def opts(**env):
+        e = {k: v for k, v in os.environ.items() if k != "XCP_DB_JIT"}
+        e.update(env, XCP_DB_QUIET="1")
+        out = subprocess.run([sys.executable, "-W", "ignore", "-c", code], cwd=_ROOT,
+                             env=e, capture_output=True, text=True, timeout=300)
+        return out.stdout.strip().splitlines()[-1]
+    assert opts(XCP_DB_STATEMENT_TIMEOUT_MS="55000") == "-c statement_timeout=55000 -c jit=off"
+    assert opts(XCP_DB_JIT="on") == "-c jit=on"
+
+
+# ---------------------------------------------------------------- 9 --
+# sharedcache: what it takes computed once for the box, not once per worker
+
+def test_shared_cache_computes_once_and_shares(tmp_path):
+    import sharedcache as SC
+    d = str(tmp_path / "c")
+    calls = []
+
+    def compute():
+        calls.append(1)
+        return {"genders": {"boys": (1, 2)}, "n": len(calls)}
+    clock = [1000.0]
+    v1, at1 = SC.get("wit-WI", compute, ttl=60, now=lambda: clock[0], path=d)
+    clock[0] += 30
+    v2, at2 = SC.get("wit-WI", compute, ttl=60, now=lambda: clock[0], path=d)
+    assert v1 == v2 == {"genders": {"boys": (1, 2)}, "n": 1} and len(calls) == 1
+    assert at1 == at2 == 1000.0                     # when it was computed
+    clock[0] += 31                                  # past the ttl: computed again
+    v3, _ = SC.get("wit-WI", compute, ttl=60, now=lambda: clock[0], path=d)
+    assert v3["n"] == 2
+
+
+def test_shared_cache_does_not_share_a_failure(tmp_path):
+    import sharedcache as SC
+    d = str(tmp_path / "c")
+    n = []
+
+    def compute():
+        n.append(1)
+        return {"error": "UndefinedTable"}
+    for _ in range(2):
+        SC.get("wit-CA", compute, ttl=600, keep=lambda v: not v.get("error"), path=d)
+    assert len(n) == 2
+
+
+def test_shared_cache_refuses_a_directory_others_can_write(tmp_path):
+    import sharedcache as SC
+    d = tmp_path / "open"
+    d.mkdir()
+    os.chmod(d, 0o777)
+    n = []
+    for _ in range(2):
+        SC.get("k", lambda: n.append(1) or {"v": 1}, ttl=600, path=str(d))
+    assert len(n) == 2 and not list(d.glob("*.pkl"))
+
+
+def test_shared_cache_one_compute_across_processes(tmp_path):
+    """Two workers asking at once: one computes, the other waits on the lock
+    and reads the file."""
+    import subprocess
+    d, log = str(tmp_path / "c"), tmp_path / "calls.txt"
+    code = (f"import sys, time; sys.path.insert(0, 'racecast'); import sharedcache as S\n"
+            f"def c():\n    open({str(log)!r}, 'a').write('x'); time.sleep(1.0); return {{'v': 7}}\n"
+            f"print(S.get('wit-NY', c, ttl=600, path={d!r})[0]['v'])")
+    ps = [subprocess.Popen([sys.executable, "-c", code], cwd=_ROOT, stdout=subprocess.PIPE,
+                           text=True) for _ in range(3)]
+    outs = [p.communicate(timeout=60)[0].strip() for p in ps]
+    assert outs == ["7", "7", "7"] and log.read_text() == "x"
+
+
+def test_marks_for_reads_the_shared_copy_and_keeps_its_time(tmp_path, monkeypatch):
+    import cuts
+    import sharedcache
+    import ttlcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "c"))
+    n = []
+
+    def fake(cur, state):
+        n.append(state)
+        return {"state": state, "genders": {}}
+    monkeypatch.setattr(cuts, "_computeUncached", fake)
+    ttlcache._store.pop(("wit", "ZZ"), None)
+    a = cuts.marksFor(None, "ZZ")
+    ttlcache._store.pop(("wit", "ZZ"), None)        # another worker: no memory copy
+    b = cuts.marksFor(None, "ZZ")
+    ttlcache._store.pop(("wit", "ZZ"), None)
+    assert n == ["ZZ"]
+    assert a["computed_at"] == b["computed_at"] and "_shared_at" not in a
+    assert {k: v for k, v in a.items() if k != "computed_at"} == {"state": "ZZ", "genders": {}}
+
+
+# --------------------------------------------------------------- 10 --
+# The PR board tries a small candidate set first, on the default order only
+
+class _CandCur:
+    """Answers each run with `rows_for(cand)` rows; records the cand asked."""
+    def __init__(self, rows_for):
+        self.rows_for, self.cands = rows_for, []
+
+    def execute(self, sql, params=None):
+        self.cands.append(params["cand"])
+
+    def fetchall(self):
+        return [{"i": i} for i in range(self.rows_for(self.cands[-1]))]
+
+
+def _prFilters(qs):
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    import rankings
+    rankings._hasEventKind = lambda cur=None: True
+    rankings._rowHasUnit = lambda c, t="ranking_results": False
+    f, err = rankings.parseFilters(MultiDict(parse_qsl(qs)))
+    assert not err, err
+    return f
+
+
+def test_pr_small_first_pass_and_fallback():
+    import rankings as R
+    f = _prFilters("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50&offset=50")
+    full, small = 100 * R.CANDIDATE_FACTOR, 100 * R.PR_FIRST_FACTOR
+    cur = _CandCur(lambda cand: 50)                       # the small set fills the page
+    assert len(R.getPrRankings(cur, f)) == 50 and cur.cands == [small]
+    cur = _CandCur(lambda cand: 50 if cand == full else 12)   # it does not: the full set
+    assert len(R.getPrRankings(cur, f)) == 50 and cur.cands == [small, full]
+    for other in ("&sort=school", "&dir=DESC", "&sort=date"):
+        cur = _CandCur(lambda cand: 50)                   # other orders: the full set only
+        R.getPrRankings(cur, _prFilters("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50"
+                                        + other))
+        assert cur.cands == [50 * R.CANDIDATE_FACTOR], other
+
+
+def test_pr_small_first_pass_answers_the_same_on_postgres(pg):
+    """Same rows as the full set, including a pool of many-race athletes
+    where the small set cannot fill the page and the fallback runs."""
+    import rankings as R
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE ranking_results AS
+        SELECT CASE WHEN g % 3 = 0 THEN 'hs_f' ELSE 'hs_m' END AS pool, 'XC'::text AS sport,
+               (ARRAY[5000, 4999.9, 5001])[1 + g % 3]::real AS distance,
+               (900 + (g::bigint * 7919) % 60000 / 50.0)::real AS time_seconds,
+               g::bigint AS result_id,
+               CASE WHEN g % 3 = 0 THEN (g % 40)::bigint ELSE (g % 7000)::bigint END AS person_id,
+               (150 + g % 40)::real AS speed_rating, date '2024-10-01' AS race_date,
+               2024 AS year, 'WI'::text AS state, 'S'::text AS school, '11'::text AS grade,
+               (g / 300)::bigint AS meet_id, 1::bigint AS div_id, NULL::bigint AS canon_meet_id,
+               NULL::bigint AS event_id, NULL::text AS event_kind, NULL::real AS mark
+        FROM generate_series(1, 60000) g""")
+    cur.execute("CREATE INDEX ON ranking_results (pool, sport, distance, time_seconds)")
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint,"
+                " first_name text, last_name text, gender text)")
+    cur.execute("INSERT INTO athletes SELECT g, g, 'A', 'B' || g, 'M' FROM generate_series(0, 6999) g")
+    cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
+    cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    cur.execute("ANALYZE ranking_results")
+    before = R.PR_FIRST_FACTOR
+    try:
+        for qs in ("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50",
+                   "board=pr&sport=XC&pool=hs_m&distance=5000&limit=50&offset=300",
+                   "board=pr&sport=XC&pool=hs_f&distance=5000&limit=50"):   # 40 athletes
+            f = _prFilters(qs)
+            R.PR_FIRST_FACTOR = 4
+            small = [dict(r) for r in R.getPrRankings(cur, dict(f))]
+            R.PR_FIRST_FACTOR = R.CANDIDATE_FACTOR
+            full = [dict(r) for r in R.getPrRankings(cur, dict(f))]
+            assert small == full, qs
+    finally:
+        R.PR_FIRST_FACTOR = before

@@ -133,6 +133,29 @@ def _minRaces(cur, sport, pool, now=None):
     return val
 
 
+def _nameRows(cur, rows):
+    """row["name"] for each row, by the boards' own name lookup
+    (rankings.nameLateral) -- the same name the comps query used to join
+    onto every row, asked only for the rows that print one."""
+    pids = sorted({int(r["person_id"]) for r in rows if r.get("person_id") is not None})
+    names = {}
+    if pids:
+        cur.execute(f"""
+            SELECT c.person_id, a.name
+            FROM   unnest(%s::bigint[]) AS c(person_id)
+            {nameLateral('c')}
+        """, (pids,))
+        for r in cur.fetchall():
+            pid, name = ((r.get("person_id"), r.get("name")) if isinstance(r, dict)
+                         else (r[0], r[1]))
+            if pid is not None:
+                names[int(pid)] = name
+    for r in rows:
+        pid = r.get("person_id")
+        r["name"] = names.get(int(pid)) if pid is not None else None
+    return rows
+
+
 def _runnersLikeYou(cur, person_id, sport):
     s = subjectSeason(cur, person_id, sport)
     if not s or s.get("grade") is None:
@@ -159,11 +182,16 @@ def _runnersLikeYou(cur, person_id, sport):
                AND abs((c.rating - c.prev_rating) - %(gain)s)
                    <= sqrt(%(var_ds)s + %(sig2)s / c.n_races + %(sig2)s / c.prev_n)"""
             if has_prev else "")
+    # ★ NO NAMES HERE (2026-11-06: this statement was the site's second
+    #   costliest in the slow log -- 59,186 runs over 0.25 s in a week, 37,778
+    #   s in all). It used to carry nameLateral, three name lookups per comp,
+    #   for every comp in the band -- hundreds to thousands of rows -- when
+    #   only the EXAMPLES rows ever print a name. The stats read none; the
+    #   examples are named below, after they are picked.
     cur.execute(f"""
-        SELECT c.*, a.name,
+        SELECT c.*,
                abs(c.rating - %(r)s) / sqrt(%(var_s)s + %(sig2)s / c.n_races) AS dist
         FROM   season_comps c
-        {nameLateral('c')}
         WHERE  c.sport = %(sport)s AND c.pool = %(pool)s AND c.grade = %(g)s
           AND  c.rating BETWEEN %(lo)s AND %(hi)s
           AND  c.person_id <> %(me)s AND c.year < %(y)s
@@ -186,6 +214,7 @@ def _runnersLikeYou(cur, person_id, sport):
     # known (or, for a senior, the college question settled)
     told = sen if g < 12 else col
     examples = sorted(told, key=lambda c: (float(c["dist"]), -c["year"]))[:EXAMPLES]
+    _nameRows(cur, examples)
 
     model = None
     try:
