@@ -29,6 +29,12 @@ lists is priced off the other copy's field.
   over the reference rows within NEAR of its time (else all of them, at
   least MIN_REF). A row more than TOL from that is set to it.
 
+! ONE RACE, NOT TWO THAT OVERLAP (owner's dry run, 2026-11-06: 129 -> 230,
+  93 -> 31). Two divisions sharing five runners can be a combined race and
+  one of its parts. So: SAME_FRAC of the smaller division shared, the row
+  inside the reference's times, and a move past MAX_MOVE is listed, never
+  written. The duplicate rules' flagged rows COUNT as shared (they are the
+  proof of the copy) but are never moved.
 ! BOTH WAYS: a copy rated low is as wrong as one rated high; the reference's
   field decides. IDEMPOTENT: an aligned row reads true the next night.
 ! LOGGED: copy_align_row holds every row moved, from what to what.
@@ -48,7 +54,10 @@ for _p in (_HERE, os.path.join(_ROOT, "scripts")):
         sys.path.insert(0, _p)
 
 MIN_SHARED = 5      # persons in both divisions, within SAME_S, before they are copies
+SAME_FRAC = 0.6     # ... and this share of the smaller division (one race, not two that overlap)
 SAME_S = 1.0
+RANGE = 0.03        # a row outside the reference's times (by this much) is not in that race
+MAX_MOVE = 0.20     # a copy 20%+ off the reference is a different race: listed, never moved
 MIN_REF = 3         # reference rows (of the row's pool) before a row is priced from them
 NEAR = 0.08         # ... preferring those within 8% of its time
 TOL = 0.02          # a row this far (log) from the reference's price is moved
@@ -65,38 +74,49 @@ def expected(t, ref):
     return statistics.median(rj * tj / t for tj, rj in use)
 
 
-def plan(divs, shared):
+def plan(divs, shared, flagged=frozenset(), wide=None):
     """divs: {div: [(result_id, person, pool, time, rating)]}; shared:
-    {(divA, divB): n persons in both}. -> [(result_id, old, new, ref div)]
-    for the rows to move. Pure."""
+    {(divA, divB): n persons in both}; flagged: result ids the duplicate
+    rules took (shared, never moved). -> [(result_id, old, new, ref div)]
+    for the rows to move; `wide`, a list, collects the moves past MAX_MOVE.
+    Pure."""
     out = []
     for (a, b), n in shared.items():
-        if n < MIN_SHARED or a not in divs or b not in divs:
+        if a not in divs or b not in divs:
             continue
-        rated = lambda d: sum(1 for r in divs[d] if r[4])          # noqa: E731
+        if n < max(MIN_SHARED, SAME_FRAC * min(len(divs[a]), len(divs[b]))):
+            continue
+        rated = lambda d: sum(1 for r in divs[d] if r[4] and r[0] not in flagged)  # noqa: E731
         ref, other = (a, b) if rated(a) >= rated(b) else (b, a)
         in_ref = {r[1] for r in divs[ref]}
         by_pool = defaultdict(list)
-        for _rid, _pid, pool, t, s in divs[ref]:
-            if s:
+        for rid, _pid, pool, t, s in divs[ref]:
+            if s and rid not in flagged:
                 by_pool[pool].append((t, s))
+        times = [r[3] for r in divs[ref] if r[3]]
+        lo, hi = min(times) * (1 - RANGE), max(times) * (1 + RANGE)
         for rid, pid, pool, t, s in divs[other]:
-            if not s or pid in in_ref or not t:
+            if not s or rid in flagged or pid in in_ref or not t or not lo <= t <= hi:
                 continue
             e = expected(float(t), by_pool.get(pool, []))
-            if e and abs(math.log(float(s) / e)) > TOL:
-                out.append((rid, float(s), round(e, 2), ref))
+            if not e or abs(math.log(float(s) / e)) <= TOL:
+                continue
+            if abs(math.log(float(s) / e)) > MAX_MOVE:
+                if wide is not None:
+                    wide.append((rid, float(s), round(e, 2), ref))
+                continue
+            out.append((rid, float(s), round(e, 2), ref))
     return out
 
 
 _ROWS = """
     SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id, left(r.date, 10) AS d,
-           r.time_seconds, r.speed_rating, COALESCE(r.rating_pool, '') AS pool
+           r.time_seconds, r.speed_rating, COALESCE(r.rating_pool, '') AS pool,
+           EXISTS (SELECT 1 FROM result_twin x
+                   WHERE x.sport = 'XC' AND x.result_id = r.result_id) AS flagged
     FROM   results r
     WHERE  r.date >= %(lo)s AND r.date < %(hi)s AND r.date ~ '^[0-9]{4}-'
       AND  r.person_id IS NOT NULL AND r.time_seconds BETWEEN 60 AND 14400
-      AND  NOT EXISTS (SELECT 1 FROM result_twin x
-                       WHERE x.sport = 'XC' AND x.result_id = r.result_id)
 """
 
 _LOG_DDL = """
@@ -114,7 +134,10 @@ def alignYear(getConn, lo, hi, write, show):
         conn.rollback()
         divs = defaultdict(list)
         by_pd = defaultdict(list)
-        for rid, pid, src, meet, div, d, t, s, pool in raw:
+        flagged = set()
+        for rid, pid, src, meet, div, d, t, s, pool, flag in raw:
+            if flag:
+                flagged.add(rid)
             key = (src, int(meet), int(div), d)
             divs[key].append((rid, pid, pool, float(t), float(s) if s else None))
             by_pd[(pid, d)].append((key, float(t)))
@@ -127,10 +150,14 @@ def alignYear(getConn, lo, hi, write, show):
                     (ka, ta), (kb, tb) = rows[i], rows[j]
                     if ka != kb and abs(ta - tb) <= SAME_S:
                         shared[tuple(sorted((ka, kb)))] += 1
-        moves = plan(divs, shared)
-        n_pairs = sum(1 for n in shared.values() if n >= MIN_SHARED)
+        wide = []
+        moves = plan(divs, shared, flagged, wide)
+        n_pairs = sum(1 for (a, b), n in shared.items()
+                      if n >= max(MIN_SHARED, SAME_FRAC * min(len(divs[a]), len(divs[b]))))
         print(f"[copy align] {lo[:4]}: {len(raw):,} rows, {n_pairs:,} pairs of copies, "
-              f"{len(moves):,} rows priced off the other copy", flush=True)
+              f"{len(moves):,} rows priced off the other copy"
+              f"{f', {len(wide):,} more than {MAX_MOVE:.0%} off left alone' if wide else ''}",
+              flush=True)
         for rid, old, new, ref in sorted(moves, key=lambda m: -abs(m[1] - m[2]))[:show]:
             print(f"    {old:6.1f} -> {new:6.1f}  result {rid}  (reference /race/xc/{ref[1]}/{ref[2]}, "
                   f"{ref[0]}, {ref[3]})")
