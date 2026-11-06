@@ -64,7 +64,7 @@ class ComingUp(unittest.TestCase):
         m = days[0]["meets"][0]
         self.assertEqual(days[0]["label"], "Today")
         self.assertEqual(m["level"], "College")
-        self.assertIn("src=tfrrs", m["predict_href"])
+        self.assertIn("src=2", m["predict_href"])
 
     def test_outside_the_week_is_not_shown(self):
         import weekend

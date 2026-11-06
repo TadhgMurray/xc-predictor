@@ -117,6 +117,7 @@ _ROWS = """
     FROM   results r
     WHERE  r.date >= %(lo)s AND r.date < %(hi)s AND r.date ~ '^[0-9]{4}-'
       AND  r.person_id IS NOT NULL AND r.time_seconds BETWEEN 60 AND 14400
+      AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
 """
 
 _LOG_DDL = """
@@ -136,6 +137,8 @@ def alignYear(getConn, lo, hi, write, show):
         by_pd = defaultdict(list)
         flagged = set()
         for rid, pid, src, meet, div, d, t, s, pool, flag in raw:
+            if meet is None or div is None:
+                continue                         # a row with no division is in no race to pair
             if flag:
                 flagged.add(rid)
             key = (src, int(meet), int(div), d)

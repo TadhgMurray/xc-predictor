@@ -972,6 +972,13 @@ _before_render.connect(_optoutMaskContext, app)
 
 
 @app.after_request
+def _feedScrub(resp):
+    """★ NO FEED NAME LEAVES THE SITE (owner, 2026-11-06): racecast/feed_scrub.py."""
+    import feed_scrub
+    return feed_scrub.scrubResponse(resp)
+
+
+@app.after_request
 def _optoutMaskBody(resp):
     if (not _optout.hiddenIds() or resp.direct_passthrough or resp.is_streamed
             or resp.status_code != 200):

@@ -24,7 +24,7 @@ class UpcomingRules(unittest.TestCase):
         self.assertIsNone(U.clock(None))
         self.assertEqual(U.ordinal(12), "12th")
         self.assertEqual(U.ordinal(23), "23rd")
-        self.assertEqual(U.previewHref(5, "tfrrs"), "/meet/preview/xc/5?src=tfrrs")
+        self.assertEqual(U.previewHref(5, "tfrrs"), "/meet/preview/xc/5?src=2")
         self.assertEqual(U.previewHref(5, "anet"), "/meet/preview/xc/5")
         self.assertEqual(U.predictHref(5, 2, None), "/predictions?meet_id=5&sport=XC&div_id=2")
 

@@ -159,7 +159,7 @@ def test_predictions_opens_on_the_week_and_who_wins_state(client):
     week = html.split('id="pred-week-h"', 1)[1].split("</section>", 1)[0]
     # national first, each a Predict link: last year's meet, this year's date
     assert week.index("NCAA Division I Cross Country Championships") < week.index("MSHSL Class A")
-    assert ('href="/predictions?meet_id=8&amp;src=tfrrs&amp;date=2026-11-21&amp;pick=predicted"'
+    assert ('href="/predictions?meet_id=8&amp;src=2&amp;date=2026-11-21&amp;pick=predicted"'
             in week)
     assert "Sat Nov 21 · from the 2025 meet · national" in week
     assert ">MSHSL Class A State Championships<" in week          # last year's year off

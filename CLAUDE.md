@@ -28,5 +28,9 @@
 - **Nothing on the site says athletic.net or TFRRS** (owner, 2026-11-06).
   No page text, tooltip, placeholder or message; links name a meet's feed as
   `?src=1` / `?src=2` (app._PublicSrc turns them back into the internal
-  keys). Code comments and internal keys are fine.
-  tests/test_no_feed_names.py enforces it on every template and script.
+  keys). Every HTML and JSON response also passes through
+  racecast/feed_scrub.py (app._feedScrub): a feed value goes out as "1" /
+  "2" and a name in data (a meet or venue a feed wrote) as "the results
+  site" / "the college feed". Code comments and internal keys are fine.
+  tests/test_no_feed_names.py enforces it on every template, script and
+  response.

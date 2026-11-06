@@ -55,3 +55,37 @@ def test_links_name_the_feed_by_number():
     for f in ("meet_recap.py", "upcoming_preview.py", "weekend.py", "pages3.py", "watchdog.py"):
         assert "src=tfrrs" not in open(os.path.join(_ROOT, "racecast", f)).read().split("#")[0] or True
     importlib.invalidate_caches()
+
+
+def test_every_response_is_scrubbed_of_feed_names():
+    """owner, 2026-11-06: 'yes' -- the data APIs and embedded data too."""
+    sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+    import json
+    import feed_scrub as F
+    body = json.dumps({"rows": [{"source": "tfrrs", "src": "anet", "href": "/meet/xc/5?src=tfrrs",
+                                 "meet_name": "Results on athletic.net", "venue": "www.athletic.net",
+                                 "note": "the TFRRS copy", "tfrrs_join": 1}]})
+    out = json.loads(F.scrub(body))["rows"][0]
+    assert out["source"] == "2" and out["src"] == "1" and out["href"] == "/meet/xc/5?src=2"
+    assert out["meet_name"] == "Results on the results site"
+    assert out["venue"] == "the results site" and out["note"] == "the college feed copy"
+    assert "tfrrs_join" in out                        # an internal key of its own
+    assert not NAMES.search(json.dumps(out).replace("tfrrs_join", ""))
+    assert F.scrub("Janet Planet, anetta") == "Janet Planet, anetta"
+
+    from flask import Flask, jsonify
+    app = Flask("t")
+    app.after_request(F.scrubResponse)
+
+    @app.route("/j")
+    def j():
+        return jsonify({"src": "tfrrs"})
+
+    @app.route("/png")
+    def png():
+        return app.response_class(b"tfrrs", mimetype="image/png")
+    c = app.test_client()
+    assert c.get("/j").get_json() == {"src": "2"}
+    assert c.get("/png").data == b"tfrrs"
+    src = open(os.path.join(_ROOT, "racecast", "app.py"), encoding="utf-8").read()
+    assert "feed_scrub.scrubResponse(resp)" in src
