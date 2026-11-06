@@ -25,3 +25,8 @@
   and find the CAUSE. Fix the class in code (a rule, a guard, a check that
   runs every night), never a hand pin for one row, then tell the owner what
   was fake, why, and what now catches it.
+- **Nothing on the site says athletic.net or TFRRS** (owner, 2026-11-06).
+  No page text, tooltip, placeholder or message; links name a meet's feed as
+  `?src=1` / `?src=2` (app._PublicSrc turns them back into the internal
+  keys). Code comments and internal keys are fine.
+  tests/test_no_feed_names.py enforces it on every template and script.

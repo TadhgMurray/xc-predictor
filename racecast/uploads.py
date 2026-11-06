@@ -385,7 +385,7 @@ def readyToApply(up, events):
     if "n_rows" in up and not up["n_rows"]:
         why.append("it is a link with no results read yet -- use \"Fetch and read\" or "
                    "\"Attach the file\" under The link first (or \"Queue it for the scrape\" "
-                   "for an athletic.net or tfrrs meet)" if up.get("source_url") else "no results")
+                   "for a meet on a results site we read)" if up.get("source_url") else "no results")
     if not up.get("meet_name") or not up.get("meet_date"):
         why.append("no meet name or date")
     if up.get("sport") not in SPORTS:
@@ -731,7 +731,7 @@ def decide(cur, uid, action, admin_email, note=None):
         import fixes as FX
         target = FX.queueTarget(up.get("source_url"))
         if up["status"] not in ("submitted", "flagged") or not target:
-            return up["status"], ("Only a waiting athletic.net, tfrrs or AthleticLIVE meet link "
+            return up["status"], ("Only a waiting meet link from a results site we read "
                                   "can be queued.")
         mid, sport, src = target
         FX.requeue(cur, mid, sport, src)

@@ -114,14 +114,14 @@ def previewHref(meet_id, source):
     """/meet/preview/xc/<id>, with the feed when it is tfrrs -- the anet and
     tfrrs ids collide, as weekend.predictHref says."""
     href = f"/meet/preview/xc/{int(meet_id)}"
-    return href + "?src=tfrrs" if source == "tfrrs" else href
+    return href + "?src=2" if source == "tfrrs" else href
 
 
 def predictHref(meet_id, div_id, source):
     href = f"/predictions?meet_id={int(meet_id)}&sport=XC"
     if div_id is not None:
         href += f"&div_id={int(div_id)}"
-    return href + ("&src=tfrrs" if source == "tfrrs" else "")
+    return href + ("&src=2" if source == "tfrrs" else "")
 
 
 def fiveKOf(rating, pool):

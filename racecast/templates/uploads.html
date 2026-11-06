@@ -77,7 +77,7 @@
         {% if guest %}<label class="ct-wide">Your email <input type="email" name="email" required maxlength="254" autocomplete="email" placeholder="you@example.com">
           <span class="ct-muted">We email you a private link to this upload, and the decision. Nothing else.</span></label>{% endif %}
         <label class="ct-wide">Anything the owner should know (optional)
-          <textarea name="note" maxlength="1000" placeholder="{{ ('e.g. our team (' ~ school ~ ') ran this; the timer never posted it to athletic.net') if school else 'e.g. the timer never posted this meet to athletic.net' }}"></textarea></label>
+          <textarea name="note" maxlength="1000" placeholder="{{ ('e.g. our team (' ~ school ~ ') ran this; the timer never posted it online') if school else 'e.g. the timer never posted this meet online' }}"></textarea></label>
       </div>
       {% if guest and turnstile %}<div class="cf-turnstile" data-sitekey="{{ turnstile }}"></div>{% endif %}
       <div class="ct-actions"><button type="submit" class="go">Upload and check</button>

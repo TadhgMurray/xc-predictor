@@ -1,6 +1,6 @@
 {# =====================================================================
   meet_preview.html -- a posted meet before it runs (upcoming_preview.py,
-  owner 2026-10-10): /meet/preview/xc/<id>[?src=tfrrs]
+  owner 2026-10-10): /meet/preview/xc/<id>[?src=2]
 
   ★ THE RACE PAGE'S SHAPE, FORWARD. Header: the meet, the day, the course
     and the weather; the projected winners where a race page has its
@@ -24,7 +24,7 @@
    ~ (", " ~ pv.date_label if pv.date_label else "")
    ~ (" at " ~ pv.venue if pv.venue else "")
    ~ ", from this season's ratings and the course. Course records, difficulty and the forecast." %}
-{% set meta_path = "/meet/preview/xc/" ~ pv.meet_id ~ ("?src=tfrrs" if src else "") %}
+{% set meta_path = "/meet/preview/xc/" ~ pv.meet_id ~ ("?src=2" if src else "") %}
 {% set meta_image = site_origin ~ "/card/predict.png?" ~ card_query %}
 {% set meta_image_alt = pv.name ~ ": projected team scores and top five" %}
 {% set meta_crumbs = [("Meets", "/meets?view=upcoming"), ("Preview", none)] %}
@@ -37,7 +37,7 @@
 <body>
 {% include "_topbar.html" %}
 {% set cond = pv.conditions or {} %}
-<main class="page-wide rc pv-page" data-meet="{{ pv.meet_id }}"{% if src %} data-src="{{ src }}"{% endif %}>
+<main class="page-wide rc pv-page" data-meet="{{ pv.meet_id }}"{% if src %} data-src="2"{% endif %}>
 <header class="rc-hd"><div class="rc-w rc-hgrid rc-hone">
   <div>
     <div class="rc-sport"><span class="sport-tag sport-tag--xc">Cross country</span> <span class="pv-tag">Preview</span></div>
@@ -62,7 +62,7 @@
       <div><span class="k">Projected individual winner</span><span class="rc-crow"><b class="rc-cn pv-iw"></b><i class="pv-iwt"></i></span></div>
     </div>
     <p class="pv-basis">{% if pv.edition %}No entries are posted, so the field is the teams that ran
-      <a href="/meet/xc/{{ pv.edition.meet_id }}{% if src %}?src=tfrrs{% endif %}">the last edition</a>
+      <a href="/meet/xc/{{ pv.edition.meet_id }}{% if src %}?src=2{% endif %}">the last edition</a>
       ({{ pv.edition.date|mdy }}), each with this season's top seven by rating.{% else %}No entries are posted and no earlier
       running of this meet is on file, so there is no field to project yet.{% endif %}
       {%- if pv.frozen %} This forecast was saved {{ pv.frozen.made_on|mdy }} and will not change before the meet;

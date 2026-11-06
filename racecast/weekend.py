@@ -80,7 +80,7 @@ def predictHref(m):
     source rides along: anet and tfrrs ids collide."""
     href = f"/predictions?meet_id={m['meet_id']}&sport={m['sport']}"
     if m["source"] == "tfrrs":
-        href += "&src=tfrrs"
+        href += "&src=2"
     return href
 
 

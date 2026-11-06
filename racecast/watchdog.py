@@ -156,7 +156,7 @@ def athleteHref(pid):
 
 def raceHref(sport, source, meet_id, div_id, event_id=None):
     """The race page, or the meet page when the division is not known."""
-    q = "?src=tfrrs" if source == "tfrrs" else ""
+    q = "?src=2" if source == "tfrrs" else ""
     if meet_id is None:
         return None
     if sport == "XC":

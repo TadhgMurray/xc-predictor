@@ -261,6 +261,37 @@ def _xc_distance_sql(r="r"):
 
 # Creates the app; __name__ tells Flask where "here" is
 app = Flask(__name__)
+
+
+# ★ NO FEED NAME IN A URL (owner, 2026-11-06: "nothing on the site should say
+#   athletic net or tfrrs"). Links name the feed of a meet id as ?src=1 /
+#   ?src=2; every route still reads 'anet' / 'tfrrs', so the request is
+#   translated here, once, before any of them sees it. An old link with the
+#   names keeps working.
+PUBLIC_SRC = {"1": "anet", "2": "tfrrs"}
+
+
+class _PublicSrc:
+    def __init__(self, wsgi):
+        self.wsgi = wsgi
+
+    def __call__(self, environ, start_response):
+        qs = environ.get("QUERY_STRING") or ""
+        if "src=" in qs:
+            environ["QUERY_STRING"] = publicSrcQuery(qs)
+        return self.wsgi(environ, start_response)
+
+
+def publicSrcQuery(qs):
+    """'meet_id=5&src=2' -> 'meet_id=5&src=tfrrs'. Pure."""
+    parts = qs.split("&")
+    for i, part in enumerate(parts):
+        if part.startswith("src=") and part[4:] in PUBLIC_SRC:
+            parts[i] = "src=" + PUBLIC_SRC[part[4:]]
+    return "&".join(parts)
+
+
+app.wsgi_app = _PublicSrc(app.wsgi_app)
 # ! A CAP ON THE REQUEST BODY (sweep 2026-10-10). Werkzeug parsed a whole
 #   multipart upload before accounts' 8 MB photo check ran; the largest
 #   thing anyone posts is that photo.
@@ -3770,11 +3801,11 @@ def _gradeNote(shown, pool, verdict):
         return None
     if verdict and verdict.get("method") == "pinned" and verdict.get("grade") \
             and str(verdict["grade"]).strip() != str(shown).strip():
-        return (f"athletic.net lists grade {shown}; it has been corrected to "
+        return (f"The meet results list grade {shown}; it has been corrected to "
                 f"grade {verdict['grade']}, which our ratings and rankings use.")
     pool_level = str(pool or "").split("|")[0].split("_")[0]
     if pool_level in _SCHOOL_LEVEL_WORDS and pool_level != level:
-        return (f"athletic.net lists grade {shown}, but this season is rated "
+        return (f"The meet results list grade {shown}, but this season is rated "
                 f"and ranked with {_SCHOOL_LEVEL_WORDS[pool_level]}.")
     return None
 

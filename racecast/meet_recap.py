@@ -333,7 +333,7 @@ def groupMeets(rows):
 
 def recapHref(meet_id, source):
     href = f"/meet/recap/xc/{int(meet_id)}"
-    return href + "?src=tfrrs" if source == "tfrrs" else href
+    return href + "?src=2" if source == "tfrrs" else href
 
 
 def weekRecaps(cur, week, state=None):

@@ -198,7 +198,7 @@ def meet_preview(meet_id):
     if pv.get("lead_div") is not None:
         card += f"&div_id={pv['lead_div']}"
     if pv["source"] == "tfrrs":
-        card += "&src=tfrrs"
+        card += "&src=2"
     return render_template("meet_preview.html", pv=pv, card_query=card,
                            src=pv["source"] if pv["source"] == "tfrrs" else None)
 

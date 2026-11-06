@@ -103,10 +103,10 @@
     {{ ago((st.now.astimezone() - st.snapshot_at).total_seconds()) if st.snapshot_at.tzinfo else st.snapshot_at }} ago;
     {% else %}The three sections below have not been counted yet;
     {% endif %}<code>scripts/print_status.py</code> counts them again (a few minutes).</p>
-  <h2 id="identity">tfrrs rows tied to a person</h2>
+  <h2 id="identity">College-feed rows tied to a person</h2>
   {% if st.identity.error %}{{ err(st.identity) }}{% else %}
   <table><thead><tr><th>Sport</th><th>Season</th><th>Rows</th><th>Person</th>
-    <th>tfrrs id only</th><th>Normalized</th><th>Rated</th></tr></thead><tbody>
+    <th>Feed id only</th><th>Normalized</th><th>Rated</th></tr></thead><tbody>
   {% for r in st.identity %}
     {% set gap = r.rows - r.person %}
     <tr><td>{{ r.sport }}</td><td>{{ r.season }}</td><td>{{ n(r.rows) }}</td>
@@ -115,8 +115,8 @@
       <td>{{ n(r.normalized) }}</td><td>{{ n(r.rated) }}</td></tr>
   {% endfor %}
   </tbody></table>
-  <p class="meta">A row with only a tfrrs id has no athlete page name and no rating.
-    <code>scripts/link_tfrrs_rows.py --apply</code> (pipeline step 04a) closes the gap.</p>
+  <p class="meta">A row with only a feed id has no athlete page name and no rating.
+    Pipeline step 04a closes the gap.</p>
   {% endif %}
 
   {# ---------------------------------------------------------------- #}
@@ -195,9 +195,9 @@
     {% elif not st.watchdog %}{{ sumrow("watchdog", "Data watchdog", "", "not run") }}
     {% else %}{{ sumrow("watchdog", "Data watchdog", "st-warn" if st.watchdog.new else "st-ok", (st.watchdog.new ~ " new") if st.watchdog.new else (st.watchdog.open ~ " open")) }}{% endif %}
     {# the lowest share across the table's rows: the one worth a look #}
-    {% if st.identity.error %}{{ sumrow("identity", "tfrrs rows tied", "st-bad", "unread") }}
+    {% if st.identity.error %}{{ sumrow("identity", "college-feed rows tied", "st-bad", "unread") }}
     {% else %}{% set lo = namespace(v=100, seen=false) %}{% for r in st.identity if r.rows %}{% set lo.v = [lo.v, (100 * r.person / r.rows)|round|int]|min %}{% set lo.seen = true %}{% endfor %}
-    {{ sumrow("identity", "tfrrs rows tied", "st-warn" if lo.v < 90 else "st-ok", ("low " ~ lo.v ~ "%") if lo.seen else "none") }}{% endif %}
+    {{ sumrow("identity", "college-feed rows tied", "st-warn" if lo.v < 90 else "st-ok", ("low " ~ lo.v ~ "%") if lo.seen else "none") }}{% endif %}
     {% if st.rated.error %}{{ sumrow("rated", "Rated rows", "st-bad", "unread") }}
     {% else %}{% set lo = namespace(v=100, seen=false) %}{% for r in st.rated if r.rows %}{% set lo.v = [lo.v, (100 * r.rated / r.rows)|round|int]|min %}{% set lo.seen = true %}{% endfor %}
     {{ sumrow("rated", "Rated rows", "st-warn" if lo.v < 90 else "st-ok", ("low " ~ lo.v ~ "%") if lo.seen else "none") }}{% endif %}

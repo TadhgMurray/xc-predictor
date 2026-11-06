@@ -616,7 +616,7 @@ async function restoreFromQuery(p, names, snap) {
      Jersey meet that shares its number. Opaque, like the meet page's. */
   const alt = /^\d+$/.test(p.get("alt") || "") ? p.get("alt") : "";
   // the feed a Coming-up link names (2026-10-06): see parseMeetLink
-  const src = /^(anet|tfrrs)$/.test(p.get("src") || "") ? p.get("src") : "";
+  const src = /^(anet|tfrrs|1|2)$/.test(p.get("src") || "") ? p.get("src") : "";
   const first = divIds[0] || div;
 
   showWhen(p.get("mode") === "rerun_exact" ? "asran" : "thisyear");
@@ -634,7 +634,7 @@ async function restoreFromQuery(p, names, snap) {
     date = data.date || null;
   } catch (err) { /* the meet still opens, unnamed */ }
   const tail = (alt ? `?alt=${alt}` : "")
-    + (src ? `${alt ? "&" : "?"}src=${src}` : "");
+    + (src ? `${alt ? "&" : "?"}src=${srcPublic(src)}` : "");
   await chooseMeet({ link: (first ? raceLink(sport, id, first) : `/meet/${sport}/${id}`) + tail,
                      label: name || `Meet ${id}`, sub: date || "" });
 
@@ -1293,6 +1293,12 @@ function bindPicker(input, box, kind, render, onPick, keepValue, opts) {
  *   missing div_id as "all of them", which is the right default for
  *   re-running a whole meet.
  */
+/* ★ NO FEED NAME IN A URL (owner, 2026-11-06): a link names the feed as
+   src=1 / src=2; the server reads either spelling (app._PublicSrc). */
+function srcPublic(s) {
+  return ({ anet: "1", tfrrs: "2" })[s] || s;
+}
+
 function parseMeetLink(link) {
   /* ★ AND WHICH MEET OF THE ID (owner, 2026-10-05: the 2025 D3
      championships read "ran 2009-10-13 · Warinanco Park"). The anet and
@@ -1305,7 +1311,7 @@ function parseMeetLink(link) {
   /* ★ AND THE FEED A COMING-UP LINK NAMED (2026-10-06): a meet not yet run
      has no results to pick it by, so the server is told which feed posted
      it (app._feedPin). Only on links that carried it; null otherwise. */
-  const sm = /[?&]src=(anet|tfrrs)\b/.exec(link || "");
+  const sm = /[?&]src=(anet|tfrrs|1|2)\b/.exec(link || "");
   const src = sm ? sm[1] : null;
   const race = /^\/race\/(xc|tf)\/(\d+)\/(\d+)(?:\/(\d+))?/.exec(link || "");
   if (race) {

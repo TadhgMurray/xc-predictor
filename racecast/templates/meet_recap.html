@@ -1,6 +1,6 @@
 {# =====================================================================
   meet_recap.html -- how the stored forecast did (meet_recap.py, owner
-  2026-10-10): /meet/recap/xc/<id>[?src=tfrrs]
+  2026-10-10): /meet/recap/xc/<id>[?src=2]
 
   ★ THE PREVIEW'S SHAPE, AFTER THE GUN. Header: the meet, the day, and the
     meet's numbers (winners picked, the median miss, the top ten named);
@@ -24,8 +24,8 @@
    ~ ", against the results: "
    ~ ((s.picked ~ " of " ~ s.races ~ " winners picked, median miss " ~ ("%.1f"|format(s.median_pct)) ~ "%") if s and s.median_pct is not none else "race by race")
    ~ ", the biggest surprises and every runner's predicted and actual time." %}
-{% set meta_path = "/meet/recap/xc/" ~ rc.meet_id ~ ("?src=tfrrs" if src else "") %}
-{% set meta_image = site_origin ~ "/card/recap/xc/" ~ rc.meet_id ~ ".png" ~ ("?src=tfrrs" if src else "") %}
+{% set meta_path = "/meet/recap/xc/" ~ rc.meet_id ~ ("?src=2" if src else "") %}
+{% set meta_image = site_origin ~ "/card/recap/xc/" ~ rc.meet_id ~ ".png" ~ ("?src=2" if src else "") %}
 {% set meta_image_alt = rc.name ~ ": winners picked, median miss and the top five against our forecast" %}
 {% set meta_crumbs = [("Recaps", "/recaps?week=" ~ rc.week), ("Recap", none)] %}
 {% include "_meta.html" %}
@@ -63,7 +63,7 @@
     </div>
     {% endif %}
     <p class="pv-basis">This is the forecast we published before the meet, saved {{ rc.made_on|mdy }} and not changed
-      after{% if rc.edition %}: the field was the teams at <a href="/meet/xc/{{ rc.edition.meet_id }}{% if src %}?src=tfrrs{% endif %}">the last edition</a>
+      after{% if rc.edition %}: the field was the teams at <a href="/meet/xc/{{ rc.edition.meet_id }}{% if src %}?src=2{% endif %}">the last edition</a>
       ({{ rc.edition.date|mdy }}), each with that week's top seven by rating{% endif %}. Each race below is that
       forecast against the posted results.{% if not rc.n_scored %} No results are posted for these races yet.{% endif %}</p>
   </div>

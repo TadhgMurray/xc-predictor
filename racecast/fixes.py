@@ -82,14 +82,14 @@ NOTE_MAX = 1000
 MISSING_SUPPORT = {
     "grade_class": ("That class year implies no school grade (1-12) in that season, and a "
                     "college class needs the word (FR/SO/JR/SR): recorded only."),
-    "missing_other": ("Only athletic.net and tfrrs meets can be queued for the scrape; for any "
-                      "other site the results come in as an upload (/account/uploads)."),
+    "missing_other": ("Only meets on the results sites we read can be queued for the scrape; "
+                      "anything else comes in as an upload (/account/uploads)."),
 }
 
 # What Approve applies, per kind, for the card and the side table.
 APPLIES = {
     "same_person": "link_profile_school (profile_school_merge, redirect)",
-    "missing": "meet_queue, for athletic.net and tfrrs meets",
+    "missing": "meet_queue, for a meet on a results site we read",
     "grade": "grade_pin (grade_sanity honours it every run)",
     "school": "school_pin (the boards and pages follow it every run)",
     "not_mine": "result_detach (the row moves to a new person now; 04a3 keeps it there)",
