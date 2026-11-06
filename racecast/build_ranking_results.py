@@ -3587,7 +3587,9 @@ def main():
                     cur.execute("UPDATE athlete_season SET "
                                 + ", ".join(f'"{c}" = NULL' for c in _UNIT_COLS))
                     print(f"    cleared {cur.rowcount:,} rows")
-                conn.commit()
+                # ! ONE TRANSACTION: the clear commits with the stamping (or
+                #   rolls back with it), so no page reads a board with every
+                #   conference blank in between
                 _stampSeasonUnits(conn, "athlete_season")
                 analyze(conn, "athlete_season")
             print("  restamped. The performance board's rows carry the old units "

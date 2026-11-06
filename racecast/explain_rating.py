@@ -469,11 +469,12 @@ def buildChain(t):
     else:
         add("weather", "Weather", w, _weatherText(w, wd, sport), detail=wd)
     if drift is not None:
-        add("refit", "Since normalised", drift,
-            f"This result's stored time was normalised before the latest refit "
-            f"of the weather or distance model: it still carries "
-            f"{_p(w_stored, 2)} where today's model gives {_p(w_live, 2)}. "
-            f"The difference stays in the rating until the next backfill.")
+        # plain words (owner, 2026-11-06: "what is since normalized idk")
+        add("refit", "Model update pending", drift,
+            f"This race was rated with an earlier version of the weather and "
+            f"distance model, which adjusted it by {_p(w_stored, 2)}; today's "
+            f"model adjusts it by {_p(w_live, 2)}. The rating keeps the earlier "
+            f"number until the race is re-rated at the next backfill.")
 
     # --- course --------------------------------------------------------- #
     d = t.get("difficulty")

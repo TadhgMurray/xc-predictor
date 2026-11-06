@@ -1637,17 +1637,27 @@ bgstep 10f2_projection "$PY" -u racecast/build_recruit_projection.py
 if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then _GAP_FLAGS=""; else _GAP_FLAGS="--emit"; fi
 stepsN 10a_board_sanity "$PY -u scripts/board_sanity.py --top ${XCP_SANITY_TOP:-60}" \
        10b0_tfrrs_link "$PY -u scripts/link_tfrrs_to_anet.py --write" \
-       10d_school_units "$PY -u racecast/build_school_units.py" \
-       10g_season_ranks "$PY -u racecast/build_season_ranks.py"
+       10d_school_units "$PY -u racecast/build_school_units.py"
+# ★ THE BOARDS TAKE TONIGHT'S UNITS, NOT LAST RUN'S (owner, 2026-11-06:
+#   "still see pac-12 things" -- Oregon and Washington as a PAC-12 of two
+#   after school_unit had them in the Big Ten). Step 10 stamps every season
+#   row's conference / league from school_unit, and 10d rebuilds school_unit
+#   AFTER it (it reads the boards), so a units fix reached the boards one run
+#   late. The restamp re-reads the new school_unit onto athlete_season
+#   before anything that reads those columns: 10g's conference ranks, 11's
+#   team boards (the conferences board), 10f's recruiting.
+step 10d2_restamp_units "$PY" -u racecast/build_ranking_results.py --stage restamp
 stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
        10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
        10e_meet_units "$PY -u racecast/build_meet_units.py" \
-       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py"
+       10g_season_ranks "$PY -u racecast/build_season_ranks.py"
 # recruiting (282) reads school_identity (10b) and school_unit (10d); the
 # teams read school_identity. "Runners like you" (10f3) reads college_recruit
-# (10f) and holds a transaction, so it stays in line before 11b.
+# (10f) and holds a transaction, so it stays in line before 11b. 10g2 reads
+# 10g's ranks.
 stepsN 10f_recruits "$PY -u racecast/build_recruiting.py" \
-       11_teams "$PY -u racecast/build_team_season.py"
+       11_teams "$PY -u racecast/build_team_season.py" \
+       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py"
 step 10f3_comps       "$PY" -u racecast/build_comps.py
 # ★ THE NCAA CHAMPIONSHIPS PROJECTION (2026-10-10): the regionals, the
 #   at-large selection and nationals, simulated for D1/D2/D3 men and women,
