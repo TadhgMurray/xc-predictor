@@ -138,13 +138,21 @@ def main(argv=None):
                 print("DRY RUN -- --write moves them")
                 conn.rollback()
                 return 0
-            moved = 0
+            moved, cleared = 0, []
             for pid, move, rids, why in found:
                 to = None
                 for rid in rids:
                     got = PP.detach(cur, "XC", rid, pid, actor="gender_split", to_person=to)
                     to = to or got
-                    moved += 1 if got else 0
+                    if got:
+                        moved += 1
+                        cleared.append(rid)
+            # ! PRICED AS THE OTHER GENDER: the moved rows were normalised and
+            #   rated in this person's pool; cleared, the nightly's 05 (new
+            #   rows: no normalized_time) and 09b price them on the new page
+            if cleared:
+                cur.execute("UPDATE results SET normalized_time = NULL, speed_rating = NULL "
+                            "WHERE result_id = ANY(%s)", (cleared,))
             conn.commit()
             print(f"[gender split] written: {moved:,} rows moved off {len(found):,} pages")
     return 0
