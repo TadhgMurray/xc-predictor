@@ -21,6 +21,10 @@ WorkingDirectory=$ROOT
 EnvironmentFile=/etc/xc-predictor.env
 ExecStart=$PY -u $ROOT/scripts/kailo_compare.py --record
 ExecStart=$PY -u $ROOT/scripts/kailo_ratings.py --snapshot
+# Kailo's meet simulator file, kept before the races it prices
+# (scripts/kailo_sim.py --compare scores it; owner, 2026-11-06: NESCAC had
+# no snapshot -- this line was never added). A failure here keeps the rest.
+ExecStart=-$PY -u $ROOT/scripts/kailo_sim.py --snapshot
 Nice=10
 UNIT
 cat > /etc/systemd/system/xcp-kailo-record.timer <<UNIT
