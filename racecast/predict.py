@@ -4237,7 +4237,7 @@ def _fieldGender(cur, person_ids, sport):
     if not ids:
         return None
     cur.execute("""
-        SELECT upper(right(s.pool, 1)) AS g, count(*) AS n
+        SELECT upper(right(split_part(s.pool, '|', 1), 1)) AS g, count(*) AS n
         FROM   athlete_season s
         WHERE  s.person_id = ANY(%(ids)s)
           AND  s.sport = %(sport)s
@@ -6007,7 +6007,7 @@ def _squadsForYear(cur, schools, sport, year, exclude_terminal=False,
                    if active_year is not None else "")
     # ★ A SCHOOL IS TWO TEAMS. Without this the boys squad and the girls squad
     #   come back as one list and the top seven of it is a mixed team.
-    gender_clause = ("AND upper(right(s.pool, 1)) = %(gender)s "
+    gender_clause = ("AND upper(right(split_part(s.pool, '|', 1), 1)) = %(gender)s "
                      + _pgGenderClause(cur, "s.person_id")
                      if gender in ("M", "F") else "")
     # ★ AND A NAME IS NOT A SCHOOL. Same split the pool already carries.

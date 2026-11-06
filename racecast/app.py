@@ -2007,7 +2007,8 @@ def buildRankLine(cur, person_id, season):
                           AND  t.sport  = %(sport)s
                           AND  t.year   = %(year)s
                           AND  t.mean_rating > %(mine)s
-                          AND  right(t.pool, 2) = right(%(pool)s, 2)
+                          AND  right(split_part(t.pool, '|', 1), 2)
+                             = right(split_part(%(pool)s, '|', 1), 2)
                     """, {"school": school, "sport": sport,
                           "year": season["year"], "pool": season["pool"],
                           "mine": season["mean_rating"]})

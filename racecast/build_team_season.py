@@ -519,7 +519,7 @@ _RETURNERS_SQL = """
       AND  s.state = ANY(%(states)s)
       AND  s.year = %(prev)s
       AND  s.sport = %(sport)s
-      AND  upper(right(s.pool, 1)) = %(gender)s
+      AND  upper(right(split_part(s.pool, '|', 1), 1)) = %(gender)s
       AND  s.school = ANY(%(carrying)s)
       {graduated}
       {transferred}

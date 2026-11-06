@@ -319,4 +319,4 @@ def test_the_b_team_racing_does_not_close_the_a_teams_window():
     assert got == {"NYU", "Idle"}, got
     assert cur.params["top_n"] == roster.VARSITY_N == 7
     assert cur.params["prev"] == LIVE - 1
-    assert "upper(right(s.pool, 1)) = %(gender)s" in cur.sql
+    assert "upper(right(split_part(s.pool, '|', 1), 1)) = %(gender)s" in cur.sql
