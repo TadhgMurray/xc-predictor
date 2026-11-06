@@ -319,6 +319,7 @@ DEFAULT_LIMIT = 50
 # cannot leave it short. Same reasoning as panels.py's COLLECT_N=250 for
 # TOP_N=25, scaled to paging.
 CANDIDATE_FACTOR = 40
+PR_FIRST_FACTOR = 4      # the PR board's first, smaller try (getPrRankings)
 
 
 # ------------------------------------------------------------------ #
@@ -1651,7 +1652,7 @@ def getPrRankings(cur, f):
             WHERE  {cand_where} {where}
             ORDER  BY {cand_order}
             LIMIT  %(cand)s"""
-    cur.execute(f"""
+    sql = f"""
         WITH RECURSIVE candidates AS ({candidates}
         ),
         deduped AS (
@@ -1681,7 +1682,23 @@ def getPrRankings(cur, f):
                p.meet_id, p.div_id, p.event_id,
                COALESCE(a.name, 'Unknown')          AS name
         {pageThenName("p", "best p", "p.person_rn = 1", order)}
-    """, params)
+    """
+    # ★ A SMALL CANDIDATE SET FIRST, ON THE DEFAULT ORDER (2026-11-06: the
+    #   live plan read ~10k pages for 2,000 candidates, which held 1,061
+    #   athletes for a page of 50). The candidates are the fastest rows, so
+    #   the athletes among any N of them are the N-row prefix of the whole
+    #   fastest-first list of athletes: when that prefix fills the page, the
+    #   page is exactly the one the full set gives. When it does not (deep
+    #   offsets, a pool of many-race athletes), the full CANDIDATE_FACTOR
+    #   set runs, as before. Only for the clock ordered fastest first --
+    #   every other sort re-orders the candidates, so it keeps the full set.
+    if (not is_field and f.get("sort") == "time" and f.get("dir") == "ASC"
+            and PR_FIRST_FACTOR < CANDIDATE_FACTOR):
+        cur.execute(sql, dict(params, cand=(f["limit"] + f["offset"]) * PR_FIRST_FACTOR))
+        rows = cur.fetchall()
+        if len(rows) >= f["limit"]:
+            return rows
+    cur.execute(sql, params)
     return cur.fetchall()
 
 

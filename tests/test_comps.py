@@ -41,6 +41,8 @@ class _Cur:
             self.rows = [self.subject] if self.subject else []
         elif "recruit_projection" in sql:
             self.rows = [self.proj] if self.proj else []
+        elif "unnest(" in sql:            # _nameRows: the examples' names
+            self.rows = [{"person_id": pid, "name": f"Runner {pid}"} for pid in p[0]]
         else:
             self.rows = self.comps
 

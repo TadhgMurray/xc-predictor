@@ -47,6 +47,7 @@
 #   results is on (meet_id, source), never meet_id alone.
 import re
 import threading
+import time
 
 import ttlcache
 import projections as P
@@ -799,10 +800,25 @@ def marksFor(cur, state):
             print(f"cuts.marksFor {state}: {type(exc).__name__}: {exc}",
                   flush=True)
             return _empty(state, f"{type(exc).__name__}")
-    val, stamp = ttlcache.get(
-        ("wit", state), compute, ttl=_TTL,
-        ttl_of=lambda v: 300.0 if v.get("error") else _TTL)
-    return dict(val, computed_at=stamp)
+    # ★ ONCE FOR THE BOX, NOT ONCE PER WORKER (2026-11-06, sharedcache.py):
+    #   24 workers each computed every state every 6 h -- ~55,000 s of
+    #   database time a week. The first worker computes and shares; the
+    #   others read its copy, and keep it in memory only for what is left of
+    #   its 6 h, so no state is ever older than it was before.
+    import sharedcache
+
+    def shared():
+        v, at = sharedcache.get(f"wit-{state}", compute, ttl=_TTL,
+                                keep=lambda v: not v.get("error"))
+        return dict(v, _shared_at=at)
+
+    def ttl_of(v):
+        if v.get("error"):
+            return 300.0
+        return max(60.0, _TTL - (time.time() - v.get("_shared_at", time.time())))
+    val, stamp = ttlcache.get(("wit", state), shared, ttl=_TTL, ttl_of=ttl_of)
+    val = dict(val)
+    return dict(val, computed_at=val.pop("_shared_at", stamp))
 
 
 def findDivision(data, gender, slug):
