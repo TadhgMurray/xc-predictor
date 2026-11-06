@@ -70,8 +70,9 @@ API = "https://kailo.fit/api/v1/rankings"
 # land in -- or be overwritten in -- the live store)
 STORE = os.environ.get("XCP_KAILO_STORE") or os.path.join(_ROOT, "engine", "data", "kailo")
 _S = requests.Session()
-_S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
-                   "Accept": "application/json"})
+# no product name in the request (owner, 2026-11-06: Kailo agreed); requests'
+# own default User-Agent goes instead
+_S.headers.update({"Accept": "application/json"})
 # ★ EVERY RACE ALREADY RUN, NOT ONLY THE ONES KAILO SCORED (2026-10-21: of 9
 #   races, 2 "scored"; D3 and D2 pre-nationals read "results_unavailable" /
 #   "awaiting_results" for weeks). Their prediction for those was published

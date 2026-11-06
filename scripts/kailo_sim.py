@@ -143,7 +143,7 @@ def presetTimes(D, preset):
 def snapshot(store=STORE):
     """Save today's data file as <built>.json.gz, once per build."""
     import requests
-    r = requests.get(DATA, timeout=60, headers={"User-Agent": "racecast.co comparison"})
+    r = requests.get(DATA, timeout=60)      # no product name (owner, 2026-11-06: Kailo agreed)
     r.raise_for_status()
     D = r.json()
     built = str(D.get("built") or "")
