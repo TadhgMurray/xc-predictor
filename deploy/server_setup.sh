@@ -146,17 +146,20 @@ User=xcp
 WorkingDirectory=/srv/xc-predictor
 EnvironmentFile=/etc/xc-predictor.env
 # ! THE SITE'S DATABASE SETTINGS, NOT THE PIPELINE'S (scripts/database.py):
-#   a small pool per worker (8 workers x 6 = 48 of Postgres's 100), a
+#   a small pool per worker (24 workers x 3 = 72 of Postgres's 100, the rest
+#   for the pipeline -- 2026-11-06: eight workers, each one request at a
+#   time, were held by a few 30-60 s pages and everyone else queued; a
+#   worker is ~0.9 GB on a 125 GB box), a
 #   lock_timeout so a page never queues behind a pipeline lock, and a
 #   statement_timeout under gunicorn's --timeout so a killed worker's query
 #   dies with it instead of living on as an orphan (2026-09-07).
-Environment=XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=6
+Environment=XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=3
 Environment=XCP_DB_LOCK_TIMEOUT_MS=5000 XCP_DB_STATEMENT_TIMEOUT_MS=55000
 # ★ --limit-request-line 8190 (2026-10-05: "Request Line is too large (7962 >
 #   4094)" in the journal). nginx passes request lines up to its 8 KB
 #   header buffer; gunicorn's own default stopped at 4 KB, so a long
 #   filter URL got a bare 400 from the middle of the stack.
-ExecStart=/srv/venv/bin/gunicorn -w 8 --timeout 60 --limit-request-line 8190 \
+ExecStart=/srv/venv/bin/gunicorn -w 24 --timeout 60 --limit-request-line 8190 \
     --pythonpath /srv/xc-predictor/racecast,/srv/xc-predictor/scripts,/srv/xc-predictor/engine \
     -b 127.0.0.1:8000 app:app
 Restart=always
