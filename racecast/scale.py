@@ -233,9 +233,20 @@ def buildTable(pool, ends, factor, step=STEP, convert=cellTime):
     if not span:
         return out
     first, last = span
+    # ★ ONE RATING, ONE TIME, AT EVERY LEVEL (owner, 2026-11-06: "rating to
+    #   time still isn't equal across pools"). The public number is HS-
+    #   equivalent, and the HS-equivalent map is fitted at ONE distance, so
+    #   a level's own distance curve drifts from the HS one everywhere else:
+    #   a 140 read 14:46 for a 5K in high-school boys and 14:28 in middle
+    #   school. A row's times are the HS twin's (same sex) at that number, so
+    #   a 140 is the same 1600 and the same 5K on every sheet.
+    twin = ("hs_" + pool.rsplit("_", 1)[-1]) if factor and "_" in pool else None
     for hs in range(last, first - 1, -step):
         own = down(hs)
-        times = {k: convert(own, pool, d, s) for k, _lab, d, s in cols}
+        if twin:
+            times = {k: convert(float(hs), twin, d, s) for k, _lab, d, s in cols}
+        else:
+            times = {k: convert(own, pool, d, s) for k, _lab, d, s in cols}
         if not any(times.values()):
             continue
         out["rows"].append({"hs": hs, "own": round(own, 1), "times": times,

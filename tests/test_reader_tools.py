@@ -95,7 +95,7 @@ def test_each_level_gets_the_events_it_races():
     assert keys("college_f") == ["800", "1500", "mile", "5000", "xc6k"]
 
 
-def test_rows_are_hs_numbers_converted_on_the_own_scale():
+def test_rows_are_hs_numbers_converted_on_the_hs_twin():
     seen = []
 
     def conv(own, pool, d, sport):
@@ -108,8 +108,11 @@ def test_rows_are_hs_numbers_converted_on_the_own_scale():
     assert hs[0] == 195 and hs[-1] == 70 and hs == sorted(hs, reverse=True)
     assert all(b - a == -5 for a, b in zip(hs, hs[1:]))
     top = t["rows"][0]
-    # converted on the pool's own number, not the HS one
-    assert seen[0][0] == pytest.approx(195 / 1.2) and seen[0][1] == "college_m"
+    # owner, 2026-11-06 ("rating to time still isn't equal across pools"):
+    # the HS number through the HS twin's curve, so one rating is one time
+    # on every level's sheet
+    assert seen[0][0] == pytest.approx(195.0) and seen[0][1] == "hs_m"
+    assert top["own"] == pytest.approx(195 / 1.2, abs=0.1)
     assert set(top["times"]) == {"800", "1500", "mile", "5000", "xc8k"}
     # the landmarks name the row they fall in (140 x 1.2 = 168 -> the 165 row)
     marks = {r["hs"]: r["mark"] for r in t["rows"] if r["mark"]}
