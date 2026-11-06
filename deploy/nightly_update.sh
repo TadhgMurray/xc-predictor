@@ -350,6 +350,9 @@ fi
 #   races since the last full solve get a provisional race-day term read off
 #   their field and calibrated on the solve's own days (engine/provisional_day.py);
 #   written only when its backtest beats no term. Never blocks the boards.
+# ★ 09c3 (2026-11-06, owner: "Dalton Mortensen here?"): one race listed twice
+#   (tfrrs and athletic.net) is rated once -- a runner only one copy lists is
+#   priced off the other copy's field (engine/copy_align.py). Never blocks.
 # ★ 09c2 (2026-11-05, owner: "find all things where this can happen ... and
 #   nuke it"): a division whose whole field rated 5%+ above its runners' own
 #   seasons is pulled down to +2%, whatever the cause (engine/field_guard.py).
@@ -366,6 +369,7 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
    && { step 05b_stragglers "$PY" -u scripts/fix_stragglers.py --apply || true; } \
    && step 09b_fill_venue "$PY" -u engine/fill_ratings.py --venue --recheck-since "$(date -d '-150 days' +%F)" \
    && { step 09c_provisional_day "$PY" -u engine/provisional_day.py --write || true; } \
+   && { step 09c3_copy_align "$PY" -u engine/copy_align.py --write || true; } \
    && { [ "${XCP_FIELD_GUARD:-0}" = 0 ] || step 09c2_field_guard "$PY" -u engine/field_guard.py --write || true; } \
    && { [ "$PUBLISH" -eq 1 ] || { echo "  boards not rebuilt (--no-publish); the next night does it" | tee -a "$SUMMARY"; false; }; }; then
 
