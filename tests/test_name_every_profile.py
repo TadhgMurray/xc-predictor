@@ -70,8 +70,16 @@ def test_names_on_a_scratch_database():
 
 def test_the_boards_copy_reads_every_profile_too():
     dsn = os.environ.get("XCP_TWIN_TEST_DSN")
-    src = open(os.path.join(ROOT, "racecast", "rankings.py"), encoding="utf-8").read()
-    lat = re.search(r'_NAME_LATERAL = """(.*?)"""', src, re.S).group(1)
+    # the assembled SQL (rankings._NAME_LATERAL is built from pieces since
+    # 2026-11-06: the placeholder names are one list, rankings.UNKNOWN_NAMES)
+    os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+    for p in ("racecast", "scripts", "engine"):
+        if os.path.join(ROOT, p) not in sys.path:
+            sys.path.insert(0, os.path.join(ROOT, p))
+    import warnings
+    warnings.simplefilter("ignore", SyntaxWarning)
+    import rankings
+    lat = rankings._NAME_LATERAL
     assert "a.person_id = {alias}.person_id" in lat
     if not dsn:
         pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres")

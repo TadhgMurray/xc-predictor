@@ -127,6 +127,7 @@ JOIN  (SELECT r.result_id,
 {names}
 WHERE  s.race_date > %(lo)s
   AND  s.speed_rating - p.base >= %(min_jump)s
+  AND  a.name IS NOT NULL          -- no "Unknown" breakout (rankings.UNNAMED_OUT)
 """
 
 _INSERT_PRS = """
@@ -154,6 +155,7 @@ CROSS JOIN LATERAL (
          {flat_x}) h
 {names}
 WHERE  h.n_prev >= 1 AND s.time_seconds < h.prev_best
+  AND  a.name IS NOT NULL
 """
 
 _COLS = ["kind", "sport", "level", "year", "result_id", "person_id", "name",

@@ -348,6 +348,23 @@ CANDIDATE_FACTOR = 40
 #   what the athlete page already falls back to (app._exactField's
 #   row_name). Only consulted when the athletes lookup is empty; one
 #   indexed probe per row of a 50-row page.
+# ★ NO "UNKNOWN" ON A BOARD (owner, 2026-11-06, /athlete/1009420043: #2 on
+#   the college board as "Unknown", Snow College, one race). A placeholder in
+#   any of the three name sources is no name; a row with no name anywhere is
+#   left off the boards (UNNAMED_OUT), where nobody can tell who it is.
+UNKNOWN_NAMES = ("unknown", "unknown unknown", "n/a", "na", "tbd", "tba", "-", "none",
+                 "no name", "unknown athlete", "unknown runner", "athlete unknown")
+_UNKNOWN_SQL = "(" + ", ".join(f"'{n}'" for n in UNKNOWN_NAMES) + ")"
+
+
+def namedName(expr):
+    """SQL: expr, or NULL when it is blank or a placeholder."""
+    return (f"CASE WHEN lower(btrim(COALESCE({expr}, ''))) IN ('', "
+            + ", ".join(f"'{n}'" for n in UNKNOWN_NAMES) + f") THEN NULL ELSE btrim({expr}) END")
+
+
+UNNAMED_OUT = " AND a.name IS NOT NULL"
+
 _NAME_LATERAL = """
     LEFT JOIN LATERAL (
         SELECT COALESCE(
@@ -356,21 +373,21 @@ _NAME_LATERAL = """
                  --   rows say Matthew Meli): an athletes row a linker left with
                  --   the placeholder sorted first as a name, and the result
                  --   rows' real name below was never asked
-                 (SELECT NULLIF(NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), ''), 'Unknown')
+                 (SELECT """ + namedName("concat_ws(' ', a.first_name, a.last_name)") + """
                   FROM   athletes a
                   -- ⚠ every profile of the person, as the athlete page reads
                   --   them (2026-10-07): the profile whose id IS the person
                   --   id can be blank while another carries the name
                   WHERE  a.person_id = {alias}.person_id OR a.athlete_id = {alias}.person_id
-                  ORDER  BY (COALESCE(NULLIF(TRIM(concat_ws(' ', a.first_name, a.last_name)), 'Unknown'), '') <> '') DESC,
+                  ORDER  BY (""" + namedName("concat_ws(' ', a.first_name, a.last_name)") + """ IS NOT NULL) DESC,
                             (a.gender IN ('M', 'F')) DESC
                   LIMIT  1),
-                 (SELECT NULLIF(TRIM(x.athlete_name), '') FROM results x
+                 (SELECT btrim(x.athlete_name) FROM results x
                   WHERE  x.person_id = {alias}.person_id
-                    AND  NULLIF(TRIM(x.athlete_name), '') IS NOT NULL LIMIT 1),
-                 (SELECT NULLIF(TRIM(x.athlete_name), '') FROM results_tf x
+                    AND  lower(btrim(COALESCE(x.athlete_name, ''))) NOT IN ('', """ + _UNKNOWN_SQL[1:] + """ LIMIT 1),
+                 (SELECT btrim(x.athlete_name) FROM results_tf x
                   WHERE  x.person_id = {alias}.person_id
-                    AND  NULLIF(TRIM(x.athlete_name), '') IS NOT NULL LIMIT 1)
+                    AND  lower(btrim(COALESCE(x.athlete_name, ''))) NOT IN ('', """ + _UNKNOWN_SQL[1:] + """ LIMIT 1)
                ) AS name
     ) a ON TRUE
 """
@@ -1476,7 +1493,7 @@ def getPerformanceRankings(cur, f):
                COALESCE(a.name, 'Unknown')          AS name
         FROM   deduped p
         {nameLateral("p")}
-        WHERE  p.dup_rn = 1
+        WHERE  p.dup_rn = 1{UNNAMED_OUT}
         ORDER  BY {order}
         OFFSET %(offset)s
         LIMIT  %(limit)s
@@ -1587,7 +1604,7 @@ def getPrRankings(cur, f):
                COALESCE(a.name, 'Unknown')          AS name
         FROM   best p
         {nameLateral("p")}
-        WHERE  p.person_rn = 1
+        WHERE  p.person_rn = 1{UNNAMED_OUT}
         ORDER  BY {order}
         OFFSET %(offset)s
         LIMIT  %(limit)s
@@ -1636,7 +1653,7 @@ def getAbilityRankings(cur, f):
                COALESCE(a.name, 'Unknown')          AS name
         FROM   {source}
         {nameLateral("s")}
-        WHERE  {floorSql(f['min_races_explicit'])} {where}
+        WHERE  {floorSql(f['min_races_explicit'])} {where}{UNNAMED_OUT}
         ORDER  BY {order}
         OFFSET %(offset)s
         LIMIT  %(limit)s
@@ -1940,7 +1957,7 @@ def rankOf(cur, f, person_id):
                    row_number() OVER (ORDER BY {order}) AS rn
             FROM   {source}
             {nameLateral("s")}
-            WHERE  {floorSql(f['min_races_explicit'])} {where}
+            WHERE  {floorSql(f['min_races_explicit'])} {where}{UNNAMED_OUT}
         )
         SELECT min(rn) FROM ranked WHERE person_id = %(person_id)s
     """, params)
