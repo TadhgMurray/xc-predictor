@@ -67,6 +67,9 @@ for sub in ("racecast", "scripts", "engine", "model"):
         sys.path.insert(0, p)
 
 MIN_MATCHED = 8
+# race_rows._MEET_TYPES' scores as words, sorted so the table reads up
+_TYPE_WORD = {0: "0 jv", 1: "1 dual", 2: "2 invitational", 3: "3 other", 4: "4 conference",
+              5: "5 state / regional", 6: "6 national"}
 
 
 def _ranks(xs):
@@ -211,7 +214,7 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--from", dest="lo", required=True)
     ap.add_argument("--to", dest="hi", required=True)
-    ap.add_argument("--by", choices=("all", "week", "basis", "lead", "level"),
+    ap.add_argument("--by", choices=("all", "week", "basis", "lead", "level", "meettype"),
                     default="all")
     ap.add_argument("--rebuild", action="store_true",
                     help="also predict each frozen race again on today's ratings and score "
@@ -247,6 +250,21 @@ def main():
                           AND  meet_date < CURRENT_DATE
                         ORDER  BY meet_date, meet_id, div_id""", (a.lo, a.hi))
         stored = [MF._rowOut(r) for r in cur.fetchall()]
+        # ★ BY HOW MUCH A RACE IS RUN FOR (owner's NESCAC check, 2026-11-06:
+        #   the race model said the whole field 1.99% slow, the order inside
+        #   it 1.24%): race_rows.meetType on the meet's name -- dual,
+        #   invitational, conference, regional/state, national
+        mtype = {}
+        if a.by == "meettype":
+            from race_rows import meetType
+            for src, table in (("tfrrs", "meets_tfrrs"), ("anet", "meets")):
+                ids = sorted({int(f["meet_id"]) for f in stored if f["source"] == src})
+                if ids:
+                    cur.execute(f"SELECT meet_id, min(meet_name) AS n FROM {table} "
+                                f"WHERE meet_id = ANY(%s) GROUP BY meet_id", (ids,))
+                    for r in cur.fetchall():
+                        mtype[(src, int(r["meet_id"]))] = _TYPE_WORD.get(
+                            int(meetType(r["n"]) or 0), "?")
         other = {}
         if a.against:
             cur.execute(f"""SELECT source, meet_id, div_id, meet_date, made_on, state,
@@ -310,7 +328,8 @@ def main():
                                 f"{(fc.get('model_version') or '')[9:19]}".strip(),
                        "lead": f"{(day - made).days}d ahead",
                        "level": (statistics.mode(levels).split("|")[0]
-                                 if levels else "?")}[a.by]
+                                 if levels else "?"),
+                       "meettype": mtype.get((fc["source"], int(fc["meet_id"])), "?")}[a.by]
                 groups.setdefault(key, []).append(m)
                 if a.vs_rating:
                     fm, fr = ratingOrder(fc)
