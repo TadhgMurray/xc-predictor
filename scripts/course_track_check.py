@@ -54,7 +54,7 @@ _SQL = """
         LEFT   JOIN meets_tfrrs mt ON rr.result_id < 0 AND mt.meet_id = rr.meet_id AND mt.sport = 'XC'
         WHERE  rr.sport = 'XC' AND rr.speed_rating > 0 AND rr.race_date >= %(since)s::date
           AND  split_part(rr.pool, '|', 1) IN ('hs_m', 'hs_f', 'college_m', 'college_f'))
-    SELECT x.course, x.dist, x.pool, ln(x.s / t.mean_rating) AS gap
+    SELECT x.course, x.dist, x.pool, ln(x.s / t.mean_rating) AS gap, x.person_id
     FROM   x
     JOIN   LATERAL (
         SELECT tf.mean_rating FROM tf
@@ -66,10 +66,11 @@ _SQL = """
 
 
 def readings(rows, min_n):
-    """rows: [(course, dist, pool, gap)] -> ({pool: baseline}, [(pool,
-    course, dist, n, median gap, excess)]) with min_n+ races a course. Pure."""
+    """rows: [(course, dist, pool, gap[, person])] -> ({pool: baseline},
+    [(pool, course, dist, n, median gap, excess)]) with min_n+ races a
+    course. Pure."""
     by = defaultdict(list)
-    for course, dist, pool, gap in rows:
+    for course, dist, pool, gap, *_rest in rows:
         by[(pool, course, dist)].append(float(gap))
     meds = {k: (len(v), statistics.median(v)) for k, v in by.items() if len(v) >= min_n}
     base = {}
@@ -78,6 +79,50 @@ def readings(rows, min_n):
         base[pool] = statistics.median(vals)
     out = [(p, c, d, n, m, m - base[p]) for (p, c, d), (n, m) in meds.items()]
     return base, sorted(out, key=lambda r: -r[5])
+
+
+# ★ THE CONTROL (owner, 2026-11-06: "you haven't convinced me this is a
+#   problem, need control group"). A list of the most extreme courses always
+#   has someone at the top -- small samples, who ran track, who improved.
+#   Two tests say whether the spread is the courses or the noise:
+#     shuffled   the same races with their readings shuffled across the
+#                courses of a level: the spread noise alone makes
+#     split-half the runners split in two at random; a course's excess read
+#                on each half. A real course error repeats in both halves
+#                (correlation near 1); noise does not (near 0).
+def shuffled(rows, min_n, seed=1):
+    """The readings with gaps shuffled within each level. Pure (seeded)."""
+    import random
+    rnd = random.Random(seed)
+    by = defaultdict(list)
+    for r in rows:
+        by[r[2]].append(r[3])
+    for v in by.values():
+        rnd.shuffle(v)
+    it = {k: iter(v) for k, v in by.items()}
+    return readings([(r[0], r[1], r[2], next(it[r[2]])) for r in rows], min_n)
+
+
+def splitHalf(rows, min_n):
+    """(pearson r, n courses) of a course's excess on two random halves of
+    the runners (by person id). Pure."""
+    import zlib
+    halves = ([], [])
+    for r in rows:
+        pid = r[4] if len(r) > 4 else None
+        h = zlib.crc32(str(pid).encode()) & 1
+        halves[h].append(r)
+    a = {(p, c, d): e for p, c, d, _n, _m, e in readings(halves[0], min_n)[1]}
+    b = {(p, c, d): e for p, c, d, _n, _m, e in readings(halves[1], min_n)[1]}
+    keys = sorted(set(a) & set(b))
+    if len(keys) < 3:
+        return None, len(keys)
+    xs, ys = [a[k] for k in keys], [b[k] for k in keys]
+    mx, my = statistics.fmean(xs), statistics.fmean(ys)
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    sy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    return (sxy / (sx * sy) if sx and sy else None), len(keys)
 
 
 def main(argv=None):
@@ -118,6 +163,18 @@ def main(argv=None):
         q = statistics.quantiles(spread, n=10)
         print(f"\n  spread of courses around their level: 10th {100 * q[0]:+.1f}%, "
               f"90th {100 * q[-1]:+.1f}%")
+        _b, null = shuffled(rows, a.min)
+        nq = statistics.quantiles([r[5] for r in null], n=10) if len(null) > 10 else None
+        if nq:
+            print(f"  CONTROL, the same races shuffled across courses: 10th {100 * nq[0]:+.1f}%, "
+                  f"90th {100 * nq[-1]:+.1f}%  (what noise alone spreads)")
+            beyond = sum(1 for x in spread if x > nq[-1] * 2) / len(spread)
+            print(f"           courses past twice the shuffled 90th: {100 * beyond:.1f}% "
+                  f"(shuffled: {100 * sum(1 for r in null if r[5] > nq[-1] * 2) / len(null):.1f}%)")
+        r, n = splitHalf(rows, max(10, a.min // 2))
+        if r is not None:
+            print(f"  CONTROL, split-half: a course's excess on two random halves of its runners "
+                  f"correlates r = {r:.2f} over {n:,} courses (1 = the course, 0 = noise)")
     return 0
 
 

@@ -110,6 +110,29 @@ def runnersLikeYou(cur, person_id, sport):
         return None
 
 
+# ★ ONE NUMBER PER BOARD, NOT ONE SCAN PER PAGE (2026-11-06: the site at
+#   load 12, its busiest statement this min() as a parallel full scan of
+#   season_comps on every athlete page). It changes only when the pipeline
+#   rebuilds the table; kept per process for MIN_TTL seconds.
+_MIN_CACHE = {}
+MIN_TTL = 3600
+
+
+def _minRaces(cur, sport, pool, now=None):
+    import time
+    now = time.time() if now is None else now
+    hit = _MIN_CACHE.get((sport, pool))
+    if hit and now - hit[1] < MIN_TTL:
+        return hit[0]
+    cur.execute("SELECT min(n_races) AS n FROM season_comps WHERE sport = %s AND pool = %s",
+                (sport, pool))
+    row = cur.fetchone()
+    n = row.get("n") if isinstance(row, dict) else (row[0] if row else None)
+    val = max(int(n or 1), 1)
+    _MIN_CACHE[(sport, pool)] = (val, now)
+    return val
+
+
 def _runnersLikeYou(cur, person_id, sport):
     s = subjectSeason(cur, person_id, sport)
     if not s or s.get("grade") is None:
@@ -126,9 +149,7 @@ def _runnersLikeYou(cur, person_id, sport):
     gain = (float(s["rating"]) - float(s["prev_rating"])) if has_prev else None
     # the widest a comp's own error can make the band: one with the fewest
     # races the floor allows -- an outer bound for the index range only
-    cur.execute("SELECT min(n_races) AS n FROM season_comps WHERE sport = %s AND pool = %s",
-                (sport, s["pool"]))
-    min_n = max(int((cur.fetchone() or {}).get("n") or 1), 1)
+    min_n = _minRaces(cur, sport, s["pool"])
     outer = math.sqrt(var_s + sigma ** 2 / min_n)
     params = {"sport": sport, "pool": s["pool"], "g": s["grade"], "r": float(s["rating"]),
               "lo": float(s["rating"]) - outer, "hi": float(s["rating"]) + outer,

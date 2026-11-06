@@ -251,8 +251,8 @@ def mixVerdict(rows, listed, base, cands):
                                 "implied": imp, "snap": snap(imp, cands, (listed,))})
     # which attribute explains it
     # the fast side's own rows, for a split no attribute explains
-    out["fast_ids"] = sorted(int(r[3]) for r in rows
-                             if len(r) > 3 and r[3] is not None and r[0] - base < cut)
+    out["fast_ids"] = sorted({int(r[3]) for r in rows
+                              if len(r) > 3 and r[3] is not None and r[0] - base < cut})
     out["by"] = None
     for idx, attr in ((1, "gender"), (2, "level")):
         groups = {}
@@ -1054,6 +1054,15 @@ def plan(verdicts, rows):
                 refreshed.append((key, v, "confirmed"))
                 continue
             upserts.append((key, action, dist, v))
+    # ! ONE ROW PER KEY (2026-11-06: "ON CONFLICT DO UPDATE command cannot
+    #   affect row a second time" -- a runner listed twice in a division's
+    #   rows gave its part twice, and the whole write rolled back)
+    seen, uniq = set(), []
+    for u in upserts:
+        if u[0] not in seen:
+            seen.add(u[0])
+            uniq.append(u)
+    upserts = uniq
     for key, row in rows.items():
         if key in wanted or row["status"] != "active" or row.get("set_by") != "auto":
             if row["status"] == "held" and key not in wanted:

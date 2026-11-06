@@ -4,7 +4,8 @@
 #   sudo bash deploy/nginx_limits.sh            # install / update
 #   sudo bash deploy/nginx_limits.sh --remove   # take them out again
 #
-# ★ WHY (sweep, 2026-09-26). Eight gunicorn workers serve everything, and a
+# ★ WHY (sweep, 2026-09-26). A fixed set of gunicorn workers (24 since
+#   2026-11-06) serves everything, and a
 #   handful of requests to the expensive routes -- prediction POSTs, share
 #   card images, login links -- can hold every one of them. The app's own
 #   per-IP limits cover reports and login mail only, and live per worker.

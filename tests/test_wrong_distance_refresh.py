@@ -58,3 +58,17 @@ def test_the_breaker_writes_the_strongest_and_holds_the_rest():
     assert ret == [] and held == 2 + 3
     keep, ret, held = W.trimToBreaker(upserts, retires[:1], rows, cap=2)
     assert len(ret) == 1 and held == 2
+
+
+def test_a_key_is_written_once():
+    """2026-11-06: a runner twice in a division's rows gave its part twice and
+    the upsert failed ('cannot affect row a second time')."""
+    v = {"div": {"source": "anet", "meet_id": 1, "div_id": 2, "listed": 7000.0},
+         "action": "split", "kind": "combined", "proposed": None, "x": -0.3,
+         "confidence": "medium", "points": 3, "evidence": "e",
+         "mix": {"by": None, "fast_ids": [5, 5, 6],
+                 "clusters": [{"name": "fast", "snap": 5000.0, "implied": 5010.0},
+                              {"name": "slow", "snap": 7000.0, "implied": 7000.0}]}}
+    up, _ret, _ref = W.plan([v, v], {})
+    keys = [u[0] for u in up]
+    assert len(keys) == len(set(keys))
