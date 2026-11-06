@@ -430,13 +430,17 @@ def _predictRace(cur, model, person_ids, spec, cut, rated):
                       "pool": _targetPool(e.get("form_pool"), spec)})
     if len(field) < MIN_FIELD:
         return {}
+    lead = max(0, (day - datetime.date.today()).days)
     race = {"distance": float(spec["distance_meters"]), "day": day, "meet_name": name,
             "canonical_id": spec.get("canonical_id"),
             "division": _division(cur, spec),
             "source": spec.get("source"), "is_champ": champ, "cell": spec.get("venue_cell"),
-            "page_base": True, "weather": _weather(cur, spec),
+            # past the forecast's reach the weather is unknown, as the table
+            # has it (race_rows.weatherAt)
+            "page_base": True,
+            "weather": (_weather(cur, spec) if lead <= RR.WX_HORIZON_DAYS else None),
             # how far ahead this is asked: the forecast copies' lead_days
-            "lead_days": max(0, (day - datetime.date.today()).days)}
+            "lead_days": lead}
     out = predictField(model, field, race)
     if os.environ.get("XCP_RACE_INPUTS_DIR"):
         keepInputs(os.environ["XCP_RACE_INPUTS_DIR"], spec, race, field, model)

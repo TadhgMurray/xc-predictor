@@ -500,14 +500,52 @@ def raceDistance(dists):
 #   `lead` days before the gun -- the same finishers, the same result, only
 #   less known -- and lead_days says how far ahead it was asked. Each copy
 #   is its own field (its centring, its ranks) and never adds a result.
+# ★ AND FAR AHEAD (owner, 2026-11-06: "are you still gonna provide it
+#   training examples as such" -- races months out, a race set in next
+#   season). Copies at 90, 180 and 330 days, a smaller share each, so the
+#   trees have seen a forecast made a season ahead; before this the longest
+#   was 28 days and anything further read as 28.
+DEFAULT_LEADS = "7,28,90:0.1,180:0.1,330:0.1"
+
+
+def parseLeads(text, frac):
+    """"7,28,90:0.1" -> [(7, frac), (28, frac), (90, 0.1)]; [] when frac is
+    0. A lead without its own share takes `frac`. Pure."""
+    if not frac or frac <= 0:
+        return []
+    out = []
+    for item in (text or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        lead, _, share = item.partition(":")
+        out.append((int(lead), float(share) if share else float(frac)))
+    return out
+
+
 def leadsFor(key, leads, frac):
     """[0] and each lead in `leads` this race is copied at (crc32 of the key
-    and the lead, so a rerun copies the same races)."""
+    and the lead, so a rerun copies the same races). `leads` holds ints (at
+    `frac` each) or (lead, share) pairs."""
     out = [0]
-    for lead in leads:
-        if (zlib.crc32(repr((key, lead)).encode()) % 10000) < frac * 10000:
+    for item in leads:
+        lead, share = item if isinstance(item, tuple) else (item, frac)
+        if (zlib.crc32(repr((key, int(lead))).encode()) % 10000) < share * 10000:
             out.append(int(lead))
     return out
+
+
+# ★ NO WEATHER PAST THE FORECAST'S REACH (2026-11-06, the hindsight audit,
+#   docs/PLAN-MODEL-2026-10.md §9). A forecast copy made 28+ days out used
+#   to carry the day's ACTUAL weather -- known only on the day. Past
+#   WX_HORIZON_DAYS the page has no forecast either, so both the table and
+#   the page (race_model._predictRace) leave the weather unknown there.
+WX_HORIZON_DAYS = 16
+
+
+def weatherAt(weather, lead_days):
+    """The weather a forecast made `lead_days` out could know. Pure."""
+    return weather if (lead_days or 0) <= WX_HORIZON_DAYS else None
 
 
 def keepRace(key, day, val_from, train_frac):
@@ -771,6 +809,7 @@ def build(conn, a):
         day = datetime.date.fromisoformat(key[3])
         rmeta = dict(meta.get(key[:4]) or {}, day=day, source=key[2],
                      lead_days=key[4] if len(key) > 4 else 0)
+        rmeta["weather"] = weatherAt(rmeta.get("weather"), rmeta["lead_days"])
         field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
                   "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool,
                   "past": list(zip(ph, pt))}
@@ -817,14 +856,15 @@ def main():
     # ! NOT A SMOKE RUN: a race's runners are spread over every person id,
     #   so the first N people complete almost no race (2026-10-25: 0 rows).
     #   Narrow the dates instead (the docstring's smoke line).
-    ap.add_argument("--leads", default="7,28",
-                    help="forecast copies: history cut this many days before the race")
+    ap.add_argument("--leads", default=DEFAULT_LEADS,
+                    help="forecast copies: history cut this many days before the race; "
+                         "lead:share gives a lead its own share")
     ap.add_argument("--lead-frac", type=float, default=0.25,
                     help="share of races copied at each lead (0 = none)")
     ap.add_argument("--max-persons", type=int, default=None,
                     help="stop after N people (a code check only; completes few races)")
     a = ap.parse_args()
-    a.leads = [int(x) for x in a.leads.split(",") if x.strip()] if a.lead_frac > 0 else []
+    a.leads = parseLeads(a.leads, a.lead_frac)
 
     import numpy as np
     from database import getConn
