@@ -1063,6 +1063,37 @@ def _loadRows(cur):
     return out
 
 
+def _strength(v):
+    """Sort key, strongest first: a downward pin (the overrating fix) before
+    anything else, then points, then the runners behind it."""
+    d = v.get("div") or {}
+    return (0 if v.get("direction") == "down" else 1, -(v.get("points") or 0),
+            -(d.get("n_ref") or 0))
+
+
+def trimToBreaker(upserts, retires, rows, cap=None):
+    """★ THE BREAKER HOLDS BACK, IT DOES NOT FREEZE (owner, 2026-11-06:
+    America East women and Lou Regions Splits, both judged "pin, high" and
+    neither ever in distance_pin). Over the cap the writer used to write
+    NOTHING and the step still passed -- so one big backlog stopped every
+    pin, run after run. Now: every change to a pin already active is kept,
+    the cap's worth of NEW pins are written strongest first, and retires
+    (which put a listed distance back, the direction that can overrate) are
+    all held when there are more than the cap. Returns (upserts, retires,
+    n held back). Pure."""
+    cap = MAX_CHANGES if cap is None else cap
+    def new(k):
+        return k not in rows or rows[k]["status"] != "active"
+    keep = [u for u in upserts if not new(u[0])]
+    adds = sorted((u for u in upserts if new(u[0])), key=lambda u: _strength(u[3]))
+    held = max(0, len(adds) - cap)
+    keep += adds[:cap]
+    if len(retires) > cap:
+        held += len(retires)
+        retires = []
+    return keep, retires, held
+
+
 def write(cur, verdicts, allow_many=False):
     """Apply plan() to distance_pin. Returns the counts, or None when the
     circuit breaker refused."""
@@ -1073,9 +1104,11 @@ def write(cur, verdicts, allow_many=False):
     print(f"[wrong_distance] writer: {len(upserts):,} to write ({adds:,} new), "
           f"{len(retires):,} to retire, {len(refreshed):,} kept", flush=True)
     if not allow_many and (adds > MAX_CHANGES or len(retires) > MAX_CHANGES):
+        upserts, retires, held_back = trimToBreaker(upserts, retires, rows)
         print(f"[wrong_distance] !! CIRCUIT BREAKER: more than {MAX_CHANGES} adds or retires "
-              f"in one run -- NOTHING WRITTEN. Read the list; --allow-many writes it.", flush=True)
-        return None
+              f"in one run -- writing the {MAX_CHANGES} strongest adds"
+              f"{'' if retires else ' and no retires'}; {held_back:,} held back for the next "
+              f"run (--allow-many writes them all)", flush=True)
     from psycopg2.extras import execute_values
     log, up_rows = [], []
     for key, action, dist, v in upserts:

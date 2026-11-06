@@ -39,3 +39,22 @@ def test_only_rows_the_nightly_renormalises_are_cleared():
     assert W.refreshSince(datetime.date(2026, 11, 5)) == "2025-08-15"
     assert W.refreshSince(datetime.date(2026, 3, 1)) == "2024-08-15"
     assert "r.date >= %(since)s" in W._REFRESH_SQL
+
+
+def test_the_breaker_writes_the_strongest_and_holds_the_rest():
+    """owner, 2026-11-06: America East and Lou Regions judged 'pin, high',
+    never written, because the breaker wrote nothing at all."""
+    def v(points, direction="down", n=20):
+        return {"points": points, "direction": direction, "div": {"n_ref": n}}
+    rows = {("anet", 9, 91, ""): _row("pin", 4000.0)}
+    upserts = [(("anet", 9, 91, ""), "pin", 3218.0, v(1)),          # a change: always kept
+               (("anet", 1, 11, ""), "pin", 5000.0, v(5, n=88)),    # America East
+               (("anet", 2, 21, ""), "novote", None, v(5, "up")),
+               (("anet", 3, 31, ""), "pin", 3218.0, v(2)),
+               (("anet", 4, 41, ""), "pin", 3218.0, v(5, n=28))]    # Lou Regions
+    retires = [(("anet", 8, 81, ""), "ran true")] * 3
+    keep, ret, held = W.trimToBreaker(upserts, retires, rows, cap=2)
+    assert [u[0][1] for u in keep] == [9, 1, 4]
+    assert ret == [] and held == 2 + 3
+    keep, ret, held = W.trimToBreaker(upserts, retires[:1], rows, cap=2)
+    assert len(ret) == 1 and held == 2
