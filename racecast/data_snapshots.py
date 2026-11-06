@@ -54,6 +54,21 @@ def ensure(cur):
     cur.execute(_DDL)
 
 
+AUTO_PREFIX = "Week of "
+
+
+def prune(cur, keep):
+    """Drop the weekly snapshots (label AUTO_PREFIX...) past the newest
+    `keep`; a snapshot taken by hand, with any other label, stays. -> n."""
+    ensure(cur)
+    cur.execute("""SELECT snap_id FROM data_snapshot WHERE label LIKE %s
+                   ORDER BY taken_at DESC, snap_id DESC OFFSET %s""", (AUTO_PREFIX + "%", keep))
+    ids = [r[0] for r in cur.fetchall()]
+    for t in ("data_snapshot_athlete", "data_snapshot_course", "data_snapshot"):
+        cur.execute(f"DELETE FROM {t} WHERE snap_id = ANY(%s)", (ids,))
+    return len(ids)
+
+
 def take(cur, label, sport, year):
     """Copy this season's ratings and every course difficulty into a new
     snapshot. -> (snap_id, n_athletes, n_courses)."""
@@ -143,6 +158,13 @@ def athletes_csv(snap_id):
     state = (request.args.get("state") or "").strip().upper()[:2] or None
     level = (request.args.get("level") or "").strip()
     level = level if level in LEVELS else None
+    # ★ ONE STATE AT A TIME (owner, 2026-11-06: "yes to both"): the whole
+    #   season in one file is what a scraper is after. The state is the
+    #   ATHLETE'S -- their school's (a college runner's campus), as the
+    #   boards file them -- not where the races were.
+    if not state or not state.isalpha():
+        return Response("Pick a state: /data/<id>/athletes.csv?state=WI (athletes whose team is "
+                        "in that state).\n", status=400, mimetype="text/plain")
     with getConn() as conn, conn.cursor() as cur:
         snap = _snapshot(cur, snap_id) if _exists(cur) else None
         if not snap:

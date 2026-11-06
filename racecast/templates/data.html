@@ -38,7 +38,7 @@
   <div class="rc-grid rc-grid-one"><div class="rc-mainc">
   {% if snaps %}
     <table class="rc-table data-tbl">
-      <thead><tr><th>Snapshot</th><th>Taken</th><th>Athletes</th><th>Courses</th><th>Download</th></tr></thead>
+      <thead><tr><th>Snapshot</th><th>Taken</th><th>Athletes</th><th>Courses</th><th>Course difficulties</th></tr></thead>
       <tbody>
       {% for s in snaps %}
         <tr>
@@ -46,17 +46,15 @@
           <td>{{ s.taken_at.strftime("%b %-d, %Y") }}</td>
           <td class="n">{{ "{:,}".format(s.n_athletes or 0) }}</td>
           <td class="n">{{ "{:,}".format(s.n_courses or 0) }}</td>
-          <td>
-            <a href="/data/{{ s.id }}/athletes.csv">All ratings</a>
-            · <a href="/data/{{ s.id }}/courses.csv">Courses</a>
-          </td>
+          <td><a href="/data/{{ s.id }}/courses.csv">Courses</a></td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
     <form class="data-filter" action="/data/{{ snaps[0].id }}/athletes.csv" method="get">
-      <p class="p2-foot">One state and level from the newest snapshot:
-        <label>State <input name="state" maxlength="2" size="3" placeholder="WI"></label>
+      <p class="p2-foot">Ratings from the newest snapshot, one state at a time (athletes whose
+        team is in that state, wherever they raced):
+        <label>State <input name="state" maxlength="2" size="3" placeholder="WI" required pattern="[A-Za-z]{2}"></label>
         <label>Level <select name="level"><option value="">All</option>
           {% for lv, words in levels %}<option value="{{ lv }}">{{ words }}</option>{% endfor %}
         </select></label>

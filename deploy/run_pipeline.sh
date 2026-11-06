@@ -1713,6 +1713,13 @@ step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 #   results; racecast/build_search_helpers.py.
 step 13c0_search_helpers "$PY" -u racecast/build_search_helpers.py
 step 13c_search_index "$PY" -u racecast/search_index.py
+# ★ THE WEEK'S FROZEN COPY (owner, 2026-11-06: "is this done in the pipeline?"):
+#   both sports' season ratings and the course difficulties as a dated
+#   snapshot on /data, the newest 8 weeks kept (data_snapshots.py). A full
+#   run only -- a --fast iteration is not the week's numbers.
+if [ "$FAST" -eq 0 ]; then
+  step 13c2_snapshot "$PY" -u scripts/take_snapshot.py --weekly --keep 8 || true
+fi
 # the sitemap for Google: every ranked athlete, school, course and meet
 step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
 # IndexNow: the URLs that changed, to Bing and friends (needs XCP_INDEXNOW_KEY)
