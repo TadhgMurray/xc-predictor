@@ -153,7 +153,7 @@ def test_the_rosters_read_the_targets_source(monkeypatch):
     """_teamRosters hands the target's source to every read of the meet."""
     got = []
     monkeypatch.setattr(P, "_exactField",
-                        lambda cur, m, d, s, source=None, event_id=None:
+                        lambda cur, m, d, s, source=None, event_id=None, **_kw:
                         got.append(("field", source)) or [])
     monkeypatch.setattr(P, "_meetState",
                         lambda cur, m, s, source=None:

@@ -3800,7 +3800,7 @@ def meetField(cur, meet_id, div_id, sport, season_year=None,
     if when == "asran":
         by_school = {}
         exact = _exactField(cur, meet_id, div_id, sport, source=source,
-                            event_id=event_id)
+                            event_id=event_id, started_only=True)
         states = _teamStates(cur, [dict(r) for r in exact],
                              _meetState(cur, meet_id, sport, source=source))
         for r in exact:
@@ -4733,7 +4733,7 @@ def _teamRosters(cur, schools, target, remove=frozenset(), add=frozenset()):
         #   meetField does (2026-10-06); "as it ran" stays the meet's own
         if mode == "rerun_exact":
             originals = _exactField(cur, int(target["meet_id"]), div, sport,
-                                    source=src, event_id=ev)
+                                    source=src, event_id=ev, started_only=True)
         else:
             originals, _basis = thisYearOriginals(
                 cur, int(target["meet_id"]), div, sport, source=src,
@@ -5190,7 +5190,8 @@ _NAME_LATERAL = """
 """
 
 
-def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
+def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None,
+                started_only=False):
     """Everyone who actually ran a meet: person, name, school -- and the
     grade and rating THEY HAD THEN.
 
@@ -5222,6 +5223,14 @@ def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None):
               [int(e) for e in (event_id if isinstance(event_id, (list, tuple,
                                                                   set))
                                 else [event_id])])
+    # ★ WHO WENT TO THE LINE (owner, 2026-11-06: "for predictions in the past
+    #   if someone DNSs we probably shouldn't let them run"). started_only
+    #   leaves out a row that says DNS / SCR / WD, and an old row with no
+    #   status and no time; a DNF started, and stays (result_status.kind).
+    if started_only and sport == "XC":
+        div_clause += (" AND COALESCE(upper(btrim(r.status)), '') NOT IN ('DNS', 'SCR', 'WD')"
+                       " AND NOT (NULLIF(btrim(r.status), '') IS NULL"
+                       " AND (r.time_seconds IS NULL OR r.time_seconds >= 999999))")
     if sport != "XC":
         div_clause += (" AND COALESCE(r.is_field, 0) = 0"
                        " AND COALESCE(r.is_relay, 0) = 0")
