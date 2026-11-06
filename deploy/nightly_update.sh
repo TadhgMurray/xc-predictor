@@ -401,6 +401,16 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
         step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py \
           && step 11_teams "$PY" -u racecast/build_team_season.py
         step 13c_search_index "$PY" -u racecast/search_index.py
+        # ★ the ability board's Events presets over tonight's boards
+        #   (build_season_events.py); until it finishes that board runs live
+        if [ "${XCP_SEASON_EV:-1}" != "0" ]; then
+          step 10f4_season_events "$PY" -u racecast/build_season_events.py || true
+        fi
+        # ★ tonight's swapped-in tables into memory before the visitors
+        #   (scripts/prewarm.py)
+        if [ "${XCP_PREWARM:-1}" != "0" ]; then
+          step 13z_prewarm "$PY" -u scripts/prewarm.py || true
+        fi
         # ★ every school name raced this season against the state a page would
         #   give it (owner, 2026-11-05: Georgetown TX, Notre Dame WI). Report
         #   only; FAILED in the summary means names to look at

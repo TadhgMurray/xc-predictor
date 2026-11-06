@@ -851,7 +851,63 @@ def eventRestricted(f):
     return any(f.get(k) is not None for k in _EVENT_KEYS)
 
 
-def _abilitySource(f, params, where=""):
+# ★ THE EVENTS PRESETS, PRECOMPUTED (owner, 2026-11-06: "build it"). The four
+#   windows the board offers (rankings.html's Events select) are built once
+#   per run into athlete_season_ev by build_season_events.py, with this
+#   module's own _abilitySource query over every pool, sport and year at the
+#   default scope. A board reads that table only when nothing else changes
+#   which RACES count (_evPreset) and only while the table was built from
+#   the live ranking_results (_evTableFresh); anything else runs live.
+EV_PRESETS = (800, 1500, 3000, 5000)
+_EV_FRESH = {"at": 0.0, "ok": False}
+_EV_FRESH_TTL = 60.0
+
+
+def _evPreset(f):
+    """The preset (metres) a board can read from athlete_season_ev, or None.
+    Every filter that picks RACES -- a state, a school, a grade, a unit, the
+    scope beyond the default, a dist_max -- changes the seasons themselves,
+    and those boards run live."""
+    d = f.get("dist_min")
+    if d is None or f.get("dist_max") is not None:
+        return None
+    try:
+        d = float(d)
+    except (TypeError, ValueError):
+        return None
+    if d not in tuple(float(p) for p in EV_PRESETS):
+        return None
+    if f.get("scope", "usa") != "usa":
+        return None
+    if any(f.get(k) for k in ("state", "school", "grade")):
+        return None
+    if any(f.get(k) for k in UNIT_FILTERS):
+        return None
+    return int(d)
+
+
+def _evTableFresh(now=None):
+    """athlete_season_ev exists and was built from the live ranking_results
+    (its comment names that table's oid). Asked once a minute per worker."""
+    import time as _t
+    now = _t.time() if now is None else now
+    if now - _EV_FRESH["at"] < _EV_FRESH_TTL:
+        return _EV_FRESH["ok"]
+    ok = False
+    try:
+        from database import getConn
+        with getConn() as conn, conn.cursor() as c:
+            c.execute("""SELECT obj_description(to_regclass('athlete_season_ev'), 'pg_class'),
+                                'ranking_results'::regclass::oid""")
+            desc, oid = c.fetchone()
+            ok = desc is not None and desc == f"rr_oid={int(oid)}"
+    except Exception as exc:                            # noqa: BLE001
+        print(f"athlete_season_ev check: {type(exc).__name__}: {exc}", flush=True)
+    _EV_FRESH.update(at=now, ok=ok)
+    return ok
+
+
+def _abilitySource(f, params, where="", precomputed=False):
     """The FROM fragment for the ability board, aliased `s`.
 
     Unrestricted this is the prebuilt table. Restricted it is the same
@@ -869,6 +925,14 @@ def _abilitySource(f, params, where=""):
     """
     if not eventRestricted(f):
         return "athlete_season s"
+    # ! precomputed is the CALLER's word that `where` is _whereClauses(f) for
+    #   this board -- the team board passes its own inner filter (no scope),
+    #   whose seasons the table does not hold, and never sets it
+    if precomputed:
+        ev = _evPreset(f)
+        if ev is not None and _evTableFresh():
+            params["ev_dist"] = ev
+            return "(SELECT * FROM athlete_season_ev WHERE dist_min = %(ev_dist)s) s"
 
     dist = []
     if f.get("dist_min") is not None:
@@ -1794,7 +1858,7 @@ def getAbilityRankings(cur, f):
         "offset":    f["offset"],
     }
     where = _whereClauses(f, params, with_dates=False)
-    source = _abilitySource(f, params, where)
+    source = _abilitySource(f, params, where, precomputed=True)
     order = _orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
 
     cur.execute(f"""
@@ -1898,7 +1962,7 @@ def countOf(cur, f):
     as the board and rankOf, so the fraction is of the board it links to."""
     params = {"min_races": f["min_races"]}
     where = _whereClauses(f, params, with_dates=False)
-    source = _abilitySource(f, params, where)
+    source = _abilitySource(f, params, where, precomputed=True)
     cur.execute(f"""
         SELECT count(*)
         FROM   {source}
@@ -2026,7 +2090,7 @@ def _rankByCount(cur, f, person_id):
     """
     params = {"min_races": f["min_races"], "person_id": person_id}
     where = _whereClauses(f, params, with_dates=False)
-    source = _abilitySource(f, params, where)
+    source = _abilitySource(f, params, where, precomputed=True)
 
     cur.execute(f"""
         SELECT s.mean_rating
@@ -2101,7 +2165,7 @@ def rankOf(cur, f, person_id):
         "person_id": person_id,
     }
     where = _whereClauses(f, params, with_dates=False)
-    source = _abilitySource(f, params, where)
+    source = _abilitySource(f, params, where, precomputed=True)
     order = _orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
 
     cur.execute(f"""

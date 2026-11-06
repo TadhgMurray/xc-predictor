@@ -714,3 +714,118 @@ def test_the_window_median_is_percentile_cont_exactly(pg):
     row = cur.fetchone()
     assert row["groups"] > 500 and row["even"] > 100
     assert row["differ"] == 0
+
+
+# --------------------------------------------------------------- 13 --
+# The Events presets, precomputed (athlete_season_ev)
+
+def test_ev_preset_only_where_the_races_are_the_same():
+    import rankings as R
+    base = {"dist_min": 3000.0, "dist_max": None, "scope": "usa"}
+    assert R._evPreset(base) == 3000
+    assert R._evPreset(dict(base, year=[2026], pool="hs_m", sport="XC", gender="m")) == 3000
+    for extra in ({"dist_min": 2000.0}, {"dist_max": 9000.0}, {"scope": "all"},
+                  {"state": ["CA"]}, {"school": ["Calvin"]}, {"grade": ["11"]},
+                  {"conference": ["HCC"]}):
+        assert R._evPreset(dict(base, **extra)) is None, extra
+
+
+def test_ability_source_reads_the_table_only_when_asked_and_fresh():
+    import rankings as R
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    f = {"dist_min": 3000.0, "dist_max": None, "scope": "usa"}
+    R._EV_FRESH.update(at=1e18, ok=True)
+    try:
+        p = {}
+        assert "athlete_season_ev" in R._abilitySource(f, p, "", precomputed=True)
+        assert p["ev_dist"] == 3000
+        assert "athlete_season_ev" not in R._abilitySource(f, {}, "")    # the team board
+        R._EV_FRESH.update(ok=False)                                  # built from another rr
+        assert "athlete_season_ev" not in R._abilitySource(f, {}, "", precomputed=True)
+    finally:
+        R._EV_FRESH.update(at=0.0, ok=False)
+    src = _read("racecast", "rankings.py")
+    assert src.count("_abilitySource(f, params, where, precomputed=True)") == 4
+    assert "precomputed" not in _read("racecast", "teams.py")
+
+
+def test_the_events_table_is_built_after_the_boards_go_live():
+    sh = _read("deploy", "run_pipeline.sh")
+    assert sh.index("step 10_rankings_finish") < sh.index("bgstep 10f4_season_events") \
+        < sh.rindex("\nbgwait\n")
+    nu = _read("deploy", "nightly_update.sh")
+    assert nu.index("step 10_rankings_finish") < nu.index("step 10f4_season_events")
+    import build_season_events as B
+    assert tuple(B.R.EV_PRESETS) == (800, 1500, 3000, 5000)
+    html = _read("racecast", "templates", "rankings.html")
+    for d in (800, 1500, 3000, 5000):
+        assert f'<option value="{d}">' in html
+
+
+def test_events_boards_from_the_table_equal_the_live_ones(pg):
+    import rankings as R
+    import build_season_events as B
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE ranking_results AS
+        SELECT CASE WHEN g % 2 = 0 THEN 'hs_m' ELSE 'ms_m' END AS pool, 'XC'::text AS sport,
+               (ARRAY[3000, 4000, 5000, 1600])[1 + g % 4]::real AS distance,
+               (900 + g % 600)::real AS time_seconds, g::bigint AS result_id,
+               (g % 700)::bigint AS person_id,
+               (CASE WHEN g % 17 = 0 THEN 100 + g % 7
+                     ELSE 140 + ((g::bigint * 7919) % 400) / 10.0 END)::real AS speed_rating,
+               date '2024-09-01' + (g % 60) AS race_date, 2023 + (g / 7) % 2 AS year,
+               (ARRAY['WI','CA','TX','ON'])[1 + (g / 5) % 4] AS state,
+               'School ' || (g / 11) % 30 AS school, (9 + g % 4)::text AS grade
+        FROM generate_series(1, 20000) g""")
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint,"
+                " first_name text, last_name text, gender text)")
+    cur.execute("INSERT INTO athletes SELECT g, g, 'A', 'B' || g, 'M' FROM generate_series(0, 699) g")
+    cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
+    cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    sql, params = B.presetSql(800)
+    cur.execute(f"CREATE TEMP TABLE athlete_season_ev AS {sql} WITH NO DATA", params)
+    for d in R.EV_PRESETS:
+        for k in range(3):
+            sql, params = B.presetSql(d, k, 3)
+            cur.execute(f"INSERT INTO athlete_season_ev {sql}", params)
+    tcur = cur.connection.cursor()
+    try:
+        for b in ("pool=hs_m&sport=XC&dist_min=3000",
+                  "pool=hs_m&sport=XC&dist_min=3000&year=2024&sort=best",
+                  "pool=ms_m&sport=XC&dist_min=800&scale=hs&offset=50",
+                  "pool=hs_m&sport=XC&dist_min=1500&min_races=1&sort=races"):
+            f, err = R.parseFilters(MultiDict(parse_qsl("board=ability&limit=50&" + b)))
+            assert not err, err
+            got = {}
+            for mode in (True, False):
+                R._EV_FRESH.update(at=1e18, ok=mode)
+                rows = [dict(r) for r in R.getAbilityRankings(cur, dict(f))]
+                got[mode] = (rows, R.countOf(tcur, dict(f)),
+                             R.rankOf(tcur, dict(f), rows[3]["person_id"]))
+            assert got[True] == got[False], b
+            assert len(got[True][0]) == 50
+    finally:
+        R._EV_FRESH.update(at=0.0, ok=False)
+
+
+# --------------------------------------------------------------- 14 --
+# prewarm: the swapped-in tables into memory before the first visitor
+
+def test_prewarm_plan_takes_indexes_first_smallest_first_under_the_cap():
+    import prewarm as W
+    G = 1024 ** 3
+    rels = [("big_table", "r", 20 * G), ("idx_a", "i", 3 * G), ("idx_b", "i", 1 * G),
+            ("small_table", "r", 2 * G), ("idx_huge", "i", 30 * G)]
+    assert W.plan(rels, 7 * G) == [("idx_b", 1 * G), ("idx_a", 3 * G), ("small_table", 2 * G)]
+    assert W.plan(rels, 0) == []
+
+
+def test_prewarm_runs_after_the_last_swap_and_in_the_nightly():
+    sh = _read("deploy", "run_pipeline.sh")
+    assert sh.rindex("\nbgwait\n") < sh.index("step 19b_prewarm") < sh.rindex("\nsummarise")
+    assert sh.index("step 18_vacuum") < sh.index("step 19b_prewarm")
+    nu = _read("deploy", "nightly_update.sh")
+    assert nu.index("step 10f4_season_events") < nu.index("step 13z_prewarm")
