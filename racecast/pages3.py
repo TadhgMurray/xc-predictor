@@ -40,10 +40,9 @@ _FAIL_TTL = 300.0
 def _publicJson(payload):
     """jsonify with the pages' public cache header (app.PAGE_MAX_AGE /
     PAGE_S_MAXAGE): the edge holds what ttlcache computed."""
-    from app import PAGE_MAX_AGE, PAGE_S_MAXAGE
+    from app import PUBLIC_CACHE_CONTROL
     resp = jsonify(payload)
-    resp.headers["Cache-Control"] = (f"public, max-age={PAGE_MAX_AGE}, "
-                                     f"s-maxage={PAGE_S_MAXAGE}")
+    resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return resp
 
 

@@ -42,8 +42,11 @@ next:
        cd /srv/xc-predictor
        /srv/venv/bin/python -u racecast/search_index.py
        /srv/venv/bin/python -u racecast/build_sitemap.py
-  3. pages the CDN already holds expire on their own (XCP_PAGE_S_MAXAGE);
-     purge /athlete/{pid} in Cloudflare to make it immediate.
+  3. AFTER the restart, empty the CDN -- everything, since race, meet and
+     school pages name them too (a no-op until XCP_CF_ZONE_ID and
+     XCP_CF_API_TOKEN are set; then purge in the Cloudflare dashboard, or
+     wait XCP_PAGE_S_MAXAGE):
+       /srv/venv/bin/python scripts/edge_purge.py
 """
 
 

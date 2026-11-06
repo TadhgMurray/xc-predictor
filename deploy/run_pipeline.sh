@@ -1599,6 +1599,11 @@ stepsN 10_rankings_xc_a "$PY -u racecast/build_ranking_results.py --stage stream
        10_rankings_tf_a "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --until ${XCP_RANK_SEAM:-2018-01-01}" \
        10_rankings_tf_b "$PY -u racecast/build_ranking_results.py --stage stream --sport TF --since ${XCP_RANK_SEAM:-2018-01-01}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
+# ★ THE EDGE FORGETS THE OLD BOARDS (2026-11-06, scripts/edge_purge.py):
+#   the swap just put new ratings live; without a purge Cloudflare keeps
+#   serving last night's pages for PAGE_S_MAXAGE. A no-op until
+#   XCP_CF_ZONE_ID / XCP_CF_API_TOKEN are set; never fails the run.
+step 10_edge_purge "$PY" -u scripts/edge_purge.py || true
 # ★ THE RECRUIT PROJECTION STARTS AS SOON AS athlete_season EXISTS (2026-10-18;
 #   it was the run's last 71 idle minutes: 2h41m started after 11b). It
 #   reads only athlete_season, only the recruiting and comps PAGES read its
@@ -1848,9 +1853,29 @@ step 18_vacuum        "$PY" -u scripts/gentle_vacuum.py
 #   so a bad page FAILS tonight's run and mails, instead of turning up days
 #   later in a backup or a script. The repair is in its log.
 step 18b_integrity_boards "$PY" -u scripts/integrity_check.py --tables ranking_results,athlete_season
+# ★ AND THE RESULT TABLES THE PAGES COUNT PLACES IN (2026-11-06: /athlete
+#   55 s, /race/xc 63 s). The athlete page's places and every race page's
+#   feed list read idx_results_meet_src_cover / idx_results_tf_meet_ev_place
+#   INDEX-ONLY -- but only on heap pages the visibility map calls all-visible,
+#   and the go-live rewrites results (merge_column) or updates its ratings,
+#   which clears the map; nothing in the run vacuumed either table, so every
+#   competitor of every race was a heap read again until autovacuum came by.
+#   VACUUM skips pages already all-visible, so a night that changed little
+#   costs little. Same trickle as 18. XCP_VACUUM_RESULTS=0 skips.
+if [ "${XCP_VACUUM_RESULTS:-1}" != "0" ]; then
+  step 18c_vacuum_results "$PY" -u scripts/gentle_vacuum.py --table results --table results_tf || true
+fi
 
 # the background steps (10f2, 13j, 17d): collected last
 bgwait
+# ★ AND ONCE MORE AT THE END, after every step and background step that
+#   writes what pages read -- then again, detached, once the workers' own
+#   15-minute board copies (app._BOARD_API_TTL) have run out, so nothing
+#   refilled from an old worker copy outlives the run (edge_purge.py).
+step 19_edge_purge "$PY" -u scripts/edge_purge.py || true
+if [ "$DRY" -ne 1 ]; then
+  nohup "$PY" -u scripts/edge_purge.py --delay 960 >> "$LOGDIR/19_edge_purge_again.log" 2>&1 &
+fi
 
 # ---- summary -------------------------------------------------------- #
 summarise

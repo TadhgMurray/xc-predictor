@@ -831,6 +831,31 @@ _PRIVATE_PREFIXES = ("/api/", "/search", "/debug/", "/compare",
 # shorter max-age so a person reloading sees new numbers sooner than a crawler.
 PAGE_MAX_AGE = int(os.environ.get("XCP_PAGE_MAX_AGE", "300"))
 PAGE_S_MAXAGE = int(os.environ.get("XCP_PAGE_S_MAXAGE", "900"))
+# ★ AND WHAT THE EDGE MAY DO WHEN THE ORIGIN CANNOT ANSWER (2026-11-06: the
+#   sweep found boards and school pages answering 504 after 60 s while the
+#   edge held a good copy minutes old). stale-if-error lets Cloudflare serve
+#   that last good copy instead of an error page when gunicorn times out or
+#   the swap's maintenance 503 is up; in normal operation it changes
+#   nothing, and the 503 itself is still never stored (see _headers).
+#   stale-while-revalidate (off unless set) lets an expired copy answer at
+#   once while one request refreshes it -- worth turning on together with
+#   the go-live purge (scripts/edge_purge.py), which bounds how stale it
+#   can be. docs/PERF-2026-11-06.md.
+PAGE_STALE_IF_ERROR = int(os.environ.get("XCP_PAGE_STALE_IF_ERROR", "86400"))
+PAGE_SWR = int(os.environ.get("XCP_PAGE_SWR", "0"))
+
+
+def publicCacheControl():
+    """The one Cache-Control a public page, redirect or board API carries."""
+    cc = f"public, max-age={PAGE_MAX_AGE}, s-maxage={PAGE_S_MAXAGE}"
+    if PAGE_SWR > 0:
+        cc += f", stale-while-revalidate={PAGE_SWR}"
+    if PAGE_STALE_IF_ERROR > 0:
+        cc += f", stale-if-error={PAGE_STALE_IF_ERROR}"
+    return cc
+
+
+PUBLIC_CACHE_CONTROL = publicCacheControl()
 
 
 @app.after_request
@@ -872,9 +897,7 @@ def _headers(resp):
     elif (request.method in ("GET", "HEAD") and resp.status_code == 200
           and not any(request.path.startswith(p)
                       for p in _PRIVATE_PREFIXES)):
-        resp.headers.setdefault(
-            "Cache-Control",
-            f"public, max-age={PAGE_MAX_AGE}, s-maxage={PAGE_S_MAXAGE}")
+        resp.headers.setdefault("Cache-Control", PUBLIC_CACHE_CONTROL)
     else:
         resp.headers.setdefault("Cache-Control", "no-store")
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -2299,6 +2322,8 @@ def athlete(person_id):
                 """, (person_id,))
                 rating = cur.fetchone()
             races = get_races(cur, person_id)
+            # which race links still need ?r= (_stampFeedPins)
+            _stampFeedPins(cur, races)
             # For the HS-equivalent view: which pool each rated row belongs
             # to. Fetched here (the rows), consumed after dedupe (the stamp)
             # -- see pool_view.stampHsRatings.
@@ -2951,6 +2976,94 @@ def _dayJoins():
                ORDER  BY rde0.n_rows DESC NULLS LAST
                LIMIT  1) rde ON TRUE""")
     return xc, tf
+
+
+# ★★ ?r= ON AN ATHLETE PAGE'S RACE LINK ONLY WHERE IT PICKS THE FEED
+#    (2026-11-06: /race/xc 63 s; Cloudflare hit rate 15% -> 2%). Every race
+#    and XC meet link carried ?r=<result id>, so each race page lived at the
+#    edge once per finisher who linked to it -- a 300-runner race, 300 cold
+#    copies -- and every click on one ran the race page's feed lookup up to
+#    three times only to 302 back to the bare URL (_dropUselessPin). The pin
+#    does work exactly when the meet id is held by two feeds (the anet and
+#    tfrrs id spaces collide on ~15k XC meets): then the bare URL may serve
+#    the other feed's meet. For every other meet the bare URL serves this
+#    row's own feed, and the link is the bare URL plus #r<id> -- precisely
+#    where the 302 used to land, with no round trip.
+#  ! TF MEET LINKS KEEP ?r=: meet_tf reads it for the scroll anchor it
+#    renders (an events page names the row's event), which a fragment
+#    cannot do.
+#  ! UNKNOWN IS PINNED: a row with no feed, or a lookup that fails, keeps
+#    ?r= -- the old link, never a wrong meet.
+def _multiFeedMeets(cur, table, pairs):
+    """The meet ids among (meet_id, source) pairs that `table` also holds
+    under a DIFFERENT non-null source. Two index probes per pair on
+    idx_results_meet_src_cover / (meet_id, ...) indexes: `<` and `>` rather
+    than `<>`, which no btree can seek."""
+    pairs = sorted({(int(m), s) for m, s in pairs if m is not None and s})
+    if not pairs:
+        return set()
+    cur.execute(f"""
+        SELECT v.meet_id
+        FROM   unnest(%s::bigint[], %s::text[]) AS v(meet_id, source)
+        WHERE  EXISTS (SELECT 1 FROM {table} x
+                       WHERE x.meet_id = v.meet_id AND x.source < v.source)
+           OR  EXISTS (SELECT 1 FROM {table} x
+                       WHERE x.meet_id = v.meet_id AND x.source > v.source)
+    """, ([m for m, _ in pairs], [s for _, s in pairs]))
+    return {int(r["meet_id"] if isinstance(r, dict) else r[0])
+            for r in cur.fetchall()}
+
+
+_FEED_PROBE_INDEX = {}            # table -> (checked_at, has a (meet_id, source, ...) index)
+_FEED_PROBE_RECHECK_S = 600.0
+
+
+def _hasFeedProbeIndex(cur, table):
+    """Whether `table` has a valid, unconditional index leading (meet_id,
+    source) -- idx_results_meet_src_cover on results. Without one the probe
+    would read each meet's rows from the heap, the very cost the pins exist
+    to save, so the page keeps every ?r= instead. Asked once per worker per
+    ten minutes, so an index built later is picked up without a restart."""
+    import time as _t
+    hit = _FEED_PROBE_INDEX.get(table)
+    if hit and _t.time() - hit[0] < _FEED_PROBE_RECHECK_S:
+        return hit[1]
+    cur.execute(r"""
+        SELECT 1 FROM pg_index i JOIN pg_class t ON t.oid = i.indrelid
+        WHERE  t.relname = %s AND i.indisvalid AND i.indpred IS NULL
+          AND  pg_get_indexdef(i.indexrelid) ~* '\(\s*meet_id\s*,\s*source\s*[,)]'
+        LIMIT  1""", (table,))
+    has = cur.fetchone() is not None
+    _FEED_PROBE_INDEX[table] = (_t.time(), has)
+    return has
+
+
+def _stampFeedPins(cur, races):
+    """race["feed_pin"] = True where the race link needs ?r= (see above)."""
+    for r in races:
+        r["feed_pin"] = True
+    want = {"XC": [], "TF": []}
+    for r in races:
+        if r.get("meet_id") is not None and r.get("source") and r.get("sport") in want:
+            want[r["sport"]].append((r["meet_id"], r["source"]))
+    tables = {"XC": "results", "TF": "results_tf"}
+    try:
+        cur.execute("SAVEPOINT feed_pins")
+        multi = {sport: _multiFeedMeets(cur, tables[sport], pairs)
+                 for sport, pairs in want.items()
+                 if pairs and _hasFeedProbeIndex(cur, tables[sport])}
+        cur.execute("RELEASE SAVEPOINT feed_pins")
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"feed pins: {type(exc).__name__}: {exc}", flush=True)
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT feed_pins")
+        except Exception:                                     # noqa: BLE001
+            cur.connection.rollback()
+        return races
+    for r in races:
+        if r.get("meet_id") is not None and r.get("source") and r.get("sport") in multi:
+            r["feed_pin"] = int(r["meet_id"]) in multi[r["sport"]]
+    return races
 
 
 def get_races(cur, person_id):
@@ -5310,6 +5423,18 @@ def meet_sources(cur, table, meet_id):
     the census verified clean (the div_id<100 folklore holds for XC and is
     REVERSED for TF, which is why the column and not the folklore is used).
     """
+    # ★ ONCE PER REQUEST (2026-11-06: /race/xc 63 s on this statement). A
+    #   race view asks it up to three times -- the pick, the canonical's
+    #   bare pick, the ?r= redirect test -- for the same answer; the meet's
+    #   rows cannot change inside one request. Copies out, so a caller that
+    #   edits a row cannot change the next caller's list.
+    from flask import g, has_request_context
+    memo = None
+    if has_request_context():
+        memo = g.setdefault("_meet_sources", {})
+        hit = memo.get((table, meet_id))
+        if hit is not None:
+            return [dict(s) for s in hit]
     # ! source AS THE TIE-BREAK (2026-09-13): count alone is not an order,
     #   and the search index and sitemap store the ?alt= index this list
     #   defines (search_index.meetAltIndex ranks the same way)
@@ -5319,7 +5444,10 @@ def meet_sources(cur, table, meet_id):
         WHERE  meet_id = %(meet)s AND source IS NOT NULL
         GROUP  BY source ORDER BY count(*) DESC, source
     """, {"meet": meet_id})
-    return cur.fetchall()
+    rows = [dict(s) for s in cur.fetchall()]
+    if memo is not None:
+        memo[(table, meet_id)] = rows
+    return [dict(s) for s in rows]
 
 
 def pick_source(sources, alt):
@@ -5432,8 +5560,7 @@ def _dropUselessPin(rid):
     rest = [(k, v) for k, v in request.args.items(multi=True) if k != "r"]
     url = request.path + (("?" + urlencode(rest)) if rest else "") + f"#r{rid}"
     resp = redirect(url, code=302)
-    resp.headers["Cache-Control"] = (f"public, max-age={PAGE_MAX_AGE}, "
-                                     f"s-maxage={PAGE_S_MAXAGE}")
+    resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return resp
 
 
@@ -10627,10 +10754,13 @@ from season_floor import floorFor, floorLabel, poolWords, percentileWords, clock
 #    header alone (it caches by file extension); the owner adds a rule for
 #    these four paths -- see the sweep doc / commit message for its text.
 #    Without it, the browser and the worker layers still work.
-_BOARD_API_TTL = float(os.environ.get("XCP_BOARD_API_TTL", str(PAGE_S_MAXAGE)))
+# ! 900 s ITS OWN NUMBER, NOT PAGE_S_MAXAGE's (2026-11-06). The worker copy
+#   is not reached by an edge purge, so it must stay short even when the
+#   edge TTL is raised behind a go-live purge: scripts/edge_purge.py purges
+#   again once this has run out, and the edge refills from fresh workers.
+_BOARD_API_TTL = float(os.environ.get("XCP_BOARD_API_TTL", "900"))
 _BOARD_CACHE_MAX_BYTES = 512 * 1024
-_BOARD_CACHE_CONTROL = (f"public, max-age={PAGE_MAX_AGE}, "
-                        f"s-maxage={PAGE_S_MAXAGE}")
+_BOARD_CACHE_CONTROL = PUBLIC_CACHE_CONTROL
 
 
 class _UncachedBoard(Exception):
