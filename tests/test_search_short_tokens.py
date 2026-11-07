@@ -69,9 +69,11 @@ def test_the_same_question_is_answered_from_memory(monkeypatch):
     r = c.get("/search/api?q=jo")
     assert r.get_json()[0]["label"] == "Jo Smith" and len(calls) == 1
     assert c.get("/search/api?q=jo").get_json() == r.get_json() and len(calls) == 1
-    assert r.headers["Cache-Control"] == "private, max-age=300"
+    # public since 2026-11-07: the edge may answer the next person's "jo" too
+    assert r.headers["Cache-Control"] == A.PUBLIC_CACHE_CONTROL
     c.get("/search/api?q=jo&kind=meet")
     assert len(calls) == 2                              # a different question asks again
     monkeypatch.setattr(A, "SEARCH_CACHE_TTL", -1)
+    monkeypatch.setattr(A, "SEARCH_SHARED_TTL", -1)      # and the box's copy too
     c.get("/search/api?q=jo")
     assert len(calls) == 3                              # and a stale answer is not served
