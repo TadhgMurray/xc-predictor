@@ -64,18 +64,21 @@ def backupSpeedRatings(conn, force=False):
         for table, backup in _BACKUP.items():
             cur.execute("SELECT to_regclass(%s)", (backup,))
             exists = cur.fetchone()[0] is not None
+            # ★ NO count(*) FOR A LOG LINE (2026-11-07, owner-approved): a
+            #   kept backup's size is the catalog's estimate ("about"), and a
+            #   new one's is the CREATE TABLE AS's own row count, exact and free
             if exists and not force:
-                cur.execute(f"SELECT count(*) FROM {backup}")
+                from drop_old import approxRows, aboutRows
                 print(f"    {backup}: already exists "
-                      f"({cur.fetchone()[0]:,} rows) -- kept")
+                      f"({aboutRows(approxRows(cur, backup))}) -- kept")
                 continue
             cur.execute(f"DROP TABLE IF EXISTS {backup}")
             cur.execute(f"CREATE TABLE {backup} AS SELECT result_id, "
                         f"speed_rating FROM {table} "
                         f"WHERE speed_rating IS NOT NULL")
+            n = cur.rowcount
             cur.execute(f"CREATE INDEX ON {backup} (result_id)")
-            cur.execute(f"SELECT count(*) FROM {backup}")
-            print(f"    {backup}: {cur.fetchone()[0]:,} rows saved")
+            print(f"    {backup}: {n:,} rows saved")
     conn.commit()
 
 
