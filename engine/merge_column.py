@@ -330,20 +330,34 @@ def _buildNewTable(cur, table, staging, cap, column, key, val,
 # Purpose : NOT NULL, DEFAULTs, PRIMARY KEY -- the things CREATE TABLE AS drops.
 # PK first: ADD PRIMARY KEY sets NOT NULL on its columns, so re-issuing those is
 #   harmless but noisy. We skip them.
+# ★ EVERY NOT NULL IN ONE ALTER TABLE (2026-11-07, owner-approved). Each
+#   `ALTER COLUMN ... SET NOT NULL` scans the whole new heap to prove it, so
+#   N columns were N full scans of a 40-58 GB table; one ALTER TABLE with all
+#   N subcommands proves them in ONE scan. The catalog ends the same: the
+#   same columns NOT NULL, the same defaults (catalog-only, no scan).
+def _shapeSql(table, cap):
+    """The one ALTER TABLE for every NOT NULL (the PK's columns excepted:
+    ADD PRIMARY KEY set them) and every DEFAULT; None when there are none."""
+    pk = set(cap["pk"])
+    subs = [f"ALTER COLUMN {col} SET NOT NULL"
+            for col in cap["notnulls"] if col not in pk]
+    subs += [f"ALTER COLUMN {col} SET DEFAULT {expr}"
+             for col, expr in cap["defaults"]]
+    if not subs:
+        return None
+    return f"ALTER TABLE {table}_new " + ", ".join(subs)
+
+
 def _restoreShape(cur, table, cap):
     if cap["pk"]:
         cols = ", ".join(cap["pk"])
         _timed(cur, f"ALTER TABLE {table}_new ADD PRIMARY KEY ({cols})",
                f"PRIMARY KEY ({cols})")
-    pk = set(cap["pk"])
-    for col in cap["notnulls"]:
-        if col in pk:
-            continue
-        cur.execute(f"ALTER TABLE {table}_new ALTER COLUMN {col} SET NOT NULL")
+    sql = _shapeSql(table, cap)
+    if sql:
+        _timed(cur, sql, f"NOT NULL / DEFAULT on {table}_new (one statement)")
     if cap["notnulls"]:
         print(f"    restored NOT NULL on {len(cap['notnulls'])} columns")
-    for col, expr in cap["defaults"]:
-        cur.execute(f"ALTER TABLE {table}_new ALTER COLUMN {col} SET DEFAULT {expr}")
     if cap["defaults"]:
         print(f"    restored {len(cap['defaults'])} column defaults")
 
@@ -359,6 +373,93 @@ def _restoreIndexes(cur, table, cap):
                 f"{_dbSetting('max_parallel_maintenance_workers', 6)}")
     for name, ddl in cap["indexes"]:
         _timed(cur, ddl, f"index {name}_new")
+
+
+# ★ THE SECONDARY INDEXES, THREE AT A TIME (2026-11-07, owner-approved; the
+#   pattern is backfill_normalize._buildSecondaries'). One CREATE INDEX per
+#   pooled connection, each committed there -- which is why mergeColumn now
+#   COMMITS <table>_new (heap, primary key, NOT NULLs, defaults) before
+#   them: another session cannot see an uncommitted table. CREATE INDEX takes
+#   a SHARE lock, so builds on one table run side by side; each index is the
+#   same definition (pg_indexes.indexdef) whoever builds it. Memory goes
+#   through the quiet caps per build (dbSetting), so three builds ask for
+#   three times one build's budget, never three times 8GB.
+#   XCP_MERGE_INDEX_JOBS=1 builds them one by one on the merge's connection.
+_INDEX_MEM = "2GB"          # per build when several run
+_INDEX_WORKERS = 2          # per build when several run
+
+
+def _indexJobs(n):
+    try:
+        import os
+        want = int(os.environ.get("XCP_MERGE_INDEX_JOBS", "3"))
+    except ValueError:
+        want = 3
+    try:
+        from database import dbJobs
+        want = dbJobs(want)
+    except ImportError:
+        pass
+    return max(1, min(want, n))
+
+
+def _buildOneIndex(connect, name, ddl):
+    t0 = time.time()
+    with connect() as c:
+        with c.cursor() as cur:
+            # SET LOCAL: the pooled connection goes back as it came
+            cur.execute(f"SET LOCAL maintenance_work_mem = "
+                        f"'{_dbSetting('maintenance_work_mem', _INDEX_MEM)}'")
+            cur.execute(f"SET LOCAL max_parallel_maintenance_workers = "
+                        f"{_dbSetting('max_parallel_maintenance_workers', _INDEX_WORKERS)}")
+            cur.execute(ddl)
+        c.commit()
+    return name, time.time() - t0
+
+
+def _restoreIndexesParallel(conn, table, cap, connect, jobs):
+    """Every secondary index of `cap`, `jobs` at a time on their own
+    connections. <table>_new must be committed. On the first failure the
+    builds not yet started are cancelled, the running ones finish, and the
+    failure is raised."""
+    import concurrent.futures as cf
+    idx = cap["indexes"]
+    print(f"    building {len(idx)} indexes on {table}_new, {jobs} at a time", flush=True)
+    pool = cf.ThreadPoolExecutor(max_workers=jobs)
+    try:
+        futs = [pool.submit(_buildOneIndex, connect, name, ddl) for name, ddl in idx]
+        cf.wait(futs, return_when=cf.FIRST_EXCEPTION)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+    for f in futs:
+        if not f.cancelled() and f.exception() is not None:
+            raise f.exception()
+    for f in futs:
+        name, dt = f.result()
+        print(f"    [{dt:7.1f}s] index {name}_new", flush=True)
+
+
+def _connector():
+    """database.getConn, or None where scripts/ is not importable."""
+    try:
+        from database import getConn
+    except ImportError:
+        return None
+    return getConn
+
+
+def _dropNew(conn, table):
+    """A failed build after the commit: put things back where a rolled-back
+    build left them (no <table>_new), best effort."""
+    try:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {table}_new")
+        conn.commit()
+        print(f"    build failed: dropped {table}_new ({table} untouched)")
+    except Exception as exc:                       # noqa: BLE001
+        print(f"    build failed, and {table}_new could not be dropped "
+              f"({type(exc).__name__}); the next merge drops it (_clearLeftovers)")
 
 
 # _restoreConstraints
@@ -609,7 +710,7 @@ def _vacuumNew(conn, table):
 
 
 def mergeColumn(conn, table, column, staging, key="result_id", val="val",
-                preserve_unmatched=True, extra=()):
+                preserve_unmatched=True, extra=(), connect=None):
     print("-" * 70)
     print(f"MERGE: rebuilding {table}.{column} from {staging}")
     with conn.cursor() as cur:
@@ -672,8 +773,26 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         _buildNewTable(cur, table, staging, cap, column, key, val,
                        preserve_unmatched, extra)
         _restoreShape(cur, table, cap)
-        _restoreIndexes(cur, table, cap)
-        _restoreConstraints(cur, table, cap)
+        connect = connect or _connector()
+        jobs = _indexJobs(len(cap["indexes"])) if connect is not None else 1
+        if jobs <= 1:
+            _restoreIndexes(cur, table, cap)
+            _restoreConstraints(cur, table, cap)
+    if jobs > 1:
+        # ! THE NEW TABLE IS COMMITTED BEFORE ITS INDEXES (see
+        #   _restoreIndexesParallel): the builders are other sessions. Nobody
+        #   reads <table>_new; a run killed from here leaves it, without
+        #   some indexes, for the next merge's _clearLeftovers to drop, as a
+        #   lost swap always has. A failure drops it now.
+        conn.commit()
+        try:
+            _restoreIndexesParallel(conn, table, cap, connect, jobs)
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '2min'")   # as the build
+                _restoreConstraints(cur, table, cap)
+        except BaseException:
+            _dropNew(conn, table)
+            raise
 
     # ! COMMIT BEFORE THE SWAP. The build is minutes of work; the swap is a
     #   metadata flip that needs an ACCESS EXCLUSIVE instant. When both shared
