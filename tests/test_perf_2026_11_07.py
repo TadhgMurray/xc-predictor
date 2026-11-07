@@ -201,3 +201,100 @@ def test_the_venue_build_is_a_pipeline_step_after_the_course_pages():
     src = _read("racecast", "build_venue_tf_boards.py")
     assert "from app import buildVenueTfCtx, venueTfFingerprint" in src
     assert "swapTable(conn, TABLE" in src
+
+
+# ---------------------------------------------------------------- 2 --
+
+# getReturningField's query before 2026-11-07: every athlete-season named
+_OLD_RETURNING = """
+        SELECT s.person_id, s.school, s.state, s.grade, s.pool, s.year,
+               s.mean_rating AS rating{units},
+               COALESCE(a.name, 'Unknown') AS name
+        FROM   {source}
+        {names}
+        WHERE  TRUE {where}
+        LIMIT  %(cap)s
+"""
+
+
+def test_the_returning_field_is_not_named():
+    src = _read("racecast", "teams.py")
+    i = src.index("def getReturningField")
+    body = src[i:src.index("def nameRacedPage")]
+    assert "nameLateral" not in body and "NULL::text AS name" in body
+    i = src.index("if gradeExcluded(f) or eventRestricted(f):")
+    raced = src[i:src.index("size = countField(cur, f)")]
+    assert raced.index("sortAndPage(shown, f)") < raced.index("nameRacedPage(cur, rows)")
+
+
+@pytest.fixture
+def team_db(pgconn, monkeypatch):
+    import time as _t
+    import teams
+    import school_identity
+    cur = _dictCur(pgconn)
+    cur.execute("""
+        CREATE TEMP TABLE athlete_season AS
+        SELECT p AS person_id, 'School ' || (p % 23) AS school, 'CA'::text AS state,
+               (9 + p % 4)::text AS grade, 'hs_m'::text AS pool, 'XC'::text AS sport,
+               2025 AS year, (100 + (p * 7919 % 400) / 10.0)::real AS mean_rating,
+               (100 + (p * 7919 % 400) / 10.0 + 2)::real AS best_rating, 4 AS n_races
+        FROM generate_series(1, 400) p;
+        CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint, first_name text,
+            last_name text, gender text);
+        INSERT INTO athletes SELECT p, p, 'Ann' || p, 'Lee', 'M'
+        FROM generate_series(1, 400) p WHERE p % 3 <> 0;
+        CREATE TEMP TABLE results (person_id bigint, athlete_name text);
+        INSERT INTO results SELECT p, 'Row ' || p FROM generate_series(1, 400) p
+        WHERE p % 6 = 0;
+        CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text);
+    """)
+    monkeypatch.setitem(teams._ATHLETE_COLS, "at", _t.time() + 3600)
+    monkeypatch.setitem(teams._ATHLETE_COLS, "cols", frozenset())
+    monkeypatch.setitem(school_identity._LABELS, "loaded", True)
+    return teams, cur
+
+
+def _teamFilters(teams, qs):
+    from urllib.parse import parse_qsl
+    from werkzeug.datastructures import MultiDict
+    f, err = teams.parseFilters(MultiDict(parse_qsl(qs)))
+    assert not err, err
+    return f
+
+
+def _oldReturning(teams):
+    from rankings import nameLateral
+
+    def old(cur, f):
+        params = {"cap": teams.RETURN_CAP}
+        where = teams._athleteFieldWhere(f, params)
+        source, have = teams._athleteSource(f, params)
+        units = "".join((f', s."{c}"' if c in have else f', NULL::text AS "{c}"')
+                        for c in sorted(teams.TEAM_UNIT_COLS))
+        cur.execute(_OLD_RETURNING.format(units=units, source=source,
+                                          names=nameLateral("s"), where=where), params)
+        return cur.fetchall()
+    return old
+
+
+@pytest.mark.parametrize("qs", [
+    "sport=XC&pool=hs_m&year=2025&grade=9,10",
+    "sport=XC&pool=hs_m&year=2025&exclude_grade=12&limit=5&offset=5",
+    "sport=XC&pool=hs_m&year=2025&grade=11&sort=best&dir=DESC&limit=7",
+])
+def test_the_raced_board_serves_the_same_names(team_db, monkeypatch, qs):
+    teams, cur = team_db
+    new_rows, new_info = teams.serveBoard(cur, _teamFilters(teams, qs))
+    monkeypatch.setattr(teams, "getReturningField", _oldReturning(teams))
+    monkeypatch.setattr(teams, "nameRacedPage", lambda cur, rows: rows)
+    old_rows, old_info = teams.serveBoard(cur, _teamFilters(teams, qs))
+    assert new_info["raced"] and new_rows
+    assert (json.dumps(new_rows, sort_keys=True, default=str)
+            == json.dumps(old_rows, sort_keys=True, default=str))
+    assert new_info == old_info
+    if "limit" not in qs:            # the whole board: every kind of name
+        names = {sc["name"] for r in new_rows for sc in r["scorers"]}
+        assert "Unknown" in names and any(n.startswith("Row ") for n in names)
+        assert any(n.startswith("Ann") for n in names)
+        assert all(r["best_name"] for r in new_rows)
