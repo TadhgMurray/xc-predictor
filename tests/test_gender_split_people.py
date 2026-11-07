@@ -38,3 +38,31 @@ def test_the_persons_own_gender_decides_which_side_moves():
     assert G.verdict(rows, None)[0] == "F"           # no gender: the smaller side
     even = rows[:3] + rows[3:6]
     assert G.verdict(even, None) is None             # a tie with no gender: left alone
+
+
+def test_a_girls_page_with_a_boy_near_the_front_of_a_boys_race():
+    """owner, 2026-11-07: Coogan, 2nd at Brown 2010 in the boys' race; the
+    rows 3% apart and on no shared day, so only the placing says it."""
+    rows = ([(i, "F", f"2010-09-{10 + i}", 158.0, 3, 120) for i in range(6)]
+            + [(100, "M", "2010-10-16", 165.0, 2, 180),
+               (101, "M", "2010-11-13", 161.0, 30, 150)])
+    move, rids, why = G.verdict(rows, "F")
+    assert move == "M" and rids == [100, 101] and "2 of 180" in why
+
+
+def test_a_girl_at_the_back_of_a_boys_race_is_left():
+    rows = ([(i, "F", f"2020-09-{10 + i}", 120.0, 5, 80) for i in range(5)]
+            + [(100, "M", "2020-10-10", 121.0, 140, 150)])
+    assert G.verdict(rows, "F") is None
+
+
+def test_a_mans_page_is_not_judged_by_placing():
+    rows = ([(i, "M", f"2020-09-{10 + i}", 130.0, 1, 80) for i in range(5)]
+            + [(100, "F", "2020-10-10", 131.0, 1, 150)])
+    assert G.verdict(rows, "M") is None
+
+
+def test_a_strong_girl_in_a_small_coed_race_is_left():
+    rows = ([(i, "F", f"2020-09-{10 + i}", 140.0, 1, 60) for i in range(5)]
+            + [(100, "M", "2020-10-10", 141.0, 2, 12)])
+    assert G.verdict(rows, "F") is None
