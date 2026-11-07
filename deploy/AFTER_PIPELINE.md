@@ -36,3 +36,9 @@ Printed at the end of every deploy/run_pipeline.sh run. Delete an item once it's
        set -a; . /etc/xc-predictor.env; set +a; /srv/venv/bin/python scripts/edge_purge.py
    d. Then let the edge keep pages longer -- add XCP_PAGE_S_MAXAGE=21600 and XCP_PAGE_SWR=600 to /etc/xc-predictor.env and restart:
        sudo systemctl restart xc-predictor
+
+9. Let Cloudflare cache search and the per-page JSON (2026-11-07). The site already marks /search, /search/api, the next-race lines, the meet previews and runners-like-you public; Cloudflare only caches the paths its Cache Rule names. Caching -> Cache Rules -> edit "Board APIs" -> Edit expression, replace it with:
+       (http.request.method eq "GET" and (http.request.uri.path in {"/api/rankings" "/api/teams" "/api/courses" "/api/rankings/rank" "/search" "/search/api" "/api/next-race/school"} or starts_with(http.request.uri.path, "/api/next-race/athlete/") or starts_with(http.request.uri.path, "/api/meet-preview/") or starts_with(http.request.uri.path, "/api/runners-like-you/")))
+   Keep "Eligible for cache", edge TTL "use cache-control header", browser TTL "respect origin". Check (twice; the second says HIT):
+       curl -sS -o /dev/null -D - "https://racecast.co/search/api?q=jo" | grep -i cf-cache-status
+

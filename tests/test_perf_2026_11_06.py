@@ -921,3 +921,42 @@ def test_a_live_race_prediction_is_shared_across_workers(tmp_path, monkeypatch):
     b = U.racePrediction(None, 77, 3, "anet")
     assert a == b == {"available": True, "runners": []} and n == [1]
     ttlcache.clear()
+
+
+# --------------------------------------------------------------- 16 --
+# Search: public at the edge; the first letters computed once for the box
+
+def test_search_responses_are_public():
+    import app as A
+    import ttlcache
+    c = A.app.test_client()
+    A._SEARCH_CACHE.clear()
+    orig_api, orig_run = A._searchApiRows, A._run_search
+    A._searchApiRows = lambda raw, kind, limit: [{"label": "Jo Smith", "kind": "athlete"}]
+    A._run_search = lambda q, kind, year, offset: ([], {}, [])
+    try:
+        assert c.get("/search/api?q=smith").headers["Cache-Control"] == A.PUBLIC_CACHE_CONTROL
+        r = c.get("/search?q=smith")
+        assert r.status_code == 200 and r.headers["Cache-Control"] == A.PUBLIC_CACHE_CONTROL
+        assert c.get("/search?q=smith&format=json").headers["Cache-Control"] == \
+            A.PUBLIC_CACHE_CONTROL
+    finally:
+        A._searchApiRows, A._run_search = orig_api, orig_run
+        A._SEARCH_CACHE.clear()
+
+
+def test_short_queries_are_computed_once_for_the_box(tmp_path, monkeypatch):
+    import app as A
+    import sharedcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "c"))
+    n = []
+    for q in ("jo", "jo", "jo!", "smi"):                     # "jo!" is its own key
+        A._SEARCH_CACHE.clear()                           # another worker each time
+        A._searchCached(("api", q, "", 10), lambda: n.append(q) or [q], query=q)
+    assert n == ["jo", "jo!", "smi"]
+    n.clear()
+    for _ in range(2):                                    # a long query stays per worker
+        A._SEARCH_CACHE.clear()
+        A._searchCached(("api", "smith", "", 10), lambda: n.append(1) or [], query="smith")
+    assert n == [1, 1]
+    A._SEARCH_CACHE.clear()

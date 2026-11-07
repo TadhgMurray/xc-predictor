@@ -9453,14 +9453,38 @@ _SEARCH_CACHE = {}
 _SEARCH_CACHE_LOCK = threading.Lock()
 
 
-def _searchCached(key, compute):
-    """compute() once per key per SEARCH_CACHE_TTL. A failure is not kept."""
+# ★ SHORT QUERIES ONCE FOR THE BOX (2026-11-07, scripts/explain_search.py on
+#   the server: "jo" matched 574,080 rows and took 0.74 s, "smith" 169,095 and
+#   0.23 s, "john smith" 2,304 and 0.03 s). The first two or three letters of
+#   a name are the slow searches and the ones every typist passes through,
+#   and there are few of them: up to SEARCH_SHARED_LEN characters the answer
+#   goes through sharedcache, so one worker computes it for all 24. Longer
+#   queries are many, fast and rarely repeated, and stay per worker.
+SEARCH_SHARED_LEN = 3
+SEARCH_SHARED_TTL = 3600.0
+
+
+def _searchShared(query, key, compute):
+    """compute() through sharedcache when `query` is short (see above)."""
+    folded = search_index.searchFold(query or "").strip()
+    if not folded or len(folded) > SEARCH_SHARED_LEN:
+        return compute()
+    import hashlib
+    import sharedcache
+    name = "search-" + hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
+    value, _at = sharedcache.get(name, compute, ttl=SEARCH_SHARED_TTL)
+    return value
+
+
+def _searchCached(key, compute, query=None):
+    """compute() once per key per SEARCH_CACHE_TTL. A failure is not kept.
+    `query`, the typed text, sends a short one through _searchShared."""
     now = time.time()
     with _SEARCH_CACHE_LOCK:
         hit = _SEARCH_CACHE.get(key)
     if hit is not None and now - hit[0] < SEARCH_CACHE_TTL:
         return hit[1]
-    value = compute()
+    value = (_searchShared(query, key, compute) if query is not None else compute())
     with _SEARCH_CACHE_LOCK:
         if len(_SEARCH_CACHE) >= SEARCH_CACHE_MAX:
             for k in sorted(_SEARCH_CACHE, key=lambda k: _SEARCH_CACHE[k][0])[:SEARCH_CACHE_MAX // 2]:
@@ -9511,12 +9535,15 @@ def search_api():
     kind = (request.args.get("kind") or "").strip()
     limit = max(1, min(request.args.get("limit", 10, type=int) or 10, 40))
     rows = _searchCached(("api", raw, kind, limit),
-                         lambda: _searchApiRows(raw, kind, limit))
+                         lambda: _searchApiRows(raw, kind, limit), query=raw)
     resp = jsonify(rows)
     # ★ AND THE BROWSER KEEPS IT FIVE MINUTES: backspacing over a letter
-    #   asks the same question again. private -- never the edge, for the
-    #   free-text reason _PRIVATE_PREFIXES gives.
-    resp.headers["Cache-Control"] = "private, max-age=300"
+    #   asks the same question again.
+    # ★ AND THE EDGE TOO, NOW (2026-11-07): the answer is a function of the
+    #   URL and the nightly search index -- no session, no cookie -- so one
+    #   person's "jo" can answer the next person's. Cloudflare caches it once
+    #   its Cache Rule lists /search/api (docs/PERF-2026-11-06.md).
+    resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return resp
 
 
@@ -10004,20 +10031,25 @@ def search_page():
     # counts and the year list are two more scans on top of the page itself
     results, counts, years = _searchCached(
         ("page", q.lower(), kind, year or "", offset),
-        lambda: _run_search(q, kind, year, offset))
+        lambda: _run_search(q, kind, year, offset), query=q)
 
     # Load More sends ?offset=N and wants JSON, not a full page
     if request.args.get("format") == "json":
-        return jsonify(results)
+        resp = jsonify(results)
+        resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
+        return resp
 
-    return render_template("search.html",
-                           q=q, kind=kind, year=year,
-                           results=results,
-                           counts=counts,        # per-tab counts
-                           years=years,          # for the year dropdown
-                           offset=offset,
-                           page_size=PAGE_SIZE,
-                           count_cap=SEARCH_COUNT_CAP)
+    # ★ PUBLIC, as the dropdown (search_api): a function of the URL alone
+    resp = make_response(render_template("search.html",
+                         q=q, kind=kind, year=year,
+                         results=results,
+                         counts=counts,        # per-tab counts
+                         years=years,          # for the year dropdown
+                         offset=offset,
+                         page_size=PAGE_SIZE,
+                         count_cap=SEARCH_COUNT_CAP))
+    resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
+    return resp
 
 # ===================================================================== #
 #  CONVERSIONS  - paste these two routes into app.py
