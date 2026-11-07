@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, result_twin, college_directory;
+DROP TABLE IF EXISTS results, results_tf, meets, meets_tf, meets_tfrrs, result_twin, college_directory;
 -- grade / team_id / team_slug / school LAST, so every positional INSERT below
 -- that stops at date leaves them NULL (level_conflict reads them)
 CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint, div_id bigint,
@@ -10,6 +10,7 @@ CREATE TABLE results_tf (result_id bigint, person_id bigint, source text, meet_i
   event_short text, is_relay int, is_field int, school text, athlete_name text, round text);
 CREATE TABLE meets (meet_id bigint, div_id bigint, meet_name text, source text DEFAULT 'anet', distance real, course_name text, gps_lat real, gps_long real);
 CREATE TABLE meets_tf (meet_id bigint, div_id bigint, event_id bigint, source text, meet_name text, state text);
+CREATE TABLE meets_tfrrs (meet_id bigint, sport text, meet_name text);
 CREATE TABLE result_twin (sport text NOT NULL, result_id bigint NOT NULL, reason text NOT NULL, PRIMARY KEY (sport, result_id));
 -- build_college_directory's table: level_conflict's known colleges
 CREATE TABLE college_directory (name_norm text, name text, state text, division text, source text);
@@ -49,9 +50,14 @@ INSERT INTO results VALUES (7306, NULL, 'tfrrs', 78, 781, NULL, 6, 918.0, '2026-
   (7307, 5299, 'tfrrs', 78, 781, NULL, 7, 921.0, '2026-09-05');
 INSERT INTO results SELECT 7600+g, CASE WHEN g <= 2 THEN 5205+g ELSE 5300+g END, 'tfrrs', 76, 761, NULL, g, 915+g*3, '2026-09-05' FROM generate_series(1,6) g;
 -- the same race on the college feed dated 20 days later (NEC 2023,
--- owner 2026-11-07): the whole field within a second, one race
+-- owner 2026-11-07): one name, the whole field within a second, one race.
+-- Race 83/84 matches the same way under two names: past a week, kept.
+INSERT INTO meets VALUES (80, 801, '2023 NEC Cross Country Championships'), (84, 841, 'Fall Classic');
+INSERT INTO meets_tfrrs VALUES (79, 'XC', 'NEC XC Championships 2023'), (83, 'XC', 'Conference Finals');
 INSERT INTO results SELECT 7700+g, 5400+g, 'anet', 80, 801, NULL, g, 1000+g*3, '2026-09-05' FROM generate_series(1,7) g;
 INSERT INTO results SELECT 7500+g, 5400+g, 'tfrrs', 79, 791, NULL, g, 1000+g*3, '2026-09-25' FROM generate_series(1,5) g;
+INSERT INTO results SELECT 7900+g, 5500+g, 'anet', 84, 841, NULL, g, 1100+g*3, '2026-09-05' FROM generate_series(1,7) g;
+INSERT INTO results SELECT 7800+g, 5500+g, 'tfrrs', 83, 831, NULL, g, 1100+g*3, '2026-09-25' FROM generate_series(1,5) g;
 -- a lone row that pairs with nothing
 INSERT INTO results VALUES (801, 5001, 'anet', 8, 81, 8, 1, 999.9, '2025-10-20');
 
