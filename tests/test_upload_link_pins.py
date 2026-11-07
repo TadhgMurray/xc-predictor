@@ -363,7 +363,7 @@ def test_the_pipeline_reapplies_detaches_after_the_linkers():
     upd = [s for s, _p in cur.sql if "SET person_id = d.to_person" in s]
     assert len(upd) == 2 and all("r.person_id IS NULL OR r.person_id = d.from_person" in s for s in upd)
     sh = read("deploy", "run_pipeline.sh")
-    order = ["step 04a_link_tfrrs", "step 04a2_link_teamless", "step 04a3_pins", "stepsN 04_grade_sanity",
+    order = ["step 04a_link_tfrrs", "step 04a2_link_teamless", "step 04a3_pins", "bgstep 04_grade_sanity",
              '04d_gender "$PY', "step 04c_twins", "step 05c_pro_ability", "step 10_rankings_prepare"]
     at = [sh.index(s) for s in order]
     assert at == sorted(at), order
