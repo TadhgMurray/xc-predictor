@@ -1604,6 +1604,16 @@ step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finis
 #   serving last night's pages for PAGE_S_MAXAGE. A no-op until
 #   XCP_CF_ZONE_ID / XCP_CF_API_TOKEN are set; never fails the run.
 step 10_edge_purge "$PY" -u scripts/edge_purge.py || true
+# ★ THE EVENTS PRESETS, PRECOMPUTED (owner, 2026-11-06; racecast/
+#   build_season_events.py): the ability board's 800/1500/3000/5000-and-up
+#   windows read athlete_season_ev instead of recomputing every season per
+#   request (26-55 s cold). It reads the ranking_results just swapped in and
+#   stamps that table's oid; until it finishes the board runs live, so it
+#   holds nothing up -- in the background, collected by bgwait.
+#   XCP_SEASON_EV=0 skips (the board then always runs live).
+if [ "${XCP_SEASON_EV:-1}" != "0" ]; then
+  bgstep 10f4_season_events "$PY" -u racecast/build_season_events.py
+fi
 # ★ THE RECRUIT PROJECTION STARTS AS SOON AS athlete_season EXISTS (2026-10-18;
 #   it was the run's last 71 idle minutes: 2h41m started after 11b). It
 #   reads only athlete_season, only the recruiting and comps PAGES read its
@@ -1889,6 +1899,13 @@ bgwait
 #   writes what pages read -- then again, detached, once the workers' own
 #   15-minute board copies (app._BOARD_API_TTL) have run out, so nothing
 #   refilled from an old worker copy outlives the run (edge_purge.py).
+# ★ AND THE NEW TABLES READ INTO MEMORY BEFORE THE VISITORS DO (owner,
+#   2026-11-06: "only cold timings"; scripts/prewarm.py): every run swaps in
+#   tables no cache has seen, so the first page after a go-live paid for the
+#   disk. pg_prewarm, capped (XCP_PREWARM_GB, default 16); XCP_PREWARM=0 skips.
+if [ "${XCP_PREWARM:-1}" != "0" ]; then
+  step 19b_prewarm "$PY" -u scripts/prewarm.py || true
+fi
 step 19_edge_purge "$PY" -u scripts/edge_purge.py || true
 if [ "$DRY" -ne 1 ]; then
   nohup "$PY" -u scripts/edge_purge.py --delay 960 >> "$LOGDIR/19_edge_purge_again.log" 2>&1 &

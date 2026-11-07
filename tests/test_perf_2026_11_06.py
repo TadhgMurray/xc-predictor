@@ -392,12 +392,17 @@ def _prSql(qs):
 
 def test_the_pr_board_reads_one_distance_at_a_time():
     sql, _ = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
-    assert "WITH RECURSIVE dists" in sql and "distance = dists.d" in sql
+    flat = " ".join(sql.split())
+    assert "dists(p, d) AS" in flat and "distance = dists.d" in flat
+    assert "pools(p) AS" not in flat                      # one pool: no pool walk
+    allp, _ = _prSql("board=pr&sport=XC&pool=all&distance=5000&limit=50")
+    flat = " ".join(allp.split())
+    assert "pools(p) AS" in flat and "pool IS NULL" in flat
 
 
-def test_without_a_pool_or_on_a_field_event_it_keeps_the_plain_query():
+def test_on_a_field_event_it_keeps_the_plain_query():
     import rankings
-    assert not rankings._prPerDistance({"distance": 5000, "pool": "all"}, False)
+    assert rankings._prPerDistance({"distance": 5000, "pool": "all"}, False)
     assert not rankings._prPerDistance({"distance": 5000, "pool": "hs_m"}, True)
     assert not rankings._prPerDistance({"distance": None, "pool": "hs_m"}, False)
 
@@ -423,10 +428,18 @@ def test_the_pr_board_answers_the_same_and_uses_the_index(pg):
                 " FROM generate_series(0, 4999) g")
     cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
     cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    # a row with no pool: pool=all must still find it (its own branch)
+    cur.execute("""INSERT INTO ranking_results (pool, sport, distance, time_seconds, result_id,
+                       person_id, speed_rating, race_date, year, state, school, grade, meet_id, div_id)
+                   VALUES (NULL, 'XC', 5000, 850, 999999, 4999, 160, '2024-10-01', 2024,
+                           'WI', 'S', '11', 1, 1)""")
     cur.execute("ANALYZE ranking_results")
     for qs in ("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50",
                "board=pr&sport=XC&pool=hs_m&distance=5000&limit=50&offset=200",
-               "board=pr&sport=both&pool=hs_f&distance=5000&limit=50"):
+               "board=pr&sport=both&pool=hs_f&distance=5000&limit=50",
+               "board=pr&sport=XC&pool=all&distance=5000&limit=50",
+               "board=pr&sport=both&pool=all&distance=5000&limit=50&offset=100",
+               "board=pr&sport=XC&pool=all&gender=m&distance=5000&limit=50"):
         new_sql, params = _prSql(qs)
         cur.execute(new_sql, params)
         new = [dict(r) for r in cur.fetchall()]
@@ -439,6 +452,8 @@ def test_the_pr_board_answers_the_same_and_uses_the_index(pg):
         cur.execute(old_sql, params)
         assert new == [dict(r) for r in cur.fetchall()], qs
         assert len(new) == 50
+        if "pool=all&distance" in qs and "offset" not in qs:
+            assert new[0]["result_id"] == 999999           # the row with no pool
     sql, params = _prSql("board=pr&sport=XC&pool=hs_m&distance=5000&limit=50")
     cur.execute("SET enable_seqscan = off")
     cur.execute("EXPLAIN " + sql, params)
@@ -658,3 +673,251 @@ def test_comps_min_is_shared_across_workers(tmp_path, monkeypatch):
     assert comps._minRaces(C(), "XC", "hs_m") == 3
     assert C.n == 1
     comps._MIN_CACHE.clear()
+
+
+# --------------------------------------------------------------- 12 --
+# The events-filtered ability board: the season median by windows, not by a
+# CTE self-join the planner turned into a nested loop (26-55 s live).
+
+def test_the_events_source_has_no_self_join():
+    import rankings as R
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    params = {}
+    src = R._abilitySource({"dist_min": 3000, "dist_max": None}, params, " AND pool = %(pool)s")
+    assert "JOIN" not in src.upper()
+    assert "OVER (PARTITION BY person_id, pool, sport, year" in " ".join(src.split())
+    assert "r.*" not in src
+
+
+def test_the_window_median_is_percentile_cont_exactly(pg):
+    """Group by group, the mean of the middle one or two (the rewrite) and
+    percentile_cont(0.5) (the old med CTE) are the same double."""
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE m AS
+        SELECT (g % 997)::bigint AS k,
+               (100 + ((g::bigint * 7919) % 100003) / 997.0)::real AS v
+        FROM generate_series(1, 40000) g""")
+    cur.execute("""
+        WITH r AS (
+            SELECT k, v, row_number() OVER (PARTITION BY k ORDER BY v) AS rn,
+                   count(*) OVER (PARTITION BY k) AS n FROM m),
+        w AS (
+            SELECT DISTINCT k,
+                   (max(v::float8) FILTER (WHERE rn = (n + 1) / 2) OVER (PARTITION BY k)
+                    + max(v::float8) FILTER (WHERE rn = (n + 2) / 2) OVER (PARTITION BY k)) / 2
+                       AS med FROM r),
+        p AS (SELECT k, percentile_cont(0.5) WITHIN GROUP (ORDER BY v) AS med FROM m GROUP BY k)
+        SELECT count(*) AS groups,
+               count(*) FILTER (WHERE w.med IS DISTINCT FROM p.med) AS differ,
+               count(*) FILTER (WHERE (SELECT count(*) FROM m WHERE m.k = p.k) % 2 = 0) AS even
+        FROM p JOIN w USING (k)""")
+    row = cur.fetchone()
+    assert row["groups"] > 500 and row["even"] > 100
+    assert row["differ"] == 0
+
+
+# --------------------------------------------------------------- 13 --
+# The Events presets, precomputed (athlete_season_ev)
+
+def test_ev_preset_only_where_the_races_are_the_same():
+    import rankings as R
+    base = {"dist_min": 3000.0, "dist_max": None, "scope": "usa"}
+    assert R._evPreset(base) == 3000
+    assert R._evPreset(dict(base, year=[2026], pool="hs_m", sport="XC", gender="m")) == 3000
+    for extra in ({"dist_min": 2000.0}, {"dist_max": 9000.0}, {"scope": "all"},
+                  {"state": ["CA"]}, {"school": ["Calvin"]}, {"grade": ["11"]},
+                  {"conference": ["HCC"]}):
+        assert R._evPreset(dict(base, **extra)) is None, extra
+
+
+def test_ability_source_reads_the_table_only_when_asked_and_fresh():
+    import rankings as R
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    f = {"dist_min": 3000.0, "dist_max": None, "scope": "usa"}
+    R._EV_FRESH.update(at=1e18, ok=True)
+    try:
+        p = {}
+        assert "athlete_season_ev" in R._abilitySource(f, p, "", precomputed=True)
+        assert p["ev_dist"] == 3000
+        assert "athlete_season_ev" not in R._abilitySource(f, {}, "")    # the team board
+        R._EV_FRESH.update(ok=False)                                  # built from another rr
+        assert "athlete_season_ev" not in R._abilitySource(f, {}, "", precomputed=True)
+    finally:
+        R._EV_FRESH.update(at=0.0, ok=False)
+    src = _read("racecast", "rankings.py")
+    assert src.count("_abilitySource(f, params, where, precomputed=True)") == 4
+    assert "precomputed" not in _read("racecast", "teams.py")
+
+
+def test_the_events_table_is_built_after_the_boards_go_live():
+    sh = _read("deploy", "run_pipeline.sh")
+    assert sh.index("step 10_rankings_finish") < sh.index("bgstep 10f4_season_events") \
+        < sh.rindex("\nbgwait\n")
+    nu = _read("deploy", "nightly_update.sh")
+    assert nu.index("step 10_rankings_finish") < nu.index("step 10f4_season_events")
+    import build_season_events as B
+    assert tuple(B.R.EV_PRESETS) == (800, 1500, 3000, 5000)
+    html = _read("racecast", "templates", "rankings.html")
+    for d in (800, 1500, 3000, 5000):
+        assert f'<option value="{d}">' in html
+
+
+def test_events_boards_from_the_table_equal_the_live_ones(pg):
+    import rankings as R
+    import build_season_events as B
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    _conn, cur = pg
+    cur.execute("""CREATE TEMP TABLE ranking_results AS
+        SELECT CASE WHEN g % 2 = 0 THEN 'hs_m' ELSE 'ms_m' END AS pool, 'XC'::text AS sport,
+               (ARRAY[3000, 4000, 5000, 1600])[1 + g % 4]::real AS distance,
+               (900 + g % 600)::real AS time_seconds, g::bigint AS result_id,
+               (g % 700)::bigint AS person_id,
+               (CASE WHEN g % 17 = 0 THEN 100 + g % 7
+                     ELSE 140 + ((g::bigint * 7919) % 400) / 10.0 END)::real AS speed_rating,
+               date '2024-09-01' + (g % 60) AS race_date, 2023 + (g / 7) % 2 AS year,
+               (ARRAY['WI','CA','TX','ON'])[1 + (g / 5) % 4] AS state,
+               'School ' || (g / 11) % 30 AS school, (9 + g % 4)::text AS grade
+        FROM generate_series(1, 20000) g""")
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint,"
+                " first_name text, last_name text, gender text)")
+    cur.execute("INSERT INTO athletes SELECT g, g, 'A', 'B' || g, 'M' FROM generate_series(0, 699) g")
+    cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
+    cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    sql, params = B.presetSql(800)
+    cur.execute(f"CREATE TEMP TABLE athlete_season_ev AS {sql} WITH NO DATA", params)
+    for d in R.EV_PRESETS:
+        for k in range(3):
+            sql, params = B.presetSql(d, k, 3)
+            cur.execute(f"INSERT INTO athlete_season_ev {sql}", params)
+    tcur = cur.connection.cursor()
+    try:
+        for b in ("pool=hs_m&sport=XC&dist_min=3000",
+                  "pool=hs_m&sport=XC&dist_min=3000&year=2024&sort=best",
+                  "pool=ms_m&sport=XC&dist_min=800&scale=hs&offset=50",
+                  "pool=hs_m&sport=XC&dist_min=1500&min_races=1&sort=races"):
+            f, err = R.parseFilters(MultiDict(parse_qsl("board=ability&limit=50&" + b)))
+            assert not err, err
+            got = {}
+            for mode in (True, False):
+                R._EV_FRESH.update(at=1e18, ok=mode)
+                rows = [dict(r) for r in R.getAbilityRankings(cur, dict(f))]
+                got[mode] = (rows, R.countOf(tcur, dict(f)),
+                             R.rankOf(tcur, dict(f), rows[3]["person_id"]))
+            assert got[True] == got[False], b
+            assert len(got[True][0]) == 50
+    finally:
+        R._EV_FRESH.update(at=0.0, ok=False)
+
+
+# --------------------------------------------------------------- 14 --
+# prewarm: the swapped-in tables into memory before the first visitor
+
+def test_prewarm_plan_takes_what_pages_read_in_priority_order():
+    """The server's first run filled 16 GB smallest-first with indexes no
+    page reads and left the boards cold."""
+    import prewarm as W
+    G = 1024 ** 3
+    rels = [("results_native_id_idx", "i", G // 2),          # no page reads it
+            ("idx_results_normalized_time", "i", G),
+            ("ranking_results_rr_pr_time_idx", "i", 3 * G),   # prefixed live name
+            ("season_comps", "r", 2 * G),
+            ("idx_season_comps_match", "i", G // 4),
+            ("athlete_season_as_pool_mean_idx", "i", 30 * G),  # too big for what is left
+            ("idx_athlete_season_ev_mean", "i", G)]
+    got = W.plan(rels, 7 * G)
+    assert [n for n, _ in got] == ["season_comps", "idx_season_comps_match",
+                                   "ranking_results_rr_pr_time_idx",
+                                   "idx_athlete_season_ev_mean"]
+    assert W.plan(rels, 0) == []
+
+
+def test_prewarm_runs_after_the_last_swap_and_in_the_nightly():
+    sh = _read("deploy", "run_pipeline.sh")
+    assert sh.rindex("\nbgwait\n") < sh.index("step 19b_prewarm") < sh.rindex("\nsummarise")
+    assert sh.index("step 18_vacuum") < sh.index("step 19b_prewarm")
+    nu = _read("deploy", "nightly_update.sh")
+    assert nu.index("step 10f4_season_events") < nu.index("step 13z_prewarm")
+
+
+# --------------------------------------------------------------- 15 --
+# The next-race line never holds a worker; a race predicted once per box
+
+def test_soon_or_later_fast_slow_and_busy():
+    import time as _t
+    import pages3
+    import ttlcache
+    ttlcache.clear()
+    assert pages3._soonOrLater(("t", 1), lambda: {"available": True, "v": 1},
+                               ttl=60, ttl_of=None, wait=2) == {"available": True, "v": 1}
+    calls = []
+
+    def slow():
+        calls.append(1)
+        _t.sleep(0.6)
+        return {"available": True, "v": 2}
+    assert pages3._soonOrLater(("t", 2), slow, ttl=60, ttl_of=None, wait=0.05) is None
+    # the slot is taken while it runs: nothing else starts
+    assert pages3._soonOrLater(("t", 3), lambda: calls.append("x") or {}, ttl=60,
+                               ttl_of=None, wait=0.05) is None
+    _t.sleep(0.8)
+    assert pages3._soonOrLater(("t", 2), slow, ttl=60, ttl_of=None, wait=0.05) == \
+        {"available": True, "v": 2}
+    assert calls == [1]
+    ttlcache.clear()
+
+
+def test_next_race_route_answers_not_yet_without_waiting(monkeypatch):
+    import time as _t
+    import app as A
+    import pages3
+    import ttlcache
+    import upcoming_preview as U
+    ttlcache.clear()
+    monkeypatch.setattr(pages3, "NEXT_RACE_WAIT", 0.05)
+
+    class _C:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def rollback(self):
+            pass
+    monkeypatch.setattr(pages3, "getConn", lambda: _C())
+    monkeypatch.setattr(pages3, "_cursor", lambda conn: _C())
+
+    def slow(cur, gc, pid, today):
+        _t.sleep(0.5)
+        return {"available": True, "races": [{"name": "Meet"}]}
+    monkeypatch.setattr(U, "athleteNextRace", slow)
+    c = A.app.test_client()
+    t0 = _t.time()
+    r = c.get("/api/next-race/athlete/123")
+    assert _t.time() - t0 < 0.4
+    assert r.get_json() == {"available": False, "pending": True}
+    assert r.headers["Cache-Control"] == "no-store"
+    _t.sleep(0.7)
+    r = c.get("/api/next-race/athlete/123")
+    assert r.get_json()["available"] is True and "public" in r.headers["Cache-Control"]
+    ttlcache.clear()
+
+
+def test_a_live_race_prediction_is_shared_across_workers(tmp_path, monkeypatch):
+    import sharedcache
+    import ttlcache
+    import upcoming_preview as U
+    import meet_forecast as MF
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "c"))
+    monkeypatch.setattr(MF, "loadRace", lambda cur, m, d, s: None)
+    n = []
+    monkeypatch.setattr(U, "livePrediction",
+                        lambda cur, m, d, s: n.append(1) or {"available": True, "runners": []})
+    ttlcache.clear()
+    a = U.racePrediction(None, 77, 3, "anet")
+    ttlcache.clear()                                    # another worker
+    b = U.racePrediction(None, 77, 3, "anet")
+    assert a == b == {"available": True, "runners": []} and n == [1]
+    ttlcache.clear()
