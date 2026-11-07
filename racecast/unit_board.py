@@ -491,15 +491,31 @@ def prettyName(value):
     return " ".join(word(w, len(words) == 1) for w in words)
 
 
+VALID_TTL = 600.0
+
+
 def validKeys(cur, kind, college):
     """{normKey: True} for the units whose schools are mostly of this level
     (school_unit.is_college): a college board lists no high school league
     filed as a conference, and the reverse. A unit needs two schools of the
-    level and no more than a quarter of its schools of the other."""
+    level and no more than a quarter of its schools of the other.
+
+    ★ HELD TEN MINUTES PER PROCESS (2026-11-07): a GROUP BY over all of
+      school_unit on every Conferences board and unit page, for an answer
+      that moves when step 10d rebuilds the table. A failure is not kept
+      (ttlcache)."""
     if kind not in KINDS:
         return {}
     if kind in _STATELESS:
         return None               # every region is real: nothing to test
+    import ttlcache
+    val, _at = ttlcache.get(("unit-valid", kind, bool(college)),
+                            lambda: _validKeysUncached(cur, kind, college),
+                            ttl=VALID_TTL)
+    return val
+
+
+def _validKeysUncached(cur, kind, college):
     cur.execute(f"""SELECT {kind} AS v,
                            count(DISTINCT (school, state)) FILTER (WHERE is_college) AS c,
                            count(DISTINCT (school, state)) FILTER (WHERE NOT is_college) AS h

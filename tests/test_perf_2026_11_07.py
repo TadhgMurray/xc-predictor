@@ -499,3 +499,53 @@ def test_a_school_season_reads_one_season_and_the_meet_list_only_the_index(pgcon
                   .format(table="results", year_clause=""),
                   {"school": "School 7", "sane": meets_filter._SANE_DATE, "lim": 400})
     assert "Index Only Scan using school_date" in meets and "Heap Fetches: 0" in meets, meets
+
+
+# ---------------------------------------------------------------- 5 --
+
+class _UnitCur:
+    def __init__(self):
+        self.n = 0
+
+    def execute(self, sql, params=None):
+        self.n += 1
+
+    def fetchall(self):
+        return [{"v": "BIG TEN", "c": 14, "h": 0}, {"v": "Ivy League", "c": 8, "h": 1},
+                {"v": "CIF SOUTHERN", "c": 0, "h": 90}]
+
+
+def test_valid_keys_are_held_per_process():
+    import ttlcache
+    import unit_board as UB
+    ttlcache.clear()
+    cur = _UnitCur()
+    a = UB.validKeys(cur, "conference", True)
+    b = UB.validKeys(cur, "conference", True)
+    assert cur.n == 1 and a == b == UB._validKeysUncached(_UnitCur(), "conference", True)
+    assert UB.validKeys(cur, "conference", False) != a and cur.n == 2
+    assert UB.VALID_TTL == 600.0
+    ttlcache.clear()
+
+
+def test_projections_are_computed_once_for_the_box(tmp_path, monkeypatch):
+    import projections as P
+    import sharedcache
+    import ttlcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "c"))
+    n = []
+    monkeypatch.setattr(P, "currentYear", lambda cur: n.append(1) or 2025)
+    monkeypatch.setattr(P, "_fieldUncached", lambda *a: [])
+    monkeypatch.setattr(P, "stateCourse", lambda *a: None)
+    monkeypatch.setattr(P, "_courseSpec", lambda *a: None)
+    key = ("proj", "ZZ", "all", "boys")
+    ttlcache._store.pop(key, None)
+    a = P.project(None, "ZZ", None, "boys")
+    ttlcache._store.pop(key, None)                  # another worker: no memory copy
+    b = P.project(None, "ZZ", None, "boys")
+    c = P.project(None, "ZZ", None, "boys")         # this worker's memory copy
+    ttlcache._store.pop(key, None)
+    assert n == [1]
+    assert a == b == c and "_shared_at" not in a
+    assert a["year"] == 2025 and a["teams"] == [] and a["n_field"] == 0
+    assert isinstance(a["computed_at"], float)
