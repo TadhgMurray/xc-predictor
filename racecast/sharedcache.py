@@ -118,3 +118,75 @@ def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of
             return value, at
         finally:
             fcntl.flock(lk, fcntl.LOCK_UN)
+
+
+# ★ MANY VALUES UNDER ONE KEY (2026-11-07, the predictions page): a field's
+#   per-runner answers -- rating rows, model times -- are asked by one
+#   request for some runners and by the next for a subset or a superset, so
+#   one value per key does not fit. A bucket is one file holding
+#   {key: (computed_at, value)}; peekMany reads the fresh ones, the caller
+#   computes the rest in one go and files them with putMany, merged with
+#   what another worker filed meanwhile under the bucket's lock.
+# ! THE SAME RULES AS get(): our own 0700 directory or nothing (then peekMany
+#   finds nothing and putMany keeps nothing), an unreadable file is a miss.
+# ! THE FILE NAME IS A DIGEST of the bucket, not _name(): a bucket is a long
+#   tuple, and _name's 120 characters would let two of them share a file.
+def _bucketBase(d, bucket):
+    import hashlib
+    return os.path.join(d, "many-" + hashlib.sha1(
+        repr(bucket).encode("utf-8")).hexdigest())
+
+
+def _bucketLoad(pkl):
+    try:
+        data = _load(pkl)
+    except Exception:                                   # noqa: BLE001
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def peekMany(bucket, keys, ttl, now=time.time, path=None):
+    """{key: (value, computed_at)} for those of `keys` the bucket holds
+    younger than `ttl` seconds. Never computes."""
+    d = _safeDir(path)
+    if d is None:
+        return {}
+    data = _bucketLoad(_bucketBase(d, bucket) + ".pkl")
+    t = now()
+    out = {}
+    for k in keys:
+        hit = data.get(k)
+        if (isinstance(hit, tuple) and len(hit) == 2
+                and t - hit[0] <= ttl):
+            out[k] = (hit[1], hit[0])
+    return out
+
+
+def putMany(bucket, values, ttl, now=time.time, path=None):
+    """File {key: value} into the bucket, computed now, beside the entries
+    already there that are younger than `ttl` (older ones are dropped)."""
+    d = _safeDir(path)
+    if d is None or not values:
+        return
+    base = _bucketBase(d, bucket)
+    pkl = base + ".pkl"
+    with open(base + ".lock", "a+") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            t = now()
+            data = {k: v for k, v in _bucketLoad(pkl).items()
+                    if isinstance(v, tuple) and len(v) == 2 and t - v[0] <= ttl}
+            for k, v in values.items():
+                data[k] = (t, v)
+            tmp = f"{pkl}.{os.getpid()}.tmp"
+            try:
+                with open(tmp, "wb") as fh:
+                    pickle.dump(data, fh, protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(tmp, pkl)
+            except Exception:                           # noqa: BLE001
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        finally:
+            fcntl.flock(lk, fcntl.LOCK_UN)

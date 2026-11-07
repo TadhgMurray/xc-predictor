@@ -11930,7 +11930,10 @@ def api_predict_field():
 
     import predict as _predict
     _predict.stagesStart()
-    with getConn() as conn:
+    # ★ THE WORK SHARED WITH THE PREDICTION THAT FOLLOWS (predict.shareWork,
+    #   2026-11-07): the squads' ratings and the model's times kept a few
+    #   minutes for /api/predict/team, and this request's field read once
+    with _predict.shareWork(), getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # ★ THE ONE MEET (2026-10-05): see _predictSource; and the feed
             #   a Coming-up link named, for a meet not yet run (_feedPin)
@@ -12643,7 +12646,7 @@ def api_predict_weather():
 #   than a smaller query -- logged, not papered over.
 @app.route("/api/predict/individual", methods=["GET", "POST"])
 def api_predict_individual():
-    from predict import predictIndividual
+    from predict import predictIndividuals, shareWork
 
     # ★ ONE PARAMETER, ONE OR MANY VALUES. Comparing two athletes at the same
     #   race is the obvious next question after predicting one, and it is the
@@ -12662,10 +12665,12 @@ def api_predict_individual():
         return jsonify({"error": err}), 400
 
     try:
-        with getConn() as conn:
+        with shareWork(), getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 _withSource(cur, target)      # the one meet: _predictSource
-                results = [predictIndividual(cur, int(i), target) for i in ids]
+                # ★ ONE PASS FOR ALL OF THEM (2026-11-07): each athlete's
+                #   answer is predictIndividual's for them alone, in order
+                results = predictIndividuals(cur, [int(i) for i in ids], target)
                 # A single athlete returns the bare object, so nothing that
                 # already reads this endpoint has to change.
                 out = (results[0] if len(results) == 1
@@ -12742,7 +12747,8 @@ def api_predict_team():
     import predict as _predict
     _predict.stagesStart()
     try:
-        with getConn() as conn:
+        # ★ THE FIELD REQUEST'S WORK, REUSED (predict.shareWork, 2026-11-07)
+        with _predict.shareWork(), getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 with _predict._stage("total"):
                     _withSource(cur, target)  # the one meet: _predictSource
@@ -12793,7 +12799,7 @@ def api_predict_lineup():
       question a coach asks -- "who do I run against these people" -- and not
       a claim about what the other coaches would do in reply.
     """
-    from predict import predictTeamLineup
+    from predict import predictTeamLineup, shareWork
 
     args = request.values
     target, err = _target(args)
@@ -12830,7 +12836,8 @@ def api_predict_lineup():
         else "p_win"
 
     try:
-        with getConn() as conn:
+        # the field's ratings and model times, reused (predict.shareWork)
+        with shareWork(), getConn() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 _withSource(cur, target)      # the one meet: _predictSource
                 out = predictTeamLineup(cur, schools, target, team,
