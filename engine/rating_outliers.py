@@ -691,6 +691,129 @@ def write(cur, rows, calib):
     return len(rows)
 
 
+# ---------------------------------------------------------------------- #
+# the rows the neighbourhood cannot judge (cross country)
+# ---------------------------------------------------------------------- #
+# ★ WHERE THE MAIN RULE HAS NO OPINION (owner, 2026-11-07, the board audit:
+#   Navarrete 169.2 with one other race at 71.9, Floris 14:46 in a girls'
+#   pool, Monahan, a 9:12 3000 m in a field of two, adults and college men
+#   on the middle school boards). The neighbourhood needs MIN_NEIGHBOURS
+#   other races; most of those rows had 0-2. Three narrow rules, each a
+#   side of its own so the page can say which:
+#     thin   1-2 other races within THIN_DAYS, and this one THIN_GAP (log)
+#            above the best of them: a wrong distance or another person's
+#            row -- treated as 'fast' on the page
+#     field  a division with under FIELD_MIN rated rows (nothing to read
+#            the day from), and the row above the runner's own level by
+#            FIELD_GAP, or the runner has no other race to say
+#     level  a middle school or younger row in a race of LEVEL_MIN_M or
+#            more, or in a division most of whose rated rows are college:
+#            an adult or a college runner under a youth grade; or one with
+#            NO grade in an open race (a quarter or more of its rated
+#            rows high school or college) -- its level is a
+#            guess from a club's name (Cole Hoff, "Bowerman Track", 14:06 at
+#            the Bowerman 5K, owner 2026-11-07)
+#   Rank-only, like every row here: the page keeps it and says why.
+THIN_DAYS = 365
+THIN_GAP = 0.30          # 35% above the best of their only other races
+FIELD_MIN = 3
+FIELD_GAP = 0.10
+LEVEL_MIN_M = 6000
+
+EXTRA_SQL = r"""
+    WITH x AS (
+        SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id,
+               left(r.date, 10)::date AS d, r.speed_rating AS s,
+               split_part(COALESCE(r.rating_pool, ''), '|', 1) AS pool,
+               (btrim(COALESCE(r.grade, '')) ~ '[0-9A-Za-z]') AS graded
+        FROM   results r
+        WHERE  r.speed_rating > 0 AND r.person_id IS NOT NULL
+          AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'),
+    fld AS (
+        SELECT source, meet_id, div_id, count(*) AS n,
+               count(*) FILTER (WHERE pool LIKE 'college%%') AS n_college,
+               count(*) FILTER (WHERE pool LIKE 'college%%' OR pool LIKE 'hs%%') AS n_older
+        FROM   x GROUP BY 1, 2, 3),
+    few AS (
+        SELECT person_id FROM x GROUP BY 1 HAVING count(*) BETWEEN 2 AND 3),
+    dist AS (
+        SELECT div_id,
+               CASE WHEN distance < 50 THEN distance * 1609.34 ELSE distance END AS m
+        FROM   meets WHERE distance > 0),
+    cand AS (
+        SELECT x.*, f.n, f.n_college, f.n_older, dm.m
+        FROM   x
+        JOIN   fld f ON f.source = x.source AND f.meet_id = x.meet_id AND f.div_id = x.div_id
+        LEFT   JOIN dist dm ON x.source = 'anet' AND dm.div_id = x.div_id
+        WHERE  f.n < %(field_min)s
+           OR  x.person_id IN (SELECT person_id FROM few)
+           OR  (x.pool IN ('ms_m', 'ms_f', 'elem_m', 'elem_f')
+                AND (dm.m >= %(level_m)s OR f.n_college * 2 > f.n
+                     OR (NOT x.graded AND f.n_older * 4 >= f.n))))
+    SELECT c.result_id, c.person_id, extract(year FROM c.d)::int, c.s,
+           o.k, o.best, o.med, c.n, c.pool, c.m, c.n_college, c.graded, c.n_older
+    FROM   cand c
+    CROSS  JOIN LATERAL (
+        -- ! THE TABLE, NOT x: x is materialised (read three times), and a
+        --   lateral on it has no index -- one scan per candidate
+        SELECT count(*) AS k, max(y.speed_rating) AS best,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY y.speed_rating) AS med
+        FROM   results y
+        WHERE  y.person_id = c.person_id AND y.result_id <> c.result_id
+          AND  y.speed_rating > 0 AND y.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          AND  abs(left(y.date, 10)::date - c.d) <= %(days)s) o
+"""
+
+
+def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=0):
+    """The side for one candidate row of EXTRA_SQL, or None. Pure."""
+    s = float(s)
+    if pool in ("ms_m", "ms_f", "elem_m", "elem_f") and (
+            (metres and float(metres) >= LEVEL_MIN_M) or (n and n_college * 2 > n)
+            or (not graded and n and n_older * 4 >= n)):
+        return "level"
+    if k and 1 <= k <= 2 and best and math.log(s / float(best)) > THIN_GAP:
+        return "thin"
+    if n is not None and n < FIELD_MIN and (
+            not k or (med and math.log(s / float(med)) > FIELD_GAP)):
+        return "field"
+    return None
+
+
+def extraRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, med, side)] for the
+    rows the neighbourhood cannot judge."""
+    cur.execute(EXTRA_SQL, {"field_min": FIELD_MIN, "level_m": LEVEL_MIN_M,
+                            "days": THIN_DAYS})
+    out = []
+    for rid, pid, yr, s, k, best, med, n, pool, metres, n_col, graded, n_old in cur.fetchall():
+        side = extraSide(s, k, best, med, n, pool, metres, n_col, graded, n_old)
+        if side:
+            out.append((rid, "XC", pid, yr, float(s), med and float(med), side))
+    return out
+
+
+def writeExtra(cur, rows):
+    cur.executemany("""
+        INSERT INTO rating_outlier (result_id, sport, person_id, season, rating, med, side)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (result_id, sport) DO NOTHING""", rows)
+    return len(rows)
+
+
+def printExtra(rows, show):
+    from collections import Counter
+    by = Counter(r[6] for r in rows)
+    print(f"\n  rows the neighbourhood cannot judge: {len(rows):,} "
+          f"({', '.join(f'{k} {v:,}' for k, v in sorted(by.items()))})")
+    for side in ("level", "thin", "field"):
+        top = sorted((r for r in rows if r[6] == side), key=lambda r: -r[4])[:show]
+        for r in top:
+            print(f"    {side:<5} result {r[0]}  /athlete/{r[2]}  {r[3]}  rating {r[4]:.1f}"
+                  f"  (their other races' median {r[5] and round(r[5], 1)})")
+
+
 def dropStage(cur, name=STAGE):
     """The scratch tables of a pass: the stage (and its partitions) and,
     for the main pass, the candidate table."""
@@ -919,12 +1042,15 @@ def main():
                                 slow_sigma=args.slow_sigma, bars=bars,
                                 show=args.show, shards=args.shards,
                                 connect=getConn, streams=args.streams)
+                extra = extraRows(cur)
+                printExtra(extra, args.show)
                 if args.write:
                     if args.since:
                         print("  ! --since judged only part of the corpus; "
                               "the table is replaced with that part")
                     print(f"  wrote {write(cur, rows, cal):,} rows to "
                           f"rating_outlier")
+                    print(f"  wrote {writeExtra(cur, extra):,} more (thin, field, level)")
                     dropStage(cur)
                     conn.commit()
                     print("  committed. The boards (step 10) and the season "

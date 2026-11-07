@@ -75,6 +75,27 @@ def verdict(rows, gender=None):
     return move, sorted(i for i, _d, _r in by[move]), why
 
 
+def explainOne(pid, rows, gender):
+    """--person: why the page is or is not two people."""
+    if not rows:
+        print(f"  /athlete/{pid}: fewer than {MIN_SIDE} rows in men's fields and in "
+              f"women's fields (a field counts with {FIELD_MIN}+ runners of known gender, "
+              f"{FIELD_SHARE:.0%} one way)")
+        return
+    side = defaultdict(list)
+    for rid, g, d, r in rows:
+        side[g].append((d, r, rid))
+    print(f"  /athlete/{pid}: the person's gender {gender or 'unknown'}")
+    for g in ("M", "F"):
+        rs = sorted(side[g])
+        med = statistics.median([float(r) for _d, r, _i in rs if r]) if any(r for _d, r, _i in rs) else None
+        print(f"    {len(rs)} rows in {'men' if g == 'M' else 'women'}'s fields, median "
+              f"rating {med and round(med, 1)}: "
+              + ", ".join(f"{d} {r and round(float(r), 1)}" for d, r, _i in rs[:12]))
+    v = verdict(rows, gender)
+    print(f"    verdict: {v[2] if v else 'one person (no gap of ' + format(GAP, '.0%') + ', no shared day)'}")
+
+
 _SQL = """
     WITH fld AS (
         SELECT r.source, r.meet_id, r.div_id,
@@ -131,6 +152,8 @@ def main(argv=None):
                     found.append((pid,) + v)
             print(f"[gender split] {len(by):,} pages with races in both men's and women's "
                   f"fields; {len(found):,} are two people")
+            if a.person:
+                explainOne(a.person, by.get(a.person, []), gender.get(a.person))
             for pid, move, rids, why in found[:a.show]:
                 print(f"  /athlete/{pid}  move the {len(rids)} {'men' if move == 'M' else 'women'}'s-"
                       f"field rows to a new page -- {why}")

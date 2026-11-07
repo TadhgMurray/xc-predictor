@@ -109,6 +109,10 @@ def main(argv=None):
             k, omed, opools, d0, d1, grades = cur.fetchone()
             print(f"   their other races: {k}, median rating {omed and round(omed, 1)},"
                   f" pools {opools}, grades {grades}, {d0} to {d1}")
+            cur.execute("SELECT side FROM rating_outlier WHERE sport = 'XC' AND result_id = %s",
+                        (rid,))
+            fl = cur.fetchone()
+            print(f"   outlier flag: {fl[0] if fl else 'none'}")
             cur.execute(_COPY, {"p": pid, "r": rid, "t": t, "day": day})
             for c in cur.fetchall():
                 print(f"   SAME RUN ELSEWHERE: {c[0]} on {c[1]}, {_t(c[2])}, rating {c[3]},"
