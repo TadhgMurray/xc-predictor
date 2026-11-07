@@ -47,6 +47,12 @@ CHANGES = [
      "An athlete's rank on their team now counts only teammates of the same "
      "gender, and conference and league rankings use this season's "
      "conference memberships."),
+    ("2026-11-06",
+     "Results that cannot be checked no longer rank: a race far faster than "
+     "an athlete's only one or two other races, a race with fewer than three "
+     "rated runners that is faster than the athlete's usual level, and a "
+     "college or open race filed under a middle school grade. They stay on "
+     "the athlete's page, marked."),
 ]
 
 
