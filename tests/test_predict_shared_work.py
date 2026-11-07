@@ -501,3 +501,26 @@ def test_a_full_pool_is_waited_for_not_failed(monkeypatch):
     except ValueError:
         pass
     assert D._pool.used == 0 and D._slots._value == 2
+
+
+def test_a_failed_graph_read_is_retried_not_kept(monkeypatch):
+    """! 2026-11-07: a worker whose pool was full at boot kept {} for life."""
+    import normalize_distance as ND
+    import database as D
+    from contextlib import contextmanager
+    calls = []
+
+    @contextmanager
+    def failing():
+        calls.append(1)
+        raise RuntimeError("connection pool exhausted")
+        yield
+    monkeypatch.setattr(D, "getConn", failing)
+    monkeypatch.setattr(ND, "_GRAPH_LEVELS", None)
+    monkeypatch.setattr(ND, "_GRAPH_RETRY_AT", 0.0)
+    assert ND.loadGraphLevels() == {}
+    assert ND._GRAPH_LEVELS is None and ND._GRAPH_RETRY_AT > 0
+    assert ND.loadGraphLevels() == {} and len(calls) == 1   # no retry inside the minute
+    monkeypatch.setattr(ND, "_GRAPH_RETRY_AT", 0.0)
+    ND.loadGraphLevels()
+    assert len(calls) == 2                                  # and then it reads again
