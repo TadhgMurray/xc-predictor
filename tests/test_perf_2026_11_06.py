@@ -814,12 +814,22 @@ def test_events_boards_from_the_table_equal_the_live_ones(pg):
 # --------------------------------------------------------------- 14 --
 # prewarm: the swapped-in tables into memory before the first visitor
 
-def test_prewarm_plan_takes_indexes_first_smallest_first_under_the_cap():
+def test_prewarm_plan_takes_what_pages_read_in_priority_order():
+    """The server's first run filled 16 GB smallest-first with indexes no
+    page reads and left the boards cold."""
     import prewarm as W
     G = 1024 ** 3
-    rels = [("big_table", "r", 20 * G), ("idx_a", "i", 3 * G), ("idx_b", "i", 1 * G),
-            ("small_table", "r", 2 * G), ("idx_huge", "i", 30 * G)]
-    assert W.plan(rels, 7 * G) == [("idx_b", 1 * G), ("idx_a", 3 * G), ("small_table", 2 * G)]
+    rels = [("results_native_id_idx", "i", G // 2),          # no page reads it
+            ("idx_results_normalized_time", "i", G),
+            ("ranking_results_rr_pr_time_idx", "i", 3 * G),   # prefixed live name
+            ("season_comps", "r", 2 * G),
+            ("idx_season_comps_match", "i", G // 4),
+            ("athlete_season_as_pool_mean_idx", "i", 30 * G),  # too big for what is left
+            ("idx_athlete_season_ev_mean", "i", G)]
+    got = W.plan(rels, 7 * G)
+    assert [n for n, _ in got] == ["season_comps", "idx_season_comps_match",
+                                   "idx_athlete_season_ev_mean",
+                                   "ranking_results_rr_pr_time_idx"]
     assert W.plan(rels, 0) == []
 
 

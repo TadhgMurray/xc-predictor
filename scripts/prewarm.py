@@ -16,10 +16,10 @@ pay for the disk.
   into the OS page cache ('prefetch'), the box has 125 GB, and the hot set
   is a few GB.
 
-! WHAT, AND HOW MUCH. Every index on the board and page tables and the
-  smaller of those tables whole -- smallest first, until --cap-gb (default
-  XCP_PREWARM_GB or 16) is used. ranking_results' heap (~23 GB) is left to
-  the cap: its indexes are what the boards walk.
+! WHAT, AND HOW MUCH. PRIORITY below, in order, until --cap-gb (default
+  XCP_PREWARM_GB or 16) is used; nothing a page is not known to read.
+  ranking_results' heap (~23 GB) is not in it: its indexes are what the
+  boards walk.
 
 ! HARMLESS WHEN IT CANNOT. No pg_prewarm extension (and no right to create
   it), a relation that is not there: it says so and exits 0. 'prefetch' asks
@@ -40,17 +40,59 @@ TABLES = ("athlete_season_ev", "season_comps", "season_comps_meta", "athlete_sea
           "results_tf", "grade_fix")
 
 
+# ★ WHAT THE PAGES ACTUALLY READ, MOST VISITED FIRST (2026-11-07: the first
+#   version took the smallest relations first, and on the server 16 GB filled
+#   with indexes no page reads -- native ids, normalized_time, results_pkey --
+#   while the board indexes, athlete_season_ev's and season_comps were left
+#   cold). A live index carries its canonical name with a table prefix
+#   ("athlete_season_as_pool_mean_idx", "ranking_results_rr_pr_time_idx"), so
+#   an entry matches the name or any "<prefix>_<entry>".
+PRIORITY = (
+    # /recruit/<id>: the comps search, the most frequent page by far
+    "season_comps", "idx_season_comps_match", "season_comps_meta",
+    # the boards: the Events presets, the ability board, the PR and
+    # performance boards
+    "idx_athlete_season_ev_mean", "idx_athlete_season_ev_year_mean",
+    "idx_athlete_season_ev_best", "idx_athlete_season_ev_pool_mean",
+    "as_pool_sport_mean_idx", "as_pool_mean_idx", "as_board_mean_idx",
+    "as_pool_sport_best_idx", "as_pool_best_idx", "as_board_best_idx",
+    "rr_pr_sport_time_idx", "rr_pr_time_idx", "rr_board_rating_idx",
+    "rr_pool_sport_rating_idx", "rr_pool_rating_idx", "rr_perf_dist_rating_idx",
+    "rr_pool_year_dist_idx",
+    # athlete pages, rank lines, race pages
+    "as_person_idx", "idx_athlete_season_person", "idx_athlete_season_ev_person",
+    "idx_rr_person_cover", "rr_person_cover_idx", "idx_rr_result", "rr_result_idx",
+    "idx_results_meet_src_cover", "idx_results_person", "idx_results_tf_person",
+    "idx_results_tf_meet_ev_place", "idx_athletes_person_id", "athletes_pkey",
+    "person_gender_pkey", "grade_fix_pkey",
+    # the athlete_season heap the board index scans land on
+    "athlete_season",
+    # search
+    "idx_search_prefix", "idx_search_trgm",
+)
+
+
+def _rank(name):
+    for i, p in enumerate(PRIORITY):
+        if name == p or name.endswith("_" + p):
+            return i
+    return None
+
+
 def plan(rels, cap_bytes):
-    """[(name, bytes)] to prewarm: indexes first (smallest first), then
-    tables (smallest first), while the running total stays under the cap.
+    """[(name, bytes)] to prewarm: PRIORITY's relations in its order, then
+    nothing else -- a relation no page is known to read is not worth the
+    memory -- each taken while the running total stays under the cap (one
+    too big for what is left is skipped, the next still tried).
     `rels` is [(name, kind 'i'|'r', bytes)]. Pure."""
+    ranked = sorted((r for r in rels if _rank(r[0]) is not None),
+                    key=lambda r: (_rank(r[0]), r[2]))
     out, used = [], 0
-    for kind in ("i", "r"):
-        for name, k, size in sorted((r for r in rels if r[1] == kind), key=lambda r: r[2]):
-            if used + size > cap_bytes:
-                continue
-            out.append((name, size))
-            used += size
+    for name, _kind, size in ranked:
+        if used + size > cap_bytes:
+            continue
+        out.append((name, size))
+        used += size
     return out
 
 
