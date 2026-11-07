@@ -360,8 +360,10 @@ def predictField(model, field, race):
     X = np.array([[r["f"].get(k, math.nan) for k in model["features"]] for r in field],
                  dtype=np.float32)
     base = np.array([r["base"] for r in field])
-    rel = base + model["runner"].predict(X)
-    rel -= rel.mean()
+    pr = model["runner"].predict(X)
+    # ★ CENTRED AS THE LEVEL WAS FITTED (race_trees.placeOnLevel): on the
+    #   field's mean, or its median runner with level_stat "median"
+    rel = base + pr - (np.median(pr) if model.get("level_stat") == "median" else pr.mean())
     lf = model.get("level_features") or RT.LEVEL_FEATURES
     lrow = np.array([[float(np.nanmean([r["f"].get(k, math.nan) for r in field]))
                       if any(not math.isnan(r["f"].get(k, math.nan)) for r in field)

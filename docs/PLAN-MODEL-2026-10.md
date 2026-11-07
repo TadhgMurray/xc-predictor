@@ -1036,3 +1036,27 @@ The honest model orders better than the hindsight-flattered ratings. Built:
 - Also hindsight, minor: training drops rows the engine flagged as outliers
   (`rating_outlier`, from the full solve), which flatters the validation
   mean on both sides.
+
+### 9b. The replay, built (2026-11-07)
+
+- `deploy/joint_flags.sh`: the go-live's solve flags in one function
+  (`jointFlags`), sourced by run_pipeline 08_golive and the replay, so both
+  solve the same model (checked identical under several XCP_* settings).
+- `engine/run_joint.py --asof DATE --snapshot NPZ`: the solve on the rows
+  dated before DATE; result ratings (rows of the 800 days before it, sorted
+  by id) and canonical XC course cells to the npz; never the database
+  (refuses --golive, --golive-dry, holdouts; its own npz/state beside the
+  snapshot).
+- `deploy/engine_replay.sh`: one solve per cutoff (1st and 15th, mid-August
+  to December 1; seasons 2025, 2026, 2024, 2023), skips done ones, takes
+  .pipeline.lock, starts nothing 03:30-09:30 UTC (Postgres restart, the
+  nightly at 09:17 UTC). `--list` shows what is done.
+- `race_rows --asof-dir`: each race from the snapshot in force at its cut
+  (race day - lead): its runners' ratings and its course cell. Rows after
+  the snapshot are unrated (as that morning); rows older than its window
+  keep today's rating, which only counts them. Races before the first
+  snapshot are left out.
+- Still today's, minor: pool means (conversions.pool_mean), the outlier
+  flags, distance overrides.
+- The switches for the same test round: `race_trees --runner-loss
+  absolute_error`, `--level-median`.

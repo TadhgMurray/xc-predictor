@@ -2748,6 +2748,18 @@ def buildParser():
                          "'XC=1,TF:out=2.5,TF:in=1' (bracket_engine.parsePrior)")
     ap.add_argument("--golive", action="store_true")
     ap.add_argument("--golive-dry", action="store_true")
+    # ★ AS OF A DATE (owner, 2026-11-07: "there shouldnt be any hindsight";
+    #   docs/PLAN-MODEL-2026-10.md §9). The race model trains on the ratings
+    #   and course numbers each race could have been predicted from: a solve
+    #   on the rows dated BEFORE --asof, whose result ratings and course
+    #   cells go to --snapshot (an npz, writeSnapshot) and NEVER to the
+    #   database. deploy/engine_replay.sh runs one per cutoff with the
+    #   go-live's own flags (deploy/joint_flags.sh).
+    ap.add_argument("--asof", default=None, metavar="YYYY-MM-DD",
+                    help="solve on the rows dated before this day only (with --snapshot)")
+    ap.add_argument("--snapshot", default=None, metavar="NPZ",
+                    help="write the solve's result ratings and course cells here, "
+                         "nothing to the database (with --asof)")
     ap.add_argument("--anchor", default="career",
                     choices=("career", "seasonal"),
                     help="pool mean for the per-result rating")
@@ -3936,6 +3948,71 @@ def pairEngineDelta(old_path, solved):
         return None
 
 
+# A snapshot keeps the result ratings of the rows dated this many days
+# before its cutoff (race_rows reads a runner's form from the last season and
+# the one before it; older rows only count races, and keep today's number).
+SNAPSHOT_DAYS = 800
+
+
+def snapshotArrays(live, asof, keep_ids=None):
+    """The arrays a replay keeps from buildLive's output: every result's
+    rating and pool, by sport, sorted by result id (only the ids in
+    keep_ids[sport] when given), and every course cell's difficulty under
+    the key the database would store (course_difficulties: canonical id and
+    distance). Pure but for numpy."""
+    import speed_ratings_db as srd
+    out = {"asof": np.array([asof]), "window_days": np.array([SNAPSHOT_DAYS])}
+    for name, arrays in (live.get("per_sport") or {}).items():
+        rid = np.asarray(arrays[0], dtype=np.int64)
+        val = np.asarray(arrays[1], dtype=np.float32)
+        pool = np.asarray(arrays[2]).astype(str) if len(arrays) > 2 else None
+        m = np.isfinite(val) & (val > 0)
+        if keep_ids is not None and name in keep_ids:
+            m &= np.isin(rid, keep_ids[name])
+        o = np.argsort(rid[m], kind="stable")
+        out[f"{name}_result_id"] = rid[m][o]
+        out[f"{name}_rating"] = val[m][o]
+        if pool is not None:
+            out[f"{name}_pool"] = pool[m][o]
+    names = {}
+    cid, dist, diff = [], [], []
+    for key, d in (live.get("diffs") or {}).items():
+        _name, c, m = srd._splitVenueKey(key, names)
+        if c is None or m is None:
+            continue
+        cid.append(int(c))
+        dist.append(int(m))
+        diff.append(float(d["difficulty"]))
+    out["cell_canonical_id"] = np.asarray(cid, dtype=np.int64)
+    out["cell_distance_m"] = np.asarray(dist, dtype=np.int64)
+    out["cell_difficulty"] = np.asarray(diff, dtype=np.float64)
+    return out
+
+
+def recentIds(cols, keep, dates, asof, days=SNAPSHOT_DAYS):
+    """{sport: result ids} of the solved rows dated in the `days` before
+    `asof` (snapshotArrays' keep_ids). Pure but for numpy."""
+    lo = np.datetime64(asof) - np.timedelta64(days, "D")
+    m = keep & (dates >= lo)
+    sport = np.asarray(cols["sport"])
+    rid = np.asarray(cols["result_id"])
+    return {name: rid[m & (sport == code)].astype(np.int64)
+            for code, name in ((0, "XC"), (1, "TF"))}
+
+
+def writeSnapshot(live, path, asof, keep_ids=None):
+    """The replay's output, to an npz and nowhere else (--snapshot)."""
+    arrays = snapshotArrays(live, asof, keep_ids)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp.npz"
+    np.savez(tmp, **arrays)
+    os.replace(tmp, path)
+    n = sum(arrays[k].size for k in arrays if k.endswith("_result_id"))
+    print(f"[joint] --snapshot {path}: as of {asof}, {n:,} result ratings, "
+          f"{arrays['cell_canonical_id'].size:,} cross country cells; nothing written "
+          f"to the database")
+
+
 def main():
     ap = buildParser()
     args = applyImplications(ap.parse_args(), ap)
@@ -3944,6 +4021,13 @@ def main():
     if not os.path.exists(args.pack):
         sys.exit(f"[joint] no pack at {args.pack} -- run 07_pack first")
 
+    if args.asof or args.snapshot:
+        if not (args.asof and args.snapshot):
+            sys.exit("[joint] --asof and --snapshot go together")
+        if args.golive or args.golive_dry or args.holdout or args.holdout_only:
+            sys.exit("[joint] --asof is a replay: never with --golive, --golive-dry or a holdout")
+        # ! NEVER THE LIVE FILES: the solve's npz and state go beside the snapshot
+        args.out = os.path.splitext(args.snapshot)[0] + "_joint.npz"
     print(f"[joint] loading {args.pack}")
     cols = pe.loadPack(args.pack)
     cols = sortRowsByAthlete(cols)
@@ -3954,6 +4038,12 @@ def main():
         args._forward = fh.forwardWindow(cols, args.holdout_from,
                                          args.holdout_until, args.sealed)
     keep = (cols["course"] >= 0) & (cols["norm"] > 0)
+    if args.asof:
+        dates, _pack_day, _agree = fh.rowDates(cols)
+        before = dates < np.datetime64(args.asof)
+        print(f"[joint] --asof {args.asof}: {int((keep & before).sum()):,} of "
+              f"{int(keep.sum()):,} rows dated before it")
+        keep = keep & before
     # ★ THE LADDER RUNS ON A SAMPLE. Each rung is a full solve, and a
     #   comparison between rungs only needs the ORDER to be right, not the
     #   absolute value -- so a 15% athlete sample turns 40 minutes a rung
@@ -4185,7 +4275,7 @@ def main():
     np.savez(args.out, **save)
     print(f"[joint] wrote {args.out}")
 
-    if args.golive or args.golive_dry:
+    if args.golive or args.golive_dry or args.snapshot:
         import joint_golive as jg
         gain_bands = None
         if args.winter_gain_bands:
@@ -4226,6 +4316,10 @@ def main():
                                 x.strip().upper() for x in
                                 args.race_effect_sports.split(",") if x.strip()))
         jg.report(live)
+        if args.snapshot:
+            writeSnapshot(live, args.snapshot, args.asof,
+                          recentIds(cols, keep, dates, args.asof))
+            return
         jg.writeNpz(live, os.path.join(os.path.dirname(args.out),
                                        "pair_difficulty.npz"))
         if args.golive:

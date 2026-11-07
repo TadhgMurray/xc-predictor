@@ -1376,51 +1376,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   else, the courses come from the owner's method, the abilities are
   #   recomputed to match. Default joint. The holdout and the ladder score
   #   the joint solve either way; 08d compares the two on the same rows.
-  step 08_golive        "$PY" -u engine/run_joint.py --golive --probes "${XCP_PROBES:-0}" \
-      --outer "${XCP_OUTER:-5}" \
-      ${XCP_DIFFICULTY:+--difficulty "$XCP_DIFFICULTY"} \
-      ${XCP_BRACKET_PRIOR:+--bracket-prior "$XCP_BRACKET_PRIOR"} \
-      ${XCP_BRACKET_WINDOW:+--bracket-window "$XCP_BRACKET_WINDOW"} \
-      ${XCP_TRACK_LEVEL_BY_POOL:+--track-level-by-pool "$XCP_TRACK_LEVEL_BY_POOL"} \
-      ${XCP_BRACKET_PLACE_RADIUS:+--bracket-place-radius "$XCP_BRACKET_PLACE_RADIUS"} \
-      ${XCP_BRACKET_SIBLING_TOL:+--bracket-sibling-tol "$XCP_BRACKET_SIBLING_TOL"} \
-      ${XCP_GAUGE:+--gauge "$XCP_GAUGE"} \
-      ${XCP_GAUGE_SCOPE:+--gauge-scope "$XCP_GAUGE_SCOPE"} \
-      ${XCP_BRACKET_INDOOR_GATES:+--bracket-indoor-gates "$XCP_BRACKET_INDOOR_GATES"} \
-      ${XCP_DAY_NOISE:+--day-noise "$XCP_DAY_NOISE"} \
-      ${XCP_BRACKET_INDOOR_CENTRE:+--bracket-indoor-centre "$XCP_BRACKET_INDOOR_CENTRE"} \
-      ${XCP_BRACKET_INDOOR_MODE:+--bracket-indoor-mode "$XCP_BRACKET_INDOOR_MODE"} \
-      ${XCP_BRACKET_INDOOR_LEVELS:+--bracket-indoor-levels "$XCP_BRACKET_INDOOR_LEVELS"} \
-      ${XCP_BRACKET_XC_LEVEL:+--bracket-xc-level "$XCP_BRACKET_XC_LEVEL"} \
-      ${XCP_BRACKET_XC_LEVEL_MODE:+--bracket-xc-level-mode "$XCP_BRACKET_XC_LEVEL_MODE"} \
-      ${XCP_BRACKET_PLACE_PRIOR:+--bracket-place-prior "$XCP_BRACKET_PLACE_PRIOR"} \
-      ${XCP_BRACKET_PLACE_VENUE:+--bracket-place-venue "$XCP_BRACKET_PLACE_VENUE"} \
-      ${XCP_COURSE_SCALE:+--course-scale "$XCP_COURSE_SCALE"} \
-      ${XCP_RACE_EFFECT_SPORTS:+--race-effect-sports "$XCP_RACE_EFFECT_SPORTS"} \
-      ${XCP_RACE_EFFECT_OWN:+--race-effect-own "$XCP_RACE_EFFECT_OWN"} \
-      ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
-      ${XCP_SPORT_LEVEL_POOLS:+--sport-level-pools "$XCP_SPORT_LEVEL_POOLS"} \
-      ${XCP_FROM_STATE:+--from-state "$XCP_FROM_STATE"} \
-      ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
-      ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
-      ${XCP_NO_IMPORTANCE:+--no-importance} \
-      ${XCP_NO_INDOOR:+--no-indoor} \
-      ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
-      ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
-      ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
-      ${XCP_DIST_WALK:+--dist-walk "$XCP_DIST_WALK"} \
-      ${XCP_NO_DIST_TABLE:+--no-dist-table} \
-      ${XCP_MERGE_SPORTS:+--merge-sports} \
-      ${XCP_CENTRE_CURVE:+--centre-curve} \
-      ${XCP_TAU_MAX:+--tau-max "$XCP_TAU_MAX"} \
-      ${XCP_SPLIT_ABILITY:+--split-ability} \
-      ${XCP_WINTER_GAIN:+--winter-gain "$XCP_WINTER_GAIN"} \
-      ${XCP_WINTER_GAIN_BANDS:+--winter-gain-bands "$XCP_WINTER_GAIN_BANDS"} \
-      ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
-      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
-      $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) \
-      $([ "${XCP_ALTITUDE:-1}" != "0" ] && echo --altitude) \
-      $([ "${XCP_ALTITUDE:-1}" != "0" ] && [ "${XCP_ALTITUDE_FIT:-0}" = "1" ] && echo --altitude-fit)
+  # the flags: deploy/joint_flags.sh (one definition with the replays)
+  . "$ROOT/deploy/joint_flags.sh"
+  jointFlags
+  step 08_golive        "$PY" -u engine/run_joint.py --golive "${JOINT_FLAGS[@]}"
   # ★★ THE EVIDENCE STEPS RUN BESIDE THE BOARDS, NOT BEFORE THEM (owner,
   #    2026-10-07: "make it faster"). 08a_holdout, 08a_sport_holdout,
   #    08b_ladder, 08d_diagnose and 08c_anchor_check publish nothing: they
