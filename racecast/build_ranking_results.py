@@ -2157,9 +2157,15 @@ _CANONICAL_INDEXES = {
         #   COLD because every row was a random heap fetch. INCLUDE makes
         #   it an index-only scan -- the badge query never touches the
         #   heap at all.
-        ("rr_person_cover_idx",
-         "(person_id) INCLUDE (sport, race_date, year, distance, "
-         "time_seconds)"),
+        # ★ AND THE RATING BADGES, AND ONE INDEX (2026-11-07).
+        #   app.stampRatingFlags reads speed_rating and stampRecordFlags'
+        #   hurdles/steeple test reads event_kind; the cover carried the
+        #   clock's columns only, so both were heap fetches. One index under
+        #   11b's name (rr_person_cover_idx, its old twin, is retired:
+        #   _RETIRED_INDEXES); indexDefs drops the live table's older
+        #   definition of this name on the next rebuild.
+        ("idx_rr_person_cover",
+         "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds, speed_rating, event_kind)"),
         # rankings performance boards: pool/sport/year equality, then
         #   ORDER BY speed_rating DESC LIMIT cand
         ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),
@@ -2236,8 +2242,7 @@ _CANONICAL_INDEXES = {
         #   names as 11b's, so its CREATE IF NOT EXISTS no-ops.
         ("idx_rr_result", "(result_id)"),
         ("idx_rr_school", "(school)"),
-        ("idx_rr_person_cover",
-         "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds)"),
+        # (the third, idx_rr_person_cover, is listed above with its readers)
     ],
     "athlete_season": [
         # athlete pages and "where am I": WHERE person_id = %s
@@ -2288,6 +2293,16 @@ _CANONICAL_INDEXES = {
         #   (+ sport/year equality) -- every school page view
         ("as_school_idx", "(school, sport, year)"),
     ],
+}
+
+
+# Indexes no longer wanted: a live table's copy is not replayed onto the
+# shadow, so a rebuild drops it. Each names what replaced it.
+_RETIRED_INDEXES = {
+    "ranking_results": {
+        # idx_rr_person_cover's narrower twin (2026-11-07)
+        "rr_person_cover_idx",
+    },
 }
 
 
@@ -2430,10 +2445,14 @@ def indexDefs(conn, like):
     #   step 10 on pg_class_relname_nsp_index. The catalogue's copy of a
     #   canonical name whose columns changed is dropped here.
     canon = dict(_CANONICAL_INDEXES.get(like, []))
+    retired = _RETIRED_INDEXES.get(like, set())
     strip = re.compile(r"^(?:" + re.escape(like) + r"(?:_new)*_)?")
     kept = []
     for n, ddl in defs:
         base = strip.sub("", n)
+        if base in retired:
+            print(f"    {n}: retired -- not rebuilt")
+            continue
         if base in canon and _indexSig(ddl) != _indexSig(canon[base]):
             print(f"    {n}: redefined in the canonical list -- built with "
                   f"the new columns {canon[base]}")

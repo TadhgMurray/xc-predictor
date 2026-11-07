@@ -577,8 +577,24 @@ def project(cur, state, division, gender):
             or (course or {}).get("distance"),
         }
 
-    val, stamp = ttlcache.get(key, compute, ttl=_TTL)
-    return dict(val, computed_at=stamp)
+    # ★ ONCE FOR THE BOX, NOT ONCE PER WORKER (2026-11-07, as cuts.marksFor):
+    #   each of 24 workers computed every page every 6 h. The first worker
+    #   computes and shares (sharedcache); the others read its copy and keep
+    #   it in memory only for what is left of its 6 h, so a page is never
+    #   older than it was before, and "computed at" is when it was computed.
+    import time
+    import sharedcache
+
+    def shared():
+        v, at = sharedcache.get("proj-" + "-".join(str(k) for k in key[1:]),
+                                compute, ttl=_TTL)
+        return dict(v, _shared_at=at)
+
+    def ttl_of(v):
+        return max(60.0, _TTL - (time.time() - v.get("_shared_at", time.time())))
+    val, stamp = ttlcache.get(key, shared, ttl=_TTL, ttl_of=ttl_of)
+    val = dict(val)
+    return dict(val, computed_at=val.pop("_shared_at", stamp))
 
 
 def fmtTime(seconds):

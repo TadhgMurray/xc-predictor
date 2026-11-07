@@ -9252,33 +9252,34 @@ def get_tf_venue_meets(cur, location_id, is_indoor, limit=50):
     return cur.fetchall()
 
 
-@app.route("/venue/tf/<int:location_id>/<indoor>")
-def venue_tf(location_id, indoor):
-    is_indoor = (indoor == "in")
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            label      = get_tf_venue_label(cur, location_id, is_indoor)
-            difficulty = get_tf_venue_difficulty(cur, location_id, is_indoor)
-            bests      = get_tf_venue_bests(cur, location_id, is_indoor)
-            venue_meets = get_tf_venue_meets(cur, location_id, is_indoor)
-            try:
-                individual = get_tf_venue_individual_records(cur, location_id, is_indoor)
-            except Exception:                           # noqa: BLE001
-                app.logger.exception("individual records failed for venue %s",
-                                     location_id)
-                conn.rollback()
-                individual = []
-            try:
-                relays = get_tf_venue_relay_records(cur, location_id, is_indoor)
-            except Exception:                           # noqa: BLE001
-                app.logger.exception("relay records failed for venue %s",
-                                     location_id)
-                conn.rollback()
-                relays = []
-            # HS-equivalent view: distance parsed from each row's event.
-            has_hs_view = stampRowsHs(cur, "TF", bests,
-                                      event_key="event_short")
-            bests = rankByHs(bests, 25)
+def buildVenueTfCtx(cur, location_id, is_indoor):
+    """Everything venue_tf.html renders but the venue's id and side, computed
+    live. The route uses it as the fallback; build_venue_tf_boards.py uses it
+    as the builder -- ONE code path, so a precomputed venue page cannot drift
+    from the live one (build_course_boards' arrangement for course pages)."""
+    conn = cur.connection
+    label      = get_tf_venue_label(cur, location_id, is_indoor)
+    difficulty = get_tf_venue_difficulty(cur, location_id, is_indoor)
+    bests      = get_tf_venue_bests(cur, location_id, is_indoor)
+    venue_meets = get_tf_venue_meets(cur, location_id, is_indoor)
+    try:
+        individual = get_tf_venue_individual_records(cur, location_id, is_indoor)
+    except Exception:                           # noqa: BLE001
+        app.logger.exception("individual records failed for venue %s",
+                             location_id)
+        conn.rollback()
+        individual = []
+    try:
+        relays = get_tf_venue_relay_records(cur, location_id, is_indoor)
+    except Exception:                           # noqa: BLE001
+        app.logger.exception("relay records failed for venue %s",
+                             location_id)
+        conn.rollback()
+        relays = []
+    # HS-equivalent view: distance parsed from each row's event.
+    has_hs_view = stampRowsHs(cur, "TF", bests,
+                              event_key="event_short")
+    bests = rankByHs(bests, 25)
 
     for row in bests:
         if row["is_field"]:
@@ -9288,16 +9289,72 @@ def venue_tf(location_id, indoor):
         else:
             row["display_result"] = " - "
 
-    ctx = dict(has_hs_view=has_hs_view,
-                           label=label,
-                           location_id=location_id,
-                           is_indoor=is_indoor,
-                           difficulty=difficulty,
-                           bests=bests,
-                           individual=individual,
-                           relays=relays,
-                           venue_meets=venue_meets)
-    return render_template("venue_tf.html", **ctx)
+    return dict(has_hs_view=has_hs_view,
+                label=label,
+                difficulty=difficulty,
+                bests=bests,
+                individual=individual,
+                relays=relays,
+                venue_meets=venue_meets)
+
+
+def venueTfFingerprint(cur, location_id, is_indoor):
+    """What the venue's meet list is made of, as one short string: its
+    meets_tf rows' count and highest ids. A board built from another list
+    is not served (loadVenueTfBoard)."""
+    cur.execute("""
+        SELECT count(*) AS n, max(meet_id) AS m, max(div_id) AS d,
+               max(event_id) AS e
+        FROM   meets_tf
+        WHERE  location_id = %(loc)s AND COALESCE(is_indoor, 0) = %(indoor)s
+    """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+    r = cur.fetchone()
+    vals = (r["n"], r["m"], r["d"], r["e"]) if isinstance(r, dict) else tuple(r)
+    return ":".join("" if v is None else str(v) for v in vals)
+
+
+# ★ COLD TIME IS THE PRODUCT, ON TRACK TOO (2026-11-07: /venue/tf/ at 2-5 s
+#   in the slow log). Every view copied the venue's whole history into a temp
+#   table, ANALYZEd it, and ran the records, the relays' athletes lateral and
+#   a person_gender lookup over thousands of people. build_venue_tf_boards.py
+#   (pipeline step 12c) stores buildVenueTfCtx's answer per (venue, side);
+#   the first viewer reads one row.
+# ! NOT SERVED ONCE THE VENUE'S MEETS MOVED. The nightly scrapes new meets
+#   between pipeline runs, and the live page always showed them. The board
+#   carries the fingerprint of the meet list it was built from; a venue whose
+#   list has changed since -- or one first raced after the run -- renders
+#   live, as every venue did before.
+def loadVenueTfBoard(cur, location_id, is_indoor):
+    """The precomputed render context from venue_tf_boards, or None."""
+    try:
+        cur.execute("SAVEPOINT venue_board")
+        cur.execute("""
+            SELECT fp, ctx FROM venue_tf_boards
+            WHERE  location_id = %(loc)s AND indoor = %(indoor)s
+        """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
+        row = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT venue_board")
+    except psycopg2.Error:              # the table is not built yet
+        cur.execute("ROLLBACK TO SAVEPOINT venue_board")
+        return None
+    if row is None:
+        return None
+    fp, ctx = (row["fp"], row["ctx"]) if isinstance(row, dict) else row
+    if fp != venueTfFingerprint(cur, location_id, is_indoor):
+        return None
+    return ctx
+
+
+@app.route("/venue/tf/<int:location_id>/<indoor>")
+def venue_tf(location_id, indoor):
+    is_indoor = (indoor == "in")
+    with getConn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            ctx = loadVenueTfBoard(cur, location_id, is_indoor)
+            if ctx is None:
+                ctx = buildVenueTfCtx(cur, location_id, is_indoor)
+    return render_template("venue_tf.html", location_id=location_id,
+                           is_indoor=is_indoor, **ctx)
 
 def pad_pool_pairs(panels):
     """For each (sport, scope, pool), make the athlete and performance lists
