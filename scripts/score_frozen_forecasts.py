@@ -137,6 +137,8 @@ def summarize(races):
     terr = [x for r in races for x in r["team_err"]]
     return {"races": len(races), "runners": len(errs),
             "mae": statistics.median(abs(x) for x in errs),
+            # Kailo's statistic: the MEAN |predicted - actual| / actual, in %
+            "mean": statistics.fmean(abs(math.exp(x / 100.0) - 1.0) * 100.0 for x in errs),
             "bias": statistics.median(errs),
             "within": statistics.median(abs(x) for r in races for x in r["within"]),
             "rho": statistics.fmean(rhos) if rhos else None,
@@ -193,6 +195,23 @@ def sharedRunners(a, b):
     return tuple(dict(x, runners=[r for r in x.get("runners") or []
                                   if r.get("person_id") in both], teams=[])
                  for x in (a, b))
+
+
+def mixRunners(a, b):
+    """The geometric mean of two forecasts cut to the same runners
+    (sharedRunners): what XCP_PREDICT_BASIS=race_mix would have said, from
+    the two frozen archives. Pure."""
+    by = {r["person_id"]: r for r in b.get("runners") or []}
+    out = []
+    for r in a.get("runners") or []:
+        o = by.get(r["person_id"])
+        if o is None:
+            continue
+        m = dict(r)
+        for k in ("seconds", "lo", "hi"):
+            m[k] = (math.sqrt(float(r[k]) * float(o[k])) if r.get(k) and o.get(k) else None)
+        out.append(m)
+    return dict(a, runners=out, teams=[])
 
 
 def _fmt(v, f):
@@ -342,8 +361,9 @@ def main():
                 if o is not None:
                     f_, o_ = sharedRunners(fc, o)
                     mf, mo = frozenMetrics(f_, fin, []), frozenMetrics(o_, fin, [])
-                    if mf is not None and mo is not None:
-                        versus.setdefault(key, []).append((mf, mo))
+                    mm = frozenMetrics(mixRunners(f_, o_), fin, [])
+                    if mf is not None and mo is not None and mm is not None:
+                        versus.setdefault(key, []).append((mf, mo, mm))
         conn.rollback()
 
     print(f"\n{a.by:22} {'races':>5} {'runners':>7} {'median|err|':>11} {'bias':>7} "
@@ -375,8 +395,14 @@ def main():
         for key in keys:
             pairs = (versus[key] if key != "ALL" else [p for v in versus.values() for p in v])
             sf, so = summarize([p[0] for p in pairs]), summarize([p[1] for p in pairs])
+            sm = summarize([p[2] for p in pairs])
             print(_row(f"{key} {MF.TABLE}"[:22], sf))
             print(_row(f"{key} {a.against}"[:22], so))
+            # ★ AND THE TWO AVERAGED (owner, 2026-11-07: race_mix), and Kailo's
+            #   own statistic, the mean miss, for all three
+            print(_row(f"{key} the two averaged"[:22], sm))
+            print(f"  {'':20} mean |% miss| (Kailo's statistic): {MF.TABLE} {sf['mean']:.2f}%, "
+                  f"{a.against} {so['mean']:.2f}%, averaged {sm['mean']:.2f}%")
             print(f"  {'':20} {a.against} better by: median |err| {sf['mae'] - so['mae']:+.2f} "
                   f"points, within {sf['within'] - so['within']:+.2f}, rho "
                   f"{_fmt(so['rho'] - sf['rho'] if so['rho'] is not None and sf['rho'] is not None else None, '{:+.3f}')}")
