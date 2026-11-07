@@ -82,6 +82,30 @@ def _usable(pkl, ttl, ttl_of, now):
     return value, at
 
 
+# ★ THE WAIT IS BOUNDED (2026-11-07, "the connection thing ... again"). A
+#   worker that finds another one computing waited on the lock for as long
+#   as that took -- with no limit, and holding its database connection the
+#   whole time. One slow compute (a query stuck behind a pipeline swap's
+#   lock) then held a connection in every worker. Past LOCK_WAIT seconds a
+#   worker stops waiting and computes for itself, as before this module.
+LOCK_WAIT = float(os.environ.get("XCP_SHARED_LOCK_WAIT") or 15)
+
+
+def _lockWithin(fh, seconds):
+    """flock(LOCK_EX) on fh, giving up after `seconds`; True when held."""
+    end = time.monotonic() + seconds
+    pause = 0.05
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= end:
+                return False
+            time.sleep(pause)
+            pause = min(pause * 2, 0.5)
+
+
 def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of=None):
     """(value, computed_at) for `key`: the shared copy when it is younger
     than `ttl` seconds (or ttl_of(value)), else compute() -- once across the
@@ -95,7 +119,11 @@ def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of
     if hit is not None:
         return hit
     with open(base + ".lock", "a+") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX)
+        if not _lockWithin(lk, LOCK_WAIT):
+            # another worker is still at it: answer this request ourselves
+            # (not shared -- the one holding the lock writes the copy)
+            hit = _usable(pkl, ttl, ttl_of, now())
+            return hit if hit is not None else (compute(), now())
         try:
             # another worker may have filled it while this one waited
             hit = _usable(pkl, ttl, ttl_of, now())
@@ -207,7 +235,8 @@ def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
     pkl = base + ".pkl"
     _sweepMany(d, now())
     with open(base + ".lock", "a+") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX)
+        if not _lockWithin(lk, 2.0):
+            return                   # a share skipped, never a request held
         try:
             t = now()
             data = {k: v for k, v in _bucketLoad(pkl).items()

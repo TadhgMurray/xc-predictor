@@ -428,3 +428,76 @@ def test_shared_bucket_cap_and_sweep(tmp_path, monkeypatch):
     left = [f for f in os.listdir(d) if f.startswith("many-")]
     assert not set(old) & set(left)
     assert sharedcache.peekMany(("other",), [9], 600, now=now, path=d) == {9: ("z", t[0])}
+
+
+def test_a_held_lock_is_waited_for_only_so_long(tmp_path, monkeypatch):
+    """! 2026-11-07: a worker waited on another's compute without limit,
+    holding its database connection; now it computes for itself."""
+    import fcntl
+    d = str(tmp_path / "c")
+    sharedcache._safeDir(d)
+    monkeypatch.setattr(sharedcache, "LOCK_WAIT", 0.3)
+    base = os.path.join(d, sharedcache._name("k"))
+    with open(base + ".lock", "a+") as other:
+        fcntl.flock(other, fcntl.LOCK_EX)              # another worker computing
+        import time as _t
+        t0 = _t.monotonic()
+        v, _at = sharedcache.get("k", lambda: 42, ttl=60, path=d)
+        assert v == 42 and _t.monotonic() - t0 < 2
+        assert not os.path.exists(base + ".pkl")       # the lock holder shares
+        sharedcache.putMany(("b",), {1: 1}, 60, path=d)  # a held bucket is skipped, fast
+    v, _at = sharedcache.get("k", lambda: 43, ttl=60, path=d)
+    assert v == 43 and os.path.exists(base + ".pkl")
+
+
+def test_a_full_pool_is_waited_for_not_failed(monkeypatch):
+    import threading
+    import time as _t
+    import psycopg2.pool
+    import database as D
+
+    class C:
+        closed = 0
+
+        def cursor(self):
+            class K:
+                def __enter__(s): return s
+                def __exit__(s, *a): pass
+                def execute(s, *a): pass
+            return K()
+
+        def rollback(self):
+            pass
+
+    class P:
+        used = 0
+
+        def getconn(s):
+            if s.used >= 2:
+                raise psycopg2.pool.PoolError("exhausted")
+            s.used += 1
+            return C()
+
+        def putconn(s, c, close=False):
+            s.used -= 1
+
+    monkeypatch.setattr(D, "_pool", P())
+    monkeypatch.setattr(D, "_slots", threading.BoundedSemaphore(2))
+    monkeypatch.setattr(D, "POOL_WAIT", 3.0)
+    monkeypatch.setattr(D, "dbQuiet", lambda: False)
+
+    def hold():
+        with D.getConn():
+            _t.sleep(0.5)
+    ts = [threading.Thread(target=hold) for _ in range(2)]
+    [t.start() for t in ts]
+    _t.sleep(0.1)
+    with D.getConn():                                 # waits ~0.4 s, no PoolError
+        pass
+    [t.join() for t in ts]
+    try:
+        with D.getConn():
+            raise ValueError
+    except ValueError:
+        pass
+    assert D._pool.used == 0 and D._slots._value == 2
