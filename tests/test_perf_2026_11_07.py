@@ -344,3 +344,158 @@ def test_a_recruit_page_is_the_same_slice_of_the_named_list(pgconn, sort):
     page = recruiting.searchRecruits(cur, _recruitFilters(sort=sort, limit=20, offset=37))
     assert page == everyone[37:57]
     assert any(r["name"] is None for r in everyone)
+
+
+# ---------------------------------------------------------------- 4 --
+
+_COVER = ("(person_id) INCLUDE (sport, race_date, year, distance, time_seconds, "
+          "speed_rating, event_kind)")
+
+
+def _canonical(table):
+    import build_ranking_results as B
+    return dict(B._CANONICAL_INDEXES[table])
+
+
+def _wanted():
+    import add_page_indexes as W
+    return {name: (table, spec) for table, _c, name, spec in W.WANTED}
+
+
+def test_the_person_cover_is_one_index_with_the_flags_columns():
+    import build_ranking_results as B
+    canon = _canonical("ranking_results")
+    assert canon["idx_rr_person_cover"] == _COVER
+    assert "rr_person_cover_idx" not in canon
+    assert "rr_person_cover_idx" in B._RETIRED_INDEXES["ranking_results"]
+    assert _wanted()["idx_rr_person_cover"] == ("ranking_results", _COVER)
+    # no other canonical index has the narrower signature any more
+    old = B._indexSig("(person_id) INCLUDE (sport, race_date, year, distance, time_seconds)")
+    assert old not in {B._indexSig(c) for c in canon.values()}
+
+
+class _CatalogueConn:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def cursor(self):
+        conn = self
+
+        class C:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, *a):
+                pass
+
+            def fetchall(self):
+                return list(conn.rows)
+        return C()
+
+
+def test_a_rebuild_drops_the_old_covers_and_builds_the_new_one():
+    import build_ranking_results as B
+    old = "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds)"
+    defs = B.indexDefs(_CatalogueConn([
+        ("ranking_results_idx_rr_person_cover",
+         f"CREATE INDEX ranking_results_idx_rr_person_cover ON public.ranking_results USING btree {old}"),
+        ("ranking_results_rr_person_cover_idx",
+         f"CREATE INDEX ranking_results_rr_person_cover_idx ON public.ranking_results USING btree {old}"),
+    ]), "ranking_results")
+    sigs = {B._indexSig(d): n for n, d in defs}
+    assert B._indexSig(old) not in sigs
+    assert sigs[B._indexSig(_COVER)] == "ranking_results_idx_rr_person_cover"
+
+
+def test_the_school_season_indexes():
+    w = _wanted()
+    assert w["idx_results_school_date"] == ("results", "(school, date) INCLUDE (meet_id)")
+    assert w["idx_results_tf_school_date"] == ("results_tf", "(school, date) INCLUDE (meet_id)")
+
+
+class _Rec:
+    """A cursor that keeps the statements it runs."""
+    def __init__(self, cur):
+        self.cur, self.seen = cur, []
+
+    def execute(self, sql, params=None):
+        self.seen.append((sql, params))
+        return self.cur.execute(sql, params)
+
+    def fetchall(self):
+        return self.cur.fetchall()
+
+    @property
+    def connection(self):
+        return self.cur.connection
+
+
+def _plan(cur, sql, params):
+    cur.execute("EXPLAIN (ANALYZE, COSTS OFF) " + sql, params)
+    return "\n".join(r["QUERY PLAN"] for r in cur.fetchall())
+
+
+def test_the_rating_and_record_flags_read_only_the_index(pgconn, monkeypatch):
+    import app as A
+    import rankings
+    pgconn.autocommit = True
+    cur = _dictCur(pgconn)
+    cur.execute("""
+        CREATE TEMP TABLE ranking_results AS
+        SELECT g AS result_id, g % 20000 AS person_id,
+               CASE WHEN g % 3 = 0 THEN 'TF' ELSE 'XC' END AS sport,
+               (2015 + g % 10)::text || '-0' || (1 + g % 9) || '-11' AS race_date,
+               2015 + g % 10 AS year, (CASE WHEN g % 2 = 0 THEN 5000 ELSE 1600 END)::real AS distance,
+               (900 + g % 300)::real AS time_seconds, (90 + g % 60)::real AS speed_rating,
+               CASE WHEN g % 7 = 0 THEN 'hurdles' END AS event_kind,
+               'hs_m'::text AS pool, 'School'::text AS school
+        FROM generate_series(1, 300000) g""")
+    cur.execute(f"CREATE INDEX rr_cover ON ranking_results {_canonical('ranking_results')['idx_rr_person_cover']}")
+    cur.execute("VACUUM ANALYZE ranking_results")
+    monkeypatch.setattr(rankings, "_EVENT_KIND_PRESENT", True)
+    rows = [{"person_id": p, "speed_rating": 120.0, "time_seconds": 950.0,
+             "result_id": 10 ** 9 + p} for p in range(1, 400, 13)]
+    rec = _Rec(cur)
+    A.stampRatingFlags(rec, "XC", [dict(r) for r in rows], "2024-03-01")
+    A.stampRecordFlags(rec, "TF", [dict(r) for r in rows], 1600, "2024-03-01")
+    A.stampRecordFlags(rec, "XC", [dict(r) for r in rows], 5000, "2024-03-01")
+    careers = [(s, p) for s, p in rec.seen if "GROUP  BY person_id" in s]
+    assert len(careers) == 3
+    for sql, params in careers:
+        plan = _plan(cur, sql, params)
+        assert "Index Only Scan using rr_cover" in plan, plan
+        assert "Heap Fetches: 0" in plan, plan
+
+
+def test_a_school_season_reads_one_season_and_the_meet_list_only_the_index(pgconn):
+    import meets_filter
+    pgconn.autocommit = True
+    cur = _dictCur(pgconn)
+    cur.execute("""
+        CREATE TEMP TABLE results AS
+        SELECT g AS result_id, g % 50000 AS person_id, 'School ' || (g % 2000) AS school,
+               (2010 + (g / 2000) % 16)::text || '-' || lpad((1 + g % 12)::text, 2, '0')
+                   || '-15' AS date,
+               g / 120 AS meet_id, (900 + g % 300)::real AS time_seconds
+        FROM generate_series(1, 1000000) g""")
+    w = _wanted()
+    cur.execute("CREATE INDEX plain_school ON results (school)")
+    cur.execute(f"CREATE INDEX school_date ON results {w['idx_results_school_date'][1]}")
+    cur.execute("VACUUM ANALYZE results")
+    season = _plan(cur, """
+        SELECT r.school, r.person_id, count(*) FROM results r
+        WHERE  r.school = ANY(%(s)s) AND r.person_id IS NOT NULL
+          AND  r.date >= %(lo)s AND r.date < %(hi)s
+          AND  r.time_seconds > 0 AND r.time_seconds < 19999
+        GROUP  BY 1, 2""", {"s": ["School 7", "School 99"], "lo": "2024-07-01",
+                            "hi": "2025-07-01"})
+    assert "school_date" in season and re.search(
+        r"Index Cond: .*school = ANY.*date >= .*date < ", season), season
+    meets = _plan(cur, meets_filter._SCHOOL_SQL.split("SELECT x.meet_id")[0]
+                  .replace("WITH mine AS (", "").rstrip().rstrip(")")
+                  .format(table="results", year_clause=""),
+                  {"school": "School 7", "sane": meets_filter._SANE_DATE, "lim": 400})
+    assert "Index Only Scan using school_date" in meets and "Heap Fetches: 0" in meets, meets
