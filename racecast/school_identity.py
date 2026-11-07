@@ -603,10 +603,17 @@ def levelChips(cur, school, state):
     return out
 
 
-def namesakes(cur, school, state):
+def namesakes(cur, school, state, level=None):
     """[{state, level, n}] the name's schools in OTHER states, ten athletes
     or more, not buckets, biggest first -- linked from the page of the one
-    on screen (owner, 2026-11-05: "what happened to the hs page?")."""
+    on screen (owner, 2026-11-05: "what happened to the hs page?").
+
+    ! A COLLEGE TRAVELS (owner, 2026-11-07: Duke University's page listed
+    Duke (CA), (NJ), (IL), (NY) and (TX) colleges -- Duke itself, filed by
+    the states it raced in). school_level keys a college by its race's
+    state, so one program is a "college" in every state it visits. On a
+    college page no other-state college is listed; on any other page only
+    the biggest one, the program's home."""
     if not school or not _tableExists(cur, "school_level"):
         return []
     try:
@@ -619,8 +626,13 @@ def namesakes(cur, school, state):
         cur.connection.rollback()
         return []
     out = []
+    college_seen = level == "college"
     for r in rows:
         st, lvl, n = (r["state"], r["level"], r["n_athletes"]) if isinstance(r, dict) else r
+        if lvl == "college":
+            if college_seen:
+                continue
+            college_seen = True
         if st and not any(o["state"] == st for o in out):
             out.append({"state": st, "level": lvl, "n": n,
                         "label": _LEVEL_LABEL.get(lvl, (lvl or "").title())})

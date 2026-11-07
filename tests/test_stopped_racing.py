@@ -221,6 +221,27 @@ def test_the_names_other_schools_are_listed(monkeypatch):
     assert [(g["state"], g["label"]) for g in got] == [("OK", "High school"), ("LA", "High school")]
 
 
+def test_a_college_racing_away_is_not_a_namesake(monkeypatch):
+    """owner, 2026-11-07: Duke University's page listed Duke (CA), (NJ),
+    (IL), (NY), (TX) colleges -- the program's own away races."""
+    import school_identity as SI
+    monkeypatch.setattr(SI, "_tableExists", lambda cur, t: True)
+    rows = [{"state": "CA", "level": "college", "n_athletes": 40},
+            {"state": "NJ", "level": "college", "n_athletes": 30},
+            {"state": "OK", "level": "ms", "n_athletes": 12}]
+
+    class Cur:
+        def execute(self, sql, args=None):
+            pass
+
+        def fetchall(self):
+            return rows
+    on_college = SI.namesakes(Cur(), "Duke", "NC", "college")
+    assert [g["state"] for g in on_college] == ["OK"]
+    on_ms = SI.namesakes(Cur(), "Duke", "TX", "ms")
+    assert [g["state"] for g in on_ms] == ["CA", "OK"]
+
+
 def test_a_race_as_it_ran_leaves_out_who_did_not_start():
     """owner, 2026-11-06: "for predictions in the past if someone DNSs we
     probably shouldn't let them run"."""
