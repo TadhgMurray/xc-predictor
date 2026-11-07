@@ -741,6 +741,21 @@ def fillSport(conn, sport, dry_run=False, venue=False):
               f"-> {rating:.1f}")
 
 
+# ★ WHY THE SCRUB FINDS NOTHING RIGHT AFTER A FULL GO-LIVE (2026-11-07,
+#   owner-approved). The go-live writes every row's speed_rating with
+#   mergeColumn(preserve_unmatched=False): a row the pack did not carry is
+#   written NULL, and the pack's loaders (speed_ratings_db, both sports) read
+#   only rows WHERE normalized_time IS NOT NULL. So after the go-live a row
+#   with a rating had a normalized time when the pack was built -- and when
+#   07_pack and 08_golive ran in the same pipeline run, no step between them,
+#   or between 08 and this fill, sets a normalized_time to NULL (05 and 05b
+#   come before 07). The pipeline passes --after-golive only then: 07 and 08
+#   both ran this run (not skipped, not failed) under the joint go-live, and
+#   never on a --from 8 run, whose pack is an older run's.
+_SCRUB_NOOP = ("the go-live just rewrote every rating from a pack of rows that "
+               "all had a normalized time, so no rating sits on a row without one")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
@@ -760,6 +775,10 @@ def main():
     ap.add_argument("--recheck-since", metavar="YYYY-MM-DD",
                     help="first: rated rows off the boards since this date that sit on "
                          "another pool's scale get moved onto it and priced again")
+    ap.add_argument("--after-golive", action="store_true",
+                    help="the full pipeline only, right after a go-live it ran from a "
+                         "pack it built in the same run: skip the no-normalized-time "
+                         "scrub, which cannot find a row then (see _SCRUB_NOOP)")
     args = ap.parse_args()
 
     sports = (args.sport,) if args.sport else ("XC", "TF")
@@ -789,9 +808,18 @@ def main():
                 print(f"[fill] results: {cur.rowcount:,} ratings on races with no course "
                       f"cleared to be priced again")
             conn.commit()
-        if not args.dry_run:
+        # ★ ONLY THIS RUN'S SPORT'S TABLE WITH --sport (2026-11-07): the full
+        #   pipeline fills XC and TF as two processes side by side, and the
+        #   XC one used to scrub results_tf as well -- the same end state
+        #   (nothing between the two scrubs puts a rating on a row without a
+        #   normalized time: the fill prices only rows that have one), one
+        #   scan of each table instead of two, and no two processes updating
+        #   one table. Without --sport, both, as before.
+        if args.after_golive and not args.dry_run:
+            print("[fill] scrub skipped (--after-golive): " + _SCRUB_NOOP)
+        elif not args.dry_run:
             with conn.cursor() as cur:
-                for t in ("results", "results_tf"):
+                for t in (_TABLE[sp] for sp in sports):
                     cur.execute(f"UPDATE {t} SET speed_rating = NULL "
                                 f"WHERE normalized_time IS NULL "
                                 f"AND speed_rating IS NOT NULL")

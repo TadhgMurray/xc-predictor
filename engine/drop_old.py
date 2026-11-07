@@ -33,6 +33,24 @@ for _p in (_HERE, _ROOT,
 _TABLES = ("results_old", "results_tf_old")
 
 
+# ★ THE LOG LINE'S SIZE FROM THE CATALOG, NOT A COUNT (2026-11-07, owner-
+#   approved). `SELECT count(*)` read every page of a 40-58 GB table only to
+#   print its row count before dropping it; pg_class.reltuples is the
+#   planner's estimate, free, and says "about". -1 (never analysed) or a
+#   missing row says the size is not known.
+def approxRows(cur, table):
+    """pg_class.reltuples for `table` as an int, or None when unknown."""
+    cur.execute("SELECT reltuples FROM pg_class WHERE oid = to_regclass(%s)", (table,))
+    row = cur.fetchone()
+    if not row or row[0] is None or float(row[0]) < 0:
+        return None
+    return int(float(row[0]))
+
+
+def aboutRows(n):
+    return "size unknown" if n is None else f"about {n:,} rows"
+
+
 def main():
     from database import getConn
 
@@ -43,10 +61,9 @@ def main():
                 if cur.fetchone()[0] is None:
                     print(f"[drop] {table}: absent, nothing to do")
                     continue
-                cur.execute(f"SELECT count(*) FROM {table}")
-                n = cur.fetchone()[0]
+                n = approxRows(cur, table)
                 cur.execute(f"DROP TABLE {table}")
-                print(f"[drop] {table}: dropped ({n:,} rows)")
+                print(f"[drop] {table}: dropped ({aboutRows(n)})")
         conn.commit()
     print("[drop] done -- pair_golive can now rebuild")
 

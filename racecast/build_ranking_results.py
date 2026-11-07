@@ -3421,13 +3421,13 @@ def _stampSeasonUnits(conn, season_table):
             cur.execute("SELECT to_regclass('public.school_unit')")
             if cur.fetchone()[0] is None:
                 print("    school_unit not found -- season unit columns NULL")
-                return
+                return True
             cur.execute("""SELECT column_name FROM information_schema.columns
                            WHERE table_schema = 'public' AND table_name = 'school_unit'""")
             have = {r[0] for r in cur.fetchall()}
             cols = [c for c in _UNIT_COLS if c in have]
             if not cols:
-                return
+                return True
             sets = ", ".join(f'"{c}" = u."{c}"' for c in cols)
             collist = ", ".join(f'"{c}"' for c in cols)
             t0 = time.time()
@@ -3523,9 +3523,184 @@ def _stampSeasonUnits(conn, season_table):
             print(f"    [{time.time() - t0:7.1f}s] season units: {n0:,} colleges by campus, "
                   f"{n1:,} by (school, state), {n2:,} by school; {n3:,} cleared "
                   f"(not a team)")
+            return True
         except Exception as exc:                        # noqa: BLE001
             conn.rollback()
             print(f"    season units not stamped ({exc})")
+            return False
+
+
+# ★ THE RESTAMP BY KEY, NOT BY ROW (2026-11-07, owner-approved: 10d2 was a
+#   clear of ~13M live athlete_season rows and four UPDATE passes over them).
+#   Every pass of _stampSeasonUnits decides a row's unit columns from three
+#   things only -- its school, its state, and whether its pool is a college
+#   one (s.pool LIKE 'college%': true, false, or NULL for a NULL pool) --
+#   plus what the passes before it wrote on that same row. So the same
+#   passes, run on ONE row per distinct (school, state, college-ness) with
+#   the columns cleared as the restamp clears them, give each key the exact
+#   columns every row of that key would get (the n0 > 0 guard of the second
+#   pass holds for the keys iff it holds for the rows: a key exists only
+#   where a row does). One UPDATE then copies them onto the rows whose
+#   columns differ -- IS DISTINCT FROM, so NULLs compare as values -- in one
+#   transaction: no page ever sees a board with its conferences blank, and
+#   a night where the units did not move writes nothing. A failed stamping
+#   changes nothing, as the old one-transaction clear-and-stamp did.
+#   XCP_RESTAMP_BY_KEY=0 runs the old clear and passes on the rows.
+_RESTAMP_BY_KEY = os.environ.get("XCP_RESTAMP_BY_KEY", "1") != "0"
+_RESTAMP_KEYS = "tmp_restamp_keys"
+
+
+def _restampPool(alias):
+    """A stand-in pool with the same answer to LIKE 'college%' as the row's."""
+    return (f"CASE WHEN {alias}pool LIKE 'college%' THEN 'college' "
+            f"WHEN {alias}pool IS NULL THEN NULL ELSE 'other' END")
+
+
+def _restampInPlace(conn, season_table):
+    """The original restamp: clear every row's unit columns, then the
+    stamping passes over the rows, in one transaction."""
+    with conn.cursor() as cur:
+        cur.execute(f"UPDATE {season_table} SET "
+                    + ", ".join(f'"{c}" = NULL' for c in _UNIT_COLS))
+        print(f"    cleared {cur.rowcount:,} rows")
+    # ! ONE TRANSACTION: the clear commits with the stamping (or
+    #   rolls back with it), so no page reads a board with every
+    #   conference blank in between
+    _stampSeasonUnits(conn, season_table)
+
+
+def _restampByKey(conn, season_table):
+    """_restampInPlace's columns, computed per key and copied once (see
+    _RESTAMP_BY_KEY). Returns the rows changed, or None when the stamping
+    failed and nothing was written."""
+    cols = ", ".join(f'"{c}"' for c in _UNIT_COLS)
+    t0 = time.time()
+    with conn.cursor() as cur:
+        cur.execute(f"DROP TABLE IF EXISTS {_RESTAMP_KEYS}")
+        # the unit columns' own types, empty: the restamp's clear
+        cur.execute(f"""CREATE TEMP TABLE {_RESTAMP_KEYS} AS
+                        SELECT school, state, ({_restampPool('')}) AS pool, {cols}
+                        FROM   {season_table} WITH NO DATA""")
+        cur.execute(f"""INSERT INTO {_RESTAMP_KEYS} (school, state, pool)
+                        SELECT DISTINCT school, state, ({_restampPool('')})
+                        FROM   {season_table}""")
+        n_keys = cur.rowcount
+    conn.commit()                 # the keys outlive a failed stamping's rollback
+    print(f"    [{time.time() - t0:7.1f}s] {n_keys:,} (school, state, college) keys")
+    if _stampSeasonUnits(conn, _RESTAMP_KEYS) is False:
+        print("    restamp: nothing written (the stamping failed)")
+        return None
+    t0 = time.time()
+    sets = ", ".join(f'"{c}" = k."{c}"' for c in _UNIT_COLS)
+    mine = ", ".join(f's."{c}"' for c in _UNIT_COLS)
+    theirs = ", ".join(f'k."{c}"' for c in _UNIT_COLS)
+    with conn.cursor() as cur:
+        # equality on every key part, NULLs included, in a form a hash join
+        # can use: (x IS NULL, COALESCE(x, '')) is one-to-one with x
+        cur.execute(f"""
+            UPDATE {season_table} s SET {sets}
+            FROM   {_RESTAMP_KEYS} k
+            WHERE  (s.school IS NULL) = (k.school IS NULL)
+              AND  COALESCE(s.school, '') = COALESCE(k.school, '')
+              AND  (s.state IS NULL) = (k.state IS NULL)
+              AND  COALESCE(s.state, '') = COALESCE(k.state, '')
+              AND  COALESCE(({_restampPool('s.')}), '-') = COALESCE(k.pool, '-')
+              AND  ({mine}) IS DISTINCT FROM ({theirs})""")
+        n = cur.rowcount
+        cur.execute(f"DROP TABLE IF EXISTS {_RESTAMP_KEYS}")
+    conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] restamp: {n:,} season rows changed")
+    return n
+
+
+# ★ MORE STREAMS, CUT WHERE THE ROWS ARE (2026-11-07, owner-approved: the
+#   four 10_rankings streams were 45 min, two per sport on one fixed seam,
+#   2018-01-01, with most rows after it). Each `--stage stream` reads only
+#   r.date in [--since, --until), and every row is prepared on its own
+#   (prepareRow), so ANY strictly increasing seams inside the default range
+#   [1990-01-01, 2100-01-01) partition the same rows into the same shadow:
+#   where the seams fall decides only how evenly the work is split. They are
+#   read from the planner's statistics (pg_stats: the most common dates with
+#   their shares, and the histogram's equal-share buckets for the rest), so
+#   finding them reads no table row. `--stage seams --sport XC --parts 4`
+#   prints them on one line; no usable statistics prints nothing, and the
+#   pipeline falls back to its one fixed seam.
+_SEAM_LO, _SEAM_HI = "1990-01-01", "2100-01-01"
+_ISO_DAY = re.compile(r"^(19|20)[0-9]{2}-[0-9]{2}-[0-9]{2}$")
+
+
+def _pgArray(v):
+    """A pg_stats anyarray as a Python list of strings (psycopg2 hands it
+    over as its text form, '{a,b,"c d"}')."""
+    if v is None:
+        return []
+    if isinstance(v, (list, tuple)):
+        return [str(x) for x in v]
+    t = str(v).strip()
+    if t.startswith("{") and t.endswith("}"):
+        t = t[1:-1]
+    return [x.strip().strip('"') for x in t.split(",") if x.strip()]
+
+
+def balancedSeams(parts, mcv=(), mcf=(), hist=(), null_frac=0.0):
+    """Up to parts-1 seams 'YYYY-MM-DD', strictly increasing, strictly inside
+    (_SEAM_LO, _SEAM_HI), that cut the date distribution pg_stats describes
+    into shares as equal as it allows. Pure.
+
+    mcv/mcf: the most common dates and their shares; hist: the histogram
+    bounds, which split the remaining rows into equal shares. A seam is a
+    date the rows BEFORE it (exclusive) add up to k/parts of."""
+    parts = int(parts)
+    if parts < 2:
+        return []
+    pts = {}                                   # date -> share of rows AT it
+    mcv = [str(d)[:10] for d in mcv]
+    mcf = [float(f) for f in mcf]
+    for d, f in zip(mcv, mcf):
+        if _ISO_DAY.match(d):
+            pts[d] = pts.get(d, 0.0) + f
+    hist = [str(d)[:10] for d in hist if _ISO_DAY.match(str(d)[:10])]
+    rest = max(0.0, 1.0 - float(null_frac or 0.0) - sum(mcf))
+    if len(hist) >= 2 and rest > 0:
+        per = rest / (len(hist) - 1)
+        # bucket i is [hist[i-1], hist[i]): its rows are all before hist[i],
+        # so its share sits at its lower bound
+        for d in hist[:-1]:
+            pts[d] = pts.get(d, 0.0) + per
+        pts.setdefault(hist[-1], 0.0)
+    total = sum(pts.values())
+    if total <= 0:
+        return []
+    out, run, k = [], 0.0, 1
+    for d in sorted(pts):
+        if k >= parts:
+            break
+        # the share strictly before d
+        if run >= total * k / parts and _SEAM_LO < d < _SEAM_HI \
+                and (not out or d > out[-1]):
+            out.append(d)
+            while k < parts and run >= total * k / parts:
+                k += 1
+        run += pts[d]
+    return out
+
+
+def seamsFor(conn, sport, parts):
+    """balancedSeams from the live table's statistics on `date`; [] when
+    there are none."""
+    table = "results" if sport == "XC" else "results_tf"
+    with conn.cursor() as cur:
+        cur.execute("""SELECT most_common_vals::text, most_common_freqs,
+                              histogram_bounds::text, null_frac
+                       FROM   pg_stats
+                       WHERE  schemaname = 'public' AND tablename = %s
+                         AND  attname = 'date'""", (table,))
+        row = cur.fetchone()
+    conn.rollback()
+    if not row:
+        return []
+    mcv, mcf, hist, nf = row
+    return balancedSeams(parts, _pgArray(mcv), list(mcf or []), _pgArray(hist), nf or 0.0)
 
 
 # ------------------------------------------------------------------ #
@@ -3544,7 +3719,7 @@ def main():
     #   once, two `stream --sport` processes COPY into it side by side
     #   (each builds its own session temps), and `finish` indexes, builds
     #   athlete_season and swaps. No stage = the old one-process run.
-    parser.add_argument("--stage", choices=["prepare", "stream", "finish", "restamp"],
+    parser.add_argument("--stage", choices=["prepare", "stream", "finish", "restamp", "seams"],
                         default=None,
                         help="restamp: the unit columns onto the LIVE athlete_season "
                              "from school_unit, no rebuild (after a directory or "
@@ -3567,7 +3742,16 @@ def main():
                         help=f"how far above its pool's season ceiling one "
                              f"race may rate (default {RACE_MARGIN:.0f}; pass "
                              f"1000 to disable the rail for a measuring run)")
+    parser.add_argument("--parts", type=int, default=4,
+                        help="with --stage seams: how many date ranges (seamsFor)")
     args = parser.parse_args()
+
+    if args.stage == "seams":
+        # one line, the seams only: the pipeline reads it (balancedSeams)
+        with getConn() as conn:
+            got = seamsFor(conn, "TF" if args.sport == "TF" else "XC", args.parts)
+        print(" ".join(got))
+        return
 
     RACE_MARGIN = args.race_margin
     if args.race_margin > 100:
@@ -3594,14 +3778,10 @@ def main():
             #   only NULLs; then the same three passes run on the live table.
             #   UPDATEs take row locks only; the site keeps reading.
             with phase("restamp athlete_season units from school_unit"):
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE athlete_season SET "
-                                + ", ".join(f'"{c}" = NULL' for c in _UNIT_COLS))
-                    print(f"    cleared {cur.rowcount:,} rows")
-                # ! ONE TRANSACTION: the clear commits with the stamping (or
-                #   rolls back with it), so no page reads a board with every
-                #   conference blank in between
-                _stampSeasonUnits(conn, "athlete_season")
+                if _RESTAMP_BY_KEY:
+                    _restampByKey(conn, "athlete_season")
+                else:
+                    _restampInPlace(conn, "athlete_season")
                 analyze(conn, "athlete_season")
             print("  restamped. The performance board's rows carry the old units "
                   "until the next full run.")

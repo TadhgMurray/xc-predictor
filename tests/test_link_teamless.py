@@ -210,7 +210,7 @@ def test_the_pipeline_runs_it_between_the_snapshot_and_the_redirects():
     import re
     sh = open(os.path.join(ROOT, "deploy", "run_pipeline.sh"), encoding="utf-8").read()
     order = ["step 01a_person_probe", "step 04a_link_tfrrs",
-             "step 04a2_link_teamless", "stepsN 04_grade_sanity", '04d_gender "$PY',
+             "step 04a2_link_teamless", "bgstep 04_grade_sanity", '04d_gender "$PY',
              "step 04c_twins", "step 13c0_person_redirects"]
     at = [sh.index(s) for s in order]
     assert at == sorted(at), order

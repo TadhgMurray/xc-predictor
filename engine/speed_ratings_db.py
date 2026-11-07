@@ -2146,19 +2146,31 @@ def _updateFromStaging(conn, sport, table, staging):
 #   lock, taken before the staging table is touched and held for the whole
 #   write, makes the second one fail at once with a sentence instead of
 #   killing the first one hours later.
+# ★ ONE LOCK PER TABLE (2026-11-07, owner-approved: the pipeline's 09b fill
+#   runs cross country and track as two processes side by side). What the
+#   lock protects is per table: the staging table (sr_staging_xc /
+#   sr_staging_tf, one per sport and so one per table), <table>_new and
+#   <table>_old, and the rows of that one table. Two writers of DIFFERENT
+#   tables share none of them; two writers of the same table still meet here,
+#   and the second fails at once with a sentence. The keys are fixed, so
+#   every version of this file agrees on them; one session takes both in
+#   turn (a go-live writes XC, then TF) without conflict, as before.
 _GOLIVE_LOCK_KEY = 0x5C0_11FE                  # arbitrary, project-wide
+_GOLIVE_LOCK_KEYS = {"results": _GOLIVE_LOCK_KEY * 16 + 1,
+                     "results_tf": _GOLIVE_LOCK_KEY * 16 + 2}
 
 
-def _takeGoLiveLock(conn):
+def _takeGoLiveLock(conn, table):
+    key = _GOLIVE_LOCK_KEYS[table]
     with conn.cursor() as cur:
-        cur.execute("SELECT pg_try_advisory_lock(%s)", (_GOLIVE_LOCK_KEY,))
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (key,))
         got = bool(cur.fetchone()[0])
     conn.commit()
     if not got:
         raise RuntimeError(
-            "another process holds the go-live lock: a second run_joint "
-            "--golive (or apply_tilt / fill) is writing speed ratings right "
-            "now. Let it finish, or kill it, then rerun this step.")
+            f"another process holds the go-live lock on {table}: a second "
+            "run_joint --golive (or apply_tilt / fill) is writing its speed "
+            "ratings right now. Let it finish, or kill it, then rerun this step.")
 
 
 def _ensureRatingPool(conn, table):
@@ -2193,7 +2205,7 @@ def _ensureRatingPool(conn, table):
 def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
     table = {"XC": "results", "TF": "results_tf"}[sport]
     with getConn() as conn:
-        _takeGoLiveLock(conn)
+        _takeGoLiveLock(conn, table)
         staging, n = _fillStaging(conn, sport, pairs)
         if n == 0:
             print(f"[db] {sport}: nothing to save")
