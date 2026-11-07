@@ -1717,7 +1717,9 @@ def _modelBucket(target, spec):
     if _MODEL_STAMP is None:
         return None
     return ("model_times", _codeStamp(), _MODEL_STAMP, _specKey(spec),
-            str(target.get("weather") or "none").lower(), target.get("mode"),
+            # the weather exactly as asked (the default lives in one place,
+            # _predictTimes' call; keying the raw value is exact)
+            repr(target.get("weather")), target.get("mode"),
             str(target.get("history_before")),
             datetime.date.today().isoformat())
 
