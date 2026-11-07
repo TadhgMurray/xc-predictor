@@ -216,3 +216,28 @@ worker pool, which is 8 by default.
 `max_worker_processes` takes effect only at a restart; the nightly one
 picks it up. deploy/server_setup.sh writes the same three lines for a new
 box.
+
+## Done, 2026-11-07
+
+Owner-approved, from the step times of run 20261106. Each change gives the
+same tables; tests/test_pipeline_speed_2026_11_07.py checks the order
+constraints, runs the shell helpers with stub commands, and compares old
+and new paths on a scratch Postgres.
+
+| change | why it is the same data | switch back |
+|---|---|---|
+| 04c_twins builds (`twin_flag.py --write --no-swap`) beside 04_grade_sanity and 04b_wheelchair (both now bgsteps), after 04d_gender; 04c_twins_swap (`--swap-only`) after both are joined | the rules read person_gender (04d) and nothing grade_sanity or wheelchair writes; grade_sanity still reads the previous result_twin to its end. `--swap-only` swaps only a result_twin_new marked complete in the build's final commit, and runs only after a build that succeeded this run | — |
+| 04g0, 04g1, 04g, 04g1b as one background chain (`bgchain 04g_checks`) from after 04a3b, collected before the people gate; 04g2 where it was | they read no people table and no people step reads corrections.py, data_issue or distance_pin; 04g2 still follows grade_sanity (dist_override) and the chain. On a people abort the chain's verdicts are already written; they are re-judged from scratch on the next run | `XCP_AUDIT_OVERRIDES=0` skips them as before |
+| 02b_tf_venues, 03_pro_flag, 03b_age_bands in one stepsN; 03a after | disjoint writes, no read of each other's (03 reads meets_tf's division / event_short, not venue_name) | `XCP_STREAMS=1` |
+| 13c0_person_redirects, 13c0_search_helpers, 10b0_tfrrs_link, 10e_meet_units as bgsteps after 06c, joined after 07_pack (before 08_golive's swap siege) | they read ids, names, schools, dates, teams and meet tables, all final after 06c; nothing later writes them before their old places | — |
+| 09b_fill (cross country, the old name kept for the watchdog's run-to-run step list) and 09b_fill_tf side by side; the go-live advisory lock per table (`_takeGoLiveLock(conn, table)`) | each fill reads and writes one table; the staging table, `<table>_new/_old` are per table | — |
+| `fill_ratings.py --after-golive` skips the no-normalized-time scrub; the pipeline passes it only when 07_pack and 08_golive both ran (and succeeded) this run under the joint go-live | the go-live writes every rating from a pack whose loaders read only rows with a normalized time, with unmatched rows NULL; `--sport` now scrubs only its own table | drop the flag |
+| 15_rowguard diag pair then triage pair as a background chain from after 09d, collected before 11b_indexes (its CREATE INDEX CONCURRENTLY waits on long transactions); 16 where it was | they read final ratings and corrections.py, write files under scripts/ that only 16 reads | — |
+| 10_rankings: 4 date ranges per sport from pg_stats (`--stage seams`), 8 streams at once | ranges [1990-01-01, s1) ... [sN, 2100-01-01) partition the same rows; bad seams fall back to 2018-01-01 | `XCP_RANK_PARTS=2 XCP_RANK_STREAMS=4`, `XCP_RANK_SEAM` |
+| 10d2_restamp_units: the stamping passes on one row per (school, state, college-ness), then one UPDATE of the rows whose columns differ | every pass decides a row's columns from those three values (and the earlier passes on the same row); compared row for row with the old clear-and-stamp | `XCP_RESTAMP_BY_KEY=0` |
+| merge_column: `<table>_new` committed after its PK and shape, secondary indexes 3 at a time on pooled connections, then constraints; all NOT NULLs (and defaults) in one ALTER TABLE | same index definitions and catalog, compared on Postgres; a failed index phase drops `<table>_new`; a killed one leaves it for `_clearLeftovers` | `XCP_MERGE_INDEX_JOBS=1` |
+| 16b/16c/16d/17/17b in one stepsN, 17a alone, 17c0 + 17e together, the evidence chain waited for just before 17c_report | only 17c reads the evidence logs; none of the group reads another's output | `XCP_REPORT_STREAMS=1` |
+| drop_old / pair_golive log sizes from pg_class.reltuples ("about") or the CREATE TABLE AS row count | log lines only | — |
+
+Connections at the busiest point now: the eight 10_rankings streams (one
+each) plus 10f2's workers, beside the site's 72, under max_connections 200.

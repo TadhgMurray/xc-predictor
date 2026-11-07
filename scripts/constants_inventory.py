@@ -678,6 +678,7 @@ RULES = {
                "the pool constant an unsolved row is priced at (the pool's median course); a display "
                "anchor while ratings keep the pool scale"),
         **_all("_TABLE _MARK _MIN_SAMPLE _VENUE_ROWS _UNRATED _TEAM_ANCHOR", "INFRA", "SQL and sampling"),
+        "_SCRUB_NOOP": ("INFRA", "log text: why --after-golive skips the scrub"),
         **_all("FIELD_MIN FIELD_BASE_MIN FIELD_CAP", "STATED",
                "a race with no course anchored to its own field: runners needed, runners with a "
                "rating elsewhere, and the largest shift taken (owner, 2026-11-02)"),
@@ -701,6 +702,8 @@ RULES = {
     # ------------------------------------------------ build_ranking_results
     "racecast/build_ranking_results.py": {
         "_HAVE_RATING_POOL": ("INFRA", "whether the result tables carry rating_pool (set per build)"),
+        **_all("_RETIRED_INDEXES _RESTAMP_BY_KEY _RESTAMP_KEYS _SEAM_LO _SEAM_HI _ISO_DAY", "INFRA",
+               "plumbing: retired index names, the restamp by key, the rankings date seams"),
         **_all("_PHASES _FETCH_BATCH _COPY_BATCH _INDEX_JOBS _SWAP_LOCK_TIMEOUT_MS _SWAP_ATTEMPTS "
                "_SWAP_BACKOFF _COLUMNS _TF_DISTANCE _UNIT_COLS _UNITS _TEAM_CACHE _SCHOOL_OK _COPY_ESCAPES "
                "_GATE _TIMED_KIND _LOAD_TABLE _LOAD_SEASON _CANONICAL_INDEXES _BOARD_SIZE_SPORTS "
@@ -874,6 +877,10 @@ ENV_RULES = {
            "XCP_SWAP_ATTEMPTS XCP_PACK_PREFETCH XCP_PRECOND XCP_SCHUR XCP_CG_TRACE XCP_RANK_SEAM "
            "XCP_BACKFILL_XC XCP_RUNG_TIMEOUT XCP_IGNORE_BACKFILL_FAIL XCP_IGNORE_GOLIVE_FAIL "
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
+    **_all("XCP_PREWARM XCP_SEASON_EV XCP_VACUUM_RESULTS XCP_RANK_PARTS XCP_RANK_STREAMS "
+           "XCP_REPORT_STREAMS XCP_RESTAMP_BY_KEY", "INFRA",
+           "speed pass 2026-11-06/07: prewarm, the events precompute, the results vacuum, "
+           "rankings streams, the report tail, the restamp by key"),
     **_all("XCP_LADDER XCP_LADDER_ALL XCP_LADDER_MIN_DAYS XCP_LADDER_ONLY XCP_LADDER_PCT XCP_LADDER_TUNE "
            "XCP_HOLDOUT_DUMP XCP_HOLDOUT_PCT XCP_HOLDOUT_VERBOSE XCP_DIST_HOLDOUT XCP_SPORT_HOLDOUT "
            "XCP_EVIDENCE XCP_EVIDENCE_BG XCP_BRACKET XCP_BACKTEST XCP_BACKTEST_DIVS XCP_LACCTIC "

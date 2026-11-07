@@ -1256,10 +1256,61 @@ def _buildPooled(conn, cur, skip, connect, workers):
             cur.execute(f"DROP TABLE IF EXISTS {_stageName(sport, reason)}")
 
 
-def build(conn, write=False, parallel=None, connect=None):
+# ★ BUILT BESIDE grade_sanity, SWAPPED AFTER IT (2026-11-07, owner-approved
+#   pipeline speedup). grade_sanity reads the PREVIOUS run's result_twin on
+#   purpose, so the swap must wait for it -- the build need not: it reads
+#   none of grade_sanity's or wheelchair_flag's tables. --no-swap builds and
+#   commits result_twin_new and marks it complete (a table comment written
+#   only after every rule has gone in); --swap-only swaps a COMPLETE
+#   result_twin_new in and refuses anything else, so a killed or failed
+#   build can never be swapped. --write alone does both, as before.
+_COMPLETE = "twin_flag: complete"
+
+
+def _markComplete(cur):
+    cur.execute(f"COMMENT ON TABLE result_twin_new IS '{_COMPLETE}'")
+
+
+def _isComplete(cur):
+    cur.execute("SELECT to_regclass('public.result_twin_new')")
+    oid = cur.fetchone()[0]
+    if oid is None:
+        return False
+    cur.execute("SELECT obj_description('public.result_twin_new'::regclass, 'pg_class')")
+    return cur.fetchone()[0] == _COMPLETE
+
+
+def _swapIn(conn, cur):
+    # short-lock swap with retries, then ANALYZE outside the lock
+    # (database.swapTable says why a bare DROP was a site outage)
+    from database import swapTable
+    swapTable(conn, "result_twin", "result_twin_new")
+    # the completeness mark is result_twin_new's, not result_twin's
+    cur.execute("COMMENT ON TABLE result_twin IS NULL")
+    cur.execute("ANALYZE result_twin")
+    cur.execute("SELECT count(*) FROM result_twin")
+    print(f"  result_twin: {cur.fetchone()[0]:,} rows")
+
+
+def swapOnly(conn):
+    """Swap a complete result_twin_new (from `--write --no-swap`) in.
+    Raises when there is none: nothing is swapped."""
+    with conn.cursor() as cur:
+        ensureTable(cur)
+        if not _isComplete(cur):
+            conn.rollback()
+            raise SystemExit("result_twin_new is missing or incomplete (its build "
+                             "failed or was killed): nothing swapped; result_twin "
+                             "keeps the last run's flags. Rerun --write.")
+        _swapIn(conn, cur)
+    conn.commit()
+
+
+def build(conn, write=False, parallel=None, connect=None, swap=True):
     """parallel: None reads XCP_TWIN_PARALLEL. connect: a context manager
     giving a connection to the same database for the second session
-    (default database.getConn)."""
+    (default database.getConn). swap=False (with write): leave a complete,
+    committed result_twin_new for swapOnly."""
     if parallel is None:
         parallel = TWIN_PARALLEL
     skip = {r.strip() for r in os.environ.get("XCP_TWIN_SKIP", "").split(",") if r.strip()}
@@ -1276,6 +1327,8 @@ def build(conn, write=False, parallel=None, connect=None):
             #   except below cleans up after an error, never after a kill.
             cur.execute("DROP TABLE IF EXISTS result_twin_new")
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
+            # never complete until every rule is in (see _COMPLETE)
+            cur.execute("COMMENT ON TABLE result_twin_new IS NULL")
         if parallel and write and TWIN_WORKERS > 1:
             conn.commit()
             try:
@@ -1310,14 +1363,13 @@ def build(conn, write=False, parallel=None, connect=None):
                 cur.execute("DROP TABLE IF EXISTS result_twin_new")
                 conn.commit()
                 raise
-        if write:
-            # short-lock swap with retries, then ANALYZE outside the lock
-            # (database.swapTable says why a bare DROP was a site outage)
-            from database import swapTable
-            swapTable(conn, "result_twin", "result_twin_new")
-            cur.execute("ANALYZE result_twin")
-            cur.execute("SELECT count(*) FROM result_twin")
-            print(f"  result_twin: {cur.fetchone()[0]:,} rows")
+        if write and swap:
+            _swapIn(conn, cur)
+        elif write:
+            _markComplete(cur)
+            cur.execute("SELECT count(*) FROM result_twin_new")
+            print(f"  result_twin_new: {cur.fetchone()[0]:,} rows, complete; "
+                  "not swapped (--no-swap: --swap-only puts it live)")
         else:
             print("  (report only; --write rebuilds result_twin)")
     conn.commit()
@@ -1328,12 +1380,23 @@ def main():
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--explain", metavar="SPORT:RULE",
                     help="print one rule's plan without running it, e.g. TF:dup_race_copy")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--no-swap", action="store_true",
+                   help="with --write: build and commit a complete result_twin_new, "
+                        "leave result_twin as it is (pipeline 04c, beside grade_sanity)")
+    g.add_argument("--swap-only", action="store_true",
+                   help="swap the complete result_twin_new a --no-swap build left; "
+                        "fails, swapping nothing, when there is none")
     args = ap.parse_args()
+    if args.no_swap and not args.write:
+        ap.error("--no-swap needs --write")
     with getConn() as conn:
         if args.explain:
             explain(conn, args.explain)
+        elif args.swap_only:
+            swapOnly(conn)
         else:
-            build(conn, write=args.write)
+            build(conn, write=args.write, swap=not args.no_swap)
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ def test_golive_takes_the_advisory_lock_first():
     body = s[s.index("def saveResultSpeedRatings("):]
     nxt = body.find("\ndef ", 1)
     body = body if nxt < 0 else body[:nxt]      # it is the file's last def
-    assert body.index("_takeGoLiveLock(conn)") < body.index("_fillStaging(conn")
+    assert body.index("_takeGoLiveLock(conn, table)") < body.index("_fillStaging(conn")
     assert "pg_try_advisory_lock" in s
 
 
@@ -65,10 +65,13 @@ def test_fill_streams_only_priceable_rows():
 def test_board_build_streams_the_sports_in_parallel():
     s = _src("deploy", "run_pipeline.sh")
     assert "--stage prepare" in s and "--stage finish" in s
-    assert 'stepsN 10_rankings_xc_a' in s and "--stage stream --sport TF --since" in s
-    assert "--until" in s, "each sport streams in two halves on a date seam (2026-09-06)"
+    # each sport in date ranges on seams (2026-09-06: two halves; 2026-11-07:
+    # four, from the planner's statistics -- tests/test_pipeline_speed_2026_11_07.py
+    # runs the block)
+    assert 'stepsN "${_RANK[@]}"' in s
+    assert "--stage stream --sport $_sp${_prev:+ --since $_prev}${_s:+ --until $_s}" in s
     b = _src("racecast", "build_ranking_results.py")
     # a fourth stage, restamp (issue 304), refreshes the season table's unit
-    # columns in place
-    assert 'choices=["prepare", "stream", "finish", "restamp"]' in b
+    # columns in place; a fifth, seams, prints the streams' date seams
+    assert 'choices=["prepare", "stream", "finish", "restamp", "seams"]' in b
     assert 'if stage == "prepare":' in b and 'if stage == "stream":' in b

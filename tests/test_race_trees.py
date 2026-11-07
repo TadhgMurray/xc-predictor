@@ -264,3 +264,16 @@ def test_early_stopping_holds_back_whole_races():
     held = set(race[(race // 2) % 10 == 0])
     assert seen["val"] == 5 * len(held) and seen["fit"] == 200 - seen["val"]
     assert held == {0, 1, 20, 21}                     # whole races, even and odd alike
+
+
+def test_the_level_of_the_median_runner_is_not_dragged_by_walkers():
+    import numpy as np
+    import race_trees as RT
+    base = np.array([7.0, 7.0, 7.0, 7.0, 7.0])
+    y = np.array([7.01, 7.01, 7.01, 7.01, 7.40])           # one walker
+    assert RT.levelTarget(y, base, "median") == pytest.approx(0.01)
+    assert RT.levelTarget(y, base) == pytest.approx(0.088)
+    r = np.array([-0.02, 0.0, 0.0, 0.01, 0.30])
+    got = RT.placeOnLevel(base, r, 0.01, "median")
+    assert got[1] == pytest.approx(7.01)                   # the median runner sits on the level
+    assert RT.placeOnLevel(base, r, 0.0).mean() == pytest.approx(7.0)

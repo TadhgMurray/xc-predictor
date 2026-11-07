@@ -40,8 +40,20 @@ import datetime
 #   (2026-09-07). The service unit sets XCP_DB_MAX_CONN small; the pipeline
 #   keeps the default.
 import os
-MIN_CONN = int(os.environ.get("XCP_DB_MIN_CONN") or 5)
+import threading
+# ★ ONE AT START, NOT FIVE (2026-11-07). The pool opens MIN_CONN connections
+#   the moment it is made, and the pipeline now runs many steps side by side,
+#   each its own process: five idle connections apiece counted against
+#   max_connections next to the site's. The pool grows on demand to MAX_CONN.
+MIN_CONN = int(os.environ.get("XCP_DB_MIN_CONN") or 1)
 MAX_CONN = int(os.environ.get("XCP_DB_MAX_CONN") or 250)
+# ★ A FULL POOL IS A SHORT WAIT, NOT AN ERROR (2026-11-07, "the connection
+#   thing ... again"). psycopg2's pool raises PoolError the instant every
+#   slot is out, and a site worker has three: a background compute (the
+#   next-race line, a cuts warm) with its two parallel reads took all three
+#   and every page the worker served meanwhile failed at once. A slot is now
+#   waited for up to POOL_WAIT seconds; only then is it the same PoolError.
+POOL_WAIT = float(os.environ.get("XCP_DB_POOL_WAIT") or 20)
 
 # We add connect_timeout to PG_CONFIG here so it applies to every connection
 # the pool opens. Without it, if Cloud SQL is slow to accept, psycopg2
@@ -238,6 +250,7 @@ def _quietTune(conn):
 # None until initPool() is called explicitly. This is just a 
 # list of open connections. It tracks who is using a connection.
 _pool = None
+_slots = None     # one per MAX_CONN: getConn waits on it (POOL_WAIT)
 
 # initPool
 # Purpose: Creates the connection pool. Must be called once at startup.
@@ -257,8 +270,10 @@ def initPool():
         # within these bounds. PG_CONFIG_WITH_TIMEOUT is where the pool should
         # connect to and how long it should try before giving up connecting. Opens
         # 5 connections in the pool instantly.
+        global _slots
+        _slots = threading.BoundedSemaphore(MAX_CONN)
         _pool = psycopg2.pool.ThreadedConnectionPool(
-            MIN_CONN,
+            min(MIN_CONN, MAX_CONN),
             MAX_CONN,
             **_PG_CONFIG_WITH_TIMEOUT
         )
@@ -333,6 +348,25 @@ def getConn():
       than put back."""
     if _pool is None:
         initPool()
+    slots = _slots
+    if slots is not None and not slots.acquire(timeout=POOL_WAIT):
+        raise psycopg2.pool.PoolError(
+            f"connection pool exhausted (all {MAX_CONN} in use for {POOL_WAIT:g} s)")
+    try:
+        conn = _checkout()
+    except BaseException:
+        if slots is not None:
+            slots.release()
+        raise
+    try:
+        yield from _lend(conn)
+    finally:
+        if slots is not None:
+            slots.release()
+
+
+def _checkout():
+    """A live, tuned connection from the pool (getConn holds its slot)."""
     conn = None
     for _attempt in range(3):
         cand = _pool.getconn()
@@ -356,7 +390,11 @@ def getConn():
             conn.rollback()
             print(f"[DB] quiet mode: could not tune a connection ({str(exc).splitlines()[0]})")
         _TUNED[id(conn)] = conn
+    return conn
 
+
+def _lend(conn):
+    """getConn's body once it holds `conn`: yield it, then put it back."""
     broken = False
     try:
         yield conn

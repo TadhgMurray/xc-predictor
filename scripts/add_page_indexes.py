@@ -28,11 +28,26 @@ WANTED = [
     # this each of those pages seq-scans ranking_results (56M rows).
     ("ranking_results", "result_id", "idx_rr_result", None),
     ("ranking_results", "school",  "idx_rr_school", None),
-    # stampRecordFlags: index-only career reads for the PR/SR badges
-    # (1.4s of random heap fetches per race page without it)
+    # stampRecordFlags and app.stampRatingFlags: index-only career reads
+    # for the PR/SR badges (1.4s of random heap fetches per race page
+    # without it). speed_rating and event_kind since 2026-11-07 -- same
+    # columns as build_ranking_results._CANONICAL_INDEXES. Where the older
+    # (clock-only) cover was built, this builds beside it; then drop that
+    # one: DROP INDEX CONCURRENTLY ranking_results_idx_rr_person_cover.
     ("ranking_results", "person_id", "idx_rr_person_cover",
-     "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds)"),
+     "(person_id) INCLUDE (sport, race_date, year, distance, time_seconds, speed_rating, event_kind)"),
     ("results_tf",      "school",  "idx_results_tf_school", None),
+    # ★ A SCHOOL'S SEASON (2026-11-07). predict._raceEntrantRows reads
+    #   `school = ANY(<a field's schools>) AND date >= lo AND date < hi`, and
+    #   the plain (school) index read each school's whole history to keep
+    #   one season. meets_filter's school path (school = X, GROUP BY meet_id,
+    #   max(date)) reads only these three columns, so with meet_id carried
+    #   it is an index-only scan. One index per table serves both.
+    # ! SPEC GIVEN: the plain (school) index would satisfy a specless entry.
+    ("results",         "school",  "idx_results_school_date",
+     "(school, date) INCLUDE (meet_id)"),
+    ("results_tf",      "school",  "idx_results_tf_school_date",
+     "(school, date) INCLUDE (meet_id)"),
     ("results_tf",      "meet_id", "idx_results_tf_meet", None),
     ("results",         "school",  "idx_results_school", None),
     # the course pages' driving filter (live fallback + board builds)

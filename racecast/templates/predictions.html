@@ -395,6 +395,17 @@
       <a href="/report?about=/predictions&amp;kind=other">Report it →</a>
       Say which meet and race, and which runner or team looks off.</div>
 
+{# ★ A TEAM'S PREDICTED RACE, one tap from its name (owner, 2026-11-07),
+   race.html's .rc-teampop: predictions.js openPredTeam fills it from the
+   prediction's own rows. The 5K header is redrawn per team (fkTh); the
+   ratings are rv() spans, so the scale switch reads them as everywhere. #}
+<dialog class="rc-teampop pred-teampop" aria-label="Team's predicted race">
+  <form method="dialog"><button class="rc-pop-x" aria-label="Close">&times;</button></form>
+  <h2 class="rc-pop-h"></h2>
+  <table class="rc-pop-t"><thead><tr><th>Pl</th><th>Athlete</th><th class="n">Time</th><th class="n">Rating</th><th class="n rc-pop-fk">5K</th><th class="n">Pts</th></tr></thead><tbody></tbody></table>
+  <p class="meta rc-pop-note" hidden></p>
+  <a class="rc-pop-go" href="#" hidden>Team page &rarr;</a>
+</dialog>
 </main>
 
 {# ⚠ BEFORE predictions.js, WHICH READS window.rcScale. scale-view.js's own

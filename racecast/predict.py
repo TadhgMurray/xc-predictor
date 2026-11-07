@@ -66,6 +66,10 @@ TEAM_DISPLACERS = 2
 _model = None
 _artifacts = None
 _load_error = None
+# which files the loaded model came from (their mtimes), for the shared
+# prediction cache's key (_modelBucket): a worker that loaded another
+# checkpoint never reads this one's answers
+_MODEL_STAMP = None
 # ! ONE LOAD PER PROCESS EVEN WHEN TWO THREADS ASK (2026-10-05). warm()
 #   loads the model on a background thread at worker start, and a request
 #   arriving in that second would otherwise start a second torch.load of
@@ -113,7 +117,7 @@ def _loadModel():
 
 
 def _loadModelLocked():
-    global _model, _artifacts, _load_error
+    global _model, _artifacts, _load_error, _MODEL_STAMP
     stats_path = os.path.join(MODEL_DATA, "target_stats.pkl")
     enc_path = os.path.join(MODEL_DATA, "encoders.pkl")
     vocab_path = os.path.join(MODEL_DATA, "venue_vocab.pkl")
@@ -125,6 +129,13 @@ def _loadModelLocked():
             _load_error = (f"The prediction model has not been trained yet "
                            f"(no {what} at {path}).")
             return None
+    # ! READ BEFORE THE LOAD: a file replaced meanwhile is then a different
+    #   stamp from the one loaded, never the same stamp on other weights
+    try:
+        stamp = tuple((p, os.path.getmtime(p), os.path.getsize(p))
+                      for p in (MODEL_PATH, stats_path, enc_path, vocab_path))
+    except OSError:
+        stamp = None
 
     try:
         import pickle
@@ -198,6 +209,7 @@ def _loadModelLocked():
                       "context_features": ctx_width,
                       "sequence_features": seq_width,
                       "encoders": encoders, "vocab": vocab}
+        _MODEL_STAMP = stamp
         _model = model
     except Exception as exc:                       # noqa: BLE001
         # ⚠ A BROKEN CHECKPOINT MUST NOT 500 THE PAGE. It reads as
@@ -316,6 +328,62 @@ def predictIndividual(cur, person_id, target):
                 "reason": out.get("reason",
                                   "No rated races found for this athlete.")}
     return {"available": True, **out}
+
+
+# ★ SEVERAL ATHLETES, ONE PASS (2026-11-07). /api/predict/individual takes
+#   up to twelve ids and called predictIndividual for each: twelve target
+#   lookups, twelve history checks, twelve rating reads and, for an unrated
+#   runner, a model-history read each (~0.43 s). Here each read is made
+#   once for all of them, while what depends on the field (the race model,
+#   the race's pool, the forecast) and the network itself still run per
+#   athlete (_servedEach) -- so every athlete gets the answer
+#   predictIndividual gives them alone, in the order asked.
+def predictIndividuals(cur, person_ids, target):
+    """[predictIndividual(cur, pid, target) for pid in person_ids]."""
+    status = modelStatus()
+    if not status["available"]:
+        return [dict(status) for _pid in person_ids]
+    ids = list(dict.fromkeys(person_ids))
+    have = _withRatedRaces(cur, ids)
+    served = [pid for pid in ids if pid in have]
+    entries = _servedEach(cur, served, target) if served else []
+    if entries is None:
+        # the target or the ratings failed: each athlete's own fallback
+        return [predictIndividual(cur, pid, target) for pid in person_ids]
+    by = dict(zip(served, entries))
+    out, seen = [], set()
+    for pid in person_ids:
+        if pid not in have:
+            out.append({"available": False,
+                        "reason": "No rated races found for this athlete."})
+            continue
+        e = by[pid] if pid not in seen else _copy.deepcopy(by[pid])
+        seen.add(pid)
+        if e.get("seconds") is None:
+            out.append({"available": False,
+                        "reason": e.get("reason",
+                                        "No rated races found for this athlete.")})
+        else:
+            out.append({"available": True, **e})
+    return out
+
+
+def _withRatedRaces(cur, person_ids):
+    """The person_ids with a rated race in either sport: those whose
+    _athleteHistory is not empty."""
+    ids = [int(p) for p in person_ids]
+    if not ids:
+        return set()
+    cur.execute("""
+        SELECT p.id AS person_id
+        FROM   unnest(%s::bigint[]) AS p(id)
+        WHERE  EXISTS (SELECT 1 FROM results r
+                       WHERE r.person_id = p.id AND r.speed_rating IS NOT NULL)
+           OR  EXISTS (SELECT 1 FROM results_tf r
+                       WHERE r.person_id = p.id AND r.speed_rating IS NOT NULL)
+    """, (ids,))
+    return {int(r["person_id"] if isinstance(r, dict) else r[0])
+            for r in cur.fetchall()}
 
 
 # ------------------------------------------------------------------ #
@@ -1461,9 +1529,265 @@ def _stampRaceRatings(preds, spec):
     return preds
 
 
+# ------------------------------------------------------------------ #
+#  WORK SHARED BETWEEN THE PAGE'S REQUESTS (2026-11-07)
+# ------------------------------------------------------------------ #
+#
+# ★ ONE FIELD, ASKED TWICE. "Pick runners by: Prediction" asks
+#   /api/predict/field?pick=predicted (byPrediction: the target, every
+#   squad member's season ratings, the model for the contenders) and then
+#   POSTs /api/predict/team, whose _servedTimes resolves the same target,
+#   reads the same ratings and runs the same model for the same runners --
+#   ~5 s of ratings and 4.8-6.4 s of model history, again, often on another
+#   gunicorn worker. Inside shareWork() (the /api/predict routes) three
+#   answers are kept for SHARE_TTL seconds, per worker and across workers
+#   (sharedcache.peekMany / putMany):
+#     target_spec   _targetSpec, by every target field it reads
+#     rating_rows   _ratingRows, per runner, by (lo, hi, the outlier
+#                   filter): what _ratingTimes and the race model convert
+#     model_times   _predictTimes' entry, per runner, by the resolved spec
+#                   and every other input it reads (_modelBucket)
+#   A runner already held is not read or modelled again; the rest are, in
+#   one batch, as before.
+# ! EXACT BUT FOR FRESHNESS. Each value is a function of its key and the
+#   database: rating rows are read per runner (an id's rows do not depend on
+#   who else is in the query -- _chunkedStart's own rule), and the model is
+#   deterministic in eval mode (no dropout, no sampling) with each runner's
+#   history padded and masked by itself (_predictTimes, "BY LENGTH, IN
+#   CHUNKS"). A pipeline go-live inside the TTL is seen up to SHARE_TTL late.
+# ! OUTSIDE shareWork NOTHING CHANGES: scripts, backtests and the pipeline
+#   compute everything as they always did, and nothing is written.
+# ! COPIES OUT: callers edit their entries in place (_servedTimes'
+#   guard), so a held value is never handed out itself.
+import contextlib as _ctxlib
+import contextvars as _ctxvars
+import copy as _copy
+
+SHARE_TTL = float(os.environ.get("XCP_PREDICT_SHARE_TTL") or 300.0)
+_SHARE = _ctxvars.ContextVar("predict_share_work", default=None)
+_LOCAL = collections.OrderedDict()       # bucket digest -> {key: (at, value)}
+# ! BOUNDED BY RUNNERS, NOT BUCKETS: a championship's rating rows are a
+#   bucket of a thousand runners' histories, and 24 workers each hold
+#   theirs. Past the cap the least recently filed buckets go first, and an
+#   entry past its TTL goes whenever the memo is written.
+_LOCAL_MAX_ENTRIES = int(os.environ.get("XCP_PREDICT_SHARE_LOCAL_MAX") or 6000)
+_LOCAL_LOCK = _threading.Lock()
+
+
+@_ctxlib.contextmanager
+def shareWork():
+    """Inside this, the prediction's per-runner work is shared (see above)
+    and a few per-request reads are kept for the request (_requestMemo)."""
+    if _SHARE.get() is not None:
+        yield
+        return
+    tok = _SHARE.set({"memo": {}})
+    try:
+        yield
+    finally:
+        _SHARE.reset(tok)
+
+
+def _sharing():
+    return _SHARE.get() is not None
+
+
+def _requestMemo():
+    """This request's memo dict inside shareWork, else None."""
+    st = _SHARE.get()
+    return st["memo"] if st is not None else None
+
+
+@functools.lru_cache(maxsize=1)
+def _codeStamp():
+    """The code the shared answers were computed by: a worker on other
+    code (a deploy mid-TTL) never reads another's."""
+    out = []
+    for p in (os.path.abspath(__file__),
+              os.path.join(_ROOT, "model", "feature_extraction.py"),
+              os.path.join(_ROOT, "racecast", "conversions.py")):
+        try:
+            out.append(os.path.getmtime(p))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _bucketDigest(bucket):
+    import hashlib
+    return hashlib.sha1(repr(bucket).encode("utf-8")).hexdigest()
+
+
+def _sharedPeek(bucket, keys, copier=_copy.deepcopy):
+    """{key: copy of the held value} for those of `keys` held younger than
+    SHARE_TTL -- this worker's memo first, then the shared file."""
+    if bucket is None or not keys:
+        return {}
+    import time
+    keys = list(dict.fromkeys(keys))
+    dig, t = _bucketDigest(bucket), time.time()
+    got = {}
+    with _LOCAL_LOCK:
+        mem = _LOCAL.get(dig) or {}
+        for k in keys:
+            hit = mem.get(k)
+            if hit is not None and t - hit[0] <= SHARE_TTL:
+                got[k] = hit[1]
+    miss = [k for k in keys if k not in got]
+    if miss:
+        try:
+            import sharedcache
+            shared = sharedcache.peekMany(bucket, miss, SHARE_TTL)
+        except Exception:                               # noqa: BLE001
+            shared = {}
+        if shared:
+            _localPut(dig, {k: (at, v) for k, (v, at) in shared.items()})
+            got.update({k: v for k, (v, _at) in shared.items()})
+    return {k: copier(v) for k, v in got.items()}
+
+
+def _localPut(dig, items):
+    import time
+    t = time.time()
+    with _LOCAL_LOCK:
+        mem = _LOCAL.pop(dig, None) or {}
+        mem.update(items)
+        _LOCAL[dig] = mem                    # newest last
+        for d in list(_LOCAL):
+            live = {k: v for k, v in _LOCAL[d].items() if t - v[0] <= SHARE_TTL}
+            if live:
+                _LOCAL[d] = live
+            else:
+                del _LOCAL[d]
+        n = sum(len(m) for m in _LOCAL.values())
+        while _LOCAL and n > _LOCAL_MAX_ENTRIES and len(_LOCAL) > 1:
+            _d, old = _LOCAL.popitem(last=False)
+            n -= len(old)
+
+
+def _sharedPut(bucket, values):
+    """File {key: value} (just computed) here and for the other workers."""
+    if bucket is None or not values:
+        return
+    import time
+    _localPut(_bucketDigest(bucket), {k: (time.time(), v) for k, v in values.items()})
+    try:
+        import sharedcache
+        sharedcache.putMany(bucket, values, SHARE_TTL)
+    except Exception:                                   # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("shared prediction put failed")
+
+
+def _specKey(spec):
+    return repr(sorted((str(k), v) for k, v in (spec or {}).items()))
+
+
+# every target field _targetSpec reads
+_SPEC_INPUTS = ("mode", "sport", "source", "meet_id", "div_id", "event_id",
+                "distance", "course", "date", "year")
+
+
+def _targetSpecShared(cur, target):
+    """_targetSpec(cur, target), shared inside shareWork (by every field of
+    the target it reads, and today: a meet with no date is dated today)."""
+    if not _sharing():
+        return _targetSpec(cur, target)
+    bucket = ("target_spec", _codeStamp(), datetime.date.today().isoformat())
+    key = repr(tuple(target.get(k) for k in _SPEC_INPUTS))
+    hit = _sharedPeek(bucket, [key])
+    if key in hit:
+        return hit[key]
+    spec = _targetSpec(cur, target)
+    _sharedPut(bucket, {key: _copy.deepcopy(spec)})
+    return spec
+
+
+def _modelBucket(target, spec):
+    """The shared key of _predictTimes' entries for this target, or None
+    (not sharing, no spec, no model loaded). Everything an entry is a
+    function of besides the runner's own history: the resolved spec (venue,
+    distance, date, source, meet), the weather asked, the mode (a rerun
+    reads the result on the day), history_before (the cut), today (the
+    forecast gap, _hiddenDays), the loaded model's files and the code."""
+    if not _sharing() or spec is None:
+        return None
+    if _MODEL_STAMP is None:
+        _loadModel()                  # cached; _predictTimes loads it anyway
+    if _MODEL_STAMP is None:
+        return None
+    return ("model_times", _codeStamp(), _MODEL_STAMP, _specKey(spec),
+            # the weather exactly as asked (the default lives in one place,
+            # _predictTimes' call; keying the raw value is exact)
+            repr(target.get("weather")), target.get("mode"),
+            str(target.get("history_before")),
+            datetime.date.today().isoformat())
+
+
+def _modelTimes(cur, person_ids, target, spec, history=None, each=False,
+                hits=None):
+    """_predictTimes(cur, person_ids, target, spec=spec, history=history),
+    with the entries already held (shareWork) not modelled again.
+
+    each=True: [_predictTimes(cur, [pid], target, spec=spec)[0] ...] -- the
+    network run on each runner alone, as one-runner calls ran it, with the
+    history read once for all of them. `hits`: a _sharedPeek the caller
+    already made (byPrediction, to read only the misses' history)."""
+    def run(ids, hist):
+        # ! history only when there is one: the call _servedTimes always made
+        if hist is None:
+            return _predictTimes(cur, ids, target, spec=spec)
+        return _predictTimes(cur, ids, target, spec=spec, history=hist)
+    bucket = _modelBucket(target, spec) if person_ids else None
+    if bucket is None and not each:
+        return run(person_ids, history)
+    if hits is None:
+        hits = _sharedPeek(bucket, person_ids)
+    miss = [p for p in dict.fromkeys(person_ids) if p not in hits]
+    fresh = {}
+    if miss and each:
+        hist = history if history is not None else _historyRows(cur, miss)
+        for p in miss:
+            fresh[p] = run([p], hist)[0]
+    elif miss:
+        fresh = dict(zip(miss, run(miss, history)))
+    _sharedPut(bucket, fresh)
+    if bucket is None:
+        return [fresh[p] if k == 0 else _copy.deepcopy(fresh[p])
+                for k, p in _firstSeen(person_ids)]
+    return [hits[p] if p in hits and k == 0 else
+            _copy.deepcopy(hits[p] if p in hits else fresh[p])
+            for k, p in _firstSeen(person_ids)]
+
+
+def _firstSeen(ids):
+    """[(times seen before, id)] -- a repeated id gets its own copy."""
+    seen = collections.Counter()
+    out = []
+    for p in ids:
+        out.append((seen[p], p))
+        seen[p] += 1
+    return out
+
+
 def _servedTimes(cur, person_ids, target):
     """_predictTimes, checked against the athletes' own ratings -- what every
     page entry point serves. See the note above."""
+    return _served(cur, person_ids, target, each=False)
+
+
+def _servedEach(cur, person_ids, target):
+    """each runner's _servedTimes(cur, (pid,), target)[0], in order, in one
+    pass: the target, the ratings and the model's history read once for
+    everyone; what depends on the whole field (the race model, the blend
+    factor, the race's modal pool in _stampRaceRatings, the forecast) and
+    the network itself run per runner, as the one-runner calls ran them.
+    None when the target or the ratings could not be read (the one-runner
+    calls then each take their own fallback, and the caller makes them)."""
+    return _served(cur, person_ids, target, each=True)
+
+
+def _served(cur, person_ids, target, each):
     basis = _predictBasis()
     # ★ THE TARGET IS RESOLVED ONCE (2026-10-05). _predictTimes and the
     #   rating guard below each ran _targetSpec for themselves -- the meet
@@ -1474,12 +1798,14 @@ def _servedTimes(cur, person_ids, target):
     # ! A FAILURE STILL LANDS WHERE IT DID: _predictTimes resolves it itself
     #   when this could not, and raises from there as it always has.
     try:
-        spec = _targetSpec(cur, target)
+        spec = _targetSpecShared(cur, target)
     except Exception:                                   # noqa: BLE001
         _rollback(cur)
         spec = None
+    if each and spec is None:
+        return None
     if basis == "model":
-        return _predictTimes(cur, person_ids, target, spec=spec)
+        return _modelTimes(cur, person_ids, target, spec, each=each)
     try:
         if spec is None:
             spec = _targetSpec(cur, target)
@@ -1492,7 +1818,9 @@ def _servedTimes(cur, person_ids, target):
     except Exception:                                   # noqa: BLE001
         import logging
         logging.getLogger(__name__).exception("rating guard failed")
-        return _predictTimes(cur, person_ids, target, spec=spec)
+        if each:
+            return None
+        return _modelTimes(cur, person_ids, target, spec)
     # ★★ THE MODEL ONLY FOR WHO NEEDS IT (owner, 2026-10-05: "still not fast
     #    enough"). Under the default basis ("rating") every rated runner is
     #    served their rating's time, and the model's number for them only
@@ -1508,13 +1836,13 @@ def _servedTimes(cur, person_ids, target):
     if basis in ("rating", "trend") + RACE_BASES:
         need = [pid for pid in person_ids if pid not in rated]
         with _stage(f"model-{len(need)}"):
-            got = (dict(zip(need, _predictTimes(cur, need, target, spec=spec)))
+            got = (dict(zip(need, _modelTimes(cur, need, target, spec, each=each)))
                    if need else {})
         preds = [dict(rated[pid]) if pid in rated else got.get(pid, {
                      "seconds": None, "reason": "No rated races in the corpus."})
                  for pid in person_ids]
     else:
-        preds = _predictTimes(cur, person_ids, target, spec=spec)
+        preds = _modelTimes(cur, person_ids, target, spec, each=each)
     for pid, entry in zip(person_ids, preds):
         r = rated.get(pid)
         if basis in ("rating", "trend") + RACE_BASES and r is not None:
@@ -1551,6 +1879,16 @@ def _servedTimes(cur, person_ids, target):
             entry["model_seconds"] = secs
         entry.update(r)
         entry.pop("reason", None)
+    if each:
+        return [_servedFinish(cur, [pid], [entry], rated, spec, cut, basis)[0]
+                for pid, entry in zip(person_ids, preds)]
+    return _servedFinish(cur, person_ids, preds, rated, spec, cut, basis)
+
+
+def _servedFinish(cur, person_ids, preds, rated, spec, cut, basis):
+    """What _servedTimes does to the field's entries once each has its own
+    time -- the blend factor, the race model, the trend, the race ratings,
+    the forecast -- in place. Returns preds (an entry may be replaced)."""
     if basis == "blend":
         rated_rows = [e for e in preds if e.get("basis") == "rating" and e.get("seconds")]
         f = blendFactor([(e.get("model_seconds"), e["seconds"]) for e in rated_rows])
@@ -1604,6 +1942,7 @@ def _servedTimes(cur, person_ids, target):
             import logging
             logging.getLogger(__name__).exception("forecast weather failed")
     return preds
+
 
 
 def forecastCourse(spec):
@@ -1725,7 +2064,35 @@ def _ownConnFuture(fn):
 
 def _ratingRows(cur, person_ids, lo_date, hi_date):
     """{pid: [(date, rating, pool, sport), newest first]} over both result
-    tables, strictly before hi_date (and from lo_date, when given)."""
+    tables, strictly before hi_date (and from lo_date, when given).
+
+    ★ SHARED INSIDE shareWork (2026-11-07): per runner, by (lo, hi, whether
+      the outlier filter is on) -- the field request reads every squad
+      member's rows, and the team request after it (its _ratingTimes, then
+      the race model) asks for the same runners at the same cut. A runner's
+      rows are read by their own id (an id's rows never depend on who else
+      is in the query), so a held runner's rows are the rows a read would
+      return; only the runners not held are read."""
+    if not _sharing():
+        return _ratingRowsRead(cur, person_ids, lo_date, hi_date)
+    ids = sorted({int(p) for p in person_ids if p})
+    if not ids:
+        return {}
+    bucket = ("rating_rows", _codeStamp(), str(lo_date or ""), str(hi_date),
+              bool(_outlierFilter(cur, "XC")))
+    copier = list                     # rows are tuples of immutables
+    got = _sharedPeek(bucket, ids, copier=copier)
+    miss = [p for p in ids if p not in got]
+    if miss:
+        read = _ratingRowsRead(cur, miss, lo_date, hi_date)
+        fresh = {p: read.get(p) or [] for p in miss}
+        _sharedPut(bucket, fresh)
+        got.update({p: copier(v) for p, v in fresh.items()})
+    return {p: got[p] for p in ids if got.get(p)}
+
+
+def _ratingRowsRead(cur, person_ids, lo_date, hi_date):
+    """_ratingRows read from the database."""
     ids = sorted({int(p) for p in person_ids if p})
     out = {}
     if not ids:
@@ -3506,7 +3873,7 @@ def byPrediction(cur, squads, caps, target):
         hist = None
     _stageCount("count-squad", len(ids))
     try:
-        spec = _targetSpec(cur, target)
+        spec = _targetSpecShared(cur, target)
         with _stage("pick:ratings"):
             rated = _ratingTimes(cur, ids, spec, _asDate(spec.get("date")))
     except Exception as exc:                      # noqa: BLE001 -- keep the field
@@ -3560,11 +3927,14 @@ def byPrediction(cur, squads, caps, target):
             if served_basis == "rating" else list(contenders))
     _stageCount("count-contenders", len(contenders))
     _stageCount("count-modelled", len(need))
+    # ★ A RUNNER THE MODEL ALREADY TIMED FOR THIS RACE (shareWork) IS NOT
+    #   READ OR MODELLED AGAIN: only the others' history is kept reading
+    held = _sharedPeek(_modelBucket(target, spec), need)
     if hist is not None:
-        hist.keep(need)                     # () stops what is not needed
+        hist.keep([pid for pid in need if pid not in held])   # () stops the rest
     if need:
         history = None
-        if hist is not None:
+        if hist is not None and len(held) < len(set(need)):
             try:
                 history = hist.finish(cur)
                 _stageAdd("pick:history-wait", hist.wait_s)
@@ -3574,8 +3944,8 @@ def byPrediction(cur, squads, caps, target):
                 history = None
         try:
             with _stage("pick:model"):
-                preds = _predictTimes(cur, need, target, spec=spec,
-                                      history=history)
+                preds = _modelTimes(cur, need, target, spec, history=history,
+                                    hits=held)
             for pid, p in zip(need, preds or []):
                 secs, sig, r = p.get("seconds"), p.get("sigma_pct"), form(pid)
                 on_clock = bool(secs) and p.get("is_race_time", True)
@@ -3706,6 +4076,7 @@ def dropStopped(cur, entries, sport, season_year):
     # ★ A TEAM KEEPS ITS NUMBER (owner, 2026-11-05: "now Loras only has 5"):
     #   a qualified TEAM that lost a runner here sends its next best now,
     #   from its current squad; an individual's place is the individual's
+    refill = []                                  # (school, rows, lost, gender, level)
     for sch, rows in by.items():
         lost = sum(1 for e in rows if e.get("person_id") in gone)
         if not lost or len(rows) < 5 or not isTeam(sch):
@@ -3716,12 +4087,37 @@ def dropStopped(cur, entries, sport, season_year):
         pool = pools.most_common(1)[0][0] if pools else ""
         gender = pool[-1:].upper() if pool[-2:-1] == "_" else None
         level = pool.split("_")[0] or None
+        refill.append((sch, rows, lost, gender, level))
+    # ★ ONE SQUAD READ PER (gender, level), NOT PER SCHOOL (2026-11-07):
+    #   isolated=True answers each school exactly as a call naming it alone
+    #   does (_currentSquads' docstring -- schoolSquads relies on it). A
+    #   batch that fails is asked school by school, as before, so one
+    #   school's failure still costs only that school.
+    squads = {}
+    groups = {}
+    for sch, _rows, _lost, gender, level in refill:
+        groups.setdefault((gender, level), []).append(sch)
+    for (gender, level), schs in groups.items():
+        if len(schs) < 2:
+            continue
         try:
-            sq = _currentSquads(cur, [sch], sport, season_year, gender=gender,
-                                levels={level} if level else None).get(sch, [])
-        except Exception:                               # noqa: BLE001 -- keep what is there
+            got = _currentSquads(cur, schs, sport, season_year, gender=gender,
+                                 levels={level} if level else None, isolated=True)
+        except Exception:                               # noqa: BLE001 -- one by one below
             _rollback(cur)
             continue
+        for sch in schs:
+            squads[sch] = got.get(sch, [])
+    for sch, rows, lost, gender, level in refill:
+        if sch in squads:
+            sq = squads[sch]
+        else:
+            try:
+                sq = _currentSquads(cur, [sch], sport, season_year, gender=gender,
+                                    levels={level} if level else None).get(sch, [])
+            except Exception:                           # noqa: BLE001 -- keep what is there
+                _rollback(cur)
+                continue
         have = {e.get("person_id") for e in kept} | set(gone)
         for r in [r for r in sq if r.get("person_id") not in have][:lost]:
             kept.append(dict(r, school=sch, entered=rows[0].get("entered"), refill=True))
@@ -4585,7 +4981,23 @@ def _meetState(cur, meet_id, sport, source=None):
       high-school meet that shares the id -- and that state is what picks
       which namesake of a school a team is (_keepIdentity). `meets` and
       meets_tf carry the source; a tfrrs XC meet's state is in meets_tfrrs,
-      and so is a tfrrs track meet's when meets_tf has no row for it."""
+      and so is a tfrrs track meet's when meets_tf has no row for it.
+
+    ★ ONCE PER REQUEST inside shareWork (2026-11-07): _teamRosters asked it
+      for the squads' states and again for the field's, same meet, same
+      source. Only a state found is kept; a None (none there, or a read
+      that failed) is asked again, as it always was."""
+    memo = _requestMemo()
+    if memo is None or not meet_id:
+        return _meetStateRead(cur, meet_id, sport, source)
+    key = repr(("meet_state", meet_id, sport, source))
+    if memo.get(key) is None:
+        memo[key] = _meetStateRead(cur, meet_id, sport, source)
+    return memo[key]
+
+
+def _meetStateRead(cur, meet_id, sport, source=None):
+    """_meetState read from the database."""
     if not meet_id:
         return None
     table = "meets" if sport == "XC" else "meets_tf"
@@ -5199,6 +5611,30 @@ _NAME_LATERAL = """
 
 def _exactField(cur, meet_id, div_id, sport, source=None, event_id=None,
                 started_only=False):
+    """_exactFieldRead, read once per request inside shareWork.
+
+    ★ /api/predict/field ASKED TWICE (2026-11-07): the qualifier check
+      (upcoming_preview.qualifiedMeetField) reads the race's field to see
+      whether it has run, and when it has, meetField's thisYearOriginals
+      reads the same field again. The same request reads the same rows, so
+      the second read is the first one's rows (copied: callers stamp onto
+      them). Only a field read whole is kept; a read that raised is not."""
+    memo = _requestMemo()
+    if memo is None:
+        return _exactFieldRead(cur, meet_id, div_id, sport, source=source,
+                               event_id=event_id, started_only=started_only)
+    events = (sorted(event_id, key=repr)
+              if isinstance(event_id, (list, tuple, set)) else event_id)
+    key = repr(("exact_field", meet_id, div_id, sport, source, events,
+                bool(started_only)))
+    if key not in memo:
+        memo[key] = _exactFieldRead(cur, meet_id, div_id, sport, source=source,
+                                    event_id=event_id, started_only=started_only)
+    return _copy.deepcopy(memo[key])
+
+
+def _exactFieldRead(cur, meet_id, div_id, sport, source=None, event_id=None,
+                    started_only=False):
     """Everyone who actually ran a meet: person, name, school -- and the
     grade and rating THEY HAD THEN.
 

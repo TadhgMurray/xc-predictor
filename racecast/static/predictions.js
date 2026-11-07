@@ -3035,6 +3035,74 @@ function schoolCell(school, state, href, label, crestUrl) {
        + (href ? `<a href="${esc(href)}">${text}</a>` : text);
 }
 
+/* ★ A TEAM'S NAME OPENS ITS PREDICTED RACE (owner, 2026-11-07: "make it
+     like the race page where if you click on a team it brings up a little
+     pop-up"). schoolCell's markup with the team's index in d.teams on it;
+     a plain click opens the popup (openPredTeam), a ctrl/cmd click still
+     follows the link to the team page, as race-page.js's openTeam does. */
+function teamOpenCell(t, d) {
+  if (!t.team) return " - ";
+  const ti = (d.teams || []).indexOf(t);
+  const text = esc(t.school_label || schoolWithState(t.team, t.state));
+  return crest(t.crest) + (t.school_href
+    ? `<a class="pred-team-open" data-ti="${ti}" href="${esc(t.school_href)}">${text}</a>`
+    : `<button type="button" class="pred-team-open" data-ti="${ti}">${text}</button>`);
+}
+
+/* The team's runners in the predicted race: its own scorers and every other
+   finisher from the school, read off d.runners -- the rows the Predicted
+   results tab draws -- so the popup and the table cannot disagree. */
+function predTeamRows(d, t) {
+  const ids = new Set((t.runners || []).map((r) => String(r.person_id)));
+  return (d.runners || []).filter((r) => ids.has(String(r.person_id))
+    || (r.school === t.team
+        && (!t.state || !r.school_state || r.school_state === t.state)));
+}
+
+function openPredTeam(d, ti) {
+  const pop = document.querySelector(".pred-teampop");
+  const t = (d.teams || [])[ti];
+  if (!pop || !t || typeof pop.showModal !== "function") return false;
+  const full = (d.teams || []).filter((x) => x.score !== null);
+  const place = full.indexOf(t) + 1;
+  const points = d.scoring === "points";
+  const win = d.sim && d.sim.available && t.sim ? pct(t.sim.p_win) : null;
+  const score = t.score === null ? null
+    : (points ? (t.score_display ?? String(t.score)) : String(t.score));
+  pop.querySelector(".rc-pop-h").textContent =
+    (place ? place + ". " : "") + (t.school_label || schoolWithState(t.team, t.state))
+    + (score !== null ? ` · ${score} pts` : "")
+    + (win ? ` · ${win} to win` : "");
+  const rows = predTeamRows(d, t);
+  const fk = fkHead(rows);
+  pop.querySelector(".rc-pop-fk").outerHTML = fkTh(fk, "rc-pop-fk n");
+  pop.querySelector(".rc-pop-t tbody").innerHTML = rows.map((r) => `<tr>
+      <td>${r.place}</td>
+      <td>${r.person_id
+            ? `<a href="/athlete/${encodeURIComponent(r.person_id)}">${
+                esc(r.name || "Unknown")}</a>`
+            : esc(r.name || "Unknown")}</td>
+      <td class="n">${fmtRaceTime(r.seconds)}</td>
+      <td class="n">${rv(r.rating, r.hs_rating) || " - "}</td>
+      ${fkCell(r, fk).replace('class="fk fk-sm"', 'class="n fk"')}
+      <td class="n">${(points ? r.points : r.score_place) || ""}</td>
+    </tr>`).join("") || `<tr><td colspan="6" class="meta">No runners from
+      this team in the predicted race.</td></tr>`;
+  pop.querySelector(".rc-pop-note").hidden = t.score !== null;
+  pop.querySelector(".rc-pop-note").textContent = t.score === null
+    ? `Not scored: ${t.note || "incomplete"}.` : "";
+  const go = pop.querySelector(".rc-pop-go");
+  go.hidden = !t.school_href;
+  if (t.school_href) go.href = t.school_href;
+  applyScale();
+  if (!pop.dataset.wired) {           // a tap on the backdrop closes it
+    pop.dataset.wired = "1";
+    pop.addEventListener("click", (e) => { if (e.target === pop) pop.close(); });
+  }
+  pop.showModal();
+  return true;
+}
+
 /* A probability as a percentage a reader can act on.
    ★ NEVER "0%" OR "100%". 2,000 draws cannot tell 0 from 1-in-5,000, and a
      page that prints a certainty about a cross country race is lying about
@@ -3131,8 +3199,7 @@ function teamScoreTable(d, opts) {
         || schoolWithState(t.team, t.state), t.team,
         ...runners.map((r) => r.name)]))}">
       <td>${i + 1}</td>
-      <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
-                       t.crest)}${
+      <td>${teamOpenCell(t, d)}${
         t.divs
           ? ` <span class="t-divs" title="Coalesced: one squad, drawn from `
             + `these divisions and capped at seven.">${
@@ -3237,8 +3304,7 @@ function eventPointsTable(d, opts) {
         || schoolWithState(t.team, t.state), t.team,
         ...(t.runners || []).map((r) => r.name)]))}">
       <td>${i + 1}</td>
-      <td>${schoolCell(t.team, t.state, t.school_href, t.school_label,
-                       t.crest)}</td>
+      <td>${teamOpenCell(t, d)}</td>
       <td${t.sim ? ` class="has-tip" title="${esc(pointsSpreadTip(t, d))}"`
                  : ""}>${esc(t.score_display ?? String(t.score))}${
         t.sim ? '<span class="tip-dot">\u00b7</span>' : ""}</td>
@@ -3511,7 +3577,7 @@ function teamSideCard(d) {
       .map((r) => `<i>${r.score_place || r.place}</i>`).join("");
     const win = anySim ? pct((t.sim || {}).p_win) : null;
     return `<tr${sideMoreRow(i)}><td class="tp">${i + 1}</td><td class="tn">${
-      schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest)
+      teamOpenCell(t, d)
     }<span class="sp">${sp}</span></td><td class="n tpts">${t.score}${
       win ? `<small>${win} win</small>` : ""}</td></tr>`;
   }).join("");
@@ -3559,7 +3625,7 @@ function pointsSideCard(d, teams) {
       .map((r) => `<i>${r.place}</i>`).join("");
     const win = anySim ? pct((t.sim || {}).p_win) : null;
     return `<tr${sideMoreRow(i)}><td class="tp">${i + 1}</td><td class="tn">${
-      schoolCell(t.team, t.state, t.school_href, t.school_label, t.crest)
+      teamOpenCell(t, d)
     }<span class="sp">${sp}</span></td><td class="n tpts">${
       esc(t.score_display ?? String(t.score))}${
       win ? `<small>${win} win</small>` : ""}</td></tr>`;
@@ -3857,6 +3923,16 @@ $("output").addEventListener("keydown", (e) => {
 });
 
 $("output").addEventListener("click", (e) => {
+  /* the team popup: not inside a dual meet or best seven drawn under the
+     Teams tab -- that table is its own answer, not state.lastResults' */
+  const op = e.target.closest && e.target.closest(".pred-team-open");
+  if (op && !op.closest(".team-tool-out")
+      && !(e.metaKey || e.ctrlKey || e.shiftKey || e.button)) {
+    const box = op.closest(".team-result");
+    const d = box ? state.lastResults[Number(box.dataset.t)] : null;
+    if (d && openPredTeam(d, Number(op.dataset.ti))) e.preventDefault();
+    return;
+  }
   const b = e.target.closest && e.target.closest("button");
   if (!b) return;
   if (b.classList.contains("h2h-go")) headToHead(b);

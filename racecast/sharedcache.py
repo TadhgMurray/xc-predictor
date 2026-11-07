@@ -82,6 +82,30 @@ def _usable(pkl, ttl, ttl_of, now):
     return value, at
 
 
+# ★ THE WAIT IS BOUNDED (2026-11-07, "the connection thing ... again"). A
+#   worker that finds another one computing waited on the lock for as long
+#   as that took -- with no limit, and holding its database connection the
+#   whole time. One slow compute (a query stuck behind a pipeline swap's
+#   lock) then held a connection in every worker. Past LOCK_WAIT seconds a
+#   worker stops waiting and computes for itself, as before this module.
+LOCK_WAIT = float(os.environ.get("XCP_SHARED_LOCK_WAIT") or 15)
+
+
+def _lockWithin(fh, seconds):
+    """flock(LOCK_EX) on fh, giving up after `seconds`; True when held."""
+    end = time.monotonic() + seconds
+    pause = 0.05
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= end:
+                return False
+            time.sleep(pause)
+            pause = min(pause * 2, 0.5)
+
+
 def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of=None):
     """(value, computed_at) for `key`: the shared copy when it is younger
     than `ttl` seconds (or ttl_of(value)), else compute() -- once across the
@@ -95,7 +119,11 @@ def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of
     if hit is not None:
         return hit
     with open(base + ".lock", "a+") as lk:
-        fcntl.flock(lk, fcntl.LOCK_EX)
+        if not _lockWithin(lk, LOCK_WAIT):
+            # another worker is still at it: answer this request ourselves
+            # (not shared -- the one holding the lock writes the copy)
+            hit = _usable(pkl, ttl, ttl_of, now())
+            return hit if hit is not None else (compute(), now())
         try:
             # another worker may have filled it while this one waited
             hit = _usable(pkl, ttl, ttl_of, now())
@@ -116,5 +144,121 @@ def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of
                     except OSError:
                         pass
             return value, at
+        finally:
+            fcntl.flock(lk, fcntl.LOCK_UN)
+
+
+# ★ MANY VALUES UNDER ONE KEY (2026-11-07, the predictions page): a field's
+#   per-runner answers -- rating rows, model times -- are asked by one
+#   request for some runners and by the next for a subset or a superset, so
+#   one value per key does not fit. A bucket is one file holding
+#   {key: (computed_at, value)}; peekMany reads the fresh ones, the caller
+#   computes the rest in one go and files them with putMany, merged with
+#   what another worker filed meanwhile under the bucket's lock.
+# ! THE SAME RULES AS get(): our own 0700 directory or nothing (then peekMany
+#   finds nothing and putMany keeps nothing), an unreadable file is a miss.
+# ! THE FILE NAME IS A DIGEST of the bucket, not _name(): a bucket is a long
+#   tuple, and _name's 120 characters would let two of them share a file.
+def _bucketBase(d, bucket):
+    import hashlib
+    return os.path.join(d, "many-" + hashlib.sha1(
+        repr(bucket).encode("utf-8")).hexdigest())
+
+
+def _bucketLoad(pkl):
+    try:
+        data = _load(pkl)
+    except Exception:                                   # noqa: BLE001
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def peekMany(bucket, keys, ttl, now=time.time, path=None):
+    """{key: (value, computed_at)} for those of `keys` the bucket holds
+    younger than `ttl` seconds. Never computes."""
+    d = _safeDir(path)
+    if d is None:
+        return {}
+    data = _bucketLoad(_bucketBase(d, bucket) + ".pkl")
+    t = now()
+    out = {}
+    for k in keys:
+        hit = data.get(k)
+        if (isinstance(hit, tuple) and len(hit) == 2
+                and t - hit[0] <= ttl):
+            out[k] = (hit[1], hit[0])
+    return out
+
+
+# ! A BUCKET IS BOUNDED, AND A DEAD ONE IS SWEPT (2026-11-07). One rating
+#   bucket is every runner of every race on a date, and each put rewrites
+#   the whole file and each peek reads it: past MANY_MAX entries the oldest
+#   are dropped (a dropped runner is only read again). And buckets are named
+#   by the day and the race, so a file nobody puts to again would sit in the
+#   directory forever: at most every SWEEP_EVERY seconds a put removes the
+#   many-* files untouched for SWEEP_AGE seconds (a worker still holding a
+#   swept lock at worst loses one merge -- the value is computed again).
+MANY_MAX = int(os.environ.get("XCP_SHARED_MANY_MAX") or 3000)
+SWEEP_EVERY = 600.0
+SWEEP_AGE = 3600.0
+_last_sweep = [0.0]
+
+
+def _sweepMany(d, t):
+    if t - _last_sweep[0] < SWEEP_EVERY:
+        return
+    _last_sweep[0] = t
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for n in names:
+        if not n.startswith("many-"):
+            continue
+        p = os.path.join(d, n)
+        try:
+            if t - os.stat(p).st_mtime > SWEEP_AGE:
+                os.unlink(p)
+        except OSError:
+            pass
+
+
+def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
+    """File {key: value} into the bucket, computed now, beside the entries
+    already there that are younger than `ttl` (older ones are dropped), the
+    newest `max_entries` (MANY_MAX) kept."""
+    d = _safeDir(path)
+    if d is None or not values:
+        return
+    cap = max_entries or MANY_MAX
+    base = _bucketBase(d, bucket)
+    pkl = base + ".pkl"
+    _sweepMany(d, now())
+    with open(base + ".lock", "a+") as lk:
+        if not _lockWithin(lk, 2.0):
+            return                   # a share skipped, never a request held
+        try:
+            t = now()
+            data = {k: v for k, v in _bucketLoad(pkl).items()
+                    if isinstance(v, tuple) and len(v) == 2 and t - v[0] <= ttl}
+            for k in values:
+                data.pop(k, None)          # re-inserted last: newest
+            for k, v in values.items():
+                data[k] = (t, v)
+            if len(data) > cap:
+                # dicts keep insertion order and old entries came in oldest
+                # first, so the first ones are the oldest
+                for k in list(data)[:len(data) - cap]:
+                    del data[k]
+            tmp = f"{pkl}.{os.getpid()}.tmp"
+            try:
+                with open(tmp, "wb") as fh:
+                    pickle.dump(data, fh, protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(tmp, pkl)
+            except Exception:                           # noqa: BLE001
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
         finally:
             fcntl.flock(lk, fcntl.LOCK_UN)

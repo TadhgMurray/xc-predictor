@@ -50,6 +50,7 @@ _PRODUCTION = {
     "athlete_season_level", "pro_athlete_season", "college_first_season",
     "dist_override", "dist_drop", "dist_override_snap",
     "course_canonical", "course_difficulties", "course_boards",
+    "venue_tf_boards",
     "athlete_ratings", "tfrrs_meet_geometry", "meet_extras",
     # ! THE TABLE IS issue_reports. "reports" was a name that never
     #   existed, so the real one would have landed in REVIEW -- unlisted,

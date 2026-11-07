@@ -773,13 +773,17 @@ def normSchoolKey(school):
 #   raced against a seeded meet, so 610k of 648k teams are outside it. For
 #   those, nothing changes.
 _GRAPH_LEVELS = None
+_GRAPH_RETRY_AT = 0.0     # after a failed read: not before this (time.time())
 
 
 def loadGraphLevels():
     """school -> level from school_level_graph, or {} if the table is absent."""
-    global _GRAPH_LEVELS
+    global _GRAPH_LEVELS, _GRAPH_RETRY_AT
     if _GRAPH_LEVELS is not None:
         return _GRAPH_LEVELS
+    import time as _time
+    if _time.time() < _GRAPH_RETRY_AT:
+        return {}            # failed a moment ago: the pickle alone, no wait
     _GRAPH_LEVELS = {}
     try:
         from database import getConn
@@ -803,8 +807,16 @@ def loadGraphLevels():
         print(f"[normalize_distance] Race-graph school levels: "
               f"{len(_GRAPH_LEVELS):,} schools (outranks school_levels.pkl).")
     except Exception as exc:
+        # ! A MISS IS NOT KEPT (2026-11-07). A worker whose pool was full at
+        #   boot (the predict warm-up's reads) cached {} and used the pickle
+        #   alone for the rest of its life -- so two workers could level the
+        #   same school differently. This call uses the pickle alone; the
+        #   next one reads the graph again.
         print(f"[normalize_distance] school_level_graph unavailable ({exc}); "
-              f"using school_levels.pkl alone.")
+              f"using school_levels.pkl alone for now.")
+        _GRAPH_LEVELS = None
+        _GRAPH_RETRY_AT = _time.time() + 60.0
+        return {}
     return _GRAPH_LEVELS
 
 

@@ -806,7 +806,12 @@ def _athleteSource(f, params):
 
 
 def getReturningField(cur, f):
-    """Athlete-seasons for the selected teams, minus the excluded grades."""
+    """Athlete-seasons for the selected teams, minus the excluded grades.
+
+    ★ UNNAMED (2026-11-07). This is up to RETURN_CAP rows, and the athletes
+      lateral ran on every one of them; the board shows one page of teams.
+      The rows carry name None, and nameRacedPage names the runners on the
+      page served (_serveBoard) -- the same lookup, the same 'Unknown'."""
     params = {"cap": RETURN_CAP}
     where = _athleteFieldWhere(f, params)
     # ! NULL FOR A COLUMN THIS DATABASE HAS NOT GOT, not a missing key: every
@@ -818,13 +823,42 @@ def getReturningField(cur, f):
     cur.execute(f"""
         SELECT s.person_id, s.school, s.state, s.grade, s.pool, s.year,
                s.mean_rating AS rating{units},
-               COALESCE(a.name, 'Unknown') AS name
+               NULL::text AS name
         FROM   {source}
-        {nameLateral("s")}
         WHERE  TRUE {where}
         LIMIT  %(cap)s
     """, params)
     return cur.fetchall()
+
+
+def nameRacedPage(cur, rows):
+    """Name the runners of a raced board's served rows (rankTeams' shape:
+    each scorer's "name", the team's "best_name"), in one lookup.
+
+    The name getReturningField's lateral gave every athlete-season before
+    the race, COALESCE(a.name, 'Unknown') -- now asked only for the people
+    the page shows (pages3.api_units' unnest shape)."""
+    ids = sorted({sc.get("person_id") for r in rows for sc in (r.get("scorers") or [])
+                  if sc.get("person_id") is not None}
+                 | {r.get("best_person_id") for r in rows
+                    if r.get("best_person_id") is not None})
+    names = {}
+    if ids:
+        cur.execute(f"""SELECT s.person_id, a.name FROM unnest(%s::bigint[]) AS s(person_id)
+                        {nameLateral("s")}""", (ids,))
+        for r in cur.fetchall():
+            pid, name = (r["person_id"], r["name"]) if isinstance(r, dict) else r
+            names[pid] = name
+
+    def named(pid):
+        n = names.get(pid)
+        return "Unknown" if n is None else n
+    for r in rows:
+        for sc in r.get("scorers") or []:
+            sc["name"] = named(sc.get("person_id"))
+        if "best_name" in r:
+            r["best_name"] = named(r.get("best_person_id"))
+    return rows
 
 
 def raceReturning(cur, f):
@@ -933,6 +967,8 @@ def _serveBoard(cur, f):
             f["sort"], f["dir"] = "rank", "ASC"
         shown = [r for r in raced if matchesSubject(r, f)]
         rows, total = sortAndPage(shown, f)
+        # ★ NAMED AFTER THE CUT: the page's runners, not the field's
+        nameRacedPage(cur, rows)
         return rows, {"raced": True, "field_size": len(raced),
                       "shown_of_field": len(shown), "span": f["span"],
                       "reason": None, "total": total,
