@@ -38,3 +38,21 @@ def test_the_persons_own_gender_decides_which_side_moves():
     assert G.verdict(rows, None)[0] == "F"           # no gender: the smaller side
     even = rows[:3] + rows[3:6]
     assert G.verdict(even, None) is None             # a tie with no gender: left alone
+
+
+def test_one_shared_day_is_two_people_with_few_rows():
+    """owner, 2026-11-07: Coogan -- a men's 10K on the day of her women's
+    6K; the boy's rows 3% from her level, too few for the gap rule."""
+    rows = ([(i, "F", f"2013-09-{10 + i}", 158.0) for i in range(6)]
+            + [(100, "M", "2010-10-16", 165.0), (101, "M", "2013-09-12", 161.0)])
+    move, rids, why = G.verdict(rows, "F")
+    assert move == "M" and rids == [100, 101] and "1 day" in why
+
+
+def test_a_strong_girl_near_the_front_of_a_boys_race_is_left():
+    """owner, 2026-11-07: "a strong girl lowk could even with more, it
+    happens" -- placing is no evidence; with no shared day, one boys' race
+    is hers."""
+    rows = ([(i, "F", f"2020-09-{10 + i}", 140.0, 1, 60) for i in range(5)]
+            + [(100, "M", "2020-10-10", 141.0, 2, 180)])
+    assert G.verdict(rows, "F") is None

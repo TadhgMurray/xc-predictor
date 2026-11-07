@@ -43,16 +43,27 @@ FIELD_MIN = 5
 FIELD_SHARE = 0.8
 MIN_SIDE = 3
 GAP = 0.05
+# ★ ONE DAY IN BOTH IS TWO PEOPLE, HOWEVER FEW ROWS (owner, 2026-11-07:
+#   Coogan's page -- a boy's 15:05 at Brown 2010, 3% from her own level, and
+#   a men's 10K on the day of her women's 6K in 2013). Nobody runs the men's
+#   and the women's race of one day, so a shared day needs no MIN_SIDE.
+#   ! NOT PLACING: a woman near the front of a men's race was the first
+#   idea, and the owner's answer was "a strong girl lowk could even with
+#   more, it happens" -- placing proves nothing.
 
 
 def verdict(rows, gender=None):
-    """rows: [(result_id, side 'M'/'F', day, rating)] of one person. ->
-    (move side, [result ids], why) or None. Pure."""
+    """rows: [(result_id, side 'M'/'F', day, rating[, place, field size])]
+    of one person. -> (move side, [result ids], why) or None. Pure."""
     by = defaultdict(list)
-    for rid, side, day, rating in rows:
+    for row in rows:
+        rid, side, day, rating = row[:4]
         if side in ("M", "F"):
             by[side].append((rid, day, rating))
-    if len(by["M"]) < MIN_SIDE or len(by["F"]) < MIN_SIDE:
+    shared = {d for _i, d, _r in by["M"]} & {d for _i, d, _r in by["F"]}
+    if not shared and (len(by["M"]) < MIN_SIDE or len(by["F"]) < MIN_SIDE):
+        return None
+    if not by["M"] or not by["F"]:
         return None
     med = {}
     for g in ("M", "F"):
@@ -78,12 +89,12 @@ def verdict(rows, gender=None):
 def explainOne(pid, rows, gender):
     """--person: why the page is or is not two people."""
     if not rows:
-        print(f"  /athlete/{pid}: fewer than {MIN_SIDE} rows in men's fields and in "
-              f"women's fields (a field counts with {FIELD_MIN}+ runners of known gender, "
-              f"{FIELD_SHARE:.0%} one way)")
+        print(f"  /athlete/{pid}: no rows in both men's and women's fields (a field "
+              f"counts with {FIELD_MIN}+ rated runners, {FIELD_SHARE:.0%} one way)")
         return
     side = defaultdict(list)
-    for rid, g, d, r in rows:
+    for row in rows:
+        rid, g, d, r = row[:4]
         side[g].append((d, r, rid))
     print(f"  /athlete/{pid}: the person's gender {gender or 'unknown'}")
     for g in ("M", "F"):
@@ -97,16 +108,20 @@ def explainOne(pid, rows, gender):
 
 
 _SQL = """
+    -- ! A FIELD'S GENDER FROM ITS ROWS' POOLS, not person_gender: most
+    --   runners of 2010 have no person_gender row, so Coogan's boys' races
+    --   were in no field at all (owner's --person run, 2026-11-07)
     WITH fld AS (
         SELECT r.source, r.meet_id, r.div_id,
-               count(*) FILTER (WHERE pg.gender = 'M') AS m,
-               count(*) FILTER (WHERE pg.gender = 'F') AS f
-        FROM   results r JOIN person_gender pg ON pg.person_id = r.person_id
-        WHERE  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
+               count(*) FILTER (WHERE right(split_part(r.rating_pool, '|', 1), 2) = '_m') AS m,
+               count(*) FILTER (WHERE right(split_part(r.rating_pool, '|', 1), 2) = '_f') AS f
+        FROM   results r
+        WHERE  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL AND r.rating_pool IS NOT NULL
         GROUP  BY 1, 2, 3
         HAVING count(*) >= %(fmin)s),
     side AS (
         SELECT r.result_id, r.person_id, left(r.date, 10) AS d, r.speed_rating AS s,
+               r.place, fld.m + fld.f AS n,
                CASE WHEN fld.m >= %(share)s * (fld.m + fld.f) THEN 'M'
                     WHEN fld.f >= %(share)s * (fld.m + fld.f) THEN 'F' END AS g
         FROM   results r
@@ -114,9 +129,9 @@ _SQL = """
         WHERE  r.person_id IS NOT NULL {one}),
     both_sides AS (
         SELECT person_id FROM side GROUP BY 1
-        HAVING count(*) FILTER (WHERE g = 'M') >= %(side)s
-           AND count(*) FILTER (WHERE g = 'F') >= %(side)s)
-    SELECT s.person_id, s.result_id, s.g, s.d, s.s, pg.gender
+        HAVING count(*) FILTER (WHERE g = 'M') >= 1
+           AND count(*) FILTER (WHERE g = 'F') >= 1)
+    SELECT s.person_id, s.result_id, s.g, s.d, s.s, pg.gender, s.place, s.n
     FROM   side s JOIN both_sides b USING (person_id)
     LEFT   JOIN person_gender pg ON pg.person_id = s.person_id
     WHERE  s.g IS NOT NULL
@@ -142,8 +157,8 @@ def main(argv=None):
             raw = cur.fetchall()
             by = defaultdict(list)
             gender = {}
-            for pid, rid, g, d, s, pg in raw:
-                by[pid].append((rid, g, d, s))
+            for pid, rid, g, d, s, pg, place, n in raw:
+                by[pid].append((rid, g, d, s, place, n))
                 gender[pid] = pg
             found = []
             for pid, rows in by.items():
