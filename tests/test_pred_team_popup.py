@@ -22,7 +22,7 @@ def test_the_page_carries_the_race_pages_dialog():
 def test_every_team_name_opens_it():
     js = read("racecast", "static", "predictions.js")
     # the side cards (both scorings) and both team tables
-    assert js.count("teamOpenCell(t, d)") == 4
+    assert js.count("teamOpenCell(t, d)") - js.count("function teamOpenCell(t, d)") == 4
     assert not re.search(r"schoolCell\(t\.team, t\.state, t\.school_href, t\.school_label,\s*t\.crest\)\n\s*\}<span", js)
 
 
