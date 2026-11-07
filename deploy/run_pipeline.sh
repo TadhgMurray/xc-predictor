@@ -1693,6 +1693,10 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
 XCP_DB_MIN_CONN=1 shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
 step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
+# ★ TRACK VENUE PAGES, THE SAME WAY (racecast/build_venue_tf_boards.py)
+step 12c_prepare      "$PY" -u racecast/build_venue_tf_boards.py --prepare
+XCP_DB_MIN_CONN=1 shards 12c_venue_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_venue_tf_boards.py --limit 2000
+step 12c_finish       "$PY" -u racecast/build_venue_tf_boards.py --finish
 # ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
 #   course records by era, "on this day" (racecast/build_record_books.py).
 #   IN THE BACKGROUND, off the main chain: only the record pages read
