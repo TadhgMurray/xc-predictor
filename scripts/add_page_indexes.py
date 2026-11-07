@@ -149,6 +149,11 @@ WANTED = [
      "(pool, sport, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
     ("athlete_season",  "pool", "as_pool_best_idx",
      "(pool, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
+    # the state boards (build_ranking_results' _CANONICAL_INDEXES says why)
+    ("athlete_season",  "pool", "as_state_year_mean_idx",
+     "(pool, sport, year, state, mean_rating DESC NULLS LAST, person_id) INCLUDE (school)"),
+    ("athlete_season",  "pool", "as_state_mean_idx",
+     "(pool, sport, state, mean_rating DESC NULLS LAST, person_id)"),
     # ★ THE EVENTS WINDOW ON THE ATHLETES BOARD (2026-09-08,
     #   rankings._abilitySource). That board re-aggregates ranking_results
     #   over a distance range, and with sport='both' there is NO sport

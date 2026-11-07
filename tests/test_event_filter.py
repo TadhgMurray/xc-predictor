@@ -174,7 +174,7 @@ def test_event_filter():
     ok(RK.count("FROM   {source}") == 5,
        f"expected 5 ability queries on the shared source, found "
        f"{RK.count('FROM   {source}')}")
-    ok(RK.count("source = _abilitySource(f, params, where)") == 4,
+    ok(RK.count("source = _abilitySource(f, params, where, precomputed=True)") == 4,
        "every site that builds a WHERE for the ability board must also build "
        "its source")
 

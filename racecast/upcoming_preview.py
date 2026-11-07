@@ -110,6 +110,30 @@ def raceOrder(race, person_id, in_field):
             race.get("school_n", 0))
 
 
+def pickRace(races, person_id, in_field):
+    """max(races, key=raceOrder(r, person_id, in_field(r))), asking
+    in_field -- a whole race's prediction -- only where it can change the
+    answer (2026-11-07: the next-race line predicted every race of a meet
+    to keep one; a returning runner's race is settled by the first key).
+
+    Exact, ties included: the races sharing the best first key are walked
+    best-first on the remaining keys (a stable sort, so equal ones keep
+    their order, as max() keeps the first), and the first one holding the
+    runner wins; if none does, the first of them."""
+    first = lambda r: person_id in r.get("persons", ())        # noqa: E731
+    top = max(first(r) for r in races)
+    group = [r for r in races if first(r) == top]
+    if len(group) == 1:
+        return group[0]
+    rest = lambda r: (not _NOT_VARSITY.search(r.get("label") or ""),   # noqa: E731
+                      r.get("school_n", 0))
+    ordered = sorted(group, key=rest, reverse=True)
+    for r in ordered:
+        if in_field(r):
+            return r
+    return ordered[0]
+
+
 def previewHref(meet_id, source):
     """/meet/preview/xc/<id>, with the feed when it is tfrrs -- the anet and
     tfrrs ids collide, as weekend.predictHref says."""
@@ -161,7 +185,16 @@ def meetPlan(cur, meet_id, source=None):
             cur.execute("ROLLBACK TO SAVEPOINT up_plan")
             print(f"upcoming plan {meet_id}: {type(exc).__name__}: {exc}", flush=True)
             return None
-    val, _ = ttlcache.get(("up_plan", source, int(meet_id)), compute, ttl=TTL,
+    # ★ ONCE FOR THE BOX (2026-11-07): _meetPlanUncached is ~6 queries, and
+    #   every one of the 24 workers asked them per meet per TTL. sharedcache
+    #   hands the others the first one's plan (a None, "no posted meet", for
+    #   FAIL_TTL, as each worker kept it before).
+    def shared():
+        import sharedcache
+        v, _at = sharedcache.get(f"up-plan-{source}-{int(meet_id)}", compute, ttl=TTL,
+                                 ttl_of=lambda v: TTL if v else FAIL_TTL)
+        return v
+    val, _ = ttlcache.get(("up_plan", source, int(meet_id)), shared, ttl=TTL,
                           ttl_of=lambda v: TTL if v else FAIL_TTL)
     return val
 
@@ -432,6 +465,16 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
     race = next((r for r in plan.get("races") or [] if int(r["div_id"]) == int(div_id)), None)
     if race is None or not plan.get("date"):
         return None, None
+    # ★ NO RULE AND NO ROUTE AT ALL: nothing below can find a field, so the
+    #   gender lookup (a savepoint and three queries) is not asked
+    #   (2026-11-07). learnedRoute answers None for every gender when the
+    #   meet has no candidate routes.
+    if rule is None:
+        import last_edition as _LE
+        if not Q._loadRoutes().get((plan.get("source"), _LE.editionName(plan.get("name")))):
+            why["no"] = (f"no rule or learned route for {race.get('label')!r} "
+                         f"({race.get('gender') or '?'})")
+            return None, None
     if not race.get("gender"):
         race = dict(race, gender=lastYearGender(cur, plan, race))
     # ★ ELSE A LEARNED ROUTE (high school state / section / district, NAIA):
@@ -969,16 +1012,20 @@ def racePrediction(cur, meet_id, div_id, source=None):
             stored = MF.loadRace(cur, meet_id, div_id, source)
             if stored:
                 return stored
+        # ★ A FAILURE IS SHARED TOO, FOR FAIL_TTL (2026-11-07): kept per
+        #   worker only, a race that cannot be predicted was re-run by each of
+        #   24 workers every five minutes, seconds each time
         v, at = sharedcache.get(f"up-pred-{source}-{int(meet_id)}-{div_id}",
                                 lambda: livePrediction(cur, meet_id, div_id, source),
-                                ttl=TTL, keep=lambda v: bool(v.get("available")))
+                                ttl=TTL,
+                                ttl_of=lambda v: TTL if v.get("available") else FAIL_TTL)
         return dict(v, _shared_at=at)
 
     def ttl_of(v):
-        if not v.get("available"):
-            return FAIL_TTL
         import time as _t
-        return max(60.0, TTL - (_t.time() - v.get("_shared_at", _t.time())))
+        full = TTL if v.get("available") else FAIL_TTL
+        return max(60.0 if v.get("available") else 1.0,
+                   full - (_t.time() - v.get("_shared_at", _t.time())))
     val, _ = ttlcache.get(("up_pred", source, int(meet_id), div_id), compute, ttl=TTL,
                           ttl_of=ttl_of)
     if "_shared_at" in val:
@@ -1175,15 +1222,20 @@ def athleteNextRace(cur, getConn, person_id, today=None):
         races = [r for r in races if r.get("gender") in (None, gender)]
         if not races:
             continue
-        preds = {r["div_id"]: racePrediction(cur, m["meet_id"], r["div_id"], m["source"])
-                 for r in races}
+        preds = {}
+
+        def predOf(r):
+            if r["div_id"] not in preds:
+                preds[r["div_id"]] = racePrediction(cur, m["meet_id"], r["div_id"],
+                                                    m["source"])
+            return preds[r["div_id"]]
 
         def inField(r):
-            p = preds[r["div_id"]]
+            p = predOf(r)
             return bool(p.get("available")) and any(
                 x["person_id"] == person_id for x in p["runners"])
-        race = max(races, key=lambda r: raceOrder(r, person_id, inField(r)))
-        pred = preds[race["div_id"]]
+        race = pickRace(races, person_id, inField)
+        pred = predOf(race)
         if not pred.get("available"):
             continue
         me = next((x for x in pred["runners"] if x["person_id"] == person_id), None)
