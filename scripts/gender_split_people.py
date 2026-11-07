@@ -43,36 +43,27 @@ FIELD_MIN = 5
 FIELD_SHARE = 0.8
 MIN_SIDE = 3
 GAP = 0.05
-# ★ A WOMAN DOES NOT FINISH 2ND IN A BOYS' VARSITY RACE (owner, 2026-11-07:
-#   Coogan's 15:05 at Brown 2010 -- 2nd behind Cheserek -- and the rule
-#   above never saw her: the boy's races, rated in the girls' pool, sat 3%
-#   from hers, and their day never met hers). A row of a woman's page in a
-#   men's field, in its first TOP_SHARE, is a man's row: the whole men's
-#   side of the page moves, however few rows it has.
-TOP_SHARE = 0.25
-PLACE_FIELD_MIN = 20     # a varsity race, not a small co-ed one where a strong girl is 2nd
+# ★ ONE DAY IN BOTH IS TWO PEOPLE, HOWEVER FEW ROWS (owner, 2026-11-07:
+#   Coogan's page -- a boy's 15:05 at Brown 2010, 3% from her own level, and
+#   a men's 10K on the day of her women's 6K in 2013). Nobody runs the men's
+#   and the women's race of one day, so a shared day needs no MIN_SIDE.
+#   ! NOT PLACING: a woman near the front of a men's race was the first
+#   idea, and the owner's answer was "a strong girl lowk could even with
+#   more, it happens" -- placing proves nothing.
 
 
 def verdict(rows, gender=None):
     """rows: [(result_id, side 'M'/'F', day, rating[, place, field size])]
     of one person. -> (move side, [result ids], why) or None. Pure."""
     by = defaultdict(list)
-    placed = []
     for row in rows:
         rid, side, day, rating = row[:4]
-        place, n = (row[4], row[5]) if len(row) >= 6 else (None, None)
         if side in ("M", "F"):
             by[side].append((rid, day, rating))
-        if side == "M" and place and n and n >= PLACE_FIELD_MIN and place <= TOP_SHARE * n:
-            placed.append((day, place, n))
-    g0 = (gender or "").upper()
-    hers = g0 == "F" or (g0 not in ("M", "F") and len(by["F"]) > len(by["M"]))
-    if placed and by["F"] and hers:
-        day, place, n = min(placed)
-        return "M", sorted(i for i, _d, _r in by["M"]), (
-            f"{len(by['M'])} rows in men's fields, {len(placed)} in their first "
-            f"{TOP_SHARE:.0%} ({place} of {n} on {day}); {len(by['F'])} in women's")
-    if len(by["M"]) < MIN_SIDE or len(by["F"]) < MIN_SIDE:
+    shared = {d for _i, d, _r in by["M"]} & {d for _i, d, _r in by["F"]}
+    if not shared and (len(by["M"]) < MIN_SIDE or len(by["F"]) < MIN_SIDE):
+        return None
+    if not by["M"] or not by["F"]:
         return None
     med = {}
     for g in ("M", "F"):
