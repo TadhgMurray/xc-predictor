@@ -404,3 +404,27 @@ def test_shared_buckets(tmp_path):
     assert sharedcache.peekMany(("b", 2), [3], 60, now=now, path=d) == {}
     os.chmod(d, 0o777)                                          # not ours alone
     assert sharedcache.peekMany(("b", 1), [3], 60, now=now, path=d) == {}
+
+
+def test_shared_bucket_cap_and_sweep(tmp_path, monkeypatch):
+    d = str(tmp_path / "c")
+    t = [5000.0]
+    now = lambda: t[0]                                          # noqa: E731
+    monkeypatch.setattr(sharedcache, "_last_sweep", [0.0])
+    sharedcache.putMany(("cap",), {1: "a", 2: "b"}, 600, now=now, path=d, max_entries=3)
+    t[0] += 1
+    sharedcache.putMany(("cap",), {3: "c", 1: "a2"}, 600, now=now, path=d, max_entries=3)
+    t[0] += 1
+    sharedcache.putMany(("cap",), {4: "d"}, 600, now=now, path=d, max_entries=3)
+    # 2 was the oldest; 1 was refreshed so it stays
+    got = sharedcache.peekMany(("cap",), [1, 2, 3, 4], 600, now=now, path=d)
+    assert sorted(got) == [1, 3, 4] and got[1][0] == "a2"
+    # a bucket nobody touches for SWEEP_AGE is removed by a later put
+    old = [f for f in os.listdir(d) if f.startswith("many-")]
+    t[0] += sharedcache.SWEEP_AGE + sharedcache.SWEEP_EVERY + 10
+    for f in old:
+        os.utime(os.path.join(d, f), (5000.0, 5000.0))
+    sharedcache.putMany(("other",), {9: "z"}, 600, now=now, path=d)
+    left = [f for f in os.listdir(d) if f.startswith("many-")]
+    assert not set(old) & set(left)
+    assert sharedcache.peekMany(("other",), [9], 600, now=now, path=d) == {9: ("z", t[0])}

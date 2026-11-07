@@ -162,22 +162,65 @@ def peekMany(bucket, keys, ttl, now=time.time, path=None):
     return out
 
 
-def putMany(bucket, values, ttl, now=time.time, path=None):
+# ! A BUCKET IS BOUNDED, AND A DEAD ONE IS SWEPT (2026-11-07). One rating
+#   bucket is every runner of every race on a date, and each put rewrites
+#   the whole file and each peek reads it: past MANY_MAX entries the oldest
+#   are dropped (a dropped runner is only read again). And buckets are named
+#   by the day and the race, so a file nobody puts to again would sit in the
+#   directory forever: at most every SWEEP_EVERY seconds a put removes the
+#   many-* files untouched for SWEEP_AGE seconds (a worker still holding a
+#   swept lock at worst loses one merge -- the value is computed again).
+MANY_MAX = int(os.environ.get("XCP_SHARED_MANY_MAX") or 3000)
+SWEEP_EVERY = 600.0
+SWEEP_AGE = 3600.0
+_last_sweep = [0.0]
+
+
+def _sweepMany(d, t):
+    if t - _last_sweep[0] < SWEEP_EVERY:
+        return
+    _last_sweep[0] = t
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for n in names:
+        if not n.startswith("many-"):
+            continue
+        p = os.path.join(d, n)
+        try:
+            if t - os.stat(p).st_mtime > SWEEP_AGE:
+                os.unlink(p)
+        except OSError:
+            pass
+
+
+def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
     """File {key: value} into the bucket, computed now, beside the entries
-    already there that are younger than `ttl` (older ones are dropped)."""
+    already there that are younger than `ttl` (older ones are dropped), the
+    newest `max_entries` (MANY_MAX) kept."""
     d = _safeDir(path)
     if d is None or not values:
         return
+    cap = max_entries or MANY_MAX
     base = _bucketBase(d, bucket)
     pkl = base + ".pkl"
+    _sweepMany(d, now())
     with open(base + ".lock", "a+") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         try:
             t = now()
             data = {k: v for k, v in _bucketLoad(pkl).items()
                     if isinstance(v, tuple) and len(v) == 2 and t - v[0] <= ttl}
+            for k in values:
+                data.pop(k, None)          # re-inserted last: newest
             for k, v in values.items():
                 data[k] = (t, v)
+            if len(data) > cap:
+                # dicts keep insertion order and old entries came in oldest
+                # first, so the first ones are the oldest
+                for k in list(data)[:len(data) - cap]:
+                    del data[k]
             tmp = f"{pkl}.{os.getpid()}.tmp"
             try:
                 with open(tmp, "wb") as fh:
