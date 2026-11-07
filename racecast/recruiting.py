@@ -372,11 +372,15 @@ def searchRecruits(cur, f):
             {view_joins}
             {gain_where}
         )
+        -- ★ THE PAGE FIRST, THEN ITS NAMES (2026-11-07): the lateral ran
+        --   on every candidate before the LIMIT. No sort reads the name,
+        --   and every one already ends on person_id.
         SELECT j.*, a.name
-        FROM   j
+        FROM   (SELECT * FROM j
+                ORDER  BY {SORTS[f['sort']]}
+                LIMIT  %(limit)s OFFSET %(offset)s) j
         {nameLateral('j')}
         ORDER  BY {SORTS[f['sort']]}
-        LIMIT  %(limit)s OFFSET %(offset)s
     """, params)
     rows = [dict(r) for r in cur.fetchall()]
     cur.execute("RELEASE SAVEPOINT recruit_search")

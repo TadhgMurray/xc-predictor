@@ -298,3 +298,49 @@ def test_the_raced_board_serves_the_same_names(team_db, monkeypatch, qs):
         assert "Unknown" in names and any(n.startswith("Row ") for n in names)
         assert any(n.startswith("Ann") for n in names)
         assert all(r["best_name"] for r in new_rows)
+
+
+# ---------------------------------------------------------------- 3 --
+
+def test_the_recruit_search_cuts_the_page_before_naming():
+    import recruiting
+    src = _read("racecast", "recruiting.py")
+    q = " ".join(src[src.index("def searchRecruits"):src.index("def searchOrTimeout")].split())
+    assert q.index("LIMIT %(limit)s OFFSET %(offset)s) j") < q.index("{nameLateral('j')}")
+    # no order reads the name, and every one ends on the unique person_id
+    for order in recruiting.SORTS.values():
+        assert "name" not in order and order.endswith("j.person_id")
+
+
+def _recruitFilters(**kw):
+    f = {"sport": "XC", "pool": "hs_m", "label": 2025, "year": 2025, "grad": None,
+         "states": [], "schools": [], "min_rating": None, "max_rating": None,
+         "min_gain": None, "min_races": 1, "min_races_explicit": True,
+         "sort": "rating", "limit": 100, "offset": 0}
+    f.update(kw)
+    return f
+
+
+@pytest.mark.parametrize("sort", ["rating", "gain", "best", "grad"])
+def test_a_recruit_page_is_the_same_slice_of_the_named_list(pgconn, sort):
+    import recruiting
+    cur = _dictCur(pgconn)
+    cur.execute("""
+        CREATE TEMP TABLE athlete_season AS
+        SELECT p AS person_id, 'School ' || (p % 9) AS school, 'CA'::text AS state,
+               (9 + p % 4)::text AS grade, 'hs_m'::text AS pool, 'XC'::text AS sport,
+               y AS year, (100 + (p * 7919 % 60) / 4.0 + y - 2024)::real AS mean_rating,
+               (110 + (p * 31 % 50) / 4.0)::real AS best_rating, 4 AS n_races
+        FROM generate_series(1, 300) p, generate_series(2024, 2025) y;
+        CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint, first_name text,
+            last_name text, gender text);
+        INSERT INTO athletes SELECT p, p, 'Ann' || p, 'Lee', 'F'
+        FROM generate_series(1, 300) p WHERE p % 4 <> 0;
+        CREATE TEMP TABLE results (person_id bigint, athlete_name text);
+        CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text);
+    """)
+    everyone = recruiting.searchRecruits(cur, _recruitFilters(sort=sort, limit=1000))
+    assert len(everyone) == 300
+    page = recruiting.searchRecruits(cur, _recruitFilters(sort=sort, limit=20, offset=37))
+    assert page == everyone[37:57]
+    assert any(r["name"] is None for r in everyone)
