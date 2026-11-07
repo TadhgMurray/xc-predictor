@@ -23,8 +23,12 @@
 # ! NEVER BESIDE THE PIPELINE: each solve takes .pipeline.lock (the nightly
 #   SKIPS a night it finds held, so no cutoff STARTS in XCP_REPLAY_QUIET,
 #   default 03:30-09:30 UTC: Postgres restarts 04:30-07:00 and the nightly
-#   starts 09:17 UTC). A solve holds the whole pack in memory: do not run
-#   race_trees beside it.
+#   starts 09:17 UTC). A solve holds the whole pack in memory.
+# ! AND NOT BESIDE ANY OF ITS PARTS (owner, 2026-11-07: "I ran it with the
+#   pipeline and it OOMed"). The lock alone let a cutoff start while heavy
+#   work still ran. A cutoff now also waits until no pipeline, nightly,
+#   solve, race_rows or race_trees process is running (busy) and the
+#   machine has XCP_REPLAY_MIN_GB of memory available (default 70).
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -53,6 +57,11 @@ inQuiet() {
   now=$(minutes "$(date -u +%H:%M)"); lo=$(minutes "${QUIET%%-*}"); hi=$(minutes "${QUIET##*-}")
   [ "$now" -ge "$lo" ] && [ "$now" -lt "$hi" ]
 }
+busy() {
+  pgrep -f "deploy/run_pipeline.sh|deploy/nightly_update.sh|deploy/race_model_weekly.sh|engine/run_joint.py|model/race_rows.py|model/race_trees.py|model/race_blend.py" >/dev/null
+}
+availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
+ready() { ! inQuiet && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
 say() { echo "[replay] $(date -u '+%F %H:%M') UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 
 if [ "${1:-}" = "--list" ]; then
@@ -68,9 +77,13 @@ mkdir -p "$OUT" "$LOGDIR"
 for d in $DATES; do
   snap="$OUT/asof_$d.npz"
   if [ -f "$snap" ]; then say "$d already done"; continue; fi
-  while inQuiet; do sleep 600; done
+  waited=0
   exec 9>"$ROOT/.pipeline.lock"
-  until flock -n 9; do sleep 300; while inQuiet; do sleep 600; done; done
+  until ready && flock -n 9; do
+    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, other heavy work, under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB, or the pipeline lock)"
+    waited=1
+    sleep 300
+  done
   say "$d: solving on the rows before it: tail -f $LOGDIR/asof_$d.log"
   t0=$(date +%s)
   if nice -n 10 "$PY" -u engine/run_joint.py --asof "$d" --snapshot "$snap" \
