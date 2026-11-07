@@ -26,6 +26,8 @@ def test_the_audits_rows_get_their_side():
     assert RO.extraSide(155.2, 12, 140.0, 130.7, 309, "ms_m", 8000, 250) == "level"
     # an open race most of whose field is college
     assert RO.extraSide(140.0, 0, None, None, 40, "ms_m", 5000, 30) == "level"
+    # no grade, a club's name, in a race high school and college men ran too
+    assert RO.extraSide(162.8, 1, 159.2, 159.2, 47, "ms_m", 5000, 3, False, 20) == "level"
 
 
 def test_ordinary_rows_are_left_alone():
@@ -35,6 +37,12 @@ def test_ordinary_rows_are_left_alone():
     assert RO.extraSide(120.0, 6, 125.0, 119.0, 2, "hs_f", 5000, 0) is None
     # a real middle school race
     assert RO.extraSide(120.0, 0, None, None, 80, "ms_m", 3200, 0) is None
+    # no grade, but a middle school race (nobody older in it)
+    assert RO.extraSide(120.0, 0, None, None, 80, "ms_m", 3200, 0, False, 0) is None
+    # no grade, a middle school race with two ninth graders in it
+    assert RO.extraSide(120.0, 0, None, None, 80, "ms_m", 3200, 0, False, 2) is None
+    # graded 8 in an open race: the grade is evidence, left alone
+    assert RO.extraSide(120.0, 3, 125.0, 118.0, 80, "ms_m", 5000, 3, True, 20) is None
     # a breakout among many races is the neighbourhood's to judge, not this
     assert RO.extraSide(150.0, 8, 130.0, 125.0, 200, "hs_m", 5000, 0) is None
 
@@ -50,7 +58,8 @@ def test_the_sql_finds_them():
     cur.execute("""
         DROP SCHEMA IF EXISTS ox CASCADE; CREATE SCHEMA ox; SET search_path = ox;
         CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint,
-                              div_id bigint, date text, speed_rating real, rating_pool text);
+                              div_id bigint, date text, speed_rating real, rating_pool text,
+                              grade text DEFAULT '9');
         CREATE TABLE meets (div_id bigint, meet_id bigint, distance real);
         INSERT INTO meets VALUES (11, 1, 5000), (21, 2, 8000), (31, 3, 5000);
         -- a big race: person 1 far above their one other race (thin)

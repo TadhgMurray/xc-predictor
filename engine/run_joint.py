@@ -3516,7 +3516,13 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         if s_u2.ndim == 0:
             s_u2 = np.full(int(D.group_of_cell.max()) + 1, float(s_u2))
         pen = float(out["sigma2"]) / np.maximum(s_u2[js.groupOfRace(D)], 1e-12)
-        c = w * h
+        # the day's weights: each row by the other races behind its runner
+        # (js.dayEvidenceWeight); the abilities keep w
+        wd = w * js.dayEvidenceWeight(D.athlete, D.n_ath)
+        print(f"[joint] bracket: day evidence -- {100 * float((wd < w).mean()):.1f}% of rows "
+              f"count less on their day (runners with under {js.DAY_EVIDENCE_FULL} other "
+              f"races; XCP_DAY_EVIDENCE)", flush=True)
+        c = wd * h
         u_new = np.asarray(b["u"], dtype=np.float64).copy()
         # ★ THE DAY GUARD, IN THE FRAME THAT PUBLISHES (owner, 2026-10-08;
         #   js.raceDayDivisions). Production's ratings carry THIS u, so the
@@ -3529,7 +3535,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         dd = None
         for _ in range(4):
             r_pre = z_raw - a_new[D.athlete] - h * D_b[D.cell]
-            dd = js.raceDayDivisions(r_pre, w, h, D.race, sub, D.n_race, pen)
+            dd = js.raceDayDivisions(r_pre, wd, h, D.race, sub, D.n_race, pen)
             u_new = dd["u"]
             resid = z_raw - h * (D_b[D.cell] + u_new[D.race] + dd["offset"])
             a_new = js.tiedAbilities(den, np.bincount(D.athlete, weights=w * resid,
@@ -3540,15 +3546,15 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
         # exact drop-one difference (as js.raceEffectLeaveOneOut does).
         # A flagged division's rows had no pull on u_j: they get it whole.
         r_pre = z_raw - a_new[D.athlete] - h * D_b[D.cell]
-        dd_fin = js.raceDayDivisions(r_pre, w, h, D.race, sub, D.n_race, pen)
+        dd_fin = js.raceDayDivisions(r_pre, wd, h, D.race, sub, D.n_race, pen)
         # ! THE FLAGS u_new WAS TAKEN WITH, re-summed at the final abilities,
         #   so the drop-one difference is a difference of one row, not of a
         #   division flagged in one pass and not the other
         kept = dd["keep"]
         num = np.bincount(D.race, weights=c * r_pre * kept, minlength=D.n_race)
-        P = np.bincount(D.race, weights=w * h * h * kept, minlength=D.n_race) + pen
+        P = np.bincount(D.race, weights=wd * h * h * kept, minlength=D.n_race) + pen
         u_ref = num / P
-        u_loo = (num[D.race] - kept * c * r_pre) / (P[D.race] - kept * w * h * h)
+        u_loo = (num[D.race] - kept * c * r_pre) / (P[D.race] - kept * wd * h * h)
         out["race_effect_row_bracket"] = u_new[D.race] + (u_loo - u_ref[D.race])
         # ★ EACH DIVISION LEANS TOWARD ITS OWN DAY (js.divisionDayRow): by
         #   how much the divisions of one venue-day really differ, measured
@@ -3560,7 +3566,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
             # ★ AND THE LOOP BETWEEN THEM (js.dayDistanceLayerOn): both
             #   versions kept, the report prints them side by side
             u_dist, u_div, linfo = js.layeredDayRow(
-                r_pre, w, h, D.race, D.cell, div_ids, out["race_effect_row_bracket"],
+                r_pre, wd, h, D.race, D.cell, div_ids, out["race_effect_row_bracket"],
                 float(out["sigma2"]), keep=kept)
             dinfo = linfo["division"]
             out["race_effect_row_nodist"] = u_div
@@ -3602,7 +3608,7 @@ def bracketDifficulties(out, D, cols, keep, y, athlete_pool, pool_names,
             with np.errstate(divide="ignore", invalid="ignore"):
                 m_race = np.where(W > 0, num / W, np.nan)
                 v_race = np.where(W > 0, sig2 / W, np.nan)
-                W_loo = W[D.race] - kept * w * h * h
+                W_loo = W[D.race] - kept * wd * h * h
                 m_loo = np.where(W_loo > 0, (num[D.race] - kept * c * r_pre) / W_loo, np.nan)
                 v_loo = np.where(W_loo > 0, sig2 / W_loo, np.nan)
             mix_row = np.zeros(D.n)

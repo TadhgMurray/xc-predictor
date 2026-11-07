@@ -53,6 +53,11 @@ CHANGES = [
      "rated runners that is faster than the athlete's usual level, and a "
      "college or open race filed under a middle school grade. They stay on "
      "the athlete's page, marked."),
+    ("2026-11-06",
+     "A race day's fast or slow conditions are now read only from runners "
+     "who have other races to compare it with. A runner whose only race is "
+     "that one no longer counts, so days built on such fields, most of them "
+     "old meets, move less."),
 ]
 
 
