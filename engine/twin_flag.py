@@ -249,6 +249,21 @@ def twinRaceRestSql(table, sport):
 
 
 SHIFTED_MAX_DAYS = 7      # how far apart two feeds' dates for one race may be
+# ! UP TO A MONTH ONLY UNDER ONE NAME (owner, 2026-11-07: the 2023 NEC
+#   Championships, tfrrs on Oct 28 and the other feed on Nov 17, every
+#   runner twice; "this feels bad" about a plain 31-day window). Past a week
+#   the two meets must also carry the same name (years, punctuation and
+#   "cross country" / "xc" aside): one championship whose date one feed
+#   got wrong, never two races of a season.
+SHIFTED_NAMED_DAYS = 31
+
+
+def _meetNameKey(col):
+    """A meet name for comparing across the feeds: lower case, no years,
+    'cross country' as 'xc', letters and digits only."""
+    return (f"btrim(regexp_replace(regexp_replace(regexp_replace(lower({col}), "
+            f"'(19|20)[0-9]{{2}}', ' ', 'g'), 'cross[ -]*country', 'xc', 'g'), "
+            f"'[^a-z0-9]+', ' ', 'g'))")
 
 
 def twinRaceShiftedSql(table, sport):
@@ -283,14 +298,32 @@ def twinRaceShiftedSql(table, sport):
             WHERE  r.source = 'anet'
               AND  r.time_seconds > 0 AND r.time_seconds < 100000
               AND  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'),
-        hit AS (
+        hit0 AS (
             SELECT t.meet_id, t.div_id, a.meet_id AS am,
-                   count(DISTINCT t.result_id) AS k
+                   count(DISTINCT t.result_id) AS k,
+                   max(abs(a.d - t.d)) AS gap
             FROM   t JOIN a ON a.person_id = t.person_id
-                           AND abs(a.d - t.d) <= {SHIFTED_MAX_DAYS}
+                           AND abs(a.d - t.d) <= {SHIFTED_NAMED_DAYS}
                            AND abs(a.ts - t.ts) < 1.0
             GROUP  BY 1, 2, 3
             HAVING count(DISTINCT t.result_id) >= {RACE_REST_MIN}),
+        tn AS (
+            SELECT meet_id, min({_meetNameKey('meet_name')}) AS n
+            FROM   meets_tfrrs
+            WHERE  sport = 'XC' AND meet_id IN (SELECT meet_id FROM hit0 WHERE gap > {SHIFTED_MAX_DAYS})
+            GROUP  BY 1),
+        an AS (
+            SELECT meet_id, min({_meetNameKey('meet_name')}) AS n
+            FROM   meets
+            WHERE  meet_id IN (SELECT am FROM hit0 WHERE gap > {SHIFTED_MAX_DAYS})
+            GROUP  BY 1),
+        hit AS (
+            SELECT h.meet_id, h.div_id, h.am, h.k
+            FROM   hit0 h
+            LEFT   JOIN tn ON tn.meet_id = h.meet_id
+            LEFT   JOIN an ON an.meet_id = h.am
+            WHERE  h.gap <= {SHIFTED_MAX_DAYS}
+               OR  (tn.n <> '' AND tn.n = an.n)),
         size AS (
             SELECT meet_id, div_id, count(*) AS n
             FROM   {table}
@@ -1238,6 +1271,10 @@ def build(conn, write=False, parallel=None, connect=None):
         ensureTable(cur)
         _session(conn, cur)
         if write:
+            # ! A KILLED RUN LEAVES IT (nightly 2026-11-07, DuplicateTable:
+            #   the owner stopped the pipeline at 04c the day before). The
+            #   except below cleans up after an error, never after a kill.
+            cur.execute("DROP TABLE IF EXISTS result_twin_new")
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
         if parallel and write and TWIN_WORKERS > 1:
             conn.commit()
