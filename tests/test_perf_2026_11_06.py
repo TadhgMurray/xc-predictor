@@ -839,3 +839,85 @@ def test_prewarm_runs_after_the_last_swap_and_in_the_nightly():
     assert sh.index("step 18_vacuum") < sh.index("step 19b_prewarm")
     nu = _read("deploy", "nightly_update.sh")
     assert nu.index("step 10f4_season_events") < nu.index("step 13z_prewarm")
+
+
+# --------------------------------------------------------------- 15 --
+# The next-race line never holds a worker; a race predicted once per box
+
+def test_soon_or_later_fast_slow_and_busy():
+    import time as _t
+    import pages3
+    import ttlcache
+    ttlcache.clear()
+    assert pages3._soonOrLater(("t", 1), lambda: {"available": True, "v": 1},
+                               ttl=60, ttl_of=None, wait=2) == {"available": True, "v": 1}
+    calls = []
+
+    def slow():
+        calls.append(1)
+        _t.sleep(0.6)
+        return {"available": True, "v": 2}
+    assert pages3._soonOrLater(("t", 2), slow, ttl=60, ttl_of=None, wait=0.05) is None
+    # the slot is taken while it runs: nothing else starts
+    assert pages3._soonOrLater(("t", 3), lambda: calls.append("x") or {}, ttl=60,
+                               ttl_of=None, wait=0.05) is None
+    _t.sleep(0.8)
+    assert pages3._soonOrLater(("t", 2), slow, ttl=60, ttl_of=None, wait=0.05) == \
+        {"available": True, "v": 2}
+    assert calls == [1]
+    ttlcache.clear()
+
+
+def test_next_race_route_answers_not_yet_without_waiting(monkeypatch):
+    import time as _t
+    import app as A
+    import pages3
+    import ttlcache
+    import upcoming_preview as U
+    ttlcache.clear()
+    monkeypatch.setattr(pages3, "NEXT_RACE_WAIT", 0.05)
+
+    class _C:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def rollback(self):
+            pass
+    monkeypatch.setattr(pages3, "getConn", lambda: _C())
+    monkeypatch.setattr(pages3, "_cursor", lambda conn: _C())
+
+    def slow(cur, gc, pid, today):
+        _t.sleep(0.5)
+        return {"available": True, "races": [{"name": "Meet"}]}
+    monkeypatch.setattr(U, "athleteNextRace", slow)
+    c = A.app.test_client()
+    t0 = _t.time()
+    r = c.get("/api/next-race/athlete/123")
+    assert _t.time() - t0 < 0.4
+    assert r.get_json() == {"available": False, "pending": True}
+    assert r.headers["Cache-Control"] == "no-store"
+    _t.sleep(0.7)
+    r = c.get("/api/next-race/athlete/123")
+    assert r.get_json()["available"] is True and "public" in r.headers["Cache-Control"]
+    ttlcache.clear()
+
+
+def test_a_live_race_prediction_is_shared_across_workers(tmp_path, monkeypatch):
+    import sharedcache
+    import ttlcache
+    import upcoming_preview as U
+    import meet_forecast as MF
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "c"))
+    monkeypatch.setattr(MF, "loadRace", lambda cur, m, d, s: None)
+    n = []
+    monkeypatch.setattr(U, "livePrediction",
+                        lambda cur, m, d, s: n.append(1) or {"available": True, "runners": []})
+    ttlcache.clear()
+    a = U.racePrediction(None, 77, 3, "anet")
+    ttlcache.clear()                                    # another worker
+    b = U.racePrediction(None, 77, 3, "anet")
+    assert a == b == {"available": True, "runners": []} and n == [1]
+    ttlcache.clear()

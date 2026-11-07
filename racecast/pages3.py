@@ -24,6 +24,8 @@
 #   else -- no session, no free text -- so each sets the pages' own public
 #   max-age itself, and ttlcache holds the compute under the edge.
 import datetime
+import os
+import threading
 
 import psycopg2.extras
 from flask import (Blueprint, abort, jsonify, redirect, render_template,
@@ -35,6 +37,56 @@ from database import getConn
 bp = Blueprint("pages3", __name__)
 
 _FAIL_TTL = 300.0
+
+
+# ★ THE NEXT-RACE LINE NEVER HOLDS A WORKER (2026-11-07: /api/next-race/
+#   athlete at 60.5 s -- a cold worker predicting a meet's every race inline,
+#   killed at gunicorn's 60 s, so the reader got an error and the line stayed
+#   hidden anyway, while the worker served nobody else). The compute runs in
+#   a background thread; the request waits up to NEXT_RACE_WAIT seconds for
+#   it and otherwise answers "not yet" (no-store, so the next view asks
+#   again and finds it). next-race.js hides the line for any answer that is
+#   not available, exactly as for a failure.
+# ! ONE BACKGROUND COMPUTE PER WORKER AT A TIME: a worker has three database
+#   connections, and a crawler walking athlete pages must not start a
+#   prediction per page.
+NEXT_RACE_WAIT = float(os.environ.get("XCP_NEXT_RACE_WAIT", "4"))
+_BG = {"busy": False}
+_BG_LOCK = threading.Lock()
+
+
+def _soonOrLater(key, compute, ttl, ttl_of, wait=None):
+    """The cached value for `key`; else compute it in the background and
+    wait up to `wait` seconds for it. None when it is not ready (or another
+    background compute holds this worker's slot)."""
+    hit = ttlcache.peek(key)
+    if hit is not None:
+        return hit
+    with _BG_LOCK:
+        if _BG["busy"]:
+            return None
+        _BG["busy"] = True
+    box, done = {}, threading.Event()
+
+    def run():
+        try:
+            box["v"], _ = ttlcache.get(key, compute, ttl=ttl, ttl_of=ttl_of)
+        except Exception as exc:                        # noqa: BLE001
+            print(f"next race {key}: {type(exc).__name__}: {exc}", flush=True)
+            box["v"] = {"available": False}
+        finally:
+            with _BG_LOCK:
+                _BG["busy"] = False
+            done.set()
+    threading.Thread(target=run, daemon=True, name="next-race").start()
+    done.wait(NEXT_RACE_WAIT if wait is None else wait)
+    return box.get("v")
+
+
+def _notYet():
+    resp = jsonify({"available": False, "pending": True})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _publicJson(payload):
@@ -134,13 +186,9 @@ def api_next_race_athlete(person_id):
                 out = U.athleteNextRace(cur, getConn, person_id, _today())
                 conn.rollback()
                 return out
-    try:
-        val, _ = ttlcache.get(("next_race_a", person_id, _today().isoformat()), compute,
-                              ttl=U.TTL, ttl_of=lambda v: U.TTL if v.get("available") else _FAIL_TTL)
-    except Exception as exc:                            # noqa: BLE001
-        print(f"next race athlete {person_id}: {type(exc).__name__}: {exc}", flush=True)
-        val = {"available": False}
-    return _publicJson(val)
+    val = _soonOrLater(("next_race_a", person_id, _today().isoformat()), compute,
+                       ttl=U.TTL, ttl_of=lambda v: U.TTL if v.get("available") else _FAIL_TTL)
+    return _notYet() if val is None else _publicJson(val)
 
 
 @bp.route("/api/next-race/school")
@@ -158,13 +206,9 @@ def api_next_race_school():
                 out = U.schoolNextRaces(cur, getConn, school, state, _today(), level=level)
                 conn.rollback()
                 return out
-    try:
-        val, _ = ttlcache.get(("next_race_s", school, state, level, _today().isoformat()), compute,
-                              ttl=U.TTL, ttl_of=lambda v: U.TTL if v.get("available") else _FAIL_TTL)
-    except Exception as exc:                            # noqa: BLE001
-        print(f"next race school {school}: {type(exc).__name__}: {exc}", flush=True)
-        val = {"available": False}
-    return _publicJson(val)
+    val = _soonOrLater(("next_race_s", school, state, level, _today().isoformat()), compute,
+                       ttl=U.TTL, ttl_of=lambda v: U.TTL if v.get("available") else _FAIL_TTL)
+    return _notYet() if val is None else _publicJson(val)
 
 
 # ------------------------------------------------------------------ #

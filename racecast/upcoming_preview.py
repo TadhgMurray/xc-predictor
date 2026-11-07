@@ -956,15 +956,33 @@ def racePrediction(cur, meet_id, div_id, source=None):
       pipeline has frozen a race, every page that reads it -- the preview,
       the next-race lines -- shows the stored numbers, with "frozen" saying
       when they were made, so what a reader saw is what the recap scores."""
+    # ★ A LIVE PREDICTION ONCE FOR THE BOX, NOT ONCE PER WORKER (2026-11-07:
+    #   /api/next-race/athlete at 60.5 s, the worker timeout, right after a
+    #   restart emptied all 24 workers' caches -- each predicted the same
+    #   meets' every race again). sharedcache hands the other workers the
+    #   first one's answer; a worker keeps it in memory only for what is
+    #   left of its TTL. A stored forecast is read as before.
     def compute():
         import meet_forecast as MF
+        import sharedcache
         if div_id is not None:
             stored = MF.loadRace(cur, meet_id, div_id, source)
             if stored:
                 return stored
-        return livePrediction(cur, meet_id, div_id, source)
+        v, at = sharedcache.get(f"up-pred-{source}-{int(meet_id)}-{div_id}",
+                                lambda: livePrediction(cur, meet_id, div_id, source),
+                                ttl=TTL, keep=lambda v: bool(v.get("available")))
+        return dict(v, _shared_at=at)
+
+    def ttl_of(v):
+        if not v.get("available"):
+            return FAIL_TTL
+        import time as _t
+        return max(60.0, TTL - (_t.time() - v.get("_shared_at", _t.time())))
     val, _ = ttlcache.get(("up_pred", source, int(meet_id), div_id), compute, ttl=TTL,
-                          ttl_of=lambda v: TTL if v.get("available") else FAIL_TTL)
+                          ttl_of=ttl_of)
+    if "_shared_at" in val:
+        val = {k: v for k, v in val.items() if k != "_shared_at"}
     return val
 
 
