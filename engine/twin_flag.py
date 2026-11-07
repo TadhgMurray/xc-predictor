@@ -248,7 +248,12 @@ def twinRaceRestSql(table, sport):
     """
 
 
-SHIFTED_MAX_DAYS = 7      # how far apart two feeds' dates for one race may be
+# ! 31, NOT 7 (owner, 2026-11-07: the 2023 NEC Championships, tfrrs on
+#   Oct 28 and the other feed on Nov 17 -- every runner twice, 20 days
+#   apart). The race-level share is what makes a window safe: five-plus
+#   runners and 60% of a field within a second of their own times is one
+#   race, whatever the two feeds say the day was.
+SHIFTED_MAX_DAYS = 31     # how far apart two feeds' dates for one race may be
 
 
 def twinRaceShiftedSql(table, sport):
@@ -1238,6 +1243,10 @@ def build(conn, write=False, parallel=None, connect=None):
         ensureTable(cur)
         _session(conn, cur)
         if write:
+            # ! A KILLED RUN LEAVES IT (nightly 2026-11-07, DuplicateTable:
+            #   the owner stopped the pipeline at 04c the day before). The
+            #   except below cleans up after an error, never after a kill.
+            cur.execute("DROP TABLE IF EXISTS result_twin_new")
             cur.execute("CREATE TABLE result_twin_new (LIKE result_twin INCLUDING ALL)")
         if parallel and write and TWIN_WORKERS > 1:
             conn.commit()

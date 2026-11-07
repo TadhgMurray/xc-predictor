@@ -88,7 +88,8 @@ _EXPECTED = {
     ("TF", "twin_race_rest"): [],
     # 2026-11-02: the same copy found with the day relaxed (no shifted pair
     # in the fixtures beyond it); TF never
-    ("XC", "twin_race_shifted"): [7301, 7302, 7303, 7304, 7305, 7306, 7307],
+    ("XC", "twin_race_shifted"): [7301, 7302, 7303, 7304, 7305, 7306, 7307,
+                                  7501, 7502, 7503, 7504, 7505],
     ("TF", "twin_race_shifted"): [],
     ("TF", "twin_same_day"):  [1901],
     # 2026-10-10: the fixtures hold no uploaded row

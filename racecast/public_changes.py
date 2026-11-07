@@ -27,6 +27,26 @@ CHANGES = [
      "College cross country courses are now matched to their locations, so "
      "they get their own difficulty numbers like high school courses. Until "
      "now every college course was treated as unknown."),
+    ("2026-11-06",
+     "Splits and time-trial postings of a race are no longer rated as races "
+     "of their own. They had put runners at the top of the all-time lists "
+     "with times from a shorter run."),
+    ("2026-11-06",
+     "Races where runners ran different distances under one listing, such "
+     "as a combined men's and women's race, are now rated runner by runner "
+     "at the distance each ran. This check now runs every night, not only "
+     "on full updates."),
+    ("2026-11-06",
+     "When the same race is posted by two results sites, a runner listed on "
+     "only one of them is rated against the full field of the other, not "
+     "against a field of one or two."),
+    ("2026-11-06",
+     "Profiles that held two different runners' races, one in men's races "
+     "and one in women's, have been split into two profiles."),
+    ("2026-11-06",
+     "An athlete's rank on their team now counts only teammates of the same "
+     "gender, and conference and league rankings use this season's "
+     "conference memberships."),
 ]
 
 
