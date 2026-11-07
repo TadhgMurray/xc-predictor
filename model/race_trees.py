@@ -518,10 +518,19 @@ def fieldFromBase(X, base, slices, fidx):
 #  fitting
 # ------------------------------------------------------------------ #
 
-def runnerModel(seed=0, big=False):
+# ★ THE LOSS, AND THE LEVEL'S STATISTIC (owner, 2026-11-07: "there must be
+#   more we can do"). Kailo's number is the MEAN |% miss| per runner, which
+#   the median of each runner's error minimises -- not the mean, which
+#   squared error and a field-mean level both aim at, and which a few
+#   walkers drag slow. --runner-loss absolute_error and --level-median test
+#   the two; the saved model says which it is ("level_stat").
+RUNNER_LOSSES = ("squared_error", "absolute_error")
+
+
+def runnerModel(seed=0, big=False, loss="squared_error"):
     from sklearn.ensemble import HistGradientBoostingRegressor
     return HistGradientBoostingRegressor(
-        loss="squared_error", learning_rate=0.05, max_iter=8000 if big else 4000,
+        loss=loss, learning_rate=0.05, max_iter=8000 if big else 4000,
         max_leaf_nodes=255 if big else 63, min_samples_leaf=200 if big else 400,
         l2_regularization=1.0, early_stopping=True,
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
@@ -553,9 +562,12 @@ def levelModel(seed=0):
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
 
 
-def raceTable(X, y_abs, base_abs, slices, fidx, level_features=LEVEL_FEATURES):
+def raceTable(X, y_abs, base_abs, slices, fidx, level_features=LEVEL_FEATURES,
+              stat="mean"):
     """One row per race: the level inputs (race constants, and the field's
-    mean level, sex and form) and the level target."""
+    mean level, sex and form) and the level target: the field's mean
+    ln(actual) - mean base, or with stat "median" the median runner's
+    ln(actual / base) (levelTarget)."""
     import numpy as np
     cols = [fidx[k] for k in level_features]
     R = np.empty((len(slices), len(cols)), dtype=np.float32)
@@ -565,8 +577,25 @@ def raceTable(X, y_abs, base_abs, slices, fidx, level_features=LEVEL_FEATURES):
         warnings.simplefilter("ignore", RuntimeWarning)     # an input empty for a race
         for i, (a, b) in enumerate(slices):
             R[i] = np.nanmean(X[a:b][:, cols], axis=0)
-            L[i] = float(y_abs[a:b].mean() - base_abs[a:b].mean())
+            L[i] = levelTarget(y_abs[a:b], base_abs[a:b], stat)
     return R, L
+
+
+def levelTarget(y_abs, base_abs, stat="mean"):
+    """One race's level target. Pure but for numpy."""
+    import numpy as np
+    if stat == "median":
+        return float(np.median(y_abs - base_abs))
+    return float(y_abs.mean() - base_abs.mean())
+
+
+def placeOnLevel(base_abs, runner, level, stat="mean"):
+    """Every runner's ln time in one race: their base, plus the runner
+    trees' part centred on the field's mean (or median, with stat
+    "median"), plus the race level. Pure but for numpy."""
+    import numpy as np
+    c = np.median(runner) if stat == "median" else runner.mean()
+    return base_abs + runner - c + level
 
 
 def levelTable(R, L, fidx_level):
@@ -1007,6 +1036,10 @@ def main():
     ap.add_argument("--importance", action="store_true",
                     help="permutation importance of the runner inputs (a few minutes)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--runner-loss", choices=RUNNER_LOSSES, default="squared_error",
+                    help="the runner trees' loss (absolute_error aims at Kailo's mean miss)")
+    ap.add_argument("--level-median", action="store_true",
+                    help="the race level of the median runner, not the field's mean")
     ap.add_argument("--no-own", dest="own", action="store_false",
                     help="leave out each runner's own record against the ratings")
     ap.add_argument("--big", action="store_true",
@@ -1045,14 +1078,15 @@ def main():
      excluded, order, pid, ctx_packs, clv_pack, course, _seq_ev, _seq_idx) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
-    rm = fitByRaces(runnerModel(a.seed, a.big), Xt, r[~val], race[~val])
+    rm = fitByRaces(runnerModel(a.seed, a.big, a.runner_loss), Xt, r[~val], race[~val])
     del Xt
     print(f"runner trees: {rm.n_iter_} rounds ({datetime.datetime.now() - t0})")
     Xv, yv, bv = X[val], y[val], base[val]
     XvA = X_all[val]                     # every input, for the report's bands
     rv, dv, tv = race[val], day[val], tfrrs[val]
     sl = raceSlices(rv)
-    pv = centre(bv + rm.predict(Xv), sl)
+    pr_v = rm.predict(Xv)
+    pv = centre(bv + pr_v, sl)
     base_s, model_s = orderScores(bv, yv, sl), orderScores(pv, yv, sl)
     # ★ "SAME AS THEIR LAST RACE", the simplest baseline (owner, 2026-10-27):
     #   the last rated race on the page's clock -- the form's time moved by
@@ -1117,7 +1151,8 @@ def main():
     lf = [k for k in LEVEL_FEATURES + COURSE_FEATURES if k in fidx and k not in excluded]
     if a.no_ratings and "raw_form" in fidx:
         lf.append("raw_form")
-    R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx, lf)
+    stat = "median" if a.level_median else "mean"
+    R, L = raceTable(X_all, y_abs, base_abs, sl_all, fidx, lf, stat)
     race_val = np.array([val[s] for s, _e in sl_all])
     # ! THE LEVEL IS LEARNED ONLY WHERE THE RACE HAS A REAL DISTANCE (1.3): a
     #   half-marathon filed as cross country, a track 800, a "Test Race" --
@@ -1139,7 +1174,7 @@ def main():
     bav = base_abs[val]
     for k, (s, e) in enumerate(sl):
         mb = bav[s:e].mean()
-        tot_m[s:e] = mb + lvl_model[k] + pv[s:e]
+        tot_m[s:e] = placeOnLevel(bav[s:e], pr_v[s:e], lvl_model[k], stat)
         tot_n[s:e] = mb + lvl_naive[k] + bv[s:e]
     # ★ THE PAGE ITSELF (2026-10-25): base_abs is what the site would print
     #   (race_rows.pageBase) wherever page_base is 1, so "page" is the served
@@ -1323,7 +1358,7 @@ def main():
         #   err a little wide. ! A refit that scores WORSE on rows it has now
         #   seen than the held-out model did is broken: it stops here.
         t5 = datetime.datetime.now()
-        rm2 = runnerModel(a.seed, a.big).set_params(max_iter=int(rm.n_iter_),
+        rm2 = runnerModel(a.seed, a.big, a.runner_loss).set_params(max_iter=int(rm.n_iter_),
                                                     early_stopping=False)
         rm2.fit(practiceBlanks(X, feats, a.seed + 1), r)
         lm2 = levelModel(a.seed).set_params(max_iter=int(lm.n_iter_), early_stopping=False)
@@ -1347,6 +1382,7 @@ def main():
                          "all_features": feats_all,
                          "level_features": [f for f, u in zip(lf, lused) if u],
                          "clip": CLIP, "clock": "raw" if a.no_ratings else "ratings",
+                         "level_stat": stat, "runner_loss": a.runner_loss,
                          "val_from": a.val_from, "made": datetime.date.today().isoformat()}, fh)
         print(f"\nwrote {a.out}")
     print(f"\n({datetime.datetime.now() - t0})")
