@@ -5715,29 +5715,28 @@ _ENTRANTS_TTL_S = 600
 
 
 def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
-    """Cached for ten minutes per (schools, sport, year, gender, levels):
-    one page visit asks for the same squads from the field, each card and
-    the prediction itself, and results only change when a scrape lands."""
-    import copy
+    """Cached for ten minutes per (schools, sport, year): one page visit asks
+    for the same squads from the field, each card and the prediction itself,
+    and results only change when a scrape lands.
+
+    ★ THE ROWS ARE CACHED, NOT THE FILTERED ANSWER (2026-11-07): gender and
+      levels are applied in Python after the query, so a meet's boys' and
+      girls' races and every level asked the same 1-4 s query again under
+      their own keys. The query runs once per school set; each call filters
+      the cached rows (_entrantsFromRows), exactly as before."""
     import time as _t
-    key = (tuple(sorted(x for x in schools if x)), sport, year, gender,
-           tuple(sorted(levels)) if levels else None)
+    key = (tuple(sorted(x for x in schools if x)), sport, year)
     hit = _ENTRANTS_CACHE.get(key)
     if hit and _t.time() - hit[0] < _ENTRANTS_TTL_S:
-        return copy.deepcopy(hit[1])
-    out = _raceEntrantsUncached(cur, schools, sport, year, gender, levels)
-    if len(_ENTRANTS_CACHE) > 512:
-        _ENTRANTS_CACHE.clear()
-    _ENTRANTS_CACHE[key] = (_t.time(), out)
-    return copy.deepcopy(out)
+        rows = hit[1]
+    else:
+        rows = _raceEntrantRows(cur, schools, sport, year)
+        if len(_ENTRANTS_CACHE) > 512:
+            _ENTRANTS_CACHE.clear()
+        _ENTRANTS_CACHE[key] = (_t.time(), rows)
+    return _entrantsFromRows(cur, rows, sport, year, gender, levels)
 
 
-# A person's gender for the squad filter: person_gender's verdict (the
-# site's one person-level answer, from every row they ran) when the table
-# exists, else the profile whose athlete_id equals the person_id.
-# ! THE PROFILE FALLBACK IS THE OLD PRIMARY-KEY LOOKUP (owner, 2026-10-08:
-#   "now it loads slower"): a per-person scan of athletes by person_id, run
-#   for every runner at every school, cost more than it found.
 _PERSON_GENDER_SQL = """COALESCE(max(pg.gender),
                    (SELECT x.gender FROM athletes x
                     WHERE  x.athlete_id = r.person_id LIMIT 1))"""
@@ -5782,46 +5781,70 @@ def _pgGenderClause(cur, pid_sql):
 
 
 def _raceEntrantsUncached(cur, schools, sport, year, gender=None, levels=None):
+    """The entrants of `schools` this season, filtered for one race (see
+    _raceEntrants, which caches the rows)."""
+    return _entrantsFromRows(cur, _raceEntrantRows(cur, schools, sport, year),
+                             sport, year, gender, levels)
+
+
+def _raceEntrantRows(cur, schools, sport, year):
+    """[row] per (school, person) this season -- the query alone, before any
+    gender or level filter."""
     schools = [x for x in schools if x]
     if not schools or year is None:
-        return {}
+        return []
     from season_year import SEASON_START_MMDD as _md
     lo = f"{int(year):04d}-{_md}"
     hi = f"{int(year) + 1:04d}-{_md}"
     table = "results" if sport == "XC" else "results_tf"
     running = ("" if sport == "XC" else
                "AND COALESCE(r.is_field, 0) = 0 AND COALESCE(r.is_relay, 0) = 0")
+    # ★ THE NAME ONCE PER PERSON (2026-11-07: this statement at up to 4 s in
+    #   the slow log, /api/predict/field). _NAME_LATERAL sat in the FROM
+    #   before the GROUP BY, so it probed athletes twice for every RESULT
+    #   ROW of a season; it depends on person_id alone, so it now runs once
+    #   per grouped person. The value is the same: max() over one person's
+    #   identical lateral rows was that row.
     cur.execute(f"""
-        SELECT r.school, r.person_id,
-               (array_agg(r.grade ORDER BY r.date DESC))[1]       AS grade,
-               (array_agg(split_part(r.rating_pool, '|', 1) ORDER BY r.date DESC)
-                   FILTER (WHERE r.rating_pool IS NOT NULL))[1]    AS pool,
-               percentile_cont(0.8) WITHIN GROUP (ORDER BY r.speed_rating)
-                   FILTER (WHERE r.speed_rating > 0)               AS rating,
-               count(*)                                            AS n_races,
-               {_PERSON_GENDER_SQL}                               AS gender,
-               bool_or(COALESCE(pg.split, FALSE))                 AS pg_split,
-               max(pg.gender)                                     AS pg_gender,
-               -- ★ THE ROW'S OWN NAME WHEN athletes HAS NONE (owner,
-               --   2026-09-25: "all freshman are unknown"). A tfrrs-only
-               --   person -- a freshman whose high school career is on anet
-               --   under another id -- has no athletes row; the tfrrs row
-               --   carries the name inline, as the race pages already read.
-               COALESCE(NULLIF(btrim(max(COALESCE(a.first_name, '') || ' '
-                   || COALESCE(a.last_name, ''))), ''),
-                   max(NULLIF(btrim(r.athlete_name), '')))         AS name
-        FROM   {table} r
-        {_NAME_LATERAL.format(pid="r.person_id")}
-        {_personGenderJoin(cur)}
-        WHERE  r.school = ANY(%(schools)s)
-          AND  r.person_id IS NOT NULL
-          AND  r.date >= %(lo)s AND r.date < %(hi)s
-          AND  r.time_seconds > 0 AND r.time_seconds < 19999
-          {running}
-        GROUP  BY r.school, r.person_id
+        WITH agg AS (
+            SELECT r.school, r.person_id,
+                   (array_agg(r.grade ORDER BY r.date DESC))[1]       AS grade,
+                   (array_agg(split_part(r.rating_pool, '|', 1) ORDER BY r.date DESC)
+                       FILTER (WHERE r.rating_pool IS NOT NULL))[1]    AS pool,
+                   percentile_cont(0.8) WITHIN GROUP (ORDER BY r.speed_rating)
+                       FILTER (WHERE r.speed_rating > 0)               AS rating,
+                   count(*)                                            AS n_races,
+                   {_PERSON_GENDER_SQL}                               AS gender,
+                   bool_or(COALESCE(pg.split, FALSE))                 AS pg_split,
+                   max(pg.gender)                                     AS pg_gender,
+                   -- ★ THE ROW'S OWN NAME WHEN athletes HAS NONE (owner,
+                   --   2026-09-25: "all freshman are unknown"): a tfrrs-only
+                   --   person carries the name inline on the row
+                   max(NULLIF(btrim(r.athlete_name), ''))             AS row_name
+            FROM   {table} r
+            {_personGenderJoin(cur)}
+            WHERE  r.school = ANY(%(schools)s)
+              AND  r.person_id IS NOT NULL
+              AND  r.date >= %(lo)s AND r.date < %(hi)s
+              AND  r.time_seconds > 0 AND r.time_seconds < 19999
+              {running}
+            GROUP  BY r.school, r.person_id
+        )
+        SELECT agg.school, agg.person_id, agg.grade, agg.pool, agg.rating,
+               agg.n_races, agg.gender, agg.pg_split, agg.pg_gender,
+               COALESCE(NULLIF(btrim(COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '')), ''), agg.row_name)  AS name
+        FROM   agg
+        {_NAME_LATERAL.format(pid="agg.person_id")}
     """, {"schools": schools, "lo": lo, "hi": hi})
+    return [dict(r) if not isinstance(r, dict) else r for r in cur.fetchall()]
+
+
+def _entrantsFromRows(cur, rows, sport, year, gender=None, levels=None):
+    """{school: [entry]} from _raceEntrantRows' rows for one race: the
+    gender and level filters, college grades, the HS-equivalent stamp."""
     out = {}
-    for r in cur.fetchall():
+    for r in rows:
         pool = r.get("pool") or None
         g = (pool[-1].upper() if pool and pool[-2:] in ("_m", "_f")
              else (r.get("gender") or "").upper()[:1] or None)

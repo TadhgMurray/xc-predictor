@@ -84,8 +84,15 @@ def test_board_academic_year():
     params = {}
     where = rankings._whereClauses({"pool": "hs_m", "sport": "XC", "year": [2025],
                                     "board": "ability"}, params, with_dates=False)
-    ok(" AND year = ANY(%(year)s)" in where,
+    # one year is a plain = since 2026-11-07 (rankings._anyOrEq: an array
+    #   cannot be an ordered index condition in Postgres 16); several, ANY
+    ok(" AND year = %(year_one)s" in where and params.get("year_one") == 2025,
        f"the year filter is not a plain equality on the stored year: {where!r}")
+    params2 = {}
+    where2 = rankings._whereClauses({"pool": "hs_m", "sport": "XC", "year": [2024, 2025],
+                                     "board": "ability"}, params2, with_dates=False)
+    ok(" AND year = ANY(%(year)s)" in where2 and params2["year"] == [2024, 2025],
+       f"several years are not one ANY on the stored year: {where2!r}")
     ok(params.get("year") == [2025],
        "the year must be bound as given, with no conversion")
 

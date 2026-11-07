@@ -2273,6 +2273,17 @@ _CANONICAL_INDEXES = {
          "(pool, sport, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
         ("as_pool_best_idx",
          "(pool, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
+        # ★ AND BY STATE (2026-11-07: the state landing pages, /projections
+        #   and every board with one state at 3.8-5.2 s in the slow log).
+        #   No athlete_season index carried state, so a state board walked
+        #   the whole pool in rating order testing each row's state -- 1-2%
+        #   of rows match -- and /projections bitmap-scanned the season.
+        #   school rides along so /projections' DISTINCT school reads only
+        #   the index. One state needs rankings._anyOrEq's plain `=`.
+        ("as_state_year_mean_idx",
+         "(pool, sport, year, state, mean_rating DESC NULLS LAST, person_id) INCLUDE (school)"),
+        ("as_state_mean_idx",
+         "(pool, sport, state, mean_rating DESC NULLS LAST, person_id)"),
         # school.py roster/years/currentSeason: WHERE school = %s
         #   (+ sport/year equality) -- every school page view
         ("as_school_idx", "(school, sport, year)"),

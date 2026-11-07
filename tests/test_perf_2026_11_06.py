@@ -960,3 +960,89 @@ def test_short_queries_are_computed_once_for_the_box(tmp_path, monkeypatch):
         A._searchCached(("api", "smith", "", 10), lambda: n.append(1) or [], query="smith")
     assert n == [1, 1]
     A._SEARCH_CACHE.clear()
+
+
+# --------------------------------------------------------------- 17 --
+# The 2026-11-07 sweep: exactness of each rewrite
+
+def test_pick_race_is_max_with_fewer_predictions():
+    import random
+    import upcoming_preview as U
+    rnd = random.Random(7)
+    labels = ["Varsity Boys", "JV Boys", "Open", "Frosh/Soph", "Boys 5K"]
+    for _ in range(3000):
+        races = [{"div_id": i, "label": rnd.choice(labels),
+                  "school_n": rnd.choice([0, 3, 7, 7, 12]),
+                  "persons": {9} if rnd.random() < 0.3 else set()} for i in range(rnd.randint(1, 6))]
+        field = {r["div_id"] for r in races if rnd.random() < 0.4}
+        asked = []
+
+        def in_field(r):
+            asked.append(r["div_id"])
+            return r["div_id"] in field
+        got = U.pickRace(races, 9, in_field)
+        want = max(races, key=lambda r: U.raceOrder(r, 9, r["div_id"] in field))
+        assert got is want
+        assert len(asked) <= len(races)
+    # a returning runner's race costs no prediction at all
+    races = [{"div_id": 1, "label": "JV", "persons": {9}}, {"div_id": 2, "label": "Varsity"}]
+    assert U.pickRace(races, 9, lambda r: 1 / 0)["div_id"] == 1
+
+
+def test_shared_failure_expires_before_a_success(tmp_path):
+    import sharedcache as SC
+    d, clock, n = str(tmp_path / "c"), [1000.0], []
+    ttl_of = lambda v: 3600 if v.get("available") else 300           # noqa: E731
+    f = lambda: n.append(1) or {"available": False}                  # noqa: E731
+    SC.get("k", f, ttl=3600, ttl_of=ttl_of, now=lambda: clock[0], path=d)
+    clock[0] += 200
+    SC.get("k", f, ttl=3600, ttl_of=ttl_of, now=lambda: clock[0], path=d)
+    assert len(n) == 1                         # a failure is shared for 300 s ...
+    clock[0] += 200
+    SC.get("k", f, ttl=3600, ttl_of=ttl_of, now=lambda: clock[0], path=d)
+    assert len(n) == 2                         # ... and no longer
+
+
+def test_merge_vacuums_the_new_table_before_the_swap():
+    src = _read("engine", "merge_column.py")
+    body = src[src.index("def mergeColumn("):]
+    assert body.index("conn.commit()") < body.index("_vacuumNew(conn, table)") \
+        < body.index("_swapSiege(conn, table, cap)")
+    assert "SET vacuum_cost_delay = 0" in src and 'XCP_MERGE_VACUUM' in src
+
+
+def test_one_value_is_an_equality():
+    import rankings as R
+    p = {}
+    assert R._anyOrEq("state", ["OK"], p) == " AND state = %(state_one)s" and p["state_one"] == "OK"
+    p = {}
+    assert R._anyOrEq("state", ["OK", "TX"], p) == " AND state = ANY(%(state)s)"
+
+
+def test_unit_page_names_after_the_cut():
+    import pages3
+    q = " ".join(pages3._UNIT_ATHLETES.split())
+    assert q.index("LIMIT 100) s") < q.index("{names}")
+    assert "ORDER BY s.mean_rating DESC NULLS LAST, s.person_id" in q
+
+
+def test_entrant_names_once_per_person_on_postgres(pg):
+    import predict as P
+    _conn, cur = pg
+    cur.execute("DROP TABLE pg_temp.results")          # the fixture's, not this shape
+    cur.execute("""CREATE TEMP TABLE results AS
+        SELECT 'Calvin'::text AS school, (g % 3 + 1)::bigint AS person_id,
+               '2025-10-0' || (1 + g % 9) AS date, (1000 + g)::real AS time_seconds,
+               '11'::text AS grade, 'hs_m'::text AS rating_pool, (150 + g % 9)::real AS speed_rating,
+               CASE WHEN g % 3 = 2 THEN ' Row Name ' END AS athlete_name
+        FROM generate_series(1, 30) g""")
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint, first_name text,"
+                " last_name text, gender text)")
+    cur.execute("INSERT INTO athletes VALUES (1, 1, 'Ann', 'Lee', 'M'), (2, 2, '', '', 'M')")
+    P._PG["has"] = False
+    rows = {r["person_id"]: r for r in P._raceEntrantRows(cur, ["Calvin"], "XC", 2025)}
+    assert rows[1]["name"] == "Ann Lee"                 # the athletes row
+    assert rows[3]["name"] == "Row Name"                # no athletes row: the result's own name
+    assert rows[2]["name"] is None                      # blank everywhere
+    assert rows[1]["n_races"] == 10
+    P._PG["has"] = None

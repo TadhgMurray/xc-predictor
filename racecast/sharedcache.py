@@ -67,29 +67,40 @@ def _load(path):
         return pickle.load(fh)
 
 
-def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None):
+def _usable(pkl, ttl, ttl_of, now):
+    """(value, mtime) of a shared copy still inside its ttl, else None.
+    ttl_of(value), when given, is that value's own ttl (at most `ttl`): a
+    failure kept minutes beside successes kept hours."""
+    if not _fresh(pkl, ttl, now):
+        return None
+    try:
+        value, at = _load(pkl), os.stat(pkl).st_mtime
+    except Exception:                                   # noqa: BLE001
+        return None
+    if ttl_of is not None and now - at > ttl_of(value):
+        return None
+    return value, at
+
+
+def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of=None):
     """(value, computed_at) for `key`: the shared copy when it is younger
-    than `ttl` seconds, else compute() -- once across the workers -- and
-    share it when keep(value)."""
+    than `ttl` seconds (or ttl_of(value)), else compute() -- once across the
+    workers -- and share it when keep(value)."""
     d = _safeDir(path)
     if d is None:
         return compute(), now()
     base = os.path.join(d, _name(key))
     pkl = base + ".pkl"
-    if _fresh(pkl, ttl, now()):
-        try:
-            return _load(pkl), os.stat(pkl).st_mtime
-        except Exception:                               # noqa: BLE001
-            pass
+    hit = _usable(pkl, ttl, ttl_of, now())
+    if hit is not None:
+        return hit
     with open(base + ".lock", "a+") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         try:
             # another worker may have filled it while this one waited
-            if _fresh(pkl, ttl, now()):
-                try:
-                    return _load(pkl), os.stat(pkl).st_mtime
-                except Exception:                       # noqa: BLE001
-                    pass
+            hit = _usable(pkl, ttl, ttl_of, now())
+            if hit is not None:
+                return hit
             value = compute()
             at = now()
             if keep(value):

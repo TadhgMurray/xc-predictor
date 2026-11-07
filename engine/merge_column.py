@@ -578,6 +578,36 @@ def _clearLeftovers(cur, table):
 #                         fossil values from previous runs.
 # Output   : None. Prints one timed line per step.
 # Safety   : the old heap survives as <table>_old. Verify, then drop it by hand.
+# ★ THE NEW TABLE'S VISIBILITY MAP, BEFORE ANYONE READS IT (2026-11-07). A
+#   table built by CREATE TABLE AS has no page marked all-visible, so every
+#   index-only read the pages make on results / results_tf -- the athlete
+#   page's places, the race page's feed list (idx_results_meet_src_cover) --
+#   went to the heap row by row until a vacuum came by; and pipeline step
+#   18c's throttled vacuum (~10 MB/s) of two freshly rebuilt 40-58 GB heaps
+#   would hold the end of a full run for hours. One unthrottled VACUUM here,
+#   committed, before the swap: the pages were just written and are still in
+#   the page cache, nothing reads {table}_new yet, and 18c then skips every
+#   page already marked. Never fails the go-live: a refusal is printed and
+#   the table swaps in as it always did. XCP_MERGE_VACUUM=0 skips it.
+def _vacuumNew(conn, table):
+    import os
+    if os.environ.get("XCP_MERGE_VACUUM", "1") == "0":
+        return
+    old = conn.autocommit
+    try:
+        conn.autocommit = True                     # VACUUM cannot run in a transaction
+        with conn.cursor() as cur:
+            cur.execute("SET vacuum_cost_delay = 0")
+            _timed(cur, f"VACUUM {table}_new", f"VACUUM {table}_new (visibility map)")
+    except Exception as exc:                       # noqa: BLE001
+        print(f"    VACUUM {table}_new skipped: {type(exc).__name__}: {exc}", flush=True)
+    finally:
+        try:
+            conn.autocommit = old
+        except Exception:                          # noqa: BLE001
+            pass
+
+
 def mergeColumn(conn, table, column, staging, key="result_id", val="val",
                 preserve_unmatched=True, extra=()):
     print("-" * 70)
@@ -652,6 +682,7 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
     #   Committed, {table}_new outlives a lost siege. Nobody reads it, so
     #   nothing observes a half-done state; `table` still flips atomically.
     conn.commit()
+    _vacuumNew(conn, table)
     _swapSiege(conn, table, cap)                   # the swap becomes visible HERE
 
     with conn.cursor() as cur:

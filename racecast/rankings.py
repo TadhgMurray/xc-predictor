@@ -1030,6 +1030,22 @@ def _abilitySource(f, params, where="", precomputed=False):
     ) s"""
 
 
+# ★ ONE VALUE IS AN EQUALITY, NOT AN ARRAY (2026-11-07). `col = ANY(%s)` with
+#   a one-element list does NOT become `col = x` in Postgres 16: on a
+#   column after the index's first, an array condition cannot be an index
+#   condition of an ORDERED scan, so the planner keeps the board's order and
+#   demotes the column to a filter -- year=2024 walked every year of the
+#   pool in rating order (872 pages against 4 on a stand-in), state=OK every
+#   state. The rows are the same either way; the list still sits in
+#   params[name] for anything that reads it. Several values keep ANY.
+def _anyOrEq(name, values, params):
+    vals = list(values) if isinstance(values, (list, tuple)) else [values]
+    if len(vals) == 1:
+        params[f"{name}_one"] = vals[0]
+        return f" AND {name} = %({name}_one)s"
+    return f" AND {name} = ANY(%({name})s)"
+
+
 def _whereClauses(f, params, with_dates):
     """Shared filters -> SQL fragment, appending bind values to `params`.
 
@@ -1201,7 +1217,7 @@ def _whereClauses(f, params, with_dates):
             #   so the filter is one plain equality on an indexed column and
             #   the two sports need no separate branch.
             params["year"] = f["year"]
-            parts.append(" AND year = ANY(%(year)s)")
+            parts.append(_anyOrEq("year", f["year"], params))
         elif name == "grade":
             # ★ THE GRADE IS MATCHED ON WHAT IT MEANS, NOT ON ITS SPELLING
             #   (owner, 2026-09-07: "grade filter is removing ppl it
@@ -1214,7 +1230,7 @@ def _whereClauses(f, params, with_dates):
             parts.append(f" AND {GRADE_KEY_SQL} = ANY(%(grade_keys)s)")
         else:
             params[name] = f[name]
-            parts.append(f" AND {name} = ANY(%({name})s)")
+            parts.append(_anyOrEq(name, f[name], params))
 
     if with_dates:
         if f["date_from"]:

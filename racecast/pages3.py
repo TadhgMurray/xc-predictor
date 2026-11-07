@@ -636,16 +636,23 @@ _WITHIN_LABELS = {"division": "Division", "region": "Region", "section": "Sectio
                   "state_div": "State division"}
 
 
+# ★ THE HUNDRED FIRST, THEN THEIR NAMES (2026-11-07: up to 5 s in the slow
+#   log). The name lateral sat in the FROM, so every member of a big section
+#   -- thousands -- was looked up before the sort kept a hundred; now the
+#   hundred are cut, then named (rankings.pageThenName's shape). mean_rating
+#   is never NULL here, so NULLS LAST picks the same rows; person_id fixes
+#   the order among exact ties, which had none.
 _UNIT_ATHLETES = """
     SELECT s.person_id, s.school, s.state, s.mean_rating, s.n_races, s.grade,
            a.name
-    FROM   athlete_season s
+    FROM   (SELECT s.* FROM athlete_season s
+            WHERE  s.pool = %(pool)s AND s.sport = %(sport)s AND s.year = %(year)s
+              AND  upper(s.{col}) = ANY(%(spell)s) AND s.mean_rating IS NOT NULL
+              {state}
+            ORDER  BY s.mean_rating DESC NULLS LAST, s.person_id
+            LIMIT  100) s
     {names}
-    WHERE  s.pool = %(pool)s AND s.sport = %(sport)s AND s.year = %(year)s
-      AND  upper(s.{col}) = ANY(%(spell)s) AND s.mean_rating IS NOT NULL
-      {state}
-    ORDER  BY s.mean_rating DESC
-    LIMIT  100
+    ORDER  BY s.mean_rating DESC NULLS LAST, s.person_id
 """
 
 # the meets several of the unit's teams ran this season: its championship,
