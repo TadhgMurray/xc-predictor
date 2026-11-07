@@ -7689,7 +7689,8 @@ def school_page(school_name):
             from school_identity import mainLevel, namesakes, collegeFullName
             page_level = level or mainLevel(_cur2, school_name, state or primary_state)
             if not chips:
-                others_named = namesakes(_cur2, school_name, state or primary_state)
+                others_named = namesakes(_cur2, school_name, state or primary_state,
+                                         page_level)
             _c2.rollback()
         if page_level == "college":
             display_name = collegeFullName(school_name, state or primary_state) or school_name
