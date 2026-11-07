@@ -50,21 +50,25 @@ TABLES = ("athlete_season_ev", "season_comps", "season_comps_meta", "athlete_sea
 PRIORITY = (
     # /recruit/<id>: the comps search, the most frequent page by far
     "season_comps", "idx_season_comps_match", "season_comps_meta",
-    # the boards: the Events presets, the ability board, the PR and
+    # the boards everyone opens: the ability board, then the PR and
     # performance boards
-    "idx_athlete_season_ev_mean", "idx_athlete_season_ev_year_mean",
-    "idx_athlete_season_ev_best", "idx_athlete_season_ev_pool_mean",
     "as_pool_sport_mean_idx", "as_pool_mean_idx", "as_board_mean_idx",
     "as_pool_sport_best_idx", "as_pool_best_idx", "as_board_best_idx",
     "rr_pr_sport_time_idx", "rr_pr_time_idx", "rr_board_rating_idx",
     "rr_pool_sport_rating_idx", "rr_pool_rating_idx", "rr_perf_dist_rating_idx",
     "rr_pool_year_dist_idx",
     # athlete pages, rank lines, race pages
-    "as_person_idx", "idx_athlete_season_person", "idx_athlete_season_ev_person",
+    "as_person_idx", "idx_athlete_season_person",
     "idx_rr_person_cover", "rr_person_cover_idx", "idx_rr_result", "rr_result_idx",
     "idx_results_meet_src_cover", "idx_results_person", "idx_results_tf_person",
     "idx_results_tf_meet_ev_place", "idx_athletes_person_id", "athletes_pkey",
     "person_gender_pkey", "grade_fix_pkey",
+    # ! THE EVENTS PRESETS AFTER THE EVERYDAY BOARDS (2026-11-07: on the
+    #   server their four indexes are 7.4 GB and took half the cap before a
+    #   PR board index was reached); a board opens them only with Events set
+    "idx_athlete_season_ev_mean", "idx_athlete_season_ev_year_mean",
+    "idx_athlete_season_ev_best", "idx_athlete_season_ev_pool_mean",
+    "idx_athlete_season_ev_person",
     # the athlete_season heap the board index scans land on
     "athlete_season",
     # search

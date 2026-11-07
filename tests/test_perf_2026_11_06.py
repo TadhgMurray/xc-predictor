@@ -828,8 +828,8 @@ def test_prewarm_plan_takes_what_pages_read_in_priority_order():
             ("idx_athlete_season_ev_mean", "i", G)]
     got = W.plan(rels, 7 * G)
     assert [n for n, _ in got] == ["season_comps", "idx_season_comps_match",
-                                   "idx_athlete_season_ev_mean",
-                                   "ranking_results_rr_pr_time_idx"]
+                                   "ranking_results_rr_pr_time_idx",
+                                   "idx_athlete_season_ev_mean"]
     assert W.plan(rels, 0) == []
 
 
