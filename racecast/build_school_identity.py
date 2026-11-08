@@ -1412,8 +1412,9 @@ def main():
 #   short bracket -- "San Marcos (SB)" is Santa Barbara's, beside the San
 #   Marcos high school in San Marcos -- which reads as nothing to a person.
 #   Each such name's anet team carries its city; the commonest city across
-#   the name's rows (QUAL_CITY_SHARE of them) is the town the label shows:
-#   "San Marcos (Santa Barbara, CA)" (school_identity.schoolLabelIn).
+#   the name's rows (QUAL_CITY_SHARE of them) marks the bracket as a town,
+#   which the label then replaces with the state like every other name:
+#   "San Marcos (CA)" (school_identity.withTown).
 QUAL_CITY_SHARE = 0.6
 _QUAL_RX = r"\(([A-Za-z.]{1,5})\)\s*$"
 

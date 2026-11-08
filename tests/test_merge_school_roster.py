@@ -72,3 +72,25 @@ def test_a_rename_needs_one_known_state_and_two_high_schools():
     merged, refused = M.judge(pairs, ros, {}, level_of=lvl)        # no state known
     assert not merged and "one known state" in refused[0][7]
     assert M.renamedPairs(ros, {n: "ms" for n in ros}) == []      # middle schools: never
+
+
+def test_a_rename_without_a_team_record_takes_its_runners_state():
+    """owner's dry run, 2026-11-08: Reading / Reading Memorial refused for
+    want of a team record's state"""
+    ros = {"Reading": set(range(0, 3000)), "Reading Memorial": set(range(2300, 3700))}
+    lvl = {n: "hs" for n in ros}
+    pairs = M.renamedPairs(ros, lvl)
+    assert pairs
+    merged, _r = M.judge(pairs, ros, {"Reading": {"MA"}}, level_of=lvl,
+                         identity_states={"Reading Memorial": {"MA"}})
+    assert merged
+    # a name its runners spread over many states gets no state, so no merge
+    merged, refused = M.judge(pairs, ros, {"Reading": {"MA"}}, level_of=lvl, identity_states={})
+    assert not merged
+
+
+def test_a_schools_unattached_runners_are_not_its_team():
+    """owner's dry run, 2026-11-08: 'Amarillo HS UNATT', 'Ada Unat'"""
+    ros = {"Amarillo": set(range(60)), "Amarillo HS UNATT": set(range(0, 14)),
+           "Forest Hills Eastern Ada": set(range(100, 160)), "Ada Unat": set(range(100, 113))}
+    assert M.renamedPairs(ros, {n: "hs" for n in ros}) == []

@@ -116,14 +116,16 @@ def loadLabels(conn_factory, force=False):
 
 
 def withTown(school, state):
-    """withState, with athletic.net's short town bracket spelled out: 'San
-    Marcos (SB)' + 'CA' -> 'San Marcos (Santa Barbara, CA)' when the build
-    knows the town (school_qualifier_city); else withState."""
+    """withState, with athletic.net's short town bracket replaced by the
+    state like every other label: 'San Marcos (SB)' + 'CA' -> 'San Marcos
+    (CA)' (owner, 2026-11-08: "I kind of want CA, not really Santa
+    Barbara. Like everything else"). Only a bracket the build knows is a
+    town (school_qualifier_city) is dropped; else withState."""
     town = (_LABELS.get("qual_city") or {}).get(school)
     if not town:
         return withState(school, state)
     base = _TRAIL_PAREN.sub("", str(school)).rstrip()
-    return f"{base} ({town}, {state})" if state else f"{base} ({town})"
+    return withState(base, state) if state else base
 
 
 def schoolLabel(school):

@@ -349,9 +349,12 @@ ROSTER_MIN_FRACTION = 0.85
 #   racing UNATTACHED (a redshirt, an open race) -- the college's people,
 #   never its team: folded in, they would score for it (owner's dry run,
 #   2026-11-05)
+# ! AND "UNATT" / "Unat" ANYWHERE IN THE NAME (owner's dry run, 2026-11-08:
+#   "Amarillo HS UNATT" into Amarillo, "Ada Unat" into Forest Hills Eastern --
+#   a school's runners racing unattached, never its team)
 _NOT_A_TEAM = re.compile(r"\bclub\b|alumni|unattached|unaffiliated|\belite\b|\btc\b|"
                          r"track club|running club|striders|\baa\b|\bac\b|"
-                         r"^\s*unat?\b|^\s*una?t?\s*-", re.I)
+                         r"^\s*unat?\b|^\s*una?t?\s*-|\bunatt?\b", re.I)
 
 
 def rosterPairs(rosters_by_name, level_of, min_shared=ROSTER_MIN_SHARED,
@@ -512,11 +515,35 @@ def candidatesAll(names, want_prefix=False, level_of=None, college_key=None):
     return sorted((a, b, rel) for (a, b), rel in best.items())
 
 
+# ★ THE RUNNERS' STATE, FOR A RENAMED PAIR WITH NO TEAM RECORD (owner's
+#   dry run, 2026-11-08: Lincoln-Sudbury / Lincoln-Sudbury Regional, Reading
+#   / Reading Memorial, Plant / H B Plant ... every one refused because one
+#   spelling had no athletic.net team to give a state). school_identity
+#   places each name by where its runners race; a name ONE_STATE_SHARE of
+#   whose runners are in one state is that state's. A name many states wear
+#   ("Douglas", "Mount Vernon", "Notre Dame") never reaches the bar.
+ONE_STATE_SHARE = 0.90
+
+
+def identityStates(cur):
+    """{school string: {state}} for the names school_identity places in one
+    state (ONE_STATE_SHARE of its runners); empty without the table."""
+    cur.execute("SELECT to_regclass('public.school_identity')")
+    if cur.fetchone()[0] is None:
+        return {}
+    cur.execute("SELECT school, state, share FROM school_identity")
+    best = {}
+    for school, st, share in cur.fetchall():
+        if share is not None and float(share) >= ONE_STATE_SHARE and st:
+            best[school] = {str(st).strip().upper()}
+    return best
+
+
 def judge(pairs, rosters_by_name, states_by_name,
           min_shared=MIN_SHARED, min_fraction=MIN_FRACTION,
           prefix_min_shared=PREFIX_MIN_SHARED,
           prefix_min_fraction=PREFIX_MIN_FRACTION, level_of=None,
-          level_mix=None, generic=None):
+          level_mix=None, generic=None, identity_states=None):
     """(merged, refused) -- the whole decision, and it is pure so it is
     testable. Each entry is
     (a, b, relation, n_a, n_b, n_shared, fraction, why)."""
@@ -534,6 +561,10 @@ def judge(pairs, rosters_by_name, states_by_name,
         row = [a, b, rel, len(ra), len(rb), shared, round(frac, 4), None]
         sa = states_by_name.get(a) or set()
         sb = states_by_name.get(b) or set()
+        if rel == "renamed" and identity_states:
+            # a spelling with no team record: where its runners are
+            sa = sa or identity_states.get(a) or set()
+            sb = sb or identity_states.get(b) or set()
         la = (level_of or {}).get(a)
         lb = (level_of or {}).get(b)
         mix = level_mix or {}
@@ -882,10 +913,12 @@ def main():
         by_state = teamStates(cur)
         print(f"  {len(by_state):,} of them carry an anet team, so their "
               f"state is known")
+        id_states = identityStates(cur)
         merged, refused = judge(pairs, by_name, by_state,
                                 min_shared=a.min_shared,
                                 min_fraction=a.min_fraction, level_of=level_of,
-                                level_mix=level_mix, generic=generic)
+                                level_mix=level_mix, generic=generic,
+                                identity_states=id_states)
         if a.pair:
             explainPair(a.pair[0], a.pair[1], by_name, level_mix, level_of, college_key,
                         generic, by_state, pairs, merged, refused)
