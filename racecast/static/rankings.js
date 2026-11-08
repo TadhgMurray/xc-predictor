@@ -52,6 +52,9 @@ const state = {
   // Set by a jump; the row for this person_id is marked once and then
   // cleared, so it does not stay highlighted as the user pages away.
   highlight: null,
+  // A filtered board's deep limit, from a refused page (api_rankings'
+  // deep_limit); cleared by the next board that loads.
+  deepLimit: null,
   // The sort is HERE, not in a <select>. Clicking a column header sets it;
   // clicking the same header again flips the direction.
   sort: "rating",
@@ -2143,12 +2146,26 @@ async function load() {
         `<div class="status error">${esc(data.error || res.statusText || `The server had a problem (error ${res.status}).`)}` +
         (res.status >= 500 ? ' <button type="button" class="rc-retry">Retry</button>' : "") +
         `</div>`;
-      $("pager").classList.add("hidden");
       $("csv-wrap").classList.add("hidden");   // under the pager now, so hide it with it
+      /* ★ A FILTERED BOARD STOPS AT ITS DEEP LIMIT (deep_limit, 2026-11-08):
+         the message above says why; the pager stays so First and Prev lead
+         back, and Next is off -- there is nothing further to fetch. */
+      if (Number.isInteger(data.deep_limit) && state.offset > 0) {
+        state.deepLimit = data.deep_limit;
+        $("pager").classList.remove("hidden");
+        $("first").disabled = false;
+        $("prev").disabled = false;
+        $("next").disabled = true;
+        $("last").disabled = true;
+        $("pageLabel").textContent = `${state.offset + 1}–`;
+      } else {
+        $("pager").classList.add("hidden");
+      }
       return;
     }
 
     const rows = data.rows || [];
+    state.deepLimit = null;
 
     /* TWO NOTICES, TWO CONDITIONS, and neither is always on.
 
@@ -2689,7 +2706,9 @@ $("first").addEventListener("click", () => {
 });
 
 $("prev").addEventListener("click", () => {
-  state.offset = Math.max(0, state.offset - PAGE_SIZE);
+  /* past a filtered board's deep limit, Prev lands on its last page */
+  const top = state.deepLimit ? Math.floor(state.deepLimit / PAGE_SIZE) * PAGE_SIZE : Infinity;
+  state.offset = Math.max(0, Math.min(state.offset - PAGE_SIZE, top));
   load();
 });
 

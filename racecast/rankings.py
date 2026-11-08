@@ -298,6 +298,16 @@ DNF_SENTINEL = 86400
 
 MAX_LIMIT = 200
 DEFAULT_LIMIT = 50
+# ★ HOW DEEP A BOARD PAGES (2026-11-08). The default boards seek from a
+#   stored position (board_seek, see "DEEP PAGES" below), so any page of
+#   them costs what page one does and the whole board can be walked: the
+#   ceiling is MAX_OFFSET. Everything that still pages live keeps the old
+#   ceiling, LEGACY_MAX_OFFSET (a deeper offset reads as that one, as it
+#   always has), and a FILTERED live board stops at LIVE_DEEP_MAX with a
+#   message (deepPageRefusal) instead of ranking millions of rows.
+MAX_OFFSET = 10_000_000
+LEGACY_MAX_OFFSET = 100000
+LIVE_DEEP_MAX = 10000
 # ★ NO PER-ATHLETE CAP. This board ranks RACES, and a cap makes it rank races
 #   subject to a quota -- the third-best race in the country absent while the
 #   twentieth is shown. That is a different list from the one the heading
@@ -663,7 +673,7 @@ def parseFilters(args):
         #   when the box was touched, so absent means default.
         "min_races_explicit": (args.get("min_races") or "").strip() != "",
         "limit":     _boundedInt(args, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
-        "offset":    _boundedInt(args, "offset", 0, 0, 100000),
+        "offset":    _boundedInt(args, "offset", 0, 0, MAX_OFFSET),
         # ★ THE SCALE THE READER IS LOOKING AT. "hs" means the rows are shown
         #   as HS-equivalents, so the ORDER must be on those numbers or a
         #   pool=all board reads unsorted (owner, 2026-09-02). Anything else
@@ -1587,6 +1597,267 @@ def _orderBy(f, table, tiebreak, unique_key):
 
 
 # ------------------------------------------------------------------ #
+#  2c. DEEP PAGES: SEEK FROM A STORED POSITION
+# ------------------------------------------------------------------ #
+#
+# ★★ WHY A DEEP PAGE WAS SLOW (2026-11-08: /api/rankings 25.4 s for
+#    board=performance&pool=hs_m&sport=XC&distance=5000&offset=150850, 6.6 s
+#    for the ability board at offset 44,750; a crawler walks these). OFFSET
+#    has no shortcut: Postgres produces every row before the page and throws
+#    them away. The performance board is worse than that -- its candidate
+#    stage reads (offset + limit) x CANDIDATE_FACTOR rows (4M at offset
+#    100,000), sorts them all into the dedup window and then sorts the
+#    survivors again. Page n cost n times page one.
+#
+#  ★ THE BOARD'S ORDER IS A KEY, SO A POSITION CAN BE STORED. A default board
+#    (seekFamily: a pool, a sport, at most one season and one distance, the
+#    rating order, nothing else) is ordered on (rating, unique id). Every
+#    SEEK_EVERY-th row's key is written to board_seek by the pipeline
+#    (build_board_seek.py, beside the Events presets); a page at offset X
+#    starts from the stored row at or before X -- an index range read of
+#    the rows after that key -- and skips fewer than SEEK_EVERY rows, so page
+#    3,000 reads what page one reads plus at most a thousand index entries.
+#
+#  ! EXACTLY THE LIVE BOARD, ROW FOR ROW. The stored key is the key of the
+#    row at that position of the board the live query builds, from the same
+#    filters (_whereClauses), the same floor (floorSql), the same dedup key
+#    (PERF_DUP_KEY) and the same order; the seek reads the rows at or past
+#    it with the same WHERE and ORDER BY, so it returns board[pos:] and the
+#    same OFFSET / LIMIT / name tail runs on it (pageThenName).
+#    - THE DEDUP: the live board keeps a race's best copy among the
+#      candidates (row_number over PERF_DUP_KEY, best rating first, then the
+#      lower result_id). The seek keeps a row exactly when no copy of the
+#      same race under the same filters beats it in that order (NOT EXISTS
+#      on person_id, an indexed probe) -- the same rows, wherever the
+#      better copy sits on the board.
+#    - TIES: a key is only stored where it begins (a row whose key differs
+#      from the one before it), so "key at or past the stored one" is
+#      precisely board[pos:]. Rows with the very same key (one person's two
+#      seasons at one mean on an all-years board; an XC and a TF race with
+#      the same id and rating on sport=both) have no order on the live
+#      board either; they occupy the same positions on both.
+#    - NEVER STALE: the table says which ranking_results and athlete_season
+#      it was built from (their oids) and which code (seekSig: the filters,
+#      floors, distances and order it stored); anything else and every page
+#      runs live, exactly as before. Past the end of a board the stored size
+#      answers with no rows at all.
+#
+#  ⚠ AND A FILTERED BOARD STOPS AT LIVE_DEEP_MAX. A state, a school, a grade,
+#    a unit, a date range, several seasons, another sort: those boards have
+#    no stored positions and page live, so their cost still grows with the
+#    offset. Past LIVE_DEEP_MAX rows deepPageRefusal answers with a message
+#    (the route sends it as the board's error) rather than letting a crawler
+#    queue up queries that each rank millions of rows. The default boards --
+#    the ones people and crawlers page through -- are never refused.
+
+SEEK_TABLE = "board_seek"
+SEEK_EVERY = 1000
+SEEK_VERSION = 1
+_SEEK_FRESH = {"at": 0.0, "ok": False}
+_SEEK_FRESH_TTL = 60.0
+_SEEK_SIG = {}
+
+# the performance board's dedup key: one physical race, its anet and tfrrs
+# copies (the live query, its seek and build_board_seek all read this one)
+PERF_DUP_KEY = ("sport", "person_id", "COALESCE(canon_meet_id, -result_id)",
+                "round(time_seconds::numeric, 1)")
+
+# filters that pick RACES or ROWS beyond a default board's (seekFamily)
+_SEEK_NARROWING = ("state", "school", "grade", "course", "date_from", "date_to",
+                   "gender", "event", "dist_min", "dist_max") + UNIT_FILTERS
+
+
+def _oneYear(f):
+    """(ok, year): a default board has no year or exactly one."""
+    years = f.get("year")
+    if not years:
+        return True, None
+    if isinstance(years, (list, tuple)):
+        if len(years) != 1:
+            return False, None
+        years = years[0]
+    return True, int(years)
+
+
+def seekFamilyKey(board, pool, sport, year, distance, floor):
+    """board_seek.fam for one default board. build_board_seek writes the
+    same text from SQL ('|'-joined, '*' for no year / no distance)."""
+    return "|".join((board, pool, sport,
+                     "*" if year is None else str(int(year)),
+                     "*" if distance is None else str(int(distance)),
+                     floor))
+
+
+def seekFamily(f):
+    """The board_seek family this board's pages can seek in, or None.
+
+    A DEFAULT BOARD: performance or ability, one pool, a sport (or both),
+    the US scope, at most one season, at most one distance (performance),
+    the rating order in its own direction, and the ability floor either the
+    default one ('d') or a typed minimum of DEFAULT_FLOOR ('e3', what the
+    board's own links send). Anything else returns None and pages live."""
+    from season_floor import DEFAULT_FLOOR
+    board = f.get("board")
+    if board not in ("performance", "ability"):
+        return None
+    if f.get("pool") not in POOLS or f.get("sport") not in SPORTS:
+        return None
+    if f.get("scope", "usa") != "usa" or _scaleActive(f):
+        return None
+    if any(f.get(k) for k in _SEEK_NARROWING):
+        return None
+    if f.get("sort") != "rating" or f.get("dir") != "DESC":
+        return None
+    ok, year = _oneYear(f)
+    if not ok:
+        return None
+    dist = f.get("distance")
+    if board == "performance":
+        if dist is not None and int(dist) not in PR_DISTANCES:
+            return None
+        floor = "-"
+    else:
+        if dist is not None or f.get("min_races") != DEFAULT_FLOOR:
+            return None
+        floor = "e3" if f.get("min_races_explicit") else "d"
+    return seekFamilyKey(board, f["pool"], f["sport"], year, dist, floor)
+
+
+def seekSig():
+    """A digest of everything a stored position depends on in THIS code: the
+    filters a default board emits, its floors, its order, the dedup key, the
+    distance bands, SEEK_EVERY. build_board_seek stamps it on the table; a
+    deploy that changes any of them makes the table stale (pages run live)
+    until the next build, instead of seeking with another board's
+    positions."""
+    if "sig" in _SEEK_SIG:
+        return _SEEK_SIG["sig"]
+    import hashlib
+    parts = [SEEK_VERSION, SEEK_EVERY, US_STATES, PR_DISTANCES, PR_DISTANCE_TOL,
+             UNRATED_BELOW, PERF_DUP_KEY, floorSql(True), floorSql(False)]
+    for board, extra in (("performance", {"distance": 5000}), ("performance", {}),
+                         ("ability", {})):
+        f = {"board": board, "pool": "hs_m", "sport": "XC", "scope": "usa",
+             "year": [2020], "distance": None, "sort": "rating", "dir": "DESC",
+             "min_races": 3, "min_races_explicit": False, "scale": "pool",
+             "date_from": None, "date_to": None, **extra}
+        params = {}
+        parts.append(_whereClauses(f, params, with_dates=(board != "ability")))
+        parts.append(sorted((k, repr(v)) for k, v in params.items()))
+        parts.append(_orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
+                     if board == "ability" else
+                     _orderBy(f, _SORTS_PERFORMANCE, "p.speed_rating DESC NULLS LAST",
+                              "p.result_id"))
+    _SEEK_SIG["sig"] = hashlib.sha1(repr(parts).encode()).hexdigest()[:16]
+    return _SEEK_SIG["sig"]
+
+
+def seekComment(rr_oid, as_oid):
+    """The table comment a fresh board_seek carries (see _seekFresh)."""
+    return f"rr_oid={int(rr_oid)};as_oid={int(as_oid)};sig={seekSig()}"
+
+
+def _vals(row):
+    return tuple(row.values()) if isinstance(row, dict) else tuple(row)
+
+
+def _seekFresh(cur, now=None):
+    """board_seek exists and was built from the live ranking_results and
+    athlete_season by this code. Asked once a minute per worker."""
+    import time as _t
+    now = _t.time() if now is None else now
+    if now - _SEEK_FRESH["at"] < _SEEK_FRESH_TTL:
+        return _SEEK_FRESH["ok"]
+    # ! NAMED COLUMNS: a dict cursor keeps one of two same-named ones
+    cur.execute("""SELECT obj_description(to_regclass(%s), 'pg_class') AS comment,
+                          to_regclass('ranking_results')::oid           AS rr_oid,
+                          to_regclass('athlete_season')::oid            AS as_oid""",
+                (SEEK_TABLE,))
+    desc, rr, sea = _vals(cur.fetchone())
+    ok = (desc is not None and rr is not None and sea is not None
+          and desc == seekComment(rr, sea))
+    _SEEK_FRESH.update(at=now, ok=ok)
+    return ok
+
+
+def _seekPoint(cur, f):
+    """Where this page can start, or None to page live:
+       ("end",)               the board is shorter than the offset: no rows
+       ("seek", pos, k1, k2)  the stored row at position pos (<= offset):
+                              its rating (or sprint time) and unique id."""
+    off = f.get("offset") or 0
+    if off < SEEK_EVERY:
+        return None                  # the first pages are cheap live
+    fam = seekFamily(f)
+    if fam is None or not _seekFresh(cur):
+        return None
+    # ! THE STAMP AGAIN, IN THE SAME STATEMENT: _seekFresh is a minute old,
+    #   and a swap inside that minute must not seek with the old positions
+    #   (the cached answer only spares a query of a table that is not there)
+    cur.execute(f"""
+        SELECT n.k2 AS n, c.pos AS pos, c.k1 AS k1, c.k2 AS k2
+        FROM   (SELECT k2 FROM {SEEK_TABLE}
+                WHERE  fam = %(fam)s AND pos = -1
+                  AND  obj_description(%(tbl)s::regclass, 'pg_class')
+                       = 'rr_oid=' || 'ranking_results'::regclass::oid::text
+                         || ';as_oid=' || 'athlete_season'::regclass::oid::text
+                         || ';sig=' || %(sig)s) n
+        LEFT   JOIN LATERAL (
+               SELECT pos, k1, k2 FROM {SEEK_TABLE}
+               WHERE  fam = %(fam)s AND pos > 0 AND pos <= %(off)s
+               ORDER  BY pos DESC LIMIT 1) c ON TRUE
+    """, {"fam": fam, "off": off, "tbl": SEEK_TABLE, "sig": seekSig()})
+    row = cur.fetchone()
+    if row is None:
+        return None                  # not a board it built, or no longer fresh
+    n, pos, k1, k2 = _vals(row)
+    if off >= int(n):
+        return ("end",)
+    if pos is None:
+        return None                  # shorter than SEEK_EVERY, or no key start
+    return ("seek", int(pos), float(k1), int(k2))
+
+
+def _liveOffset(f):
+    """A live board keeps the old ceiling: a deeper offset reads as
+    LEGACY_MAX_OFFSET, as it did when parseFilters clamped it."""
+    if (f.get("offset") or 0) > LEGACY_MAX_OFFSET:
+        f["offset"] = LEGACY_MAX_OFFSET
+
+
+def _pagedDefault(f):
+    """A board people and crawlers page through: never refused."""
+    if f.get("board") in ("performance", "ability"):
+        return seekFamily(f) is not None
+    if f.get("board") != "pr":
+        return False
+    # the best-times board: a pool (or all levels, by gender), a sport, an
+    # event / distance, at most one season, the clock (or mark) order
+    if f.get("scope", "usa") != "usa":
+        return False
+    if any(f.get(k) for k in ("state", "school", "grade", "course",
+                              "date_from", "date_to") + UNIT_FILTERS):
+        return False
+    if not _oneYear(f)[0]:
+        return False
+    natural = "mark" if f.get("event") in PR_FIELD_EVENTS else "time"
+    return f.get("sort") == natural and f.get("dir") == _SORTS_PR[natural][1]
+
+
+def deepPageRefusal(f):
+    """The message for a page too deep to rank live, or None.
+
+    Only a board that is NOT a default one (_pagedDefault), and only past
+    LIVE_DEEP_MAX rows. No ratings in it: nothing here needs the scale."""
+    if (f.get("offset") or 0) <= LIVE_DEEP_MAX or _pagedDefault(f):
+        return None
+    return (f"This board stops at row {LIVE_DEEP_MAX:,}: with this filter or sort it "
+            f"is ranked from scratch for every page, and deeper pages take too long. "
+            f"Narrow it (a state, a school, a season) to see more of it, or clear "
+            f"the extra filters and sort - the plain boards page all the way down.")
+
+
+# ------------------------------------------------------------------ #
 #  3. THE PERFORMANCE BOARD
 # ------------------------------------------------------------------ #
 
@@ -1618,7 +1889,16 @@ def getPerformanceRankings(cur, f):
     to_char, not the raw date: psycopg2 returns date objects and Flask's
     jsonify renders those as RFC-822 strings ("Sat, 30 Aug 2025 00:00:00 GMT").
     Casting in SQL gives the frontend plain ISO.
+
+    DEEP PAGES of a default board start from a stored position instead
+    (_seekPoint, "DEEP PAGES" above): same rows, an index range instead of
+    offset x CANDIDATE_FACTOR candidates.
     """
+    seek = _seekPoint(cur, f)
+    if seek is not None and seek[0] == "end":
+        return []
+    if seek is None:
+        _liveOffset(f)
     params = {
         "cand":   (f["limit"] + f["offset"]) * CANDIDATE_FACTOR,
         "limit":  f["limit"],
@@ -1635,18 +1915,42 @@ def getPerformanceRankings(cur, f):
     #   whole rating index for rows that cannot exist and returned nothing.
     #   Below it the candidates are the fastest times and the board their order.
     sprint = (f.get("distance") is not None and float(f["distance"]) < UNRATED_BELOW)
+    # ! result_id BREAKS A TIE IN THE DEDUP (2026-11-08): two copies of one
+    #   race at the same rating had no order, so which one the board showed
+    #   (its result_id, meet, state) followed the plan. The lower id now, on
+    #   the live board, its seek and build_board_seek alike.
     cand_where, cand_order, dup_order = (
-        ("time_seconds > 0", "time_seconds ASC", "time_seconds ASC") if sprint else
-        ("speed_rating IS NOT NULL", "speed_rating DESC", "speed_rating DESC"))
+        ("time_seconds > 0", "time_seconds ASC", "time_seconds ASC, result_id") if sprint else
+        ("speed_rating IS NOT NULL", "speed_rating DESC", "speed_rating DESC, result_id"))
     if sprint:
         order = "p.time_seconds ASC, p.result_id"
+    cand_cols = """sport, result_id, person_id, pool, speed_rating,
+                   race_date, year, state, school, grade,
+                   meet_id, div_id, canon_meet_id, time_seconds, event_id,
+                   distance"""
+    select = """
+        SELECT p.sport, p.result_id, p.person_id,
+               -- pool + distance ride along for the HS-equivalent view
+               -- (pool_view.stampBoardRows in the API route).
+               p.pool, p.distance,
+               p.speed_rating                       AS rating,
+               to_char(p.race_date, 'YYYY-MM-DD')   AS race_date,
+               p.year,
+               p.state, p.school, p.grade,
+               p.meet_id, p.div_id, p.event_id, p.time_seconds,
+               COALESCE(a.name, 'Unknown')          AS name"""
+
+    if seek is not None:
+        _tag, pos, k1, k2 = seek
+        # the inner read skips to the page; the name tail then starts at 0
+        params.update(seek_skip=f["offset"] - pos, seek_k1=k1, seek_k2=k2, offset=0)
+        source = _perfSeekSource(cand_cols, cand_where, where, sprint)
+        cur.execute(f"{select} {pageThenName('p', source, 'TRUE', order)}", params)
+        return cur.fetchall()
 
     cur.execute(f"""
         WITH candidates AS (
-            SELECT sport, result_id, person_id, pool, speed_rating,
-                   race_date, year, state, school, grade,
-                   meet_id, div_id, canon_meet_id, time_seconds, event_id,
-                   distance
+            SELECT {cand_cols}
             FROM   ranking_results
             -- ⚠ NULLS SORT FIRST UNDER `DESC`, so this is not optional and
             --   it is not belt-and-braces. Since #46, ranking_results also
@@ -1669,25 +1973,66 @@ def getPerformanceRankings(cur, f):
                        --   anet and tfrrs copies of ONE run; without the
                        --   person it also folded two DIFFERENT runners who
                        --   tied at the same meet, and one of them vanished.
-                       PARTITION BY sport, person_id,
-                                    COALESCE(canon_meet_id, -result_id),
-                                    round(time_seconds::numeric, 1)
+                       PARTITION BY {", ".join(PERF_DUP_KEY)}
                        ORDER BY {dup_order}) AS dup_rn
             FROM candidates
         )
-        SELECT p.sport, p.result_id, p.person_id,
-               -- pool + distance ride along for the HS-equivalent view
-               -- (pool_view.stampBoardRows in the API route).
-               p.pool, p.distance,
-               p.speed_rating                       AS rating,
-               to_char(p.race_date, 'YYYY-MM-DD')   AS race_date,
-               p.year,
-               p.state, p.school, p.grade,
-               p.meet_id, p.div_id, p.event_id, p.time_seconds,
-               COALESCE(a.name, 'Unknown')          AS name
+        {select}
         {pageThenName("p", "deduped p", "p.dup_rn = 1", order)}
     """, params)
     return cur.fetchall()
+
+
+def _perfSeekSource(cols, cand_where, where, sprint):
+    """The performance board from a stored key on: the rows at or past
+    (%(seek_k1)s, %(seek_k2)s) in the board's order that survive the dedup,
+    the first %(seek_skip)s skipped, a page and the name slack kept. Aliased
+    `p`, for pageThenName.
+
+    ! THE DEDUP AS A TEST, NOT A WINDOW: a row stays unless another copy of
+      the same race (PERF_DUP_KEY) that this board's filters also keep comes
+      before it in the dedup order -- exactly the row_number() = 1 of the
+      live query, whose window sees every such copy (they rate higher, so
+      they are among its candidates). `{where}` is unqualified, so inside the
+      NOT EXISTS it binds to x, outside to r, as in the live query.
+    ! `>= key` FROM A KEY THAT STARTS ITS TIE GROUP (build_board_seek stores
+      no other), so the rows read are board[pos:] whatever the ties."""
+    if sprint:
+        at = ("r.time_seconds >= %(seek_k1)s::float8 AND (r.time_seconds > %(seek_k1)s::float8"
+              " OR r.result_id >= %(seek_k2)s)")
+        better = ("(x.time_seconds < r.time_seconds OR (x.time_seconds = r.time_seconds"
+                  " AND x.result_id < r.result_id))")
+        inner = "time_seconds ASC, result_id"
+    else:
+        at = ("r.speed_rating <= %(seek_k1)s::float8 AND (r.speed_rating < %(seek_k1)s::float8"
+              " OR r.result_id >= %(seek_k2)s)")
+        better = ("(x.speed_rating > r.speed_rating OR (x.speed_rating = r.speed_rating"
+                  " AND x.result_id < r.result_id))")
+        # ! DESC as the rating indexes store it (nulls first); the rows are
+        #   all rated, so it is the board's DESC NULLS LAST, in index order
+        inner = "speed_rating DESC, result_id"
+    same_race = ("x.person_id = r.person_id"
+                 " AND x.sport IS NOT DISTINCT FROM r.sport"
+                 " AND COALESCE(x.canon_meet_id, -x.result_id)"
+                 " = COALESCE(r.canon_meet_id, -r.result_id)"
+                 " AND round(x.time_seconds::numeric, 1)"
+                 " IS NOT DISTINCT FROM round(r.time_seconds::numeric, 1)")
+    assert PERF_DUP_KEY == ("sport", "person_id", "COALESCE(canon_meet_id, -result_id)",
+                            "round(time_seconds::numeric, 1)"), "same_race follows PERF_DUP_KEY"
+    return f"""(
+            SELECT {cols}
+            FROM   ranking_results r
+            WHERE  {cand_where} {where}
+              AND  {at}
+              AND  NOT EXISTS (
+                     SELECT 1 FROM ranking_results x
+                     WHERE  {same_race}
+                       AND  {better}
+                       AND  {cand_where} {where})
+            ORDER  BY {inner}
+            OFFSET %(seek_skip)s
+            LIMIT  %(limit)s + {UNNAMED_SLACK}
+        ) p"""
 
 
 # ------------------------------------------------------------------ #
@@ -1815,6 +2160,7 @@ def getPrRankings(cur, f):
     of its own -- real ids are positive, so a negated result_id cannot
     collide.
     """
+    _liveOffset(f)          # pages live: the old offset ceiling
     params = {
         "cand":   (f["limit"] + f["offset"]) * CANDIDATE_FACTOR,
         "limit":  f["limit"],
@@ -1937,7 +2283,17 @@ def getAbilityRankings(cur, f):
     WITH sport='both' AN ATHLETE CAN STILL APPEAR TWICE -- once for XC, once
     for TF -- because the rows are per sport. That is honest (two different
     seasons), but the UI must show the sport in each row or it looks like a bug.
+
+    DEEP PAGES of a default board start from a stored position (_seekPoint,
+    "DEEP PAGES" above): the same WHERE and ORDER BY from a stored key on,
+    in the order of the board's index, so the OFFSET skips fewer than
+    SEEK_EVERY rows.
     """
+    seek = _seekPoint(cur, f)
+    if seek is not None and seek[0] == "end":
+        return []
+    if seek is None:
+        _liveOffset(f)
     params = {
         "min_races": f["min_races"],
         "limit":     f["limit"],
@@ -1946,6 +2302,16 @@ def getAbilityRankings(cur, f):
     where = _whereClauses(f, params, with_dates=False)
     source = _abilitySource(f, params, where, precomputed=True)
     order = _orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
+    base_where = floorSql(f['min_races_explicit']) + " " + where
+    if seek is not None:
+        # ! FROM A KEY THAT STARTS ITS TIE GROUP: the rows at or past it in
+        #   (mean_rating DESC NULLS LAST, person_id) are board[pos:]. The
+        #   floor keeps every unrated season out, so no NULL is skipped.
+        _tag, pos, k1, k2 = seek
+        params.update(offset=f["offset"] - pos, seek_k1=k1, seek_k2=k2)
+        base_where += (" AND s.mean_rating <= %(seek_k1)s::float8"
+                       " AND (s.mean_rating < %(seek_k1)s::float8"
+                       " OR s.person_id >= %(seek_k2)s)")
 
     cur.execute(f"""
         SELECT s.person_id, s.sport, s.pool,
@@ -1959,7 +2325,7 @@ def getAbilityRankings(cur, f):
                to_char(s.first_race, 'YYYY-MM-DD')  AS first_race,
                to_char(s.last_race,  'YYYY-MM-DD')  AS last_race,
                COALESCE(a.name, 'Unknown')          AS name
-        {pageThenName("s", source, floorSql(f['min_races_explicit']) + " " + where, order)}
+        {pageThenName("s", source, base_where, order)}
     """, params)
     return cur.fetchall()
 
