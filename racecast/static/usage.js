@@ -114,8 +114,16 @@
     } catch (e) { return 0; }
   }
   function view() { send({ k: "v", r: refHost(), u: firstToday() }); }
-  if (d.readyState === "complete") setTimeout(view, 0);
-  else w.addEventListener("load", function () { setTimeout(view, 0); });
+  /* ★ A PAGE IS VIEWED WHEN IT IS SHOWN, NOT WHEN IT LOADS (speed pass,
+     2026-11-08). A prerendered page (the speculation rules in speed.py,
+     or Chrome guessing from the address bar) loads in the background and
+     may never be opened; it counts once, when the reader switches to it. */
+  function whenShown() {
+    if (d.prerendering) d.addEventListener("prerenderingchange", view, { once: true });
+    else view();
+  }
+  if (d.readyState === "complete") setTimeout(whenShown, 0);
+  else w.addEventListener("load", function () { setTimeout(whenShown, 0); });
 
   d.addEventListener("visibilitychange", function () {
     if (d.visibilityState === "hidden") flush();

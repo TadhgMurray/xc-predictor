@@ -705,7 +705,14 @@
     var target = document.getElementById(location.hash.slice(1));
     if (target) {
       centreRow(target);
-      target.classList.add("rc-flash");
+      // a prerendered page flashes when it is shown (speed pass, 2026-11-08)
+      if (document.prerendering) {
+        document.addEventListener("prerenderingchange", function () {
+          target.classList.add("rc-flash");
+        }, { once: true });
+      } else {
+        target.classList.add("rc-flash");
+      }
     }
   }
 })();
