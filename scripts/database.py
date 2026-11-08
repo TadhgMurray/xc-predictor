@@ -87,6 +87,49 @@ for _setting, _env in (("lock_timeout", "XCP_DB_LOCK_TIMEOUT_MS"),
 _jit = (os.environ.get("XCP_DB_JIT") or "").strip().lower()
 if _jit in ("on", "off"):
     _opts.append(f"-c jit={_jit}")
+# ★ THE SITE'S OWN MEMORY AND PARALLELISM, FROM ITS SERVICE UNIT (2026-11-08,
+#   database tuning track; scripts/db_health.py section g says why each one).
+#   The site and the pipeline both log in as postgres, so ALTER ROLE cannot
+#   tell them apart; the startup packet can. Each variable is unset by
+#   default -- unset, the connection takes the server's value exactly as
+#   before -- and a value that does not look like the setting's type is
+#   skipped with one line on stderr, never sent: a bad -c is a FATAL at
+#   connect, and that would be every page.
+#     XCP_DB_WORK_MEM              work_mem per sort/hash node   (e.g. 64MB)
+#     XCP_DB_HASH_MEM_MULTIPLIER   hash nodes get work_mem x this (e.g. 2)
+#     XCP_DB_PARALLEL_GATHER       max_parallel_workers_per_gather (e.g. 0)
+#     XCP_DB_IDLE_TXN_TIMEOUT_MS   idle_in_transaction_session_timeout
+#     XCP_DB_TEMP_FILE_LIMIT       temp_file_limit per backend   (e.g. 4GB)
+# ! temp_file_limit is a superuser setting: fine while the site logs in as
+#   postgres, a refused connection under a non-superuser role.
+# ! The pipeline's quiet mode SETs its own values after connecting, so these
+#   never reach a pipeline backend even if a shell exports them.
+_SITE_KNOBS = (
+    ("work_mem", "XCP_DB_WORK_MEM", r"[1-9][0-9]*(kB|MB|GB)"),
+    ("hash_mem_multiplier", "XCP_DB_HASH_MEM_MULTIPLIER", r"[0-9]+(\.[0-9]+)?"),
+    ("max_parallel_workers_per_gather", "XCP_DB_PARALLEL_GATHER", r"[0-9]+"),
+    ("idle_in_transaction_session_timeout", "XCP_DB_IDLE_TXN_TIMEOUT_MS", r"[0-9]+"),
+    ("temp_file_limit", "XCP_DB_TEMP_FILE_LIMIT", r"(-1|[1-9][0-9]*(kB|MB|GB|TB)?)"),
+)
+
+
+def _siteKnobs(env=None):
+    """The `-c name=value` options the XCP_DB_* knobs above ask for, in a
+    fixed order; malformed values are dropped (and said once on stderr)."""
+    env = os.environ if env is None else env
+    out = []
+    for setting, var, shape in _SITE_KNOBS:
+        v = (env.get(var) or "").strip()
+        if not v:
+            continue
+        if re.fullmatch(shape, v):
+            out.append(f"-c {setting}={v}")
+        else:
+            print(f"[DB] {var}={v!r} is not a valid {setting}; not sent", file=sys.stderr)
+    return out
+
+
+_opts += _siteKnobs()
 if _opts:
     _PG_CONFIG_WITH_TIMEOUT["options"] = " ".join(_opts)
 _PG_CONFIG_WITH_TIMEOUT["application_name"] = os.environ.get("XCP_DB_APP") or "xcp"
