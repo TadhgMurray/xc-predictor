@@ -5,6 +5,7 @@ there. READ-ONLY.
 
     set -a; . /etc/xc-predictor.env; set +a; P=/srv/venv/bin/python
     $P scripts/person_rows.py 26140046
+    $P scripts/person_rows.py 19764025 --sport TF     # track: one line per feed id and team
 
 ★ WHY (owner, 2026-11-07, Katrina Coogan's profile: "there must be something
   else"). A boy's results on a girl's profile got there by a LINK -- the
@@ -56,12 +57,56 @@ def _t(s):
     return f"{int(s // 60)}:{s % 60:04.1f}"
 
 
+# ★ TRACK (owner, 2026-11-08, /athlete/19764025: a Tennessee runner's profile
+#   carrying four years of a Guam namesake's track). Track rows are many, so
+#   they print grouped: one line per (feed, feed athlete id, name, team), with
+#   its seasons, row count and the rules that moved its rows here.
+_TF_GROUPS = """
+    SELECT r.source, r.athlete_id, r.athlete_name, r.school,
+           min(left(r.date, 10)), max(left(r.date, 10)), count(*),
+           string_agg(DISTINCT r.grade, ','),
+           (SELECT string_agg(DISTINCT l.rule || ' from ' || l.from_person, ', ')
+            FROM person_link_log l
+            WHERE l.sport = 'TF' AND l.result_id = ANY(array_agg(r.result_id))) AS linked
+    FROM   results_tf r
+    WHERE  r.person_id = %(p)s
+    GROUP  BY 1, 2, 3, 4
+    ORDER  BY 5
+"""
+
+
+def mainTF(pid):
+    from database import getConn
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute("SET LOCAL statement_timeout = 0")
+        cur.execute("SELECT to_regclass('person_link_log')")
+        sql = _TF_GROUPS
+        if cur.fetchone()[0] is None:
+            sql = sql.replace("""(SELECT string_agg(DISTINCT l.rule || ' from ' || l.from_person, ', ')
+            FROM person_link_log l
+            WHERE l.sport = 'TF' AND l.result_id = ANY(array_agg(r.result_id)))""", "NULL::text")
+        cur.execute(sql, {"p": pid})
+        rows = cur.fetchall()
+        cur.execute("""SELECT athlete_id, first_name, last_name, school
+                       FROM athletes WHERE athlete_id = %s""", (pid,))
+        me = cur.fetchall()
+        conn.rollback()
+    print(f"/athlete/{pid}: track rows grouped by feed id and team; the profile's own row: {me}")
+    for src, aid, name, school, d0, d1, n, grades, linked in rows:
+        print(f"  {d0} to {d1}  feed {'2' if src == 'tfrrs' else '1'} #{aid} {name!r:<24} "
+              f"{str(school)[:26]:<26} grades {grades}  {n} rows"
+              + (f"  LINKED: {linked}" if linked else ""))
+    return 0
+
+
 def main(argv=None):
     args = argv if argv is not None else sys.argv[1:]
     if not args:
-        print("usage: person_rows.py PERSON_ID")
+        print("usage: person_rows.py PERSON_ID [--sport TF]")
         return 2
     pid = int(args[0])
+    if "--sport" in args and args[args.index("--sport") + 1:][:1] == ["TF"]:
+        return mainTF(pid)
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = 0")
