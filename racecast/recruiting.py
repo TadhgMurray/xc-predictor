@@ -402,6 +402,98 @@ def searchOrTimeout(cur, f):
         raise
 
 
+# ★ ONE COUNT PER BOARD, NOT PER RECRUIT (2026-11-08, the latency report:
+#   /recruit/:n was a third of all origin time -- 20,681 views, p50 202 ms,
+#   p99 1.5 s, 6,624 s in six hours). Each view counted, for 2 sports x 4
+#   divisions, the college seasons above the recruit's rating and the board's
+#   total: 16 counts, every one the same for every recruit but the "above"
+#   cut. A division board's ratings (as float8, the values the SQL compared)
+#   and its total are read once and shared by every worker (sharedcache),
+#   keyed by the board's filters and athlete_season's oid -- a rebuilt table
+#   is a new oid, so no copy outlives the data it was read from. "Above" is
+#   then a binary search: the same count the SQL made.
+import bisect
+
+RECRUIT_BOARD_TTL = 6 * 3600.0
+_STAMP = {"at": 0.0, "oid": None}
+
+
+def _seasonStamp(cur):
+    """athlete_season's oid, read once a minute per worker (None: unknown)."""
+    now = _time.time()
+    if now - _STAMP["at"] < 60:
+        return _STAMP["oid"]
+    oid = None
+    try:
+        with cur.connection.cursor() as c:
+            c.execute("SAVEPOINT recruit_stamp")
+            try:
+                c.execute("SELECT to_regclass('athlete_season')::oid")
+                row = c.fetchone()
+                oid = int(row[0]) if row and row[0] is not None else None
+                c.execute("RELEASE SAVEPOINT recruit_stamp")
+            except Exception:                           # noqa: BLE001
+                c.execute("ROLLBACK TO SAVEPOINT recruit_stamp")
+                oid = None
+    except Exception:                                   # noqa: BLE001
+        oid = None
+    _STAMP.update(at=now, oid=oid)
+    return oid
+
+
+def _shared(cur, name, compute):
+    """compute() once for the box while athlete_season is the same table;
+    computed per call when its oid cannot be read."""
+    stamp = _seasonStamp(cur)
+    if stamp is None:
+        return compute()
+    import hashlib
+    import sharedcache
+    key = "recruit-" + hashlib.sha1(repr((name, stamp)).encode("utf-8")).hexdigest()
+    value, _at = sharedcache.get(key, compute, ttl=RECRUIT_BOARD_TTL)
+    return value
+
+
+def _latestCollegeYear(cur, college, sport, upto):
+    """The newest stored year <= upto with a rated college season."""
+    def compute():
+        with cur.connection.cursor() as c:
+            c.execute("""SELECT max(year) AS y FROM athlete_season
+                         WHERE pool = %s AND sport = %s AND year <= %s
+                           AND mean_rating IS NOT NULL""", (college, sport, upto))
+            row = c.fetchone()
+        return row[0] if row else None
+    return _shared(cur, ("latest", college, sport, upto), compute)
+
+
+def _divisionBoard(cur, f):
+    """(sorted float8 mean_ratings, total) of one division's ability board
+    under the board's own floor and WHERE (the rows the per-recruit count
+    tested), the total by rankings.countOf as before."""
+    from rankings import _whereClauses, countOf
+
+    def compute():
+        params = {"min_races": f["min_races"]}
+        where = _whereClauses(f, params, with_dates=False)
+        # a plain cursor: the board machinery reads rows by position
+        with cur.connection.cursor() as plain:
+            plain.execute("SAVEPOINT recruit_place")
+            try:
+                plain.execute(f"""SELECT s.mean_rating::float8 FROM athlete_season s
+                                  WHERE {floorSql(f['min_races_explicit'])} {where}
+                                    AND s.mean_rating IS NOT NULL""", params)
+                ratings = sorted(r[0] for r in plain.fetchall())
+                total = countOf(plain, f)
+                plain.execute("RELEASE SAVEPOINT recruit_place")
+            except Exception:
+                plain.execute("ROLLBACK TO SAVEPOINT recruit_place")
+                raise
+        return ratings, total
+    key = ("board", f["pool"], f["sport"], f.get("year"), tuple(f.get("division") or ()),
+           f["min_races"], f["min_races_explicit"])
+    return _shared(cur, key, compute)
+
+
 def collegePlacements(cur, sport, hs_pool, rating, label_year):
     """Where a high-school rating would rank on each college division's
     board for the season: [{division, rank, total, board_url}]. The board
@@ -409,7 +501,7 @@ def collegePlacements(cur, sport, hs_pool, rating, label_year):
     rankings page shows, so a coach can click through and see the list."""
     from urllib.parse import urlencode
     from werkzeug.datastructures import MultiDict
-    from rankings import parseFilters as boardFilters, countOf
+    from rankings import parseFilters as boardFilters
     from pool_view import fromHs
     if rating is None:
         return []
@@ -422,15 +514,9 @@ def collegePlacements(cur, sport, hs_pool, rating, label_year):
     #   filter this can land on a year whose only college seasons are
     #   unrated sprint years, and every placement below comes back empty --
     #   a page that silently shows nothing rather than the newest real board.
-    cur.execute("""SELECT max(year) AS y FROM athlete_season
-                   WHERE pool = %s AND sport = %s AND year <= %s
-                     AND mean_rating IS NOT NULL""",
-                (college, sport, storedYear(label_year, sport)))
-    row = cur.fetchone()
-    stored = (row["y"] if isinstance(row, dict) else row[0]) if row else None
+    stored = _latestCollegeYear(cur, college, sport, storedYear(label_year, sport))
     if stored is None:
         return []
-    from rankings import _whereClauses
     out = []
     for div in COLLEGE_DIVISIONS:
         args = {"board": "ability", "pool": college, "sport": sport,
@@ -440,24 +526,14 @@ def collegePlacements(cur, sport, hs_pool, rating, label_year):
         f, err = boardFilters(MultiDict(args))
         if err:
             continue
-        params = {"min_races": f["min_races"], "equiv": equiv}
-        where = _whereClauses(f, params, with_dates=False)
         try:
-            # a plain cursor: the board machinery reads rows by position
-            with cur.connection.cursor() as plain:
-                plain.execute("SAVEPOINT recruit_place")
-                plain.execute(f"""SELECT count(*) FROM athlete_season s
-                                  WHERE {floorSql(f['min_races_explicit'])} {where}
-                                    AND s.mean_rating > %(equiv)s""", params)
-                above = plain.fetchone()[0]
-                total = countOf(plain, f)
-                plain.execute("RELEASE SAVEPOINT recruit_place")
+            ratings, total = _divisionBoard(cur, f)
+            # the same test the SQL made (s.mean_rating > equiv): ratings are
+            # the float8 values Postgres compared, sorted ascending
+            above = len(ratings) - bisect.bisect_right(ratings, equiv)
         except Exception as exc:                    # noqa: BLE001
+            # _divisionBoard rolled its own savepoint back; nothing to undo
             print(f"recruit: placement {div} failed ({type(exc).__name__}: {exc})", flush=True)
-            try:
-                cur.execute("ROLLBACK TO SAVEPOINT recruit_place")
-            except Exception:                       # noqa: BLE001
-                cur.connection.rollback()
             continue
         if not total:
             continue
