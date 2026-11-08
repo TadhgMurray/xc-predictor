@@ -692,11 +692,17 @@ def fitAll(xc, tf, verbose=True, degrees=None, agreement=True, residual=True,
     `residual=False` skips the joint fits altogether."""
     rng = np.random.default_rng(SEED)
     fams, report = {}, {}
-    by_sport = {"XC": xc, "TF": tf, "*": concatArrays([xc, tf])}
+    # ! the combined family is built when its turn comes and dropped after,
+    #   not held beside both sports for the whole run
+    by_sport = {"XC": xc, "TF": tf}
     for s in FAMILY_SPORTS:
         for gdr in FAMILY_GENDERS:
             key = f"{gdr}|{s}"
-            arr = subset(by_sport[s], genderMask(by_sport[s], gdr))
+            src = by_sport[s] if s != "*" else concatArrays([xc, tf])
+            arr = subset(src, genderMask(src, gdr))
+            del src
+            n_all = len(arr["d1"])
+            arr = capFamily(arr, rng)
             n = len(arr["d1"])
             if n < MIN_FAMILY_PAIRS:
                 if verbose:
@@ -704,7 +710,8 @@ def fitAll(xc, tf, verbose=True, degrees=None, agreement=True, residual=True,
                 continue
             t0 = time.time()
             if verbose:
-                print(f"\n  {key}: {n:,} pairs")
+                print(f"\n  {key}: {n:,} pairs"
+                      + (f" (sampled from {n_all:,}; FIT_MAX_PAIRS)" if n < n_all else ""))
             # ★ THE JOINT FIT IS PER (gender, sport) ONLY: the gender-blind
             #   and sport-blind families pool what the residual separates,
             #   and a row that reaches one has no pool worth a residual
@@ -872,14 +879,95 @@ def printJoint(key, e, rep):
 # LOAD, FIT, WRITE
 # ------------------------------------------------------------------ #
 
+# ★ THE PAIRS AS ARRAYS FROM THE CACHE'S TUPLES (owner, 2026-11-08: the
+#   dry run OOMed the server). The pool fitter's loader turns its 8.4M cached
+#   tuples into one dict per pair, filters them into new lists, then groups
+#   them -- several GB of Python objects -- and this file then built arrays
+#   while those were still alive. tuplesToArrays reads the tuples straight
+#   into five arrays and applies the SAME four filters vectorised, on the
+#   loader's own constants (tests/test_distance_ability.py checks it keeps
+#   exactly the pairs the dict path keeps); each sport's tuples are freed
+#   before the next is read.
+def tuplesToArrays(tuples, sport, F):
+    """Cached (pool, d1, d2, t1, t2) tuples -> pairArrays' dict, with the
+    loader's cache-side filters: distance ceiling, near-equal distances,
+    either leg's impossible pace, and (XC) each pool's race-range cap."""
+    n = len(tuples)
+    names, codes = {}, np.empty(n, dtype=np.int32)
+    d1 = np.empty(n); d2 = np.empty(n); t1 = np.empty(n); t2 = np.empty(n)
+    for i, (pl, a, b, c, d) in enumerate(tuples):
+        codes[i] = names.setdefault(pl, len(names))
+        d1[i], d2[i], t1[i], t2[i] = a or 0.0, b or 0.0, c or 0.0, d or 0.0
+    labels = np.empty(len(names), dtype=object)
+    for pl, k in names.items():
+        labels[k] = pl
+    pool = labels[codes]
+    ok = (d1 > 0) & (d2 > 0) & (t1 > 0) & (t2 > 0)
+    ok &= (d1 <= F.MAX_DISTANCE_METERS) & (d2 <= F.MAX_DISTANCE_METERS)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ok &= np.abs(np.log(np.where(ok, d2 / np.where(d1 > 0, d1, 1), 1.0))) >= F.MIN_LOG_RATIO
+        female = np.array([F._genderFromPool(pl) == "F" for pl in labels], dtype=bool)[codes]
+        floor = np.where(female, F._paceFloorFor("F"), F._paceFloorFor("M"))
+        for dd, tt in ((d1, t1), (d2, t2)):
+            pace = tt / np.where(dd > 0, dd / F.METERS_PER_MILE, np.nan)
+            ok &= (pace >= floor) & (pace <= F.PACE_CEILING)
+        if sport == "XC":
+            cap = np.array([F._poolMaxXC(pl) for pl in labels], dtype=float)[codes]
+            ok &= (d1 <= cap) & (d2 <= cap)
+    return {"pool": pool[ok], "d1": d1[ok], "d2": d2[ok], "t1": t1[ok], "t2": t2[ok]}
+
+
 def loadPairs(fresh=False):
     """The pool fitter's pairs (cache first). Imported lazily: that module
     needs the database config and corrections.py, the tests need neither."""
     import fit_distance_exponent as F
-    xc_by_pool, tf_by_pool = F.loadAllPairs(use_cache=not fresh)
-    xc = pairArrays([p for ps in xc_by_pool.values() for p in ps])
-    tf = pairArrays([p for ps in tf_by_pool.values() for p in ps])
+    path = F._cachePath(False)
+    if fresh or not os.path.exists(path):
+        # the stream: the pool fitter's own loader (it writes the cache)
+        xc_by_pool, tf_by_pool = F.loadAllPairs(use_cache=False)
+        xc = pairArrays([p for ps in xc_by_pool.values() for p in ps])
+        del xc_by_pool
+        tf = pairArrays([p for ps in tf_by_pool.values() for p in ps])
+        return xc, tf
+    with open(path, "rb") as f:
+        c = pickle.load(f)
+    print(f"  pair cache loaded <- {path} (as arrays)")
+    xc = tuplesToArrays(c.pop("xc"), "XC", F)
+    tf = tuplesToArrays(c.pop("tf"), "TF", F)
     return xc, tf
+
+
+# ★ EACH FAMILY'S FIT ON AT MOST FIT_MAX_PAIRS (2026-11-08, the same OOM).
+#   The combined families held all 8.4M pairs, several full-length design
+#   matrices at once. A curve of a dozen coefficients is pinned long before
+#   that; the CV already scores on CV_MAX_PAIRS. Pools of POOL_KEEP_ALL
+#   pairs or fewer keep every pair, so a small pool's residual is read on
+#   the support it always had; the rest are sampled at one rate. Seeded.
+FIT_MAX_PAIRS = 1_500_000
+POOL_KEEP_ALL = 20_000
+
+
+def capFamily(arr, rng, cap=FIT_MAX_PAIRS, keep_all=POOL_KEEP_ALL):
+    """arr, sampled down to about `cap` pairs: small pools whole, large
+    pools at one rate. Unchanged when it already fits. Pure (seeded rng)."""
+    n = len(arr["d1"])
+    if n <= cap:
+        return arr
+    pools = np.array([str(p).split("|")[0] for p in arr["pool"]])
+    names, counts = np.unique(pools, return_counts=True)
+    small = counts <= keep_all
+    rest = cap - counts[small].sum()
+    big_total = counts[~small].sum()
+    rate = max(rest, 0) / big_total if big_total else 1.0
+    keep = np.zeros(n, dtype=bool)
+    for name, cnt, sm in zip(names, counts, small):
+        idx = np.flatnonzero(pools == name)
+        if sm:
+            keep[idx] = True
+        else:
+            k = max(keep_all, int(round(cnt * rate)))
+            keep[rng.choice(idx, size=min(k, cnt), replace=False)] = True
+    return subset(arr, keep)
 
 
 def writeArtifact(art, path=OUTPUT_FILE):
