@@ -1,0 +1,23 @@
+# deploy/cloudflare/wrangler.toml -- the board-snapshot Worker (prototype).
+# See deploy/cloudflare/README.md before deploying. `npx wrangler deploy`
+# from this directory publishes it; nothing here holds a secret.
+name = "racecast-board-edge"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+# ★ ONLY THE BOARD AND SEARCH APIS. Every other path never runs the Worker,
+#   so its daily request count is the API traffic, not the site's.
+routes = [
+  { pattern = "racecast.co/api/rankings*", zone_name = "racecast.co" },
+  { pattern = "racecast.co/api/teams*", zone_name = "racecast.co" },
+  { pattern = "racecast.co/api/courses*", zone_name = "racecast.co" },
+  { pattern = "racecast.co/search/api*", zone_name = "racecast.co" },
+]
+
+# The namespace scripts/edge_snapshot.py writes (XCP_CF_KV_NAMESPACE).
+# Create it once: npx wrangler kv namespace create racecast-snap
+# and paste the id it prints here.
+[[kv_namespaces]]
+binding = "SNAP"
+id = "REPLACE_WITH_NAMESPACE_ID"
