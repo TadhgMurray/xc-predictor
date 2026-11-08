@@ -605,6 +605,21 @@ rankSeamsOk() {
   done
   echo "$1"
 }
+# ★ WIDE OR NOT (2026-11-08, after the 2026-11-07 23:28 OOM). The 11-07
+#   speedups ran memory-heavy Python steps side by side: the twins build beside
+#   grade_sanity / wheelchair / gender, the distance checks as a background
+#   chain, 13c0/10b0/10e beside 07_pack, the rowguard chain beside the boards,
+#   the XC and TF fills apart, eight ranking streams instead of four. A run in
+#   the people block took the box past 125 GB and the OOM killer took
+#   Postgres. XCP_PIPELINE_WIDE=1 keeps them side by side; the default (0) runs
+#   them in line as before 11-07. Same steps, same order of writes, same data.
+WIDE="${XCP_PIPELINE_WIDE:-0}"
+# wbg NAME CMD... -- bgstep when wide, else an ordinary step (bgjoin of a step
+#   that never went to the background is a no-op)
+wbg() { if [ "$WIDE" = 1 ]; then bgstep "$@"; else step "$@"; fi; }
+# wchain LABEL FN -- bgchain when wide, else FN's steps in line (and the
+#   matching bgchainjoin finds no chain and does nothing)
+wchain() { if [ "$WIDE" = 1 ]; then bgchain "$@"; else "$2"; fi; }
 BGC_PIDS=(); BGC_NAMES=()
 bgchain() {
   local label="$1" fn="$2"
@@ -843,7 +858,7 @@ _distanceChecks() {
        --csv "$LOGDIR/wrong_distance.csv"
 }
 if [ "${_DIST_CHECKS:-0}" -eq 1 ]; then
-  bgchain 04g_checks _distanceChecks
+  wchain 04g_checks _distanceChecks
 fi
 
 # ⚠ THIS STEP WAS MISSING, AND THAT IS HOW CHAIR ATHLETES CAME BACK (owner,
@@ -889,9 +904,16 @@ skipped 04b_wheelchair && _skipCost 04b_wheelchair
 bgstep 04_grade_sanity "$PY" -u engine/grade_sanity.py --write
 bgstep 04b_wheelchair  "$PY" -u engine/wheelchair_flag.py --write
 step 04d_gender "$PY" -u engine/person_gender.py --write
-step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
+if [ "$WIDE" = 1 ]; then
+  step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
+fi
 bgjoin 04_grade_sanity
 bgjoin 04b_wheelchair
+if [ "$WIDE" != 1 ]; then
+  # in line (the default): built once grade_sanity and wheelchair are done,
+  # so no more than three of the people steps are ever in memory at once
+  step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
+fi
 if ! skipped 04c_twins && ! failed 04c_twins; then
   step 04c_twins_swap "$PY" -u engine/twin_flag.py --swap-only
 fi
@@ -1197,17 +1219,17 @@ step 06c_impossible   "$PY" -u engine/impossible_race.py --write
 #    siege that terminates whatever still reads results.
 # athlete ids that vanished since 01a -> the id their rows went to (the
 # athlete page 301s them; see scripts/person_redirects.py)
-bgstep 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
+wbg 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 # ★ THE SEARCH INDEX'S THREE SOURCE TABLES, REBUILT FIRST (owner,
 #   2026-10-11: a college-only page "doesn't show up on search results").
 #   athlete_named / athlete_agg / athlete_school were built once by hand and
 #   never again, so nobody made since could be found. One scan of the
 #   results; racecast/build_search_helpers.py.
-bgstep 13c0_search_helpers "$PY" -u racecast/build_search_helpers.py
+wbg 13c0_search_helpers "$PY" -u racecast/build_search_helpers.py
 # ! 10b0 BEFORE 10b, BECAUSE 10b READS IT (see the board steps below)
-bgstep 10b0_tfrrs_link "$PY" -u scripts/link_tfrrs_to_anet.py --write
+wbg 10b0_tfrrs_link "$PY" -u scripts/link_tfrrs_to_anet.py --write
 # 10e marks which meets are championships (issue 34)
-bgstep 10e_meet_units "$PY" -u racecast/build_meet_units.py
+wbg 10e_meet_units "$PY" -u racecast/build_meet_units.py
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 bgjoin 13c0_person_redirects
 bgjoin 13c0_search_helpers
@@ -1716,9 +1738,15 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ] && [ "$FROM" -le 7 ] \
    && ! skipped 08_golive && ! failed 08_golive; then
   _FILL_FLAG=" --after-golive"
 fi
-stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
-       09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG" \
-       09c_school_names "$PY -u scripts/merge_school_names.py --write"
+if [ "$WIDE" = 1 ]; then
+  stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
+         09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG" \
+         09c_school_names "$PY -u scripts/merge_school_names.py --write"
+else
+  # the two fills one after the other, as before 11-07 (one step, 09b_fill)
+  stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG && $PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG" \
+         09c_school_names "$PY -u scripts/merge_school_names.py --write"
+fi
 
 
 # ---- boards and pages ----------------------------------------------- #
@@ -1781,7 +1809,7 @@ _rowguard() {
   steps2 15_rowguard_triage_xc "$PY -u scripts/triage_suspects.py --sport XC" \
          15_rowguard_triage_tf "$PY -u scripts/triage_suspects.py --sport TF"
 }
-bgchain 15_rowguard _rowguard
+wchain 15_rowguard _rowguard
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
 # each sport in date ranges, every stream into one shadow: the row walk is
 # Python per row and was 52 minutes for two (2026-09-06), 45 for four.
@@ -1797,14 +1825,17 @@ step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prep
 #   XCP_RANK_SEAM="d1 d2 ..." states the seams (one date, as before, is two
 #   streams per sport).
 #   XCP_RANK_PARTS=2 XCP_RANK_STREAMS=4 is the old shape.
+# not wide: the pre-11-07 shape, two ranges per sport, four streams
+if [ "$WIDE" = 1 ]; then _RPARTS="${XCP_RANK_PARTS:-4}"; _RSTREAMS="${XCP_RANK_STREAMS:-8}"
+else _RPARTS="${XCP_RANK_PARTS:-2}"; _RSTREAMS="${XCP_RANK_STREAMS:-4}"; fi
 _RANK=()
 for _sp in XC TF; do
   _lc=$(echo "$_sp" | tr 'A-Z' 'a-z')
   _seams="${XCP_RANK_SEAM:-}"
   if [ -z "$_seams" ] && [ "$DRY" -eq 0 ] && ! beforeFrom 10_rankings_prepare \
-     && [ "${XCP_RANK_PARTS:-4}" -gt 2 ]; then
+     && [ "$_RPARTS" -gt 2 ]; then
     _seams=$("$PY" racecast/build_ranking_results.py --stage seams --sport "$_sp" \
-               --parts "${XCP_RANK_PARTS:-4}" 2>>"$LOGDIR/10_rankings_seams.log" | tail -n 1)
+               --parts "$_RPARTS" 2>>"$LOGDIR/10_rankings_seams.log" | tail -n 1)
     _seams=$(rankSeamsOk "$_seams")
   fi
   [ -n "$_seams" ] || _seams="2018-01-01"
@@ -1816,7 +1847,7 @@ for _sp in XC TF; do
     _prev="$_s"; _i=$((_i + 1))
   done
 done
-XCP_STREAMS="${XCP_RANK_STREAMS:-8}" stepsN "${_RANK[@]}"
+XCP_STREAMS="$_RSTREAMS" stepsN "${_RANK[@]}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
 # ★ THE EDGE FORGETS THE OLD BOARDS (2026-11-06, scripts/edge_purge.py):
 #   the swap just put new ratings live; without a purge Cloudflare keeps
