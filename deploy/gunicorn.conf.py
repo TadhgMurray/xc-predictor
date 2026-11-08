@@ -19,13 +19,25 @@
 #     yet; the first prediction (warm-up) runs in each worker, never here.
 #   - the predict warm-up thread app.py starts at import: off in the master
 #     (XCP_PREWARM=0 before the import) and started per worker in post_fork.
+#   - ★ torch's thread count (2026-11-08, tested): a model loaded with
+#     torch set to more than one thread leaves an OpenMP pool in the master,
+#     and every forked child HUNG on its first forward pass (3 of 3, killed
+#     by a 15 s alarm); loaded with one thread, all of them ran. So the
+#     master loads with XCP_TORCH_THREADS=1 and post_fork gives each worker
+#     the count predict.py would have chosen (cores // 8).
 import os
 
 preload_app = os.environ.get("XCP_PRELOAD", "1") == "1"
 _WARM = os.environ.get("XCP_PREWARM", "")
+_TORCH_THREADS = os.environ.get("XCP_TORCH_THREADS", "")
 
 if preload_app:
     os.environ["XCP_PREWARM"] = "0"
+    os.environ["XCP_TORCH_THREADS"] = "1"   # the master's load: one thread
+
+
+def _workerTorchThreads():
+    return int(_TORCH_THREADS or max(1, (os.cpu_count() or 1) // 8))
 
 
 def when_ready(server):
@@ -35,10 +47,21 @@ def when_ready(server):
     import gc
     import database
     try:
-        import predict
-        predict._loadModel()           # weights and artifacts, no inference
-    except Exception as exc:                            # noqa: BLE001
-        server.log.warning("preload: model not loaded in the master (%s)", exc)
+        import torch
+        torch.set_num_threads(1)       # before anything torch runs here
+    except Exception:                                   # noqa: BLE001
+        pass
+    import predict
+    # what each worker's warm-up loaded for itself, loaded once: the model
+    # (weights and artifacts, no inference), feature extraction with the
+    # corrections tables (the largest of them), the forecast, race_sim
+    for name, fn in (("model", predict._loadModel), ("features", predict._fx),
+                     ("forecast", predict._fc),
+                     ("race_sim", lambda: __import__("race_sim"))):
+        try:
+            fn()
+        except Exception as exc:                        # noqa: BLE001
+            server.log.warning("preload: %s not loaded in the master (%s)", name, exc)
     database.closePool()               # no socket crosses a fork
     gc.collect()
     gc.freeze()                        # shared pages stay shared
@@ -52,6 +75,13 @@ def post_fork(server, worker):
     import database
     database._pool = None              # belt and braces: always a fresh pool
     database._slots = None
+    os.environ["XCP_TORCH_THREADS"] = str(_workerTorchThreads())
+    try:
+        import sys
+        if "torch" in sys.modules:
+            sys.modules["torch"].set_num_threads(_workerTorchThreads())
+    except Exception:                                   # noqa: BLE001
+        pass
     if _WARM != "0":
         import app
         threading.Thread(target=app._prewarmPredict, name="predict-warm",

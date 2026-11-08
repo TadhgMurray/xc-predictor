@@ -168,6 +168,11 @@ Environment=XCP_DB_LOCK_TIMEOUT_MS=5000 XCP_DB_STATEMENT_TIMEOUT_MS=55000
 #   seconds), never Postgres.
 MemoryHigh=40G
 MemoryMax=48G
+# glibc gives every thread its own malloc arena and rarely hands one back, so
+# one big request (a 3,000-runner field) leaves a worker at its high-water
+# mark for good; two arenas a process keep that from piling up (audit,
+# 2026-11-08)
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/srv/venv/bin/gunicorn -w 24 --timeout 60 --limit-request-line 8190 \
     --max-requests 2000 --max-requests-jitter 400 \
     -c /srv/xc-predictor/deploy/gunicorn.conf.py \
