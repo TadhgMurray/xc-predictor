@@ -70,3 +70,38 @@ def test_the_master_compiles_them_before_freezing():
     assert "precompileTemplates()" in body
     assert body.index("precompileTemplates()") < body.index("gc.freeze()")
     assert body.index("precompileTemplates()") < body.index("database.closePool()")
+
+
+def test_a_template_from_the_bytecode_cache_renders_the_same(A, tmp_path):
+    """when_ready loads them through jinja2.FileSystemBytecodeCache: a
+    restart reads the compiled code back instead of compiling again."""
+    bcc = jinja2.FileSystemBytecodeCache(str(tmp_path))
+    writer = A.app.jinja_env.overlay(cache_size=0, bytecode_cache=bcc)
+    reader = A.app.jinja_env.overlay(cache_size=0, bytecode_cache=bcc)
+    fresh = A.app.jinja_env.overlay(cache_size=0)
+    names = A.app.jinja_env.list_templates()
+    for n in names:
+        writer.get_template(n)
+    assert len(os.listdir(tmp_path)) == len(names)
+    loads = []
+    real = bcc.load_bytecode
+    bcc.load_bytecode = lambda bucket: (real(bucket), loads.append(bucket.code is not None))[0]
+    with A.app.test_request_context("/"):
+        for env in (reader, fresh):
+            env.undefined = jinja2.ChainableUndefined
+        for n in names:
+            outs = []
+            for env in (reader, fresh):
+                try:
+                    outs.append(env.get_template(n).render())
+                except Exception as exc:                # noqa: BLE001
+                    outs.append(("raised", type(exc).__name__))
+            assert outs[0] == outs[1], n
+    assert loads and all(loads), "the reader compiled instead of loading"
+
+
+def test_the_master_uses_the_bytecode_cache_unless_told_not_to():
+    src = open(os.path.join(_ROOT, "deploy", "gunicorn.conf.py"), encoding="utf-8").read()
+    body = src[src.index("def when_ready"):src.index("def _startWarmer")]
+    assert body.index("FileSystemBytecodeCache()") < body.index("precompileTemplates()")
+    assert 'XCP_JINJA_BYTECODE' in body
