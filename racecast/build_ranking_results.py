@@ -38,6 +38,9 @@ import psycopg2.extras
 
 sys.path.insert(0, "scripts")
 from database import getConn, dbSetting, dbJobs, dbQuiet
+# ★ THE LAYOUT SWITCHES (XCP_RR_LEAN, XCP_RR_ORDERED; both off by default).
+#   Beside this file, and light: add_page_indexes and db_health read it too.
+import rr_layout
 
 # poolFor is the engine's SSOT for grade -> level -> pool. IMPORT it; do not
 # reimplement it in SQL. Reimplementing is how the site and the engine drift
@@ -2051,6 +2054,64 @@ def _migrateLive(conn, like):
 
 
 
+# the tables whose shadow XCP_RR_LEAN creates in alignment order. Not
+# athlete_season: its row is already nearly packed (185 -> 184 MB in the lab).
+_NARROW_TABLES = ("ranking_results",)
+
+
+def _narrowShadowBody(cur, like):
+    """The body of a CREATE TABLE that is `LIKE like INCLUDING DEFAULTS
+    INCLUDING CONSTRAINTS` in every respect but the column order, or None
+    when the live table cannot be read (createShadow then uses LIKE).
+
+    ★ WHY. The live order loses ~21 bytes a row to alignment padding: a
+      short `sport` text before the bigint result_id, `grade` before
+      meet_id. Fixed-width columns widest first, then the texts, packs it
+      (rr_layout.alignRank; the lab: heap -6.4%, boards -2% buffers).
+
+    ! EXACTLY WHAT LIKE COPIES, READ FROM THE LIVE TABLE'S CATALOGUE, not
+      from a list here: each column's type with its modifier
+      (format_type), its collation where it is not the type's own, NOT
+      NULL, its default, and every CHECK constraint by name. LIKE copies
+      no identity, generated expression, storage or statistics target
+      without an INCLUDING, so neither does this.
+    ! THE ORDER IS SAFE ONLY BECAUSE EVERY WRITER NAMES ITS COLUMNS: the
+      stream's COPY and seedOtherSports name _COLUMNS, the ordered rewrite
+      names the shadow's own. tests/test_rr_layout_flags.py holds a
+      shadow made this way to the LIKE one, column for column.
+    ! WITHIN A WIDTH THE LIVE ORDER IS KEPT, so a table already narrow
+      comes out the same, run after run."""
+    cur.execute("""
+        SELECT a.attname, format_type(a.atttypid, a.atttypmod), a.attnotnull,
+               pg_get_expr(d.adbin, d.adrelid), t.typlen, t.typalign,
+               CASE WHEN a.attcollation <> t.typcollation
+                    THEN quote_ident(cn.nspname) || '.' || quote_ident(co.collname) END
+        FROM   pg_attribute a
+        JOIN   pg_type t ON t.oid = a.atttypid
+        LEFT   JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        LEFT   JOIN pg_collation co ON co.oid = a.attcollation
+        LEFT   JOIN pg_namespace cn ON cn.oid = co.collnamespace
+        WHERE  a.attrelid = to_regclass(%s) AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER  BY a.attnum""", (f"public.{like}",))
+    cols = cur.fetchall()
+    if not cols:
+        return None
+    cur.execute("""SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+                   WHERE conrelid = to_regclass(%s) AND contype = 'c'
+                   ORDER BY conname""", (f"public.{like}",))
+    checks = cur.fetchall()
+    ranked = sorted(enumerate(cols), key=lambda ic: (rr_layout.alignRank(ic[1][4], ic[1][5]), ic[0]))
+    parts = []
+    for _i, (col, typ, notnull, default, _len, _align, coll) in ranked:
+        parts.append(f'"{col}" {typ}'
+                     + (f" COLLATE {coll}" if coll else "")
+                     + (f" DEFAULT {default}" if default is not None else "")
+                     + (" NOT NULL" if notnull else ""))
+    for con, cdef in checks:
+        parts.append(f'CONSTRAINT "{con}" {cdef}')
+    return ", ".join(parts)
+
+
 def createShadow(conn, name, like):
     """Fresh empty `name` shaped exactly like `like`.
 
@@ -2111,8 +2172,14 @@ def createShadow(conn, name, like):
         #   pipeline runs that itself, last and throttled
         #   (scripts/gentle_vacuum.py, step 18). The reloption survives
         #   SET LOGGED and the rename.
+        # ★ XCP_RR_LEAN: THE SAME COLUMNS IN ALIGNMENT ORDER (plan step 1.4;
+        #   -6% heap in the lab). See _narrowShadowBody.
+        body = (_narrowShadowBody(cur, like)
+                if rr_layout.lean() and like in _NARROW_TABLES else None)
+        if body is None:
+            body = f"LIKE {like} INCLUDING DEFAULTS INCLUDING CONSTRAINTS"
         cur.execute(f"CREATE UNLOGGED TABLE {name} "
-                    f"(LIKE {like} INCLUDING DEFAULTS INCLUDING CONSTRAINTS) "
+                    f"({body}) "
                     f"WITH (autovacuum_enabled = false)")
 
         # Index builds sort; the default 64MB spills a 61.6M row sort to disk.
@@ -2316,10 +2383,24 @@ def _indexSig(ddl):
       removed, rr_board_mark_idx never matched itself: it built in 62s on
       the owner's run, verifyIndexes still called it missing, and the
       finish refused to swap.
+    ⚠ AND THE STORAGE CLAUSE (2026-11-08, XCP_RR_LEAN). A lean index comes
+      back from pg_indexes as `... (person_id) WITH (fillfactor='100')`;
+      the same failure, for every index at once. rr_layout.indexSig drops
+      the WITH (...) before comparing; tests/test_rr_layout_flags.py.
     """
-    i = ddl.find("(")
-    tail = ddl[i:] if i >= 0 else ddl
-    return re.sub(r"[\s()]", "", tail).lower()
+    return rr_layout.indexSig(ddl)
+
+
+def canonicalIndexes(like):
+    """_CANONICAL_INDEXES[like] as this run builds them: under XCP_RR_LEAN
+    the four rating trees are partial (rr_layout.LEAN_PARTIAL). Off, the
+    list itself, unchanged.
+
+    ! THE LITERAL STAYS THE LITERAL. db_health and layout_lab read
+      _CANONICAL_INDEXES from the source text; the switch is applied here,
+      where the build, its verify and ensure_ranking_indexes all read it."""
+    return [(n, rr_layout.leanSpec(like, n, cols))
+            for n, cols in _CANONICAL_INDEXES.get(like, [])]
 
 
 def _canonicaliseIndexNames(conn, like):
@@ -2444,7 +2525,7 @@ def indexDefs(conn, like):
     #   lines -- possibly the NEW one) or, built at the same moment, failed
     #   step 10 on pg_class_relname_nsp_index. The catalogue's copy of a
     #   canonical name whose columns changed is dropped here.
-    canon = dict(_CANONICAL_INDEXES.get(like, []))
+    canon = dict(canonicalIndexes(like))
     retired = _RETIRED_INDEXES.get(like, set())
     strip = re.compile(r"^(?:" + re.escape(like) + r"(?:_new)*_)?")
     kept = []
@@ -2464,7 +2545,7 @@ def indexDefs(conn, like):
     # earlier run carries an auto-generated name, and adding ours beside it
     # would build the same tree twice.
     have = {_indexSig(ddl) for _n, ddl in defs}
-    for name, cols in _CANONICAL_INDEXES.get(like, []):
+    for name, cols in canonicalIndexes(like):
         if _indexSig(cols) in have:
             continue
         defs.append((f"{like}_{name}",
@@ -2570,7 +2651,10 @@ def buildIndexes(conn, name, like):
                           f"INDEX IF NOT EXISTS {newname} ")
         sql = sql.replace(f"INDEX IF NOT EXISTS {idxname} ",
                           f"INDEX IF NOT EXISTS {newname} ")
-        return newname, sql
+        # ★ XCP_RR_LEAN: fillfactor 100; off, a lean build's clause is
+        #   taken back out (rr_layout.withStorage). No clause either way:
+        #   the statement is today's.
+        return newname, rr_layout.withStorage(sql)
 
     # ★ ONE CONNECTION EACH, IN PARALLEL. Four indexes over 56.6M rows built
     #   one after another is four full sorts in series, and the server sits
@@ -2655,7 +2739,7 @@ def verifyIndexes(conn, name, like):
     ! A BARE TABLE IS WORSE THAN A STALE ONE. Failing here leaves yesterday's
       ranking_results serving pages; swapping leaves the site down.
     """
-    want = _CANONICAL_INDEXES.get(like, [])
+    want = canonicalIndexes(like)
     if not want:
         return
     _sig = _indexSig
@@ -2668,7 +2752,8 @@ def verifyIndexes(conn, name, like):
           f"the build -- rebuilding serially:")
     for idxname, cols in missing:
         newname = _freeIndexName(conn, f"{name}_{idxname}", name)
-        sql = f"CREATE INDEX IF NOT EXISTS {newname} ON public.{name} {cols}"
+        sql = rr_layout.withStorage(
+            f"CREATE INDEX IF NOT EXISTS {newname} ON public.{name} {cols}")
         t0 = time.time()
         try:
             with getConn() as c:
@@ -2769,6 +2854,123 @@ def setLogged(conn, table):
         cur.execute(f"ALTER TABLE {table} SET LOGGED")
     conn.commit()
     print(f"    [{time.time() - t0:7.1f}s] {table}: set logged (before its indexes)")
+
+
+def relog(conn, table, like):
+    """The shadow's one rewrite before its indexes: SET LOGGED, or under
+    XCP_RR_ORDERED the same rewrite in board order (orderedRewrite), which
+    falls back to SET LOGGED when it has no room to sort."""
+    if rr_layout.ordered() and orderedRewrite(conn, table, like):
+        return
+    setLogged(conn, table)
+
+
+# room the ordered rewrite wants on the data disk, as a multiple of the
+# shadow's size: the new heap (1x) plus the sort's spill (up to ~1x) plus slack
+_ORDERED_ROOM = 2.2
+
+
+def _freeBytes(cur):
+    """Free bytes on the server's data disk, when this process can see it
+    (the pipeline runs on the database's box); None when it cannot."""
+    import shutil
+    try:
+        cur.execute("SAVEPOINT free_bytes")
+        cur.execute("SELECT current_setting('data_directory')")
+        path = cur.fetchone()[0]
+        cur.execute("RELEASE SAVEPOINT free_bytes")
+    except psycopg2.Error:
+        cur.execute("ROLLBACK TO SAVEPOINT free_bytes")
+        return None
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
+def _roomErrors():
+    """The errors that mean "no room to sort", from the server: the disk
+    (or a temp_file_limit) ran out, or memory did."""
+    names = ("DiskFull", "ConfigurationLimitExceeded", "OutOfMemory")
+    return tuple(getattr(psycopg2.errors, n) for n in names
+                 if isinstance(getattr(psycopg2.errors, n, None), type))
+
+
+def orderedRewrite(conn, table, like):
+    """★ XCP_RR_ORDERED (docs/TABLE-LAYOUT-EXPERIMENTS.md, step 2): the
+    unlogged shadow copied into a LOGGED table in board order, in place of
+    SET LOGGED. True when done; False when it stood down (no room), and the
+    caller sets the shadow logged as before.
+
+    ★ WHY. The stream writes rows in the order it reads `results` (scrape
+      order, four processes at once), so a board's candidates sit one per
+      page. SET LOGGED already rewrites the whole heap once; written in
+      board order (rr_layout.BOARD_ORDER) the boards read 2.2x fewer pages
+      and the planner sees the pool/sport/year correlation (lab: boards -55%
+      buffers and ~3x faster, the misplanned PR boards become index walks).
+      Same heap write and WAL as SET LOGGED, plus one sort; the indexes
+      after it build 25-35% cheaper from nearly sorted keys.
+
+    ! ONE TRANSACTION: the copy, the drop of the unordered shadow and the
+      rename. Anything failing leaves the shadow exactly as it was.
+    ! EVERY ROW, NAMED COLUMNS: INSERT INTO new (cols) SELECT cols, the
+      shadow's own columns in its own order (LIKE keeps both), so the copy
+      holds every value of every row: one statement, one snapshot, no WHERE,
+      and nothing else writes a shadow (tests/test_rr_layout_flags.py
+      checks count and checksum). The order changes no query's result:
+      every board's ORDER BY ends in a unique key (rankings._orderBy).
+    ! A RESUMED FINISH DOES NOT SORT TWICE: a shadow that is already logged
+      was rewritten (or set logged) by the attempt before, and is left as it
+      is -- the same no-op SET LOGGED is on a logged table.
+    ⚠ THE SORT NEEDS ROOM: about 1x the heap of temp files beside the 1x new
+      heap. Checked first against the data disk when this box can see it,
+      and a sort that runs out anyway (DiskFull, temp_file_limit, memory)
+      rolls back and the build falls back to SET LOGGED, saying so."""
+    order = rr_layout.BOARD_ORDER[like]
+    tmp = f"{table}_sorted"
+    with conn.cursor() as cur:
+        cur.execute("SELECT c.relpersistence, pg_table_size(c.oid) FROM pg_class c "
+                    "WHERE c.oid = to_regclass(%s)", (f"public.{table}",))
+        persistence, size = cur.fetchone()
+        if persistence == "p":
+            conn.rollback()
+            print(f"    {table}: already logged (a resumed finish) -- left in its order")
+            return True
+        free = _freeBytes(cur)
+        cur.execute("""SELECT a.attname FROM pg_attribute a
+                       WHERE a.attrelid = to_regclass(%s) AND a.attnum > 0
+                         AND NOT a.attisdropped ORDER BY a.attnum""",
+                    (f"public.{table}",))
+        cols = ", ".join(f'"{r[0]}"' for r in cur.fetchall())
+        cur.execute(f"DROP TABLE IF EXISTS {tmp}")
+    conn.commit()
+    if free is not None and free < _ORDERED_ROOM * size:
+        print(f"    ⚠ {table}: {free / 2**30:.1f} GB free, the ordered rewrite of "
+              f"{size / 2**30:.1f} GB wants {_ORDERED_ROOM * size / 2**30:.1f} -- "
+              f"SET LOGGED instead (rows in stream order)")
+        return False
+    t0 = time.time()
+    try:
+        with conn.cursor() as cur:
+            # the athlete_season aggregate's ladder: the sort is the same size
+            got = _seasonWorkMem(conn, cur, _SEASON_WORK_MEM, quiet_log=True)
+            cur.execute(f"CREATE TABLE {tmp} (LIKE {table} INCLUDING DEFAULTS "
+                        f"INCLUDING CONSTRAINTS) WITH (autovacuum_enabled = false)")
+            cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table} "
+                        f"ORDER BY {order}")
+            n_out = cur.rowcount
+            cur.execute(f"DROP TABLE {table}")
+            cur.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
+        conn.commit()
+    except _roomErrors() as exc:
+        conn.rollback()
+        print(f"    ⚠ {table}: the ordered rewrite ran out of room "
+              f"({type(exc).__name__}: {str(exc).splitlines()[0]}) -- "
+              f"SET LOGGED instead (rows in stream order)")
+        return False
+    print(f"    [{time.time() - t0:7.1f}s] {table}: logged, {n_out:,} rows in board "
+          f"order ({order}; work_mem {got})")
+    return True
 
 
 def verifyShadow(conn, tables):
@@ -3334,7 +3536,9 @@ def refreshAthleteSeason(conn):
     # ! AND ITS INDEXES. createShadow copies structure without them by design,
     #   and this call was missing -- so every run since swapped in a
     #   12.9M-row table with no index on it at all.
-    setLogged(conn, _LOAD_SEASON)
+    # ★ XCP_RR_ORDERED: rewritten in board order instead (relog), which
+    #   also leaves the unit stamping's dead row versions behind
+    relog(conn, _LOAD_SEASON, "athlete_season")
     buildIndexes(conn, _LOAD_SEASON, "athlete_season")
 
 
@@ -3874,7 +4078,8 @@ def main():
         #   refreshAthleteSeason below reads this table, so they have to exist
         #   before it runs.
         with phase("index ranking_results"):
-            setLogged(conn, _LOAD_TABLE)
+            # ★ XCP_RR_ORDERED: rewritten in board order instead (relog)
+            relog(conn, _LOAD_TABLE, "ranking_results")
             buildIndexes(conn, _LOAD_TABLE, "ranking_results")
 
         with phase("athlete_season"):

@@ -673,6 +673,80 @@ def build_cost(args):
         json.dump(rep, fh, indent=1)
 
 
+# ★ THE REAL BUILDER, SWITCH BY SWITCH (2026-11-08: the plan's steps 1 and 2
+#   as shipped behind XCP_RR_LEAN / XCP_RR_ORDERED). Not the lab's own
+#   re-statement of a layout: build_ranking_results' createShadow, relog
+#   (SET LOGGED or the ordered rewrite) and buildIndexes (with its
+#   verifyIndexes) run on the base rows, exactly as `--stage finish` runs
+#   them; the built shadows are then moved into lab_<name>, where `bench`
+#   reads them like any other layout. flag_off is the control: today's
+#   build, which must equal base.
+FLAG_LAYOUTS = {"flag_off": (False, False), "flag_lean": (True, False),
+                "flag_ordered": (False, True), "flag_both": (True, True)}
+
+
+def builder_variant(name, log=print):
+    """lab_<name> built by the real finish step under its switches; returns
+    {step: seconds} and the sizes. The stream's COPY is stood in for by an
+    INSERT of the base rows in the base heap's (the stream's) order."""
+    import build_ranking_results as B                               # noqa: E402
+    lean, ordered = FLAG_LAYOUTS[name]
+    saved = {k: os.environ.get(k) for k in ("XCP_RR_LEAN", "XCP_RR_ORDERED")}
+    os.environ["XCP_RR_LEAN"] = "1" if lean else "0"
+    os.environ["XCP_RR_ORDERED"] = "1" if ordered else "0"
+    sch = f"lab_{name}"
+    conn = connect(autocommit=False)
+    tune(conn)
+    T = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP SCHEMA IF EXISTS {sch} CASCADE")
+            cur.execute(f"CREATE SCHEMA {sch}")
+        conn.commit()
+        for like, load in (("ranking_results", B._LOAD_TABLE),
+                           ("athlete_season", B._LOAD_SEASON)):
+            p = "rr" if like == "ranking_results" else "as"
+            B.createShadow(conn, load, like)
+            with conn.cursor() as cur:
+                cur.execute("""SELECT attname FROM pg_attribute WHERE attrelid = %s::regclass
+                               AND attnum > 0 AND NOT attisdropped ORDER BY attnum""",
+                            (f"public.{like}",))
+                cols = ", ".join(f'"{r[0]}"' for r in cur.fetchall())
+                t0 = time.time()
+                cur.execute(f"INSERT INTO {load} ({cols}) SELECT {cols} FROM public.{like}")
+            conn.commit()
+            T[f"{p}_load"] = time.time() - t0
+            t0 = time.time()
+            B.relog(conn, load, like)
+            T[f"{p}_relog"] = time.time() - t0
+            t0 = time.time()
+            B.buildIndexes(conn, load, like)             # verifyIndexes + ANALYZE inside
+            T[f"{p}_index"] = time.time() - t0
+            with conn.cursor() as cur:
+                cur.execute(f"ALTER TABLE public.{load} SET SCHEMA {sch}")
+                cur.execute(f"ALTER TABLE {sch}.{load} RENAME TO {like}")
+            conn.commit()
+        conn.autocommit = True
+        T["vacuum"] = (run(conn, f"VACUUM (ANALYZE) {sch}.ranking_results", quiet=True)
+                       + run(conn, f"VACUUM (ANALYZE) {sch}.athlete_season", quiet=True))
+        rep = {"layout": name, "lean": lean, "ordered": ordered,
+               "steps": {k: round(v, 1) for k, v in T.items()}, "sizes": sizes(conn, sch)}
+    finally:
+        conn.close()
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    s = rep["sizes"]
+    log(f"  {name}: rr heap {s['ranking_results']['heap'] / 2**20:.0f} MB, "
+        f"indexes {s['ranking_results']['indexes'] / 2**20:.0f} MB; "
+        f"as heap {s['athlete_season']['heap'] / 2**20:.0f} MB, "
+        f"indexes {s['athlete_season']['indexes'] / 2**20:.0f} MB; "
+        + ", ".join(f"{k} {v}s" for k, v in rep["steps"].items()))
+    return rep
+
+
 def sizes(conn, sch):
     """heap and index bytes of the two tables in a schema, partitions summed."""
     out = {}
@@ -840,6 +914,22 @@ def queries(args):
 #  4. THE BENCHMARK
 # ------------------------------------------------------------------ #
 
+def planIndexes(node):
+    """The sorted index names a plan walks, with lab_<x>_ / shadow prefixes
+    taken off, so the same tree compares equal across layouts."""
+    import re
+    out = set()
+
+    def walk(n):
+        if "Index Name" in n:
+            out.add(re.sub(r"^(lab_[a-z]+_|b_[a-z]+_)?(ranking_results|athlete_season)?(_new)*_?", "",
+                           n["Index Name"]))
+        for c in n.get("Plans", []):
+            walk(c)
+    walk(node)
+    return sorted(out)
+
+
 def bench(args):
     qs = json.load(open(os.path.join(OUT_DIR, "layout_queries.json")))
     if args.only:
@@ -872,7 +962,8 @@ def bench(args):
             times.sort()
             res[v][q["label"]] = {"ms": round(times[len(times) // 2], 2), "buffers": bufs,
                                   "rows": len(rows), "md5": h,
-                                  "plan_ms": round(plan.get("Planning Time", 0), 2)}
+                                  "plan_ms": round(plan.get("Planning Time", 0), 2),
+                                  "indexes": planIndexes(plan["Plan"])}
             if args.plans:
                 with open(os.path.join(OUT_DIR, f"plan_{v}_{q['label'].split()[0]}.txt"), "w") as fh:
                     with conn.cursor() as cur:
@@ -901,7 +992,10 @@ def bench(args):
         json.dump(res, fh, indent=1)
     # the table: per query, each variant's ms / buffers, and equality to the first
     base = args.variants[0]
-    print(f"\n{'query':40s}" + "".join(f"{v:>19s}" for v in args.variants))
+    # ★ AND THE TREES EACH PLAN WALKED, against the first variant's: `i`
+    #   after the equality mark when a query used a different set of
+    #   indexes (names with their schema/shadow prefixes taken off)
+    print(f"\n{'query':40s}" + "".join(f"{v:>20s}" for v in args.variants))
     bad = 0
     for q in qs:
         lab = q["label"]
@@ -909,8 +1003,9 @@ def bench(args):
         for v in args.variants:
             r = res[v][lab]
             same = r["md5"] == res[base][lab]["md5"]
+            same_ix = r["indexes"] == res[base][lab]["indexes"]
             bad += not same
-            line += f"{r['ms']:>8.1f}ms {r['buffers']:>7}b {'=' if same else 'X'}"
+            line += f"{r['ms']:>8.1f}ms {r['buffers']:>7}b {'=' if same else 'X'}{' ' if same_ix else 'i'}"
         print(line)
     print(f"\n  {bad} result differences against {base}" if bad else
           f"\n  every result identical to {base}, row for row")
@@ -1024,7 +1119,7 @@ def main():
     g = sub.add_parser("gen")
     g.add_argument("--persons", type=int, default=450000)
     v = sub.add_parser("variant")
-    v.add_argument("names", nargs="+", choices=[k for k in LAYOUTS if k != "base"])
+    v.add_argument("names", nargs="+", choices=[k for k in LAYOUTS if k != "base"] + list(FLAG_LAYOUTS))
     sub.add_parser("queries")
     b = sub.add_parser("bench")
     b.add_argument("variants", nargs="+")
@@ -1045,7 +1140,13 @@ def main():
         gen(a)
     elif a.cmd == "variant":
         for n in a.names:
-            build_layout(n)
+            if n in FLAG_LAYOUTS:
+                rep = builder_variant(n)
+                os.makedirs(OUT_DIR, exist_ok=True)
+                with open(os.path.join(OUT_DIR, f"layout_{n}.json"), "w") as fh:
+                    json.dump(rep, fh, indent=1, default=str)
+            else:
+                build_layout(n)
     elif a.cmd == "queries":
         queries(a)
     elif a.cmd == "bench":

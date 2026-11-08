@@ -533,6 +533,138 @@ machinery.
    migration of the live table is ever needed, because every run builds a
    fresh shadow.
 
+## Steps 1 and 2, shipped behind switches (2026-11-08)
+
+Both switches default **off**. They are read when `build_ranking_results`
+runs, so to turn one on, add it to `/etc/xc-predictor.env` (the pipeline
+sources that file) and the next run's step 10 builds the new layout:
+
+```
+XCP_RR_LEAN=1       # step 1
+XCP_RR_ORDERED=1    # step 2
+```
+
+To roll back, remove the line (or set it to 0). The next run builds the old
+layout and swaps it in. A lean run's partial and fillfactor trees are
+rebuilt full when the switch is off: indexDefs' "redefined in the canonical
+list" path, plus `rr_layout.withStorage`, which removes the fillfactor
+clause.
+
+Code: `racecast/rr_layout.py` holds the switches, the partial list, the
+board order and the shared index signature. It is light enough for
+`add_page_indexes` and `db_health` to import.
+
+**Step 1, `XCP_RR_LEAN=1`:**
+
+* Every index of both tables is built `WITH (fillfactor = 100)`.
+* The four rating trees are partial `WHERE speed_rating IS NOT NULL`
+  (`build_ranking_results.canonicalIndexes`). The `_CANONICAL_INDEXES`
+  literal is unchanged.
+* The ranking_results shadow is created in alignment order
+  (`_narrowShadowBody`). The column list comes from the live table's
+  catalogue: each column's type, collation, NOT NULL and default, and every
+  CHECK constraint. athlete_season keeps its order.
+* Nothing is dropped.
+* The signature trap is closed. `_indexSig` (now `rr_layout.indexSig`)
+  drops any `WITH (...)` clause before comparing.
+* **A second trap the plan did not name.** Step 11b (`add_page_indexes`)
+  compares the live trees against its own specs. If it had not been
+  changed, it would have read every lean tree as missing: the fillfactor
+  clause failed its text compare, and the partial `rr_perf_dist_rating_idx`
+  counted as "PART". It would then have built a full `_f` copy of each,
+  CONCURRENTLY, on every run. It now uses the same lean spec and signature,
+  and accepts a full tree where the lean spec asks for a partial one.
+  `ensure_ranking_indexes` had the same issue and gets the same fix.
+
+**Step 2, `XCP_RR_ORDERED=1`:**
+
+* `relog()` replaces `setLogged()` for both shadows.
+* `orderedRewrite` copies the shadow into a LOGGED table in
+  `rr_layout.BOARD_ORDER`, in one transaction, then drops and renames.
+  * ranking_results: `pool, sport, year, speed_rating DESC NULLS LAST,
+    result_id, person_id`.
+  * athlete_season: `pool, sport, year, mean_rating DESC NULLS LAST,
+    person_id`.
+* It stands down to SET LOGGED, and says so, in two cases:
+  * the data disk has less than 2.2x the shadow free;
+  * the sort runs out of room (DiskFull, temp_file_limit or memory).
+    The transaction then rolls back whole.
+* A resumed finish finds the shadow already logged and does not sort it
+  twice.
+* The stream, the seams and the four COPY processes are unchanged. So are
+  verifyShadow, the swap and the post-swap VACUUM.
+* Physical order is board order except where the free-space map back-fills
+  a page's leftover bytes with a later short row: 0.06% of rows at 6M.
+
+**Exactness:**
+
+* **With both switches off, the build sends exactly what it sent before.**
+  The statements from createShadow, relog and buildIndexes, verify
+  included, were recorded on Postgres for this code and for the previous
+  commit's module: 182 statements each, identical.
+* **With each switch on,** `layout_lab.py variant flag_<x>` ran the real
+  createShadow, relog and buildIndexes on the 6M-row corpus. `bench`
+  compared every statement against base:
+  * all 44 statements returned identical results (md5 of every row, in
+    order) for flag_off, flag_lean, flag_ordered and flag_both;
+  * flag_off's buffers equal base's.
+* **The athlete_season aggregate** was run over the stream-ordered heap and
+  over the board-ordered heap. The 1,340,933 seasons were identical in
+  every column, decayed_rating included.
+* **tests/test_rr_layout_flags.py** runs the rankings functions themselves
+  (21 boards, their counts, and the page lookups) and build_board_seek's
+  source rows on four builds, one per switch setting, with identical
+  results. It also checks count, checksum and md5 per table for the
+  ordered build.
+
+**Which indexes the plans used** (`bench`, flagged `i`):
+
+* Performance, ability and page queries walk the same trees under every
+  switch.
+* Under LEAN, the PR boards no longer read `rr_perf_dist_rating_idx` for
+  their `(pool, sport, distance)` probes, which carry no rating predicate.
+  They read the full `rr_pr_sport_time_idx`, and R3 reads `rr_pr_time_idx`.
+  The buffers were the same or lower: R3 178,145 -> 173,841, R4 22,542 ->
+  3,958.
+* ⚠ **So under LEAN, `rr_pr_time_idx` and `rr_board_time_idx` are not dead
+  weight.** They are the full siblings that keep every prefix of the
+  partial trees indexed. They were zero-scan in the base workload, but do
+  not retire them while LEAN is on without re-running this bench.
+
+**Lab numbers** (6,013,536 rows; buffers summed, ms against the same run's
+base):
+
+| switches | RR heap | RR indexes | AS indexes | boards: buffers | counts: buffers | page lookups |
+|---|---:|---:|---:|---:|---:|---:|
+| off | 1005 MB | 2701 MB | 530 MB | 354,201 (0%) | 485,882 (0%) | 517 |
+| LEAN | 941 MB | 2304 MB (-15%) | 479 MB (-10%) | 328,504 (-7%) | 450,621 (-7%) | 509 |
+| ORDERED | 1005 MB | 2701 MB | 530 MB | 204,473 (-42%), 2268 -> 1141 ms | 268,391 (-45%), 2107 -> 1318 ms | 487 |
+| both | 942 MB | 2304 MB | 479 MB | 203,142 (-43%), 2412 -> 1074 ms | 241,849 (-50%), 2376 -> 1175 ms | 502 |
+
+* The misplanned boards became walks:
+  * R6: 45,191 -> 1,280 buffers (425 -> 9 ms);
+  * R3: 178,145 -> 105,193 (779 -> 106 ms);
+  * P3c: 79,251 -> 10,037.
+* Two queries read more under ORDERED, both still faster:
+  * P4 (hs_m TF 1600): 34k -> 43k buffers, 164 -> 91 ms;
+  * A4c: 6.8k -> 14k buffers, 10 -> 7 ms.
+
+**Build** (the finish step's work on both tables, 3 index jobs):
+
+| switches | RR relog | RR indexes | AS relog | AS indexes | total |
+|---|---:|---:|---:|---:|---:|
+| off | 20.8 s (SET LOGGED) | 81.3 s | 1.9 s | 13.8 s | 117.8 s |
+| LEAN | 13.4 s | 77.0 s | 1.6 s | 11.9 s | 103.9 s (-12%) |
+| ORDERED | 44.0 s (sort + copy) | 68.6 s | 8.0 s | 10.0 s | 130.6 s (+11%) |
+| both | 48.2 s | 60.5 s | 7.2 s | 10.2 s | 126.1 s (+7%) |
+
+At production scale (10x), expect:
+
+* about +4-5 min of sort for ORDERED, partly paid back by 2-3 min of
+  cheaper index builds;
+* the sort's temp files, up to about 1x the heap (about 23 GB), beside the
+  new heap. The 2.2x free-space check is there for that.
+
 ## Files
 
 * `scripts/layout_lab.py`: synthetic data, layouts, benchmark, build cost,

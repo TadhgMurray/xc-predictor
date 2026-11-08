@@ -71,6 +71,9 @@ def indexSig(ddl):
     index and a listed one compare the way the builder compares them."""
     i = ddl.find("(")
     tail = ddl[i:] if i >= 0 else ddl
+    # ! the storage clause out, as the builder does (XCP_RR_LEAN writes
+    #   WITH (fillfactor = 100); rr_layout.indexSig)
+    tail = re.sub(r"\s+WITH\s*\([^()]*\)", "", tail, flags=re.I)
     return re.sub(r"[\s()]", "", tail).lower()
 
 

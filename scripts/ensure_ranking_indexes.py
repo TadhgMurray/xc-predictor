@@ -31,18 +31,26 @@ import time
 sys.path.insert(0, "racecast")
 sys.path.insert(0, "scripts")
 from database import getConn                      # noqa: E402
-from build_ranking_results import _CANONICAL_INDEXES   # noqa: E402
+from build_ranking_results import (_CANONICAL_INDEXES,   # noqa: E402
+                                   canonicalIndexes, _indexSig)
+import rr_layout                                          # noqa: E402
 
 
 def _cols(ddl):
-    """The column list of an index definition, whitespace and case removed.
+    """The column list of an index definition, normalised as the build's
+    verifyIndexes normalises it (build_ranking_results._indexSig).
 
     Compared on columns rather than name because an index built by an earlier
     run carries an auto-generated name -- matching on the name would build the
     same tree a second time under a new one.
+
+    ⚠ THE BUILD'S RULE, NOT A COPY OF AN OLDER ONE (2026-11-08). This used
+      to strip spaces only, so the partial rr_board_mark_idx (written back
+      with its predicate in parentheses) and, under XCP_RR_LEAN, every tree
+      (written back WITH (fillfactor='100')) read as MISSING, and --apply
+      built a second copy of each.
     """
-    i = ddl.find("(")
-    return ddl[i:].replace(" ", "").lower() if i >= 0 else ddl
+    return _indexSig(ddl)
 
 
 def existing(cur, table):
@@ -79,7 +87,10 @@ def main():
     with getConn() as conn:
         conn.autocommit = True          # CONCURRENTLY cannot run in a txn
         with conn.cursor() as cur:
-            for table, wanted in _CANONICAL_INDEXES.items():
+            for table in _CANONICAL_INDEXES:
+                # ★ AS THIS RUN'S BUILD WANTS THEM (XCP_RR_LEAN: partial
+                #   rating trees, fillfactor 100)
+                wanted = canonicalIndexes(table)
                 have = existing(cur, table)
                 have_cols = {_cols(d) for _n, d, _s in have}
                 n = rowCount(cur, table)
@@ -99,8 +110,9 @@ def main():
                         print(f"  MISSING {full} {cols}")
                         continue
                     how = "" if args.lock else "CONCURRENTLY "
-                    sql = (f"CREATE INDEX {how}IF NOT EXISTS {full} "
-                           f"ON public.{table} {cols}")
+                    sql = rr_layout.withStorage(
+                        f"CREATE INDEX {how}IF NOT EXISTS {full} "
+                        f"ON public.{table} {cols}")
                     print(f"  building {full} {cols} ...", flush=True)
                     t0 = time.time()
                     cur.execute(sql)
