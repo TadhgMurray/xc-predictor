@@ -170,6 +170,7 @@ MemoryHigh=40G
 MemoryMax=48G
 ExecStart=/srv/venv/bin/gunicorn -w 24 --timeout 60 --limit-request-line 8190 \
     --max-requests 2000 --max-requests-jitter 400 \
+    -c /srv/xc-predictor/deploy/gunicorn.conf.py \
     --pythonpath /srv/xc-predictor/racecast,/srv/xc-predictor/scripts,/srv/xc-predictor/engine \
     -b 127.0.0.1:8000 app:app
 Restart=always
