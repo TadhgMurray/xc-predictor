@@ -95,6 +95,10 @@ def loadLabels(conn_factory, force=False):
                 #   pure SQL builder with no cursor, and a clause naming a
                 #   table that is not there is an error on every page.
                 _LABELS["athlete_state"] = _tableExists(cur, "school_athlete_state")
+                # the towns behind athletic.net's short brackets ("(SB)")
+                if _tableExists(cur, "school_qualifier_city"):
+                    cur.execute("SELECT school, city FROM school_qualifier_city")
+                    _LABELS["qual_city"] = {r[0]: r[1] for r in cur.fetchall()}
                 # the runners of the college names two states share
                 # (build_school_identity.buildCollegePersonState)
                 if _tableExists(cur, "college_person_state"):
@@ -111,13 +115,24 @@ def loadLabels(conn_factory, force=False):
     _LABELS["loaded"] = True
 
 
+def withTown(school, state):
+    """withState, with athletic.net's short town bracket spelled out: 'San
+    Marcos (SB)' + 'CA' -> 'San Marcos (Santa Barbara, CA)' when the build
+    knows the town (school_qualifier_city); else withState."""
+    town = (_LABELS.get("qual_city") or {}).get(school)
+    if not town:
+        return withState(school, state)
+    base = _TRAIL_PAREN.sub("", str(school)).rstrip()
+    return f"{base} ({town}, {state})" if state else f"{base} ({town})"
+
+
 def schoolLabel(school):
     """'Highland' -> 'Highland (UT)'. The template filter every school
     column renders through. Unknown schools come back untouched."""
     if not school:
         return school
     st = _LABELS["map"].get(school)
-    return withState(school, st)
+    return withTown(school, st)
 
 
 # a same-named school in the context's own state needs at least this share
@@ -247,8 +262,12 @@ def namesItsState(school):
     if not m:
         return False
     inner = m.group(1).strip().rstrip(".").lower()
+    # ! A STATE CODE, NOT ANY TWO LETTERS (owner, 2026-11-08: "San Marcos
+    #   (SB)" -- athletic.net's bracket for Santa Barbara -- passed as its own
+    #   state, so no "(CA)" was ever added)
     if len(inner) == 2 and inner.isalpha():
-        return True
+        from school_name import STATE_CODES
+        return inner.upper() in STATE_CODES
     return inner in _AP_STATES or inner in _STATE_NAMES
 
 
@@ -293,7 +312,7 @@ def schoolLabelIn(school, state, trusted=False, pool=None):
         return withState((collegeFullName(school, st) if p.startswith("college") else None)
                          or school, st)
     st = contextState(school, state, trusted)
-    return withState(school, st)
+    return withTown(school, st)
 
 
 def _collegeState(school, state=None, person_id=None):
