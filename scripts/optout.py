@@ -14,9 +14,9 @@ optout.py -- hide one athlete from the public site at their request.
   every row naming them reads "Hidden athlete" with no link, and the search
   index, the sitemap and the follow digest leave them out.
 
-! THE SITE READS THE TABLE AT START-UP. After --add or --remove: restart the
-  site, then rebuild the search index and the sitemap (printed below), or
-  the old entry stays findable until the nightly run rebuilds them.
+★ NOTHING ELSE IS NEEDED (owner, 2026-11-08): the site re-reads the table
+  every five minutes (person_optout.REFRESH_S), and the nightly rebuilds the
+  search index and the sitemap. The steps printed below make it immediate.
 
 Read-only with --list (or no arguments).
 """
@@ -34,22 +34,20 @@ import person_optout as optout                           # noqa: E402
 
 # what the owner runs after a change, from the repo root on the server
 NEXT_STEPS = """
-next:
-  1. restart the site so every worker reloads the hidden list:
+next (nothing is required: within REFRESH_S, five minutes, every site worker
+re-reads the hidden list on its own; the edge forgets a page within
+XCP_PAGE_S_MAXAGE, 15 minutes; tonight's nightly rebuilds the search index
+and the sitemap and purges the CDN). To make it immediate instead:
+  1. restart the site:
        sudo systemctl restart xc-predictor
-  2. rebuild the search index and the sitemap (or wait for tonight's run,
-     steps 13c_search_index / 13d_sitemap):
+  2. rebuild the search index and the sitemap now:
        cd /srv/xc-predictor
        /srv/venv/bin/python -u racecast/search_index.py
        /srv/venv/bin/python -u racecast/build_sitemap.py
-  3. AFTER the restart, empty the CDN -- everything, since race, meet and
-     school pages name them too (a no-op until XCP_CF_ZONE_ID and
-     XCP_CF_API_TOKEN are set; then purge in the Cloudflare dashboard, or
-     wait XCP_PAGE_S_MAXAGE):
+  3. empty the CDN (a no-op until XCP_CF_ZONE_ID and XCP_CF_API_TOKEN are set):
        /srv/venv/bin/python scripts/edge_purge.py
   4. only if the edge board snapshot is in use (deploy/cloudflare/README.md):
-     switch it off -- a purge does not reach Workers KV -- and republish it
-     once the restart is done:
+     switch it off -- a purge does not reach Workers KV -- and republish it:
        /srv/venv/bin/python scripts/edge_snapshot.py --off
 """
 
