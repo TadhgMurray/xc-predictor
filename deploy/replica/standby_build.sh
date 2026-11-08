@@ -178,6 +178,7 @@ if [ -f "$PG_DATA/PG_VERSION" ]; then
     LOCAL_MB="$(du -sm "$PG_DATA/base" 2>/dev/null | cut -f1)"
   fi
 fi
+LOCAL_MB="${LOCAL_MB:-0}"
 
 sync_settings
 
@@ -199,6 +200,13 @@ fi
 if [ "$MODE" = build ] && [ "$IS_STANDBY" = 1 ] && local_up && [ "$(receiver_status)" = streaming ]; then
   psql_local -d postgres -c "SELECT pg_reload_conf()" >/dev/null
   say "already a streaming standby of $RC_PEER_NAME; settings re-synced. (--rebuild copies again.)"
+  exit 0
+fi
+# ! A STANDBY THAT IS STOPPED OR STILL CATCHING UP IS NOT RE-COPIED without
+#   --rebuild: start it and let it stream (the slot kept its WAL).
+if [ "$MODE" = build ] && [ "$IS_STANDBY" = 1 ]; then
+  say "this box is a standby that is not streaming yet; starting it (--rebuild to copy again)"
+  finish_standby
   exit 0
 fi
 
