@@ -379,7 +379,32 @@ def closePool():
 # Output: Yields a psycopg2 connection object.
 @contextmanager
 def getConn():
+    """A connection for one block: the primary's (_primaryConn), unless this
+    process has a read replica (XCP_DB_READ_DSN, scripts/read_routing.py,
+    docs/REPLICA-PLAN.md), when it is a routed connection that reads the
+    replica and sends every write -- and the rest of its block -- to the
+    primary.
+
+    ! UNSET IS TODAY'S BEHAVIOUR: the same pool and checks, no import, no
+      second pool.
+      read_routing.active() also says no for any process but the site's
+      (XCP_DB_APP, XCP_DB_READ_APPS) and under XCP_DB_QUIET (the pipeline),
+      so a read DSN that lands in the shared env file cannot send a
+      builder's reads to a replica that is minutes behind."""
+    if os.environ.get("XCP_DB_READ_DSN"):
+        import read_routing
+        if read_routing.active():
+            with read_routing.routedConn(_primaryConn) as conn:
+                yield conn
+            return
+    with _primaryConn() as conn:
+        yield conn
+
+
+@contextmanager
+def _primaryConn():
     """A live connection from the pool, returned when the block ends.
+    (This was getConn's body until read routing; it is unchanged.)
 
     ★ CHECKED ON THE WAY OUT, DISCARDED ON THE WAY BACK (2026-09-07). The
       pool never noticed a connection whose server side had died (a
