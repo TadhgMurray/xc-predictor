@@ -554,8 +554,9 @@ def anetCollegeNamesakes(cur, names):
 
 
 def hsSchools(cur, pids):
-    """{person_id: {(academic year, school lowercased)}} of each person's high
-    school rows (a school grade 1-12), both sports."""
+    """{person_id: {(academic year, school lowercased, grade)}} of each
+    person's high school rows (a school grade 1-12), both sports. The
+    academic year is named by the year it ENDS (fall 2025 -> 2026)."""
     pids = sorted({int(p) for p in pids if p is not None})
     if not pids:
         return {}
@@ -563,18 +564,26 @@ def hsSchools(cur, pids):
     year = ("(CASE WHEN substring(date, 6, 2) >= '08' THEN substring(date, 1, 4)::int + 1 "
             "ELSE substring(date, 1, 4)::int END)")
     cur.execute(f"""
-        SELECT DISTINCT person_id, {year}, lower(btrim(school)) FROM results
+        SELECT DISTINCT person_id, {year}, lower(btrim(school)), btrim(grade)::int FROM results
         WHERE  person_id = ANY(%(p)s) AND COALESCE(grade, '') ~ {school_grade}
           AND  NULLIF(btrim(school), '') IS NOT NULL AND date ~ '^[0-9]{{4}}-[0-9]{{2}}'
         UNION
-        SELECT DISTINCT person_id, {year}, lower(btrim(school)) FROM results_tf
+        SELECT DISTINCT person_id, {year}, lower(btrim(school)), btrim(grade)::int FROM results_tf
         WHERE  person_id = ANY(%(p)s) AND COALESCE(grade, '') ~ {school_grade}
           AND  NULLIF(btrim(school), '') IS NOT NULL AND date ~ '^[0-9]{{4}}-[0-9]{{2}}'
     """, {"p": pids})
     out = defaultdict(set)
-    for pid, y, school in cur.fetchall():
-        out[pid].add((int(y), school))
+    for pid, y, school, grade in cur.fetchall():
+        out[pid].add((int(y), school, int(grade)))
     return dict(out)
+
+
+def classOf(rows):
+    """The high school class a person's grade rows imply (the academic year,
+    end-named, of their grade 12), the median; None without grades. Pure."""
+    import statistics as _st
+    cls = [y + 12 - g for y, _s, *rest in rows for g in rest[:1] if 1 <= g <= 12]
+    return int(_st.median(cls)) if cls else None
 
 
 # A NAMESAKE IS SOMEONE ELSE WHEN THE TWO RACED FOR DIFFERENT HIGH SCHOOLS IN
@@ -582,11 +591,12 @@ def hsSchools(cur, pids):
 RIVAL_OVERLAP_SEASONS = 2
 
 
-def rivalsOf(a, name, college, namesakes, hs):
+def rivalsOf(a, name, college, namesakes, hs, college_year=None):
     """The main-feed persons that hold this name at this college and are
     provably someone else (two high schools in the same seasons, below). A
     namesake with no such clash may be a's own college profile, split --
-    not a rival. hs: hsSchools(). Pure."""
+    not a rival. hs: hsSchools(). college_year: the academic year (end-named)
+    of the college races. Pure."""
     # ! "UNATTACHED" IS NO COLLEGE (the owner's recheck dry run, 2026-11-08:
     #   five of 63 were 'Unattached' matching 'Unattached'). A first-year
     #   whose college string identifies nothing has no namesake there.
@@ -603,7 +613,7 @@ def rivalsOf(a, name, college, namesakes, hs):
     #   and 'Lake Orion HS' are one.
     def bySeason(rows):
         out = defaultdict(set)
-        for y, sch in rows:
+        for y, sch, *_g in rows:
             f = _fold(sch)
             if f:
                 out[y].add(f)
@@ -612,6 +622,16 @@ def rivalsOf(a, name, college, namesakes, hs):
     out = []
     for pid, school in namesakes.get(normName(name or ""), []):
         if pid == a or not sameCollege(college, [school]):
+            continue
+        # ! AND OLD ENOUGH TO BE THIS COLLEGE'S RUNNER (the owner's recheck,
+        #   2026-11-08: Emelia Hesselgren of Fayetteville (AR), class of 2026,
+        #   at Oral Roberts; the main-feed profile holding Oral Roberts rows also
+        #   holds a New York club runner in 10th grade in 2024-25 -- still in
+        #   high school this fall, so not the college runner, whatever profile
+        #   the feed filed the college races on). A namesake whose class
+        #   graduates in or after the college season is no rival.
+        c = classOf(hs.get(pid, ()))
+        if college_year is not None and c is not None and c >= college_year:
             continue
         theirs = bySeason(hs.get(pid, ()))
         clash = sum(1 for y in set(mine) & set(theirs) if not (mine[y] & theirs[y]))
@@ -635,14 +655,16 @@ def _fold(school):
     return " ".join(toks)
 
 
-def dropCollegeNamesakes(pairs, namesakes, hs):
+def dropCollegeNamesakes(pairs, namesakes, hs, years=None):
     """(kept pairs, n dropped): a pair whose first-year's college already has
     a main-feed runner of that name who is provably someone else (rivalsOf)
-    is dropped. Pure."""
+    is dropped. years: {tfrrs key: freshman academic year, START-named as
+    freshmen() names it}. Pure."""
     kept, dropped = [], 0
     for p in pairs:
         t, a, name, college = p[0], p[1], p[2], p[3]
-        if rivalsOf(a, name, college, namesakes, hs):
+        y = (years or {}).get(t)
+        if rivalsOf(a, name, college, namesakes, hs, y + 1 if y is not None else None):
             dropped += 1
             continue
         kept.append(p)
@@ -1054,8 +1076,9 @@ def main():
                 ns = anetCollegeNamesakes(cur, names)
                 hs = hsSchools(cur, {pid for v in ns.values() for pid, _s in v}
                                | {p[1] for p in all_pairs + time_pairs})
-                all_pairs, d1 = dropCollegeNamesakes(all_pairs, ns, hs)
-                time_pairs, d2 = dropCollegeNamesakes(time_pairs, ns, hs)
+                tyear = {t: y for y in a.years for t in fresh_by[y]}
+                all_pairs, d1 = dropCollegeNamesakes(all_pairs, ns, hs, tyear)
+                time_pairs, d2 = dropCollegeNamesakes(time_pairs, ns, hs, tyear)
                 if d1 or d2:
                     print(f"[link] left alone: {d1 + d2:,} pairs whose college already has a "
                           f"main-feed runner of that name who raced for another high school "

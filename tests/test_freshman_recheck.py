@@ -58,14 +58,14 @@ def test_write_takes_the_identity_back_and_undo_restores_it():
     cur.execute("""
         DROP SCHEMA IF EXISTS frr CASCADE; CREATE SCHEMA frr; SET search_path = frr;
         CREATE TABLE results (result_id bigint, person_id bigint, source text, native_id bigint,
-                              athlete_name text, school text);
+                              athlete_name text, school text, date text DEFAULT '2026-09-05');
         CREATE TABLE results_tf (LIKE results); ALTER TABLE results_tf ADD COLUMN id_system text;
         CREATE TABLE person_link_log (sport text, result_id bigint, from_person bigint,
                                       to_person bigint, rule text,
                                       PRIMARY KEY (sport, result_id, rule));
         -- the Guam person holds Hayden's college-feed id 777: one row by the
         -- freshman rule, two spread by fanout; a row of another id stays
-        INSERT INTO results VALUES
+        INSERT INTO results (result_id, person_id, source, native_id, athlete_name, school) VALUES
           (1, 29370341, 'tfrrs', 777, 'Hayden Buck', 'East Texas Baptist'),
           (2, 29370341, 'tfrrs', 777, 'Hayden Buck', 'East Texas Baptist'),
           (3, 29370341, 'tfrrs', 777, 'Hayden Buck', 'East Texas Baptist'),
@@ -75,7 +75,7 @@ def test_write_takes_the_identity_back_and_undo_restores_it():
           ('XC', 3, 0, 29370341, 'fanout');
     """)
     found = FR.links(cur)
-    assert [(lk[2], lk[3], lk[6]) for lk in found] == [(777, 29370341, 1)]
+    assert [(lk[2], lk[3], lk[6], lk[7]) for lk in found] == [(777, 29370341, 1, 2027)]
     c.commit()
     FR.write(c, [(found[0], [19764025])])
     cur.execute("SET search_path = frr")
@@ -123,7 +123,7 @@ def test_the_loader_finds_a_main_feed_college_namesake():
     c.commit()
     c.close()
     assert got == {LF.normName("Hayden Buck"): [(19764025, "East Texas Baptist")]}
-    assert hs == {19764025: {(2024, "gatlinburg-pittman")}, 29370341: {(2026, "guam")}}
+    assert hs == {19764025: {(2024, "gatlinburg-pittman", 11)}, 29370341: {(2026, "guam", 12)}}
 
 
 def test_unattached_is_no_college_and_a_spelling_is_one_school():
@@ -136,3 +136,22 @@ def test_unattached_is_no_college_and_a_spelling_is_one_school():
     ns = {normName("Sam Ward"): [(11, "Tufts")]}
     assert FR.failing([lk], ns, {10: two("lake orion"), 11: two("lake orion high school (mi)")}) == []
     assert FR.failing([lk], ns, {10: two("lake orion"), 11: two("clarkston")}) != []
+
+
+def test_a_namesake_still_in_high_school_is_not_the_college_runner():
+    """The owner's recheck, 2026-11-08: Emelia Hesselgren, Fayetteville (AR)
+    class of 2026, at Oral Roberts; the main-feed profile with the Oral
+    Roberts rows also holds a New York club runner in 10th grade in 2024-25."""
+    lk = ("XC", "tfrrs", 9404625, 21462703, "Emelia Hesselgren", "Oral Roberts", 2, 2027)
+    ns = {normName("Emelia Hesselgren"): [(32773768, "Oral Roberts")]}
+    hs = {21462703: {(2023, "haas hall - fayetteville", 9), (2024, "fayetteville", 10),
+                     (2025, "fayetteville", 11), (2026, "fayetteville", 12)},
+          32773768: {(2023, "tailwind", 8), (2024, "tailwind", 9), (2025, "tailwind", 10)}}
+    assert FR.failing([lk], ns, hs) == []
+    # the Hayden Buck case still fails: the Tennessee runner graduated in 2025
+    lk = ("XC", "tfrrs", 9418365, 29370341, "Hayden Buck", "East Texas Baptist", 1, 2027)
+    ns = {normName("Hayden Buck"): [(19764025, "East Texas Baptist")]}
+    hs = {19764025: {(2023, "gatlinburg-pittman", 10), (2024, "gatlinburg-pittman", 11),
+                     (2025, "gatlinburg-pittman", 12)},
+          29370341: {(2023, "guam", 9), (2024, "guam", 10), (2025, "guam", 11), (2026, "guam", 12)}}
+    assert [r for _lk, r in FR.failing([lk], ns, hs)] == [[19764025]]
