@@ -16,8 +16,9 @@ def test_two_letters_name_a_state_only_when_they_are_one():
     assert SI.withState("San Marcos (SB)", "CA") == "San Marcos (SB) (CA)"
 
 
-def test_the_town_replaces_the_bracket(monkeypatch):
+def test_a_known_town_bracket_reads_as_the_state(monkeypatch):
     monkeypatch.setitem(SI._LABELS, "qual_city", {"San Marcos (SB)": "Santa Barbara"})
-    assert SI.withTown("San Marcos (SB)", "CA") == "San Marcos (Santa Barbara, CA)"
-    assert SI.withTown("San Marcos (SB)", None) == "San Marcos (Santa Barbara)"
+    # the state, like every other label (owner, 2026-11-08)
+    assert SI.withTown("San Marcos (SB)", "CA") == "San Marcos (CA)"
+    assert SI.withTown("San Marcos (SB)", None) == "San Marcos"
     assert SI.withTown("Oak", "OR") == "Oak (OR)"
