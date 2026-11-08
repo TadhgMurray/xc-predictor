@@ -1439,7 +1439,15 @@ def _unitSchools(key, values):
         print(f"unit_schools: {key}={list(values)} failed "
               f"({type(exc).__name__}: {str(exc).splitlines()[0]})", flush=True)
         return []
-    _UNIT_SCHOOL_CACHE[ck] = (_t.time() + 600, schools)
+    # ! SWEPT AND CAPPED (2026-11-08 memory audit): the key is the request's
+    #   filter values, and expired entries were never removed
+    now = _t.time()
+    if len(_UNIT_SCHOOL_CACHE) >= 500:
+        for k in [k for k, v in _UNIT_SCHOOL_CACHE.items() if v[0] <= now]:
+            _UNIT_SCHOOL_CACHE.pop(k, None)
+        while len(_UNIT_SCHOOL_CACHE) >= 500:
+            _UNIT_SCHOOL_CACHE.pop(next(iter(_UNIT_SCHOOL_CACHE)), None)
+    _UNIT_SCHOOL_CACHE[ck] = (now + 600, schools)
     return schools
 
 

@@ -1308,6 +1308,7 @@ def distanceWords(meters):
 #   table is re-made when the engine scale it was built on is re-read.
 _clock_tables = {}
 _clock_lock = threading.Lock()
+_CLOCK_MAX = 2000                # ~16 KB a table: ~32 MB a worker at most
 
 
 def _clockTable(pool, sport, distance, track=False):
@@ -1330,6 +1331,11 @@ def _clockTable(pool, sport, distance, track=False):
     #   blank every title until the next re-read of the scale
     if pts:
         with _clock_lock:
+            # ! BOUNDED (2026-11-08 memory audit): the key carries the row's
+            #   own distance, any of hundreds; a dropped table is rebuilt
+            #   exactly as before on its next use
+            if len(_clock_tables) >= _CLOCK_MAX:
+                _clock_tables.pop(next(iter(_clock_tables)), None)
             _clock_tables[key] = (_scale["at"], pts)
     return pts
 

@@ -6177,6 +6177,11 @@ def _tf_seed_points_cache(meet_id, source, rows, scored):
             names[k] = r["event_short"]
     _TF_POINTS_CACHE[(meet_id, source)] = (
         _time.time(), scored["points_by_result"], names)
+    # ! THE SAME CAP AS _tf_points_cached (2026-11-08 memory audit): this
+    #   path filed one meet per TF meet/compiled page view, without limit
+    while len(_TF_POINTS_CACHE) > _TF_POINTS_MAX:
+        oldest = min(_TF_POINTS_CACHE, key=lambda k: _TF_POINTS_CACHE[k][0])
+        _TF_POINTS_CACHE.pop(oldest, None)
 
 
 def _tfRaceSource(cur, meet_id, div_id, event_id, args):
