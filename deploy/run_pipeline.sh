@@ -1792,6 +1792,16 @@ step 10_edge_purge "$PY" -u scripts/edge_purge.py || true
 if [ "${XCP_SEASON_EV:-1}" != "0" ]; then
   bgstep 10f4_season_events "$PY" -u racecast/build_season_events.py
 fi
+# ★ WHERE EVERY DEFAULT BOARD'S PAGES START (2026-11-08; racecast/
+#   build_board_seek.py): every 1,000th row's key of the performance and
+#   ability boards (each pool, sport, season, distance), so a deep page is an
+#   index range read instead of ranking every row above it (25.4 s at offset
+#   150,850). Stamped with the swapped-in tables' oids; until it finishes the
+#   boards page live, as before -- in the background, collected by bgwait.
+#   XCP_BOARD_SEEK=0 skips (the boards then always page live).
+if [ "${XCP_BOARD_SEEK:-1}" != "0" ]; then
+  bgstep 10f8_board_seek "$PY" -u racecast/build_board_seek.py
+fi
 # ★ THE RECRUIT PROJECTION STARTS AS SOON AS athlete_season EXISTS (2026-10-18;
 #   it was the run's last 71 idle minutes: 2h41m started after 11b). It
 #   reads only athlete_season, only the recruiting and comps PAGES read its

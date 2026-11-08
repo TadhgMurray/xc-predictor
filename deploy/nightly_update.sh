@@ -406,6 +406,11 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
         if [ "${XCP_SEASON_EV:-1}" != "0" ]; then
           step 10f4_season_events "$PY" -u racecast/build_season_events.py || true
         fi
+        # ★ where tonight's default boards' pages start (build_board_seek.py);
+        #   until it finishes their deep pages run live
+        if [ "${XCP_BOARD_SEEK:-1}" != "0" ]; then
+          step 10f8_board_seek "$PY" -u racecast/build_board_seek.py || true
+        fi
         # ★ tonight's swapped-in tables into memory before the visitors
         #   (scripts/prewarm.py)
         if [ "${XCP_PREWARM:-1}" != "0" ]; then

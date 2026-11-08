@@ -10851,7 +10851,8 @@ def athlete_results():
 
 
 from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrRankings,
-                      getAbilityRankings, rankOf, countOf, countRows, PR_DISTANCES)
+                      getAbilityRankings, rankOf, countOf, countRows, PR_DISTANCES,
+                      deepPageRefusal, LIVE_DEEP_MAX)
 from season_floor import floorFor, floorLabel, poolWords, percentileWords, clockFor
 
 
@@ -11009,6 +11010,14 @@ def api_rankings():
                                 "reason": (None if n is not None else
                                            "This board is too long to count "
                                            "quickly. Narrow it, or use Next.")})
+            # ★ A FILTERED BOARD STOPS AT LIVE_DEEP_MAX ROWS (2026-11-08):
+            #   it is ranked live for every page, so a deep one ranks
+            #   millions of rows. The default boards seek from a stored
+            #   position and are never refused (rankings "DEEP PAGES").
+            #   deep_limit tells the page to keep its way back (rankings.js).
+            deep = deepPageRefusal(f)
+            if deep:
+                return jsonify({"error": deep, "deep_limit": LIVE_DEEP_MAX}), 400
             try:
                 rows = {"performance": getPerformanceRankings,
                         "pr": getPrRankings,
