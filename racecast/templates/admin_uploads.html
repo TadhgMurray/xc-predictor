@@ -119,7 +119,7 @@
       <p class="ct-warn">{{ dupes|length }} meet{{ "s" if dupes|length != 1 }} on the same date read like this one. Approve will HOLD it, not write it.</p>
       <div class="ct-scroll"><table class="ct-rows">
         <thead><tr><th>Where</th><th>Meet</th><th>Venue</th><th>Date</th><th class="n">Name</th><th class="n">Venue</th></tr></thead>
-        <tbody>{% for d in dupes %}<tr><td>{{ d.where }}</td><td>{{ d.name }}{% if d.meet_id %} <span class="ct-muted">#{{ d.meet_id }}</span>{% endif %}</td>
+        <tbody>{% for d in dupes %}<tr><td>{% if d.upload_href %}<a href="{{ d.upload_href }}">{{ d.where }}</a>{% elif d.feed_href %}<a href="{{ d.feed_href }}" rel="nofollow noopener noreferrer" target="_blank">{{ d.where }}</a>{% else %}{{ d.where }}{% endif %}</td><td>{% if d.href %}<a href="{{ d.href }}" target="_blank">{{ d.name }}</a>{% else %}{{ d.name }}{% endif %}{% if d.meet_id %} <span class="ct-muted">#{{ d.meet_id }}</span>{% endif %}</td>
           <td>{{ d.venue or "" }}</td><td>{{ d.date }}</td><td class="n">{{ "%.2f"|format(d.name_sim) }}</td><td class="n">{{ "%.2f"|format(d.venue_sim) }}</td></tr>{% endfor %}</tbody>
       </table></div>
     {% else %}<p class="ct-muted">No meet on {{ up.meet_date }} reads like this one.</p>{% endif %}

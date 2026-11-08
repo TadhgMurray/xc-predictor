@@ -639,6 +639,32 @@ def fixes_page():
                            notice=request.args.get("notice", "")[:200], error=request.args.get("error", "")[:200])
 
 
+# ★ A FIX CAN BE TAKEN BACK WHILE IT WAITS (owner, 2026-11-08: "can someone
+#   pull an upload/fix they put onto the site ... like if it gets resolved by
+#   itself?"). Only the sender, only while it is open; it leaves the owner's
+#   queue (admin_fixes reads status 'open') and stays in the sender's list as
+#   Withdrawn. No email: they did it themselves.
+@bp.route("/account/fixes/<int:fid>/withdraw", methods=["POST"])
+def fix_withdraw(fid):
+    sess, go = AC._requireSession()
+    if go:
+        return go
+    if not AC.csrfOk(sess):
+        return _back("/account/fixes", error="That request did not come from this site."), 400
+    with AC._db() as (conn, cur):
+        if not tablesReady(cur):
+            abort(503)
+        cur.execute("""UPDATE fix_request SET status = 'withdrawn', decided_at = now()
+                       WHERE id = %s AND account_id = %s AND status = 'open'""",
+                    (fid, sess["account"]["id"]))
+        n = cur.rowcount
+        if n:
+            AC.logEvent(cur, "fix_withdrawn", sess["account"]["id"], detail={"fix": fid})
+        conn.commit()
+    return _back("/account/fixes", notice="Withdrawn." if n else "",
+                 error="" if n else "That fix has been decided; it cannot be withdrawn.")
+
+
 @bp.route("/account/fixes/new")
 def fix_new():
     sess, go = AC._requireSession()
