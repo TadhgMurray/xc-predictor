@@ -385,3 +385,26 @@ def test_publish_is_a_noop_without_credentials_and_flips_the_pointer_last(capsys
 def test_the_snapshot_user_agent_is_the_sites_own():
     import edge_snapshot as S
     assert S.UA.endswith("(racecast@racecast.co)")
+
+
+def test_nginx_may_keep_only_public_cookie_free_200s():
+    """deploy/nginx_microcache.sh: the app's X-Accel-Expires decides."""
+    import edge_cache as E
+    pub = [("Cache-Control", "public, max-age=300, s-maxage=900")]
+    assert E.microcacheHeader("200 OK", pub) == str(E.MICRO_TTL)
+    assert E.microcacheHeader("404 NOT FOUND", pub) == "0"
+    assert E.microcacheHeader("301 MOVED PERMANENTLY", pub) == "0"
+    assert E.microcacheHeader("200 OK", pub + [("Set-Cookie", "a=b")]) == "0"
+    assert E.microcacheHeader("200 OK", pub + [("Vary", "Cookie")]) == "0"
+    assert E.microcacheHeader("200 OK", [("Cache-Control", "private, no-store")]) == "0"
+    assert E.microcacheHeader("200 OK", [("Cache-Control", "no-cache")]) == "0"
+    assert E.microcacheHeader("200 OK", []) == "0"
+
+
+def test_every_response_carries_the_nginx_instruction():
+    import app as A
+    c = A.app.test_client()
+    r = c.get("/robots.txt", base_url="https://racecast.co")
+    assert r.headers.get("X-Accel-Expires") in ("0", str(__import__("edge_cache").MICRO_TTL))
+    r = c.get("/api/me", base_url="https://racecast.co")
+    assert r.headers.get("X-Accel-Expires") == "0"

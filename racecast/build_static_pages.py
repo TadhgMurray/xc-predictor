@@ -204,7 +204,10 @@ _TYPES = {"text/html; charset=utf-8": "html", "application/json": "json"}
 # headers that describe the transfer, not the answer: nginx and the app set
 # them each in their own way, and no cache or browser keys on them
 _TRANSPORT = {"content-length", "content-type", "date", "server", "connection",
-              "transfer-encoding", "content-encoding", "vary", "keep-alive"}
+              "transfer-encoding", "content-encoding", "vary", "keep-alive",
+              # nginx's own instruction (edge_cache.microcacheHeader): nginx
+              # acts on it and strips it, no visitor ever receives it
+              "x-accel-expires"}
 
 
 def _app():
@@ -259,7 +262,7 @@ def profileOf(status, headers, body, want):
     if ext is None:
         return None, f"content type {headers.get('Content-Type')!r}"
     rest = sorted((k, v) for k, v in headers.items()
-                  if k.lower() not in ("content-length", "content-type"))
+                  if k.lower() not in ("content-length", "content-type", "x-accel-expires"))
     for profile, hs in want.items():
         if rest == hs:
             break
