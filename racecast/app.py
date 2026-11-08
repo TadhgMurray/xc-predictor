@@ -1312,8 +1312,40 @@ def _homeSport(meta):
     return meta.get("default_sport") or "XC"
 
 
+# ★ THE FRONT PAGE, RENDERED ONCE FOR THE BOX (2026-11-08: 0.87 s a miss,
+#   five queries and the clock tables, the same HTML for everyone -- the top
+#   bar renders signed-out on every page and the browser fills in the rest).
+#   The first worker to miss renders it and shares it (sharedcache); the
+#   others send that copy until it is HOME_TTL old. The key carries the day
+#   (on-this-day, the season) and this process's boot stamp, so a deploy
+#   never serves an older template's HTML.
+HOME_TTL = float(os.environ.get("XCP_HOME_TTL") or 300)
+_BOOT_STAMP = str(int(time.time()))
+
+
+def sharedPageKey(name):
+    """The shared-copy key of a page whose HTML is the same for everyone, made
+    of everything its templates read off the request: the host (url_for's
+    absolute links), the canonical path with its kept arguments (_meta.html),
+    and whether ?r= is present (the noindex line). A request that differs in
+    any of them gets, and files, its own copy."""
+    import datetime as _dt
+    import hashlib
+    from seo import canonicalPath
+    parts = (request.host_url, canonicalPath(request.path, request.args),
+             bool(request.args.get("r")))
+    dig = hashlib.sha1(repr(parts).encode("utf-8")).hexdigest()[:16]
+    return f"{name}-{_BOOT_STAMP}-{_dt.date.today().isoformat()}-{dig}"
+
+
 @app.route("/")
 def home():
+    import sharedcache
+    body, _at = sharedcache.get(sharedPageKey("home"), _renderHome, ttl=HOME_TTL)
+    return body
+
+
+def _renderHome():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             rows = get_homepage_panels(cur)

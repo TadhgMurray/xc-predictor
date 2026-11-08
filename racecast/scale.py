@@ -333,11 +333,25 @@ def tableFor(cur, pool, step=STEP):
 #  the route
 # ------------------------------------------------------------------ #
 
+# ★ RENDERED ONCE FOR THE BOX (2026-11-08: 1.4 s on a worker's first view,
+#   the conversion table built per worker). Same HTML for everyone; shared
+#   for SCALE_TTL, keyed by pool and this process's boot (app._BOOT_STAMP).
+SCALE_TTL = 600.0
+
+
 @bp.route("/scale")
 def scale_page():
     want = (request.args.get("pool") or "hs_m").strip().lower()
     if want != "all" and want not in _POOL_KEYS:
         abort(404)
+    import sharedcache
+    from app import sharedPageKey
+    body, _at = sharedcache.get(sharedPageKey(f"scale-{want}"),
+                                lambda: _renderScale(want), ttl=SCALE_TTL)
+    return body
+
+
+def _renderScale(want):
     step = STEP
     pools = list(_POOL_KEYS) if want == "all" else [want]
     import psycopg2.extras

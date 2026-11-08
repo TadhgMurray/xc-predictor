@@ -53,3 +53,39 @@ def test_an_evicted_key_takes_its_lock_with_it(monkeypatch):
         ttlcache.get(("l", i), lambda: "w" * 600)
     assert len(ttlcache._locks) <= len(ttlcache._store) + 1
     ttlcache.clear()
+
+
+# ---- the front page and /scale rendered once for the box (2026-11-08) ----
+
+def _app():
+    os.environ.setdefault("XCP_DB_PASSWORD", "unused-by-this-test")
+    import app as A
+    return A
+
+
+def test_shared_page_key_carries_what_the_templates_read():
+    A = _app()
+    keys = {}
+    for url, host in (("/", "racecast.co"), ("/?utm_source=x", "racecast.co"),
+                      ("/?r=1", "racecast.co"), ("/", "127.0.0.1:8000")):
+        with A.app.test_request_context(url, base_url=f"https://{host}"):
+            keys[(url, host)] = A.sharedPageKey("home")
+    assert keys[("/", "racecast.co")] == keys[("/?utm_source=x", "racecast.co")]
+    assert keys[("/?r=1", "racecast.co")] != keys[("/", "racecast.co")]
+    assert keys[("/", "127.0.0.1:8000")] != keys[("/", "racecast.co")]
+
+
+def test_the_front_page_renders_once_and_is_shared(monkeypatch, tmp_path):
+    A = _app()
+    import sharedcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "shared"))
+    calls = []
+
+    def fake():
+        calls.append(1)
+        return "<html>front page %d</html>" % len(calls)
+    monkeypatch.setattr(A, "_renderHome", fake)
+    c = A.app.test_client()
+    a = c.get("/").get_data(as_text=True)
+    b = c.get("/").get_data(as_text=True)
+    assert a == b == "<html>front page 1</html>" and len(calls) == 1

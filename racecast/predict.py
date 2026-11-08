@@ -6171,9 +6171,26 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
     if hit and _t.time() - hit[0] < _ENTRANTS_TTL_S:
         rows = hit[1]
     else:
-        rows = _raceEntrantRows(cur, schools, sport, year)
+        rows = _raceEntrantRowsShared(cur, key)
         _entrantsKeep(key, rows, _t.time())
     return _entrantsFromRows(cur, rows, sport, year, gender, levels)
+
+
+def _raceEntrantRowsShared(cur, key):
+    """_raceEntrantRows once for the box, not once per worker (2026-11-08:
+    1.1 s a run, p95 2.3 s, in the slow log under /api/predict/field). The
+    first worker to need a field reads it and shares it (sharedcache) for
+    _ENTRANTS_TTL_S, the same ten minutes each worker already kept it; the
+    others read that copy. The key is the sorted schools, sport and year."""
+    import hashlib
+    import sharedcache
+    schools, sport, year = key
+    name = "entrants-%s-%s-%s" % (sport, year, hashlib.sha1(
+        repr(schools).encode("utf-8")).hexdigest()[:20])
+    rows, _at = sharedcache.get(
+        name, lambda: _raceEntrantRows(cur, list(schools), sport, year),
+        ttl=_ENTRANTS_TTL_S)
+    return rows
 
 
 def _entrantsKeep(key, rows, now):
