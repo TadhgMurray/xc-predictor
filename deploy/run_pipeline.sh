@@ -1781,6 +1781,10 @@ step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finis
 #   the swap just put new ratings live; without a purge Cloudflare keeps
 #   serving last night's pages for PAGE_S_MAXAGE. A no-op until
 #   XCP_CF_ZONE_ID / XCP_CF_API_TOKEN are set; never fails the run.
+# static pages (racecast/build_static_pages.py): the new boards, before the edge refills
+if [ "${XCP_STATIC_PAGES:-0}" = "1" ]; then
+  step 10_static_pages env XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=2 "$PY" -u racecast/build_static_pages.py || true
+fi
 step 10_edge_purge "$PY" -u scripts/edge_purge.py || true
 # ★ THE EVENTS PRESETS, PRECOMPUTED (owner, 2026-11-06; racecast/
 #   build_season_events.py): the ability board's 800/1500/3000/5000-and-up
@@ -2101,6 +2105,10 @@ bgwait
 #   disk. pg_prewarm, capped (XCP_PREWARM_GB, default 16); XCP_PREWARM=0 skips.
 if [ "${XCP_PREWARM:-1}" != "0" ]; then
   step 19b_prewarm "$PY" -u scripts/prewarm.py || true
+fi
+# static pages (racecast/build_static_pages.py): the new boards, before the edge refills
+if [ "${XCP_STATIC_PAGES:-0}" = "1" ]; then
+  step 19_static_pages env XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=2 "$PY" -u racecast/build_static_pages.py || true
 fi
 step 19_edge_purge "$PY" -u scripts/edge_purge.py || true
 if [ "$DRY" -ne 1 ]; then
