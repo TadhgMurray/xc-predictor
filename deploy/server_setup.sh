@@ -159,7 +159,17 @@ Environment=XCP_DB_LOCK_TIMEOUT_MS=5000 XCP_DB_STATEMENT_TIMEOUT_MS=55000
 #   4094)" in the journal). nginx passes request lines up to its 8 KB
 #   header buffer; gunicorn's own default stopped at 4 KB, so a long
 #   filter URL got a bare 400 from the middle of the stack.
+# ★ A WORKER IS RECYCLED, AND THE SITE HAS A MEMORY CEILING (2026-11-08: on
+#   11-07 at 23:28 the 24 workers held 80.5 GB, the OOM killer took
+#   Postgres, and systemd stopped the cluster -- the site was down an hour).
+#   --max-requests (jittered so they do not all restart at once) bounds any
+#   slow growth; MemoryHigh makes the kernel reclaim from the site first and
+#   MemoryMax makes an overrun kill a site worker (gunicorn starts another in
+#   seconds), never Postgres.
+MemoryHigh=40G
+MemoryMax=48G
 ExecStart=/srv/venv/bin/gunicorn -w 24 --timeout 60 --limit-request-line 8190 \
+    --max-requests 2000 --max-requests-jitter 400 \
     --pythonpath /srv/xc-predictor/racecast,/srv/xc-predictor/scripts,/srv/xc-predictor/engine \
     -b 127.0.0.1:8000 app:app
 Restart=always
