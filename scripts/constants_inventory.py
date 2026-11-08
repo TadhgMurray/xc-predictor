@@ -554,6 +554,8 @@ RULES = {
         "TILT_K": ("FITTED", KAPPA),
         **_all("TILT_RATING_LO TILT_RATING_HI", "REMOVED", TILT_ABS),
         "SPORT_RIDGE": ("FITTED", "grass specialisation β_p ~ N(0, s_β²), s_β by EM"),
+        "DAY_EVIDENCE_FULL": ("DATA", "scope: a race-day row counts in full toward its day term only when its "
+                                      "runner has this many other races (a one-race runner's day is no evidence)"),
         "XC_TRACK_GAP": ("REMOVED", XC_LEVEL + "; only if the leave-one-kind-out fits agree (§5)"),
         **_all("CURVE_KNOT_DAYS CURVE_N_KNOTS CURVE_SMOOTH CURVE_SD2_START", "FITTED",
                CURVE + " (statespace knots every 15 d: a resolution, not a level)"),
@@ -863,6 +865,7 @@ ENV_RULES = {
                                     "kept until §8 point 5"),
     **_all("XCP_ALTITUDE XCP_ALTITUDE_FIT", "FITTED", ALT),
     **_all("XCP_GAUGE XCP_GAUGE_UNKNOWN_LENGTH XCP_GAUGE_FALLBACK", "STATED", GAUGE),
+    "XCP_DAY_EVIDENCE": ("DATA", "joint_solve.DAY_EVIDENCE_FULL: other races before a day row counts in full"),
     "XCP_GEOMETRY": ("REMOVED", "course cell c_c per oval (the geometry spline is already off)"),
     **_all("XCP_DISTANCE_BY XCP_DISTANCE_RESIDUAL", "STATED", KEPT_DIST + " (which distance curve family)"),
     **_all("XCP_WEATHER_FIT XCP_MUD_SENS XCP_TF_TEMP_AGG", "STATED", KEPT_WX),
