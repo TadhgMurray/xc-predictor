@@ -105,7 +105,7 @@ def rankSql(unit_cols=True, grade_col=True):
                CASE WHEN ranked AND rg IS NOT NULL THEN {rn('rg')} END::int AS region,
                CASE WHEN ranked AND cf IS NOT NULL THEN {rn('cf')} END::int AS conference,
                CASE WHEN school IS NOT NULL THEN
-                    rank() OVER (PARTITION BY school, sport, year, right(split_part(pool, '|', 1), 2) ORDER BY mean_rating DESC) END::int AS team,
+                    rank() OVER (PARTITION BY school, state, sport, year, split_part(pool, '|', 1) ORDER BY mean_rating DESC) END::int AS team,
                gk AS grade_key,
                CASE WHEN ranked AND us AND gk IS NOT NULL THEN {rn('gk')} END::int AS grade_nation,
                CASE WHEN ranked AND us AND gk IS NOT NULL THEN count(*) OVER (PARTITION BY pool, sport, year, ranked, us, gk) END::int AS grade_nation_total,

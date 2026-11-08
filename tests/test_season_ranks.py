@@ -46,9 +46,13 @@ def test_the_statement_partitions_like_the_boards():
     assert "PARTITION BY pool, sport, year, ranked, us, dv ORDER BY" in sql
     # state_div is the board's two columns folded into one key
     assert 'coalesce("state_div", "class") AS sd' in sql
-    # team: strictly faster + 1, any level, one gender, any race count
-    # owner, 2026-11-06: the gender off the pool's own name, not its sport suffix
-    assert "rank() OVER (PARTITION BY school, sport, year, right(split_part(pool, '|', 1), 2) ORDER BY mean_rating DESC) END::int AS team" in sql
+    # team: strictly faster + 1, any race count, the roster's own set --
+    # one school name IN ONE STATE, one pool (one gender AND one level).
+    # owner, 2026-11-06: the gender off the pool's own name; 2026-11-08
+    # (/athlete/21532790, Team #18 for the roster's 9th): a namesake's or
+    # the middle school's runners are not on the team, and a middle school
+    # pool's ratings are not on the high school scale to compare anyway.
+    assert "rank() OVER (PARTITION BY school, state, sport, year, split_part(pool, '|', 1) ORDER BY mean_rating DESC) END::int AS team" in sql
     # an older database without the unit columns still builds nation, state and team
     old = " ".join(B.rankSql(False).split())
     assert '"section"' not in old and "NULL::text AS sec" in old
