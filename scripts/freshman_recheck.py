@@ -18,9 +18,11 @@ college-namesake guard, and take back the ones that fail.
 
 ★ THE TEST, PER LINK. A freshman link is a college-feed identity (its id
   system and athlete id) put on an anet person A by rule 'freshman' or
-  'freshman_time'. It fails when the main feed holds a college race of the
-  same name at that college under a person other than A -- the guard's own
-  test, the same loader and the same college match.
+  'freshman_time'. It fails when the main feed holds a race of the same
+  name at that college under a person other than A who has a high school
+  career of his own at no school A raced for -- the guard's own test
+  (link_freshmen.rivalsOf). A namesake with no high school rows may be A's
+  own college profile, split, and is not a rival.
 
 ★ WHAT --write TAKES BACK. Every row of the failing identity that sits on A
   and got there by 'freshman', 'freshman_time' or 'fanout' (the pass that
@@ -84,16 +86,16 @@ def links(cur):
     return out
 
 
-def failing(found, namesakes):
-    """The links whose college already has a main-feed runner of the name
-    under another person: [(link, rivals)]. Pure (link_freshmen's test)."""
-    from link_freshmen import normName, sameCollege
+def failing(found, namesakes, hs):
+    """The links whose college already has a main-feed runner of the name who
+    is provably someone else (link_freshmen.rivalsOf): [(link, rivals)]. Pure."""
+    from link_freshmen import rivalsOf
     out = []
     for lk in found:
         _sport, _sys_, _nat, a, name, college, _n = lk
-        rivals = [(pid, s) for pid, s in namesakes.get(normName(name or ""), []) if pid != a]
-        if rivals and sameCollege(college, [s for _p, s in rivals]):
-            out.append((lk, sorted({pid for pid, _s in rivals})))
+        rivals = rivalsOf(a, name, college, namesakes, hs)
+        if rivals:
+            out.append((lk, rivals))
     return out
 
 
@@ -168,17 +170,18 @@ def main(argv=None):
     ap.add_argument("--show", type=int, default=60)
     a = ap.parse_args(argv)
     from database import getConn
-    from link_freshmen import anetCollegeNamesakes, stageCollegeSchools
+    from link_freshmen import anetCollegeNamesakes, hsSchools
     with getConn() as conn:
         if a.undo:
             print(f"[recheck] put back: {undo(conn)}")
             return 0
         with conn.cursor() as cur:
             cur.execute("SET LOCAL statement_timeout = 0")
-            stageCollegeSchools(cur)
             found = links(cur)
             ns = anetCollegeNamesakes(cur, [lk[4] for lk in found if lk[4]])
-            bad = failing(found, ns)
+            hs = hsSchools(cur, {pid for v in ns.values() for pid, _s in v}
+                           | {lk[3] for lk in found})
+            bad = failing(found, ns, hs)
         conn.rollback()
         rows = sum(lk[6] for lk, _r in bad)
         print(f"[recheck] {len(found):,} freshman links still in place; {len(bad):,} fail the "
