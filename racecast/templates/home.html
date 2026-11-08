@@ -196,8 +196,12 @@
        empty black inside it). The nine photos fill the band edge to edge,
        darkened, and the text sits centred on them in white. The second
        search box is gone: the top bar's is the one search. #}
+  {# ★ NO BIGGER THAN DRAWN (speed pass, 2026-11-08): hero_srcset offers the
+       640 px copy where it is as sharp as the screen (speed.heroSrcset):
+       178 KB less on a phone's first visit, the largest paint (m2) ~0.4 s
+       sooner on a throttled phone. #}
   <div class="hm-photos" aria-hidden="true">
-    {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}" alt="" title="{{ alt }}" decoding="async">{% endfor %}
+    {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}"{{ hero_srcset(slot, 2 if slot == 'm2' else 1) }} alt="" title="{{ alt }}" decoding="async">{% endfor %}
   </div>
   <div class="hm-dim" aria-hidden="true"></div>
   <div class="hm-text">
