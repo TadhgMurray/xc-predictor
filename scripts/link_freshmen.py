@@ -554,40 +554,85 @@ def anetCollegeNamesakes(cur, names):
 
 
 def hsSchools(cur, pids):
-    """{person_id: {school, lowercased}} of each person's high school rows
-    (a school grade 1-12), both sports."""
+    """{person_id: {(academic year, school lowercased)}} of each person's high
+    school rows (a school grade 1-12), both sports."""
     pids = sorted({int(p) for p in pids if p is not None})
     if not pids:
         return {}
     school_grade = r"'^\s*(1[0-2]|[1-9])\s*$'"
+    year = ("(CASE WHEN substring(date, 6, 2) >= '08' THEN substring(date, 1, 4)::int + 1 "
+            "ELSE substring(date, 1, 4)::int END)")
     cur.execute(f"""
-        SELECT person_id, lower(btrim(school)) FROM results
+        SELECT DISTINCT person_id, {year}, lower(btrim(school)) FROM results
         WHERE  person_id = ANY(%(p)s) AND COALESCE(grade, '') ~ {school_grade}
-          AND  NULLIF(btrim(school), '') IS NOT NULL
+          AND  NULLIF(btrim(school), '') IS NOT NULL AND date ~ '^[0-9]{{4}}-[0-9]{{2}}'
         UNION
-        SELECT person_id, lower(btrim(school)) FROM results_tf
+        SELECT DISTINCT person_id, {year}, lower(btrim(school)) FROM results_tf
         WHERE  person_id = ANY(%(p)s) AND COALESCE(grade, '') ~ {school_grade}
-          AND  NULLIF(btrim(school), '') IS NOT NULL
+          AND  NULLIF(btrim(school), '') IS NOT NULL AND date ~ '^[0-9]{{4}}-[0-9]{{2}}'
     """, {"p": pids})
     out = defaultdict(set)
-    for pid, school in cur.fetchall():
-        out[pid].add(school)
+    for pid, y, school in cur.fetchall():
+        out[pid].add((int(y), school))
     return dict(out)
+
+
+# A NAMESAKE IS SOMEONE ELSE WHEN THE TWO RACED FOR DIFFERENT HIGH SCHOOLS IN
+# THIS MANY OF THE SAME SEASONS (profile_school's HS_OVERLAP_SEASONS rule).
+RIVAL_OVERLAP_SEASONS = 2
 
 
 def rivalsOf(a, name, college, namesakes, hs):
     """The main-feed persons that hold this name at this college and are
-    provably someone else: a high school career of their own, at no school
-    person `a` raced for. A namesake with no high school rows may be a's own
-    college profile, split -- not a rival. Pure."""
+    provably someone else (two high schools in the same seasons, below). A
+    namesake with no such clash may be a's own college profile, split --
+    not a rival. hs: hsSchools(). Pure."""
+    # ! "UNATTACHED" IS NO COLLEGE (the owner's recheck dry run, 2026-11-08:
+    #   five of 63 were 'Unattached' matching 'Unattached'). A first-year
+    #   whose college string identifies nothing has no namesake there.
+    from link_profile_school import identifyingSchool
+    if not identifyingSchool((college or "").strip().lower()):
+        return []
+    # ★ PROVABLY SOMEONE ELSE = TWO HIGH SCHOOLS IN THE SAME SEASONS (the
+    #   owner's recheck dry run, 2026-11-08: Beckett Fitch's own new college
+    #   profile carried two stray 2019 club rows, a "high school career" at
+    #   another school -- he would have been unlinked from his own). A
+    #   namesake counts only when the two raced for different high schools in
+    #   RIVAL_OVERLAP_SEASONS of the same seasons or more, as the Tennessee
+    #   and the Guam Hayden Buck did in three. Schools folded: 'Lake Orion'
+    #   and 'Lake Orion HS' are one.
+    def bySeason(rows):
+        out = defaultdict(set)
+        for y, sch in rows:
+            f = _fold(sch)
+            if f:
+                out[y].add(f)
+        return out
+    mine = bySeason(hs.get(a, ()))
     out = []
     for pid, school in namesakes.get(normName(name or ""), []):
         if pid == a or not sameCollege(college, [school]):
             continue
-        theirs, mine = hs.get(pid, set()), hs.get(a, set())
-        if theirs and not (theirs & mine):
+        theirs = bySeason(hs.get(pid, ()))
+        clash = sum(1 for y in set(mine) & set(theirs) if not (mine[y] & theirs[y]))
+        if clash >= RIVAL_OVERLAP_SEASONS:
             out.append(pid)
     return sorted(set(out))
+
+
+_HS_WORDS = {"hs", "high", "school", "senior", "sr", "jr", "junior", "the", "h", "s",
+             "jshs", "shs", "ms", "middle", "academy", "secondary"}
+
+
+def _fold(school):
+    """A high school's name for comparing two spellings: lower case, no
+    state in brackets, no punctuation, none of the words a feed adds or
+    drops ('Lake Orion', 'Lake Orion HS', 'Lake Orion High School' are one).
+    Pure."""
+    import re as _re
+    s = _re.sub(r"\([^)]*\)", " ", str(school or "").lower())
+    toks = [t for t in _re.findall(r"[a-z0-9]+", s) if t not in _HS_WORDS]
+    return " ".join(toks)
 
 
 def dropCollegeNamesakes(pairs, namesakes, hs):
@@ -1013,7 +1058,8 @@ def main():
                 time_pairs, d2 = dropCollegeNamesakes(time_pairs, ns, hs)
                 if d1 or d2:
                     print(f"[link] left alone: {d1 + d2:,} pairs whose college already has a "
-                          f"main-feed runner of that name with a high school career of his own")
+                          f"main-feed runner of that name who raced for another high school "
+                          f"in the same seasons")
             if a.pair:
                 explainPair(cur, a.pair[0], a.pair[1], a.years, fresh_by, senior_by)
                 hit = [p for p in all_pairs + time_pairs
