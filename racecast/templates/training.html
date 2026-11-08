@@ -1,0 +1,154 @@
+{# training.html -- "Your training" (training_log.py, owner 2026-11-08): a
+   runner's own runs, from their watch's files. Under /account: private,
+   no-store, never crawled. Only this account sees these runs.
+   ★ THE UPLOAD IS static/training.js: files go in batches under the app's
+     9 MB cap, so a whole export folder works; the form below is the
+     no-script fallback for a handful of files.
+   ! THE RESEARCH SWITCH SHOWS ONLY WHILE XCP_TRAINING_RESEARCH=1. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% set meta_title = "Your training" %}
+{% include "_meta.html" %}
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="{{ static_v('style.css') }}">
+<link rel="stylesheet" href="{{ static_v('race.css') }}">
+<link rel="stylesheet" href="{{ static_v('contrib.css') }}">
+<script defer src="{{ static_v('topbar-search.js') }}"></script>
+{% if mode == "page" and person %}<script defer src="{{ static_v('training.js') }}"></script>{% endif %}
+</head>
+<body>
+{% include "_topbar.html" %}
+<main class="page-wide rc account-page contrib-page">
+<header class="rc-hd"><div class="rc-hgrid rc-hone">
+  <div class="rc-left">
+    <div class="rc-sport"><span class="sport-tag sport-tag--site">Your account · training</span></div>
+    <h1>Your training</h1>
+    <div class="rc-meta">Your runs, from your watch's files. Only you can see them.
+      · <a href="/account">Settings</a>{% if person %} · {{ person[1] }}{% endif %}</div>
+    {% if notice %}<p class="predict-status show acct-notice">{{ notice }}</p>{% endif %}
+    {% if error %}<p class="predict-status show error">{{ error }}</p>{% endif %}
+  </div>
+</div></header>
+
+<div class="rc-grid">
+<div class="rc-mainc">
+{% if mode == "unready" %}
+  <p class="ct-warn ct-bad">Training uploads aren't available yet. Please check back soon.</p>
+
+{% elif not runners %}
+  <section class="acct-block">
+    <h2>Link your athlete page first</h2>
+    <p>Your runs are kept with your athlete page. <a href="/account#athlete">Link it in your settings</a>, then come back here.</p>
+  </section>
+
+{% else %}
+  {% if runners|length > 1 %}
+  <form method="get" action="/account/training" class="ct-form">
+    <label>Runner
+      <select name="person" onchange="this.form.submit()">
+        {% for pid, name in runners %}<option value="{{ pid }}" {{ "selected" if person and pid == person[0] }}>{{ name }}</option>{% endfor %}
+      </select></label>
+    <noscript><button type="submit">Show</button></noscript>
+  </form>
+  {% endif %}
+
+  <section class="acct-block" id="upload">
+    <h2>Add runs</h2>
+    <form method="post" action="/account/training/upload" enctype="multipart/form-data" id="tr-form"
+          data-csrf="{{ csrf }}" data-person="{{ person[0] }}" data-max-mb="{{ max_mb }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="person_id" value="{{ person[0] }}">
+      <div class="ct-file">
+        <input type="file" name="files" id="tr-files" multiple accept=".fit,.gpx,.tcx,.gz" aria-label="Activity files">
+        <span class="ct-muted">FIT, GPX or TCX files (a .gz of one is fine), up to {{ max_mb }} MB each.</span>
+      </div>
+      <div class="ct-file">
+        <label>Or a whole folder <input type="file" id="tr-folder" webkitdirectory directory multiple aria-label="A folder of activity files"></label>
+        <span class="ct-muted">Unzip your export and pick its <b>activities</b> folder. Only the activity files are sent.</span>
+      </div>
+      <div class="ct-actions"><button type="submit" class="go" id="tr-go">Upload</button>
+        <span class="ct-muted" id="tr-status" aria-live="polite"></span></div>
+    </form>
+    <details class="ct-muted">
+      <summary>Where to get your files</summary>
+      <ul class="ct-list">
+        <li><b>Strava</b> <span class="ct-muted">Settings → My Account → Download or Delete Your Account → Request your archive. Strava emails a zip; unzip it and pick the <b>activities</b> folder.</span></li>
+        <li><b>Garmin</b> <span class="ct-muted">Garmin's account site → Data Management → Export Your Data. Or one run at a time: open it in Garmin Connect → the gear → Export Original (a .fit).</span></li>
+        <li><b>COROS</b> <span class="ct-muted">In COROS Training Hub, open a run and export it as a .fit.</span></li>
+        <li><b>The watch itself</b> <span class="ct-muted">Plugged in, most watches show their runs as .fit files in an Activity folder.</span></li>
+      </ul>
+    </details>
+  </section>
+
+  <section class="acct-block">
+    <h2>The last {{ weeks|length }} weeks</h2>
+    {% if not total %}
+      <p class="ct-muted">No runs yet. Add some above.</p>
+    {% else %}
+    <table class="ct-rows">
+      <thead><tr><th>Week of</th><th>Miles</th><th>Runs</th><th>Longest</th><th>Hours</th></tr></thead>
+      <tbody>
+      {% for w in weeks %}
+        <tr><td>{{ w.week.strftime("%b %-d") }}</td><td class="n">{{ "%.1f"|format(w.miles) }}</td><td class="n">{{ w.runs }}</td>
+          <td class="n">{{ "%.1f"|format(w.longest) if w.runs else "" }}</td><td class="n">{{ "%.1f"|format(w.hours) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="ct-muted">{{ total }} run{{ "" if total == 1 else "s" }} in all.</p>
+    {% endif %}
+  </section>
+
+  {% if recent %}
+  <section class="acct-block">
+    <h2>Recent runs</h2>
+    <table class="ct-rows">
+      <thead><tr><th>Date</th><th>Miles</th><th>Pace</th><th>Avg HR</th><th>Climb</th></tr></thead>
+      <tbody>
+      {% for r in recent %}
+        <tr><td>{{ r.started_at.strftime("%b %-d, %Y") }}</td><td class="n">{{ "%.2f"|format(r.miles) }}</td><td class="n">{{ r.pace }}</td>
+          <td class="n">{{ r.avg_hr|round|int if r.avg_hr else "" }}</td><td class="n">{{ ((r.ascent_m * 3.28084)|round|int ~ " ft") if r.ascent_m else "" }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
+  {% if research_enabled %}
+  <section class="acct-block" id="research">
+    <h2>Help improve predictions</h2>
+    <p>With your permission, your runs (the summaries above, never a map of where you ran) can help train the models that predict race results on Racecast. They are never shown to anyone. You can turn this off at any time, and from then on your runs are no longer used.</p>
+    <form method="post" action="/account/training/consent">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="research" value="{{ '0' if consent else '1' }}">
+      <button type="submit" class="{{ '' if consent else 'go' }}">{{ "Stop using my runs" if consent else "Yes, use my runs to improve predictions" }}</button>
+      <span class="ct-muted">{{ "On: your runs help improve predictions." if consent else "Off: your runs are for your eyes only." }}</span>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="acct-block" id="delete">
+    <h2>Delete all my training</h2>
+    <form method="post" action="/account/training/delete" class="ct-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>Type DELETE to remove every run you uploaded <input type="text" name="confirm" autocomplete="off"></label>
+      <button type="submit">Delete</button>
+    </form>
+  </section>
+{% endif %}
+</div>
+<aside class="rc-side">
+  <h2>What we keep</h2>
+  <ul class="ct-how">
+    <li>For each run: when, how far, how long, heart rate and climb.</li>
+    <li>Never the map or GPS track of where you ran, and never the file itself.</li>
+    <li>Only running. Rides, swims and the rest are skipped.</li>
+    <li>Only you can see your runs. Deleting your account deletes them.</li>
+  </ul>
+</aside>
+</div>
+</main>
+</body>
+</html>
