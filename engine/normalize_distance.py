@@ -2486,6 +2486,21 @@ def _weatherReference(art, course, doy):
 # rather than interpolated into SQL from a pickle.
 WEATHER_TEMP_AGGS = ("avg(apparent_temperature)", "max(apparent_temperature)")
 
+# ★ A RACE WITH ITS OWN START (race_start, owner 2026-11-08) reads the hour it
+#   started in and the next instead of the sport's window: the backfill's
+#   WeatherIndex and the explain page both, from these. A start outside
+#   05:00-22:59 local is not a start (a date-only schedule written as
+#   midnight UTC reads as the evening before in the US).
+RACE_WX_HOURS = 2
+RACE_START_LOCAL = (5, 22)
+
+
+def raceLocalHour(utc_hour, cell_lon):
+    """The grid's local hour for a UTC hour at a cell (its round(lon/15)
+    shift, as the window's SQL computes it). Pure."""
+    signed = cell_lon - 360 if cell_lon > 180 else cell_lon
+    return (int(utc_hour) + int(round(signed / 15.0))) % 24
+
 
 def weatherTempAgg(art):
     expr = ((art or {}).get("wx_agg") or {}).get("apparent_temp",

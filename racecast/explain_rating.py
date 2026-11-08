@@ -235,7 +235,21 @@ def weatherTerm(cur, row, sport, nd):
     except Exception:                                  # noqa: BLE001
         _rollback(cur)
         return None, {"why": "the weather grid could not be read"}
-    wx, summary = aggregateWeather(rows, hours, temp_agg)
+    # ★ THIS RACE'S OWN START when the timer scheduled one (race_start): the
+    #   hours the backfill read it at (WeatherIndex), else the sport's window
+    start_lh = _raceStartHour(cur, row, sport, cell, nd)
+    wx = summary = None
+    if start_lh is not None:
+        own = (start_lh, min(23, start_lh + nd.RACE_WX_HOURS - 1))
+        wx, summary = aggregateWeather(rows, own, temp_agg)
+        if wx is not None:
+            # precipitation at the race's hourly rate, on the window's scale
+            scale = (hours[1] - hours[0] + 1) / max(1, summary.get("n_hours") or 1)
+            if wx.get("precip") is not None:
+                wx["precip"] *= scale
+            summary["race_start"] = start_lh
+    if wx is None:
+        wx, summary = aggregateWeather(rows, hours, temp_agg)
     if wx is None:
         return None, {"why": f"no weather in the grid for {day} at this location "
                              f"(no correction)"}
@@ -263,6 +277,30 @@ def weatherTerm(cur, row, sport, nd):
         return None, detail
     # _applyWeather returns time / wmult: the credit is log(wmult)
     return -math.log(out), detail
+
+
+def _raceStartHour(cur, row, sport, cell, nd):
+    """The local hour this race was scheduled to start (race_start), or None."""
+    try:
+        cur.execute("SELECT to_regclass('race_start') AS t")
+        r = cur.fetchone()
+        if not (r and (r["t"] if isinstance(r, dict) else r[0])):
+            return None
+        cur.execute("""SELECT extract(hour FROM start_utc AT TIME ZONE 'UTC')::int AS h
+                       FROM race_start
+                       WHERE sport = %s AND source = %s AND meet_id = %s
+                         AND div_id = %s AND event_id = %s""",
+                    (sport, row.get("source"), row.get("meet_id"), row.get("div_id"),
+                     int(row.get("event_id") or 0) if sport == "TF" else 0))
+        r = cur.fetchone()
+    except Exception:                                  # noqa: BLE001
+        _rollback(cur)
+        return None
+    if not r:
+        return None
+    h = nd.raceLocalHour(r["h"] if isinstance(r, dict) else r[0], cell[1])
+    lo, hi = nd.RACE_START_LOCAL
+    return h if lo <= h <= hi else None
 
 
 def _doy(day):
@@ -655,7 +693,10 @@ def _weatherText(w, wd, sport):
                 if abs(w) >= _TINY else f"{head} ({wd['why'][:1].upper()}{wd['why'][1:]}.)")
     said = "; ".join(bits)
     out = head + (f" {said[:1].upper()}{said[1:]}." if said else "")
-    if agg == "max" and sport == "TF":
+    if wd.get("race_start") is not None:
+        out += (f" Read at this race's own scheduled start, {hourWords(wd['race_start'])}"
+                f" local, and the hour after.")
+    elif agg == "max" and sport == "TF":
         out += (" Start times are not known, so a track race is read at the day's "
                 "peak heat even if it ran in the evening.")
     elif lo is not None:

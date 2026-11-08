@@ -616,6 +616,60 @@ async def fetchMeet(fetcher, alive_id, meet_date=None):
 
 def initTables(cur):
     cur.execute(DDL)
+    cur.execute(RACE_START_DDL)
+
+
+# ★ EACH RACE'S OWN START (owner, 2026-11-08: "when each race starts so we
+#   can get better weather ... specific for each race in a meet"). An
+#   AthleticLIVE event carries its scheduled start in UTC ('sd'); until now
+#   it only gave the race its date. Kept per race -- (meet, division, event):
+#   event 0 for cross country -- as the race was landed, so the weather
+#   (backfill_normalize.WeatherIndex) reads that race's own hours instead of
+#   the sport's window. Only races landed from here have one; nothing goes
+#   back over meets landed before.
+RACE_START_DDL = """
+CREATE TABLE IF NOT EXISTS race_start (
+    sport     text   NOT NULL,
+    source    text   NOT NULL,
+    meet_id   bigint NOT NULL,
+    div_id    bigint NOT NULL,
+    event_id  bigint NOT NULL DEFAULT 0,
+    start_utc timestamptz NOT NULL,
+    origin    text   NOT NULL DEFAULT 'athleticlive',
+    seen_at   timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (sport, source, meet_id, div_id, event_id))
+"""
+
+
+def startUtc(ev):
+    """An event's scheduled start as an aware UTC datetime, or None when it
+    carries no time of day. Pure."""
+    sd = str(ev.get("start") or "").strip()
+    if len(sd) < 16 or "T" not in sd:
+        return None
+    try:
+        t = datetime.datetime.fromisoformat(sd.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        return None
+    return t.astimezone(datetime.timezone.utc)
+
+
+def saveStarts(cur, sport, meet_id, starts, source="anet"):
+    """starts: [(div_id, event_id, aware datetime)] -> rows written."""
+    rows = [(sport, source, int(meet_id), int(d), int(e or 0), t)
+            for d, e, t in starts if t is not None]
+    if not rows:
+        return 0
+    from psycopg2.extras import execute_values
+    cur.execute(RACE_START_DDL)
+    execute_values(cur, """
+        INSERT INTO race_start (sport, source, meet_id, div_id, event_id, start_utc)
+        VALUES %s
+        ON CONFLICT (sport, source, meet_id, div_id, event_id)
+        DO UPDATE SET start_utc = EXCLUDED.start_utc, seen_at = now()""", rows)
+    return len(rows)
 
 
 _UPSERT = """
@@ -1004,9 +1058,11 @@ def plan(meet_id, alive, events, blobs, slots, meta, catalogue=None):
     for ev in events:
         if ev["id"] in matched and ev["id"] not in blobs:
             why[ev["id"]] = "results document missing"
+    starts = [(slot.div_id, slot.event_id, startUtc(ev)) for ev in events
+              for slot in [matched.get(ev["id"])] if slot is not None and ev["id"] in blobs]
     return {"meet_info": meet_info, "meets_to_save": m2s, "athletes": ath,
             "results_to_save": res, "own": own, "unmatched": why, "left": left,
-            "events": events}
+            "events": events, "starts": starts}
 
 
 def write(conn, meet_id, p, label="[alive]"):
@@ -1029,6 +1085,13 @@ def write(conn, meet_id, p, label="[alive]"):
     if n >= 0 and p.get("side"):
         saveSide(cur, meet_id, p["side"])
         conn.commit()
+    if n > 0 and p.get("starts"):
+        try:
+            saveStarts(cur, "TF", meet_id, p["starts"])
+            conn.commit()
+        except Exception as exc:                 # noqa: BLE001 -- results matter more
+            conn.rollback()
+            print(f"{label} {meet_id}: start times not saved ({type(exc).__name__}: {exc})")
     return n
 
 

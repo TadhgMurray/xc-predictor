@@ -307,7 +307,7 @@ def plan(anet_meet_id, alive, events, blobs, meta=None):
     AthleticLIVE gives (anetMeetInfo). Pure."""
     meet_info = dict(A.metaFromAlive(alive, anet_meet_id), **(meta or {}))
     p = {"results_to_save": [], "meets_to_save": [], "athletes": [], "own": True,
-         "skipped": Counter(), "events": events}
+         "skipped": Counter(), "events": events, "starts": []}
     parsed = {}
     for ev in events:
         doc = blobs.get(ev["id"])
@@ -336,6 +336,7 @@ def plan(anet_meet_id, alive, events, blobs, meta=None):
                "Division": _division(ev), "LevelMask": meet_info.get("LevelMask") or 4,
                "CourseId": 0}
         p["meets_to_save"].append((ev_info, div_id, 0, div))
+        p["starts"].append((div_id, 0, A.startUtc(ev)))     # this race's own start
         for r in rows:
             # the track lander's 8-tuple: (row, meet, div, event, short, relay, school, field)
             p["results_to_save"].append((xcRow(r), ev_info, div_id, 0, "XC", False,
@@ -349,7 +350,16 @@ def save(meet_id, p, label="[alive xc]"):
     from scrape_results import _saveXCMeet
     meets = [(m[0], m[3]) for m in p["meets_to_save"]]
     results = [(t[0], t[1], t[6], t[2]) for t in p["results_to_save"]]
-    return _saveXCMeet(meet_id, label, meets, [], results)
+    n = _saveXCMeet(meet_id, label, meets, [], results)
+    if n > 0 and p.get("starts"):
+        try:
+            from database import getConn
+            with getConn() as conn, conn.cursor() as cur:
+                A.saveStarts(cur, "XC", meet_id, p["starts"])
+                conn.commit()
+        except Exception as exc:                 # noqa: BLE001 -- results matter more
+            print(f"{label} {meet_id}: start times not saved ({type(exc).__name__}: {exc})")
+    return n
 
 
 # ★ "ATHLETIC.NET HAS IT" IS A COUNT, NOT A YES (owner, 2026-11-01: Mt. SAC's

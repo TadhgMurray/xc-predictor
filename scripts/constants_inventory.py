@@ -411,6 +411,8 @@ RULES = {
     # ---------------------------------------------------- normalize_distance
     "engine/normalize_distance.py": {
         "_GRAPH_RETRY_AT": ("INFRA", "retry time after a failed school_level_graph read"),
+        "RACE_WX_HOURS": ("DATA", "a race with its own start reads that hour and the next (race_start)"),
+        "RACE_START_LOCAL": ("DATA", "a scheduled start outside 05-22 local is not a start"),
         **_all("DISTANCE_EXPONENT_BY_POOL DEFAULT_EXPONENT", "STATED",
                KEPT_DIST + " (fallback exponent 1.06 when the fitted spline is absent)"),
         "EVENT_DISTANCES_TF": ("DATA", "event name -> metres"),
@@ -869,6 +871,7 @@ ENV_RULES = {
     "XCP_GEOMETRY": ("REMOVED", "course cell c_c per oval (the geometry spline is already off)"),
     **_all("XCP_DISTANCE_BY XCP_DISTANCE_RESIDUAL", "STATED", KEPT_DIST + " (which distance curve family)"),
     **_all("XCP_WEATHER_FIT XCP_MUD_SENS XCP_TF_TEMP_AGG", "STATED", KEPT_WX),
+    "XCP_DB_APP": ("INFRA", "the process's database name tag; 'site' reads the published ratings' distance mode"),
     "XCP_WEATHER_ALLOW_STALE": ("INFRA", "lets normalisation run on a stale weather artifact"),
     **_all("XCP_TEAM_POOL", "DATA", "scope: a team with under 15 athletes all-time pools professional"),
     **_all("XCP_LINK_FEED_TWINS", "DATA", "identity: feed twins merged"),

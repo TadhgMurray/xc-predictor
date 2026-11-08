@@ -696,12 +696,104 @@ def _loadMeetCellsTfrrsTF(cur):
     return out
 
 
+# ★ A RACE WITH ITS OWN START READS ITS OWN HOURS (owner, 2026-11-08: "when
+#   each race starts so we can get better weather ... specific for each race
+#   in a meet"). The sport's window (8-12 local for cross country, 9-20 for
+#   track) averages a whole morning for every race of a meet; an invitational
+#   whose first race goes at 8:00 and last at 13:00 was one temperature. A
+#   race the timer scheduled (race_start, from the AthleticLIVE landers) reads
+#   the hour it started in and the next one -- the race and its warm-up --
+#   aggregated as the fit's window is (the artifact's temperature aggregate;
+#   precipitation and snowfall as the window's sum, at the race's hourly
+#   rate, so the two stay on the fit's scale). Everything else is unchanged.
+# ! A START OUTSIDE 05:00-22:59 LOCAL IS NOT A START: a date-only schedule
+#   written as midnight UTC reads as the evening before in the US. The hours
+#   and the local-hour rule live in normalize_distance (the explain page
+#   reads the same ones).
+from normalize_distance import RACE_WX_HOURS, RACE_START_LOCAL  # noqa: E402
+from normalize_distance import raceLocalHour as _localHour      # noqa: E402
+
+
+def raceWindowWeather(hourly, start_utc, cell_lon, temp_agg, window_hours):
+    """hourly: {(date ISO, utc hour): (temp, wind, precip, soil, snow_depth,
+    snowfall)} for one cell -> the race's (temp, wind, precip, soil, snow) in
+    the window's shape, or None. Pure."""
+    import datetime as _dt
+    lo_l, hi_l = RACE_START_LOCAL
+    if not lo_l <= _localHour(start_utc.hour, cell_lon) <= hi_l:
+        return None
+    t0 = start_utc.replace(minute=0, second=0, microsecond=0)
+    got = [hourly.get(((t0 + _dt.timedelta(hours=k)).date().isoformat(),
+                       (t0 + _dt.timedelta(hours=k)).hour))
+           for k in range(RACE_WX_HOURS)]
+    got = [g for g in got if g is not None and g[0] is not None]
+    if not got:
+        return None
+
+    def mean(i):
+        v = [g[i] for g in got if g[i] is not None]
+        return sum(v) / len(v) if v else None
+    temps = [g[0] for g in got]
+    temp = max(temps) if temp_agg.startswith("max") else sum(temps) / len(temps)
+    rate_p, rate_s = mean(2), mean(5)
+    precip = rate_p * window_hours if rate_p is not None else None
+    depth = mean(4)
+    snow = (depth + (rate_s or 0.0) * window_hours) if depth is not None else None
+    return (temp, mean(1), precip, mean(3), snow)
+
+
+def _loadRaceWx(cur, sport, anet_cells, tfrrs_cells, temp_agg, window_hours):
+    """{(source, meet_id, div_id, event_id): (temp, wind, precip, soil, snow)}
+    for the races with their own start (race_start) and weather to read."""
+    cur.execute("SELECT to_regclass('race_start')")
+    if cur.fetchone()[0] is None:
+        return {}
+    cur.execute("""SELECT source, meet_id, div_id, event_id, start_utc AT TIME ZONE 'UTC'
+                   FROM race_start WHERE sport = %s""", (sport,))
+    races = []
+    for src, meet, div, ev, t in cur.fetchall():
+        meta = (tfrrs_cells if src == "tfrrs" else anet_cells).get(meet)
+        if meta is not None:
+            races.append(((src, meet, div, int(ev or 0)), meta[0], meta[1], t))
+    if not races:
+        return {}
+    import datetime as _dt
+    need = set()
+    for _k, clat, clon, t in races:
+        for k in range(RACE_WX_HOURS):
+            need.add((clat, clon, (t + _dt.timedelta(hours=k)).date()))
+    from psycopg2.extras import execute_values
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS _race_wx_need "
+                "(cell_lat real, cell_lon real, date date) ON COMMIT DROP")
+    cur.execute("TRUNCATE _race_wx_need")
+    execute_values(cur, "INSERT INTO _race_wx_need VALUES %s", list(need))
+    cur.execute("""SELECT g.cell_lat, g.cell_lon, g.date, g.hour, g.apparent_temperature,
+                          g.wind_speed_10m, g.precipitation, g.soil_moisture,
+                          g.snow_depth, g.snowfall
+                   FROM   weather_grid g
+                   JOIN   _race_wx_need n ON n.cell_lat = g.cell_lat
+                                         AND n.cell_lon = g.cell_lon AND n.date = g.date""")
+    hourly = {}
+    for clat, clon, d, h, *vals in cur.fetchall():
+        hourly.setdefault((round(float(clat), 2), round(float(clon), 2)), {})[
+            (d.isoformat(), int(h))] = tuple(vals)
+    out = {}
+    for key, clat, clon, t in races:
+        w = raceWindowWeather(hourly.get((clat, clon), {}),
+                              t.replace(tzinfo=_dt.timezone.utc), clon,
+                              temp_agg, window_hours)
+        if w is not None:
+            out[key] = w
+    return out
+
+
 class WeatherIndex:
 
-    def __init__(self, anet_cells, tfrrs_cells, wx):
+    def __init__(self, anet_cells, tfrrs_cells, wx, race_wx=None):
         self._anet = anet_cells
         self._tfrrs = tfrrs_cells
         self._wx = wx
+        self._race = race_wx or {}
 
     @classmethod
     def build(cls, cur, sport):
@@ -719,10 +811,20 @@ class WeatherIndex:
         # the temperature aggregate the artifact was fitted on (avg for XC,
         # max for track); normalize_distance refuses one it does not know
         wx = _loadWxDictCached(cur, sport, hours, weatherTempAgg(art))
-        return cls(anet, tfrrs, wx)
+        try:
+            race_wx = _loadRaceWx(cur, sport, anet, tfrrs, weatherTempAgg(art),
+                                  hours[1] - hours[0] + 1)
+        except Exception as exc:                        # noqa: BLE001
+            cur.connection.rollback()
+            print(f"  weather: race start times not read ({type(exc).__name__}: {exc});"
+                  f" every race reads the {hours} window")
+            race_wx = {}
+        print(f"  weather: {len(race_wx):,} {sport} races read at their own start")
+        return cls(anet, tfrrs, wx, race_wx)
 
-    # lookup: (source, meet_id, race_date) -> (weather dict | None, course | None).
-    def lookup(self, source, meet_id, race_date):
+    # lookup: (source, meet_id, race_date[, div, event]) -> (weather dict | None,
+    # course | None). A race with its own start (race_start) reads its hours.
+    def lookup(self, source, meet_id, race_date, div_id=None, event_id=None):
         if race_date is None:
             return None, None
         cells = self._tfrrs if source == "tfrrs" else self._anet
@@ -730,7 +832,11 @@ class WeatherIndex:
         if meta is None:
             return None, None
         clat, clon, course = meta
-        vals = self._wx.get((clat, clon, race_date.isoformat()))
+        vals = None
+        if div_id is not None and self._race:
+            vals = self._race.get((source, meet_id, div_id, int(event_id or 0)))
+        if vals is None:
+            vals = self._wx.get((clat, clon, race_date.isoformat()))
         if vals is None:
             return None, course
         temp, wind, precip, soil, snow = vals
@@ -2410,7 +2516,8 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
             return row[_ID], None, _SkipReason.INSANE_DATE, trace
         # WEATHER: per-race lookup (cell+date). None when disabled or this
         # meet/day has no weather -> normalize treats it as the reference.
-        weather, course = (wx_idx.lookup(row[_SRC], row[_MEET], race_date)
+        weather, course = (wx_idx.lookup(row[_SRC], row[_MEET], race_date,
+                                         row[_DIV], row[_EVENT_ID] if cfg.sport == "TF" else 0)
                            if wx_idx is not None else (None, None))
         # ! THE POOL RESOLVED ABOVE, NOT ONE RE-DERIVED INSIDE THE LIBRARY.
         #   normalizeResult's own getPool(grade, gender) sees only the raw
