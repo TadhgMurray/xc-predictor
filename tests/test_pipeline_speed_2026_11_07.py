@@ -111,7 +111,7 @@ def test_distance_checks_chain_order():
     pos = [at("step " + n, body) for n in names]
     assert pos == sorted(pos)
     assert "04g2_dump_overrides" not in body
-    order = ["step 04a3b_merges", "wchain 04g_checks _distanceChecks",
+    order = ["step 04a3b_merges", "bgchain 04g_checks _distanceChecks",
              "bgstep 04_grade_sanity", "bgjoin 04_grade_sanity",
              "bgchainjoin 04g_checks", "_PEOPLE_FAILED=\"\"",
              "step 04g2_dump_overrides", "step 04y_course_pins"]
@@ -181,14 +181,14 @@ def test_balanced_seams_partition_inside_the_default_range():
 
 
 def _rankBlock():
-    return SH[at("# not wide: the pre-11-07 shape"):at('XCP_STREAMS="$_RSTREAMS" stepsN "${_RANK[@]}"')]
+    return SH[at("_RANK=()\nfor _sp in XC TF; do"):at('XCP_STREAMS="${XCP_RANK_STREAMS:-8}" stepsN "${_RANK[@]}"')]
 
 
 def _runRank(tmp_path, seams_out, env=""):
     stub = tmp_path / "py"
     stub.write_text(f"#!/bin/sh\necho '{seams_out}'\n")
     stub.chmod(0o755)
-    script = (f"DRY=0; LOGDIR={tmp_path}; PY={stub}; WIDE=1\n{env}\n"
+    script = (f"DRY=0; LOGDIR={tmp_path}; PY={stub}\n{env}\n"
               "beforeFrom() { return 1; }\n" + _func("rankSeamsOk") + "\n"
               + _rankBlock() + '\nfor x in "${_RANK[@]}"; do echo "ARG $x"; done\n')
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
@@ -234,7 +234,7 @@ def test_rank_seam_override(tmp_path):
 
 
 def test_rank_streams_run_together():
-    assert 'XCP_STREAMS="$_RSTREAMS" stepsN "${_RANK[@]}"' in SH
+    assert 'XCP_STREAMS="${XCP_RANK_STREAMS:-8}" stepsN "${_RANK[@]}"' in SH
     assert at("step 10_rankings_prepare") < at("_RANK=()") < at("step 10_rankings_finish")
 
 
@@ -245,12 +245,12 @@ def test_rank_streams_run_together():
 def test_rowguard_chain_from_09d_joined_before_11b_and_16():
     body = _func("_rowguard")
     assert at("steps2 15_rowguard_diag_xc", body) < at("steps2 15_rowguard_triage_xc", body)
-    order = ["step 09d_outliers", "wchain 15_rowguard _rowguard", "step 10_rankings_prepare",
+    order = ["step 09d_outliers", "bgchain 15_rowguard _rowguard", "step 10_rankings_prepare",
              "bgchainjoin 15_rowguard", "step 11b_indexes", "step 16_rowguard_apply"]
     pos = [at(s) for s in order]
     assert pos == sorted(pos), order
     # nothing between the chain's start and 16 rewrites corrections.py
-    mid = SH[at("wchain 15_rowguard _rowguard"):at("step 16_rowguard_apply")]
+    mid = SH[at("bgchain 15_rowguard _rowguard"):at("step 16_rowguard_apply")]
     for writer in ("audit_overrides.py", "gender_pace_pin.py", "data_checks.py", "apply_triage.py"):
         assert writer not in mid
 
@@ -269,13 +269,13 @@ def test_early_block_in_parallel_then_team_pool():
 def test_four_late_steps_beside_the_pack_joined_before_the_golive():
     names = ["13c0_person_redirects", "13c0_search_helpers", "10b0_tfrrs_link", "10e_meet_units"]
     for n in names:
-        assert at("step 06c_impossible") < at(f"wbg {n} ") < at("step 07_pack") \
+        assert at("step 06c_impossible") < at(f"bgstep {n} ") < at("step 07_pack") \
             < at(f"bgjoin {n}") < at("  step 08_golive"), n
-        assert f"step {n} " not in SH.replace(f"wbg {n} ", ""), n
+        assert f"step {n} " not in SH.replace(f"bgstep {n} ", ""), n
     # each still precedes its reader
-    assert at("wbg 10b0_tfrrs_link") < at("stepsN 10b_school_ids")
-    assert at("wbg 13c0_search_helpers") < at("step 13c_search_index")
-    assert at("wbg 13c0_person_redirects") < at("step 13d_sitemap")
+    assert at("bgstep 10b0_tfrrs_link") < at("stepsN 10b_school_ids")
+    assert at("bgstep 13c0_search_helpers") < at("step 13c_search_index")
+    assert at("bgstep 13c0_person_redirects") < at("step 13d_sitemap")
     # and none of them reads a rating
     for f in (("scripts", "person_redirects.py"), ("racecast", "build_search_helpers.py"),
               ("scripts", "link_tfrrs_to_anet.py"), ("racecast", "build_meet_units.py")):
@@ -290,7 +290,7 @@ def test_four_late_steps_beside_the_pack_joined_before_the_golive():
 def test_fills_side_by_side_and_the_scrub_flag_only_after_this_runs_pack_and_golive():
     assert 'stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG"' in SH
     assert '09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG"' in SH
-    cond = SH[at('_FILL_FLAG=""'):at('if [ "$WIDE" = 1 ]; then\n  stepsN 09b_fill')]
+    cond = SH[at('_FILL_FLAG=""'):at("stepsN 09b_fill")]
     for need in ('[ "${XCP_JOINT_LIVE:-1}" = "1" ]', '[ "$FROM" -le 7 ]',
                  "! skipped 07_pack", "! failed 07_pack", "! skipped 08_golive", "! failed 08_golive"):
         assert need in cond, need
@@ -310,7 +310,7 @@ def _bash(script):
 
 
 def test_fill_flag_cases():
-    cond = SH[at('_FILL_FLAG=""'):at('if [ "$WIDE" = 1 ]; then\n  stepsN 09b_fill')]
+    cond = SH[at('_FILL_FLAG=""'):at("stepsN 09b_fill")]
     stubs = ('skipped() { case "$SKIP" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }\n'
              'failed() { case " $FAILED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }\n')
     def flag(pre):
@@ -327,8 +327,7 @@ def test_fill_flag_cases():
 # ==================================================================== #
 
 _FUNCS = ("skipped", "failed", "beforeFrom", "_stampTo", "_skipCost", "step", "_live",
-          "steps2", "stepsN", "bgstep", "bgjoin", "bgwait", "bgchain", "bgchainjoin",
-          "wbg", "wchain")
+          "steps2", "stepsN", "bgstep", "bgjoin", "bgwait", "bgchain", "bgchainjoin")
 
 
 def _lib(tmp_path):
@@ -341,8 +340,7 @@ def _lib(tmp_path):
         else:
             parts.append(_func(f))
     return (f"set -u -o pipefail\nFROM=0; SKIP=','; DRY=0; LOGDIR={tmp_path}; "
-            f"SUMMARY={tmp_path}/summary.log; NICE=; FAILED=''; XCP_STREAMS=4; XCP_LIVE=0; "
-            f"WIDE=${{WIDE:-1}}\n"
+            f"SUMMARY={tmp_path}/summary.log; NICE=; FAILED=''; XCP_STREAMS=4; XCP_LIVE=0\n"
             + "\n".join(parts) + "\n")
 
 
@@ -370,7 +368,7 @@ def _peopleBlock():
               at("# ★ THE SEASON LEVELS, REBUILT EVERY RUN")]
 
 
-def _runPeople(tmp_path, fail_build=False, skip="", wide=1):
+def _runPeople(tmp_path, fail_build=False, skip=""):
     calls = tmp_path / "calls"
     stub = tmp_path / "py"
     stub.write_text(f'''#!/bin/sh
@@ -383,7 +381,7 @@ esac
 exit 0
 ''')
     stub.chmod(0o755)
-    script = (f"WIDE={wide}\n" + _lib(tmp_path) + f"PY={stub}; SKIP=',{skip},'\n" + _peopleBlock()
+    script = (_lib(tmp_path) + f"PY={stub}; SKIP=',{skip},'\n" + _peopleBlock()
               + 'echo "FAILED=[$FAILED]"\n')
     out = _bash(script)
     return out, (calls.read_text() if calls.exists() else "")
@@ -788,47 +786,3 @@ def test_drop_old_and_the_backup_count_nothing_for_a_log_line():
         conn.rollback()
     src = read("engine", "drop_old.py") + read("engine", "pair_golive.py")
     assert "SELECT count(*) FROM {table}" not in src and "SELECT count(*) FROM {backup}" not in src
-
-
-# ---- XCP_PIPELINE_WIDE=0, the default since 2026-11-08 (the 11-07 23:28 OOM) ----
-
-def test_not_wide_builds_twins_after_grade_sanity(tmp_path):
-    """! The default: the twins build starts only once grade_sanity and
-    wheelchair are collected, so the people block holds no more Python steps
-    in memory than it did before 11-07; the swap still follows the build."""
-    _runPeople(tmp_path, wide=0)
-    calls = (tmp_path / "calls").read_text().splitlines()
-    gs = next(i for i, c in enumerate(calls) if "grade_sanity" in c)
-    build = next(i for i, c in enumerate(calls) if "--no-swap" in c)
-    assert build > gs and (tmp_path / "gs_done").exists()
-    assert "SWAP_AFTER_GS" in calls and "SWAP_EARLY" not in calls
-
-
-def test_not_wide_ranks_in_the_old_shape(tmp_path):
-    pairs = _runRank(tmp_path, "2009-08-01 2016-03-01 2021-09-15", env="WIDE=0")
-    for sport in ("XC", "TF"):
-        assert _ranges(pairs, sport) == [
-            (f"10_rankings_{sport.lower()}_a", "1990-01-01", "2018-01-01"),
-            (f"10_rankings_{sport.lower()}_b", "2018-01-01", "2100-01-01")]
-    assert 'else _RPARTS="${XCP_RANK_PARTS:-2}"; _RSTREAMS="${XCP_RANK_STREAMS:-4}"; fi' in SH
-
-
-def test_wide_is_off_unless_asked():
-    assert 'WIDE="${XCP_PIPELINE_WIDE:-0}"' in SH
-    for line in ("wbg 13c0_person_redirects", "wbg 13c0_search_helpers", "wbg 10b0_tfrrs_link",
-                 "wbg 10e_meet_units", "wchain 15_rowguard _rowguard",
-                 "wchain 04g_checks _distanceChecks"):
-        assert line in SH, line
-
-
-def test_not_wide_runs_a_chain_in_line(tmp_path):
-    script = "WIDE=0\n" + _lib(tmp_path) + '''
-_c() { step 04g0_x sh -c "echo X0"; step 04g1_y sh -c "echo Y1"; }
-wchain 04g_checks _c
-echo AFTER
-bgchainjoin 04g_checks
-echo "FAILED=[$FAILED]"
-'''
-    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout
-    assert "IN THE BACKGROUND" not in out
-    assert out.index("04g1_y") < out.index("AFTER") and "FAILED=[]" in out
