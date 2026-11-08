@@ -187,3 +187,42 @@ def test_the_raw_history_sql_reads_only_the_field():
     xc, _tf = R._sql(False, by_ids=True)
     assert "ANY(%(ids)s)" in xc
     assert "ANY(" not in R._sql(False)[0]
+
+
+def _snapshot(path, asof, rids, ratings, pools, cells=((7, 5000, 0.03),), window=800):
+    import numpy as np
+    np.savez(path, asof=np.array([asof]), window_days=np.array([window]),
+             XC_result_id=np.array(rids, dtype=np.int64),
+             XC_rating=np.array(ratings, dtype=np.float32),
+             XC_pool=np.array(pools),
+             cell_canonical_id=np.array([c for c, _d, _v in cells], dtype=np.int64),
+             cell_distance_m=np.array([d for _c, d, _v in cells], dtype=np.int64),
+             cell_difficulty=np.array([v for _c, _d, v in cells]))
+
+
+def test_as_of_each_cut_the_snapshot_then_in_force(tmp_path):
+    import datetime as dt
+    _snapshot(tmp_path / "asof_2025-10-01.npz", "2025-10-01", [11, 12], [150.0, 152.0],
+              ["hs_m|x", "hs_m"])
+    _snapshot(tmp_path / "asof_2025-10-15.npz", "2025-10-15", [11, 12, 13],
+              [149.0, 151.0, 155.0], ["hs_m", "hs_m", "hs_m"], cells=((7, 5000, 0.05),))
+    S = R.AsOf(str(tmp_path))
+    assert S.at(dt.date(2025, 9, 30)) is None
+    assert S.at(dt.date(2025, 10, 1)) == 0 and S.at(dt.date(2025, 10, 20)) == 1
+    assert S.cell(0, 7, 4990.0) == 0.03 and S.cell(1, 7, 5000.0) == 0.05
+    assert S.cell(1, None, 5000.0) is None
+    rows = [(dt.date(2020, 9, 1), 140.0, "hs_m", "XC", 1),     # older than the window
+            (dt.date(2025, 9, 20), 999.0, "hs_m", "XC", 11),   # today's 999 is hindsight
+            (dt.date(2025, 9, 27), 999.0, "hs_m", "XC", 12),
+            (dt.date(2025, 10, 4), 999.0, "hs_m", "XC", 13)]   # after the first cutoff
+    h0 = S.history(0, rows)
+    assert [(d.isoformat(), r) for d, r, _p, _s in h0] == [
+        ("2020-09-01", 140.0), ("2025-09-20", 150.0), ("2025-09-27", 152.0)]
+    assert h0[1][2] == "hs_m"                                  # the pool cut to its name
+    assert [r for _d, r, _p, _s in S.history(1, rows)] == [140.0, 149.0, 151.0, 155.0]
+
+
+def test_as_of_needs_snapshots(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit):
+        R.AsOf(str(tmp_path))

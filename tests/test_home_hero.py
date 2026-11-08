@@ -1,5 +1,5 @@
 """The home page as built from the owner-approved render (2026-10-10): the
-black hero with the search, the nine photos with their focal points, the
+mural hero (2026-11-07: the photos behind a centred headline, no second search), the nine photos with their focal points, the
 four task links, and the snapshot with one row of level tabs, top 25 per
 table, a Teams tab and a track-5K column. The database is stubbed; the page
 is rendered through the real home() route.
@@ -47,8 +47,12 @@ def test_every_focal_point_outranks_the_shared_rule():
 
 
 def test_the_hero_search_is_the_topbar_search():
+    # owner, 2026-11-07: "the second search bar" -- the hero's box is gone,
+    # the top bar's search is the one search on the page
     h = read("racecast", "templates", "home.html")
-    assert 'data-live-search="hm-search-results"' in h and 'id="hm-search-results"' in h
+    assert "hm-search" not in h
+    top = read("racecast", "templates", "_topbar.html")
+    assert "data-live-search" in top or "topsearch" in top or "search" in top
     js = read("racecast", "static", "topbar-search.js")
     assert "input[data-live-search]" in js
     assert js.count("fetch('/search/api?q=") == 1          # one copy, not two

@@ -191,19 +191,17 @@
   ('m9', 'Kerr celebrating')
 ] %}
 <div class="hm-band"><section class="hm-hero">
+  {# ★ THE MURAL BEHIND THE HEADLINE (owner, 2026-11-07: light mode's black
+       block "looks so off with all the whitespace" -- white gutters beside it,
+       empty black inside it). The nine photos fill the band edge to edge,
+       darkened, and the text sits centred on them in white. The second
+       search box is gone: the top bar's is the one search. #}
+  <div class="hm-photos" aria-hidden="true">
+    {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}" alt="" title="{{ alt }}" decoding="async">{% endfor %}
+  </div>
+  <div class="hm-dim" aria-hidden="true"></div>
   <div class="hm-text">
     <h1>Every result on one comparable scale.</h1>
-    {# ★ THE TOP BAR'S SEARCH, BIGGER (2026-10-10): same endpoint, same
-         dropdown -- topbar-search.js wires any input that names its results
-         box in data-live-search. Without script it is a plain GET to /search. #}
-    <form class="hm-search" action="/search" role="search">
-      <div class="hm-search-box">
-        <input type="search" name="q" id="hm-search-input" data-live-search="hm-search-results"
-               placeholder="Find an athlete, school or meet" aria-label="Find an athlete, school or meet" autocomplete="off">
-        <button type="submit">Search</button>
-      </div>
-      <div id="hm-search-results" class="search-results"></div>
-    </form>
     {# ★ A RATING AS A TRACK 5K (owner, 2026-10-10): both clocks come from
          conversions.track5k on the HS boys scale; a database with no scale
          yet says the sentence without them rather than inventing them #}
@@ -218,9 +216,6 @@
     {% if updates and (updates.through_text or updates.recomputed) %}
     <p class="hm-updates"><a href="{{ url_for('updates_page') }}">{% if updates.through_text %}Results through <b>{{ updates.through_text }}</b>{% endif %}{% if updates.through_text and updates.recomputed %} <span aria-hidden="true">&middot;</span> {% endif %}{% if updates.recomputed %}ratings recomputed {{ updates.recomputed.strftime("%b") }} {{ updates.recomputed.day }}{% endif %} <span aria-hidden="true">&middot;</span> <span class="rc-nowrap">What's new &rarr;</span></a></p>
     {% endif %}
-  </div>
-  <div class="hm-photos" aria-hidden="true">
-    {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}" alt="" title="{{ alt }}" decoding="async">{% endfor %}
   </div>
 </section></div>
 

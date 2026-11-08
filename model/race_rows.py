@@ -600,7 +600,8 @@ def _sql(has_outliers, by_ids=False):
     xc = escapeLiteralPercent(f"""
         SELECT r.person_id, left(r.date, 10), r.speed_rating,
                split_part(r.rating_pool, '|', 1), r.time_seconds,
-               r.meet_id, r.div_id, r.source, r.school, r.grade, 0, {dist}
+               r.meet_id, r.div_id, r.source, r.school, r.grade, 0, {dist},
+               r.result_id
         FROM   results r
 {joins}
         WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
@@ -613,7 +614,7 @@ def _sql(has_outliers, by_ids=False):
     tf = f"""
         SELECT r.person_id, left(r.date, 10), r.speed_rating,
                split_part(r.rating_pool, '|', 1), NULL, NULL, NULL, NULL, NULL, NULL, 1,
-               NULL
+               NULL, r.result_id
         FROM   results_tf r
         WHERE  r.person_id IS NOT NULL AND r.date >= %(lo)s AND r.date < %(hi)s
           AND  r.speed_rating > 0 AND r.rating_pool IS NOT NULL
@@ -655,6 +656,90 @@ def rawHistory(cur, ids, cut, has_outliers):
             continue
         out.setdefault(int(row[0]), []).append((day, x))
     return out
+
+
+# ★ THE ENGINE AS OF EACH DAY (owner, 2026-11-06: "there shouldnt be any
+#   hindsight"; docs/PLAN-MODEL-2026-10.md §9). With --asof-dir, every
+#   training race reads the ratings and course cells of the latest snapshot
+#   made on or before its cut (deploy/engine_replay.sh, run_joint --asof):
+#   a solve on the rows dated before that day. A row dated after the
+#   snapshot has no rating in it (unrated, as on that morning); a row older
+#   than the snapshot's window keeps today's rating, which only counts it
+#   (career_n, xc_seasons: rawFeatures and the form read the last two
+#   seasons). A race whose cut is before the first snapshot is left out.
+class AsOf:
+    """The snapshots in a folder (asof_YYYY-MM-DD.npz), oldest first."""
+
+    def __init__(self, folder):
+        import glob
+        import numpy as np
+        self.days, self.cells, self.window, self.by = [], [], [], []
+        self.pools = []
+        self._pool_ix = {}
+        for path in sorted(glob.glob(os.path.join(folder, "asof_*.npz"))):
+            z = np.load(path, allow_pickle=False)
+            self.days.append(datetime.date.fromisoformat(str(z["asof"][0])))
+            self.window.append(int(z["window_days"][0]) if "window_days" in z.files else 10 ** 6)
+            by = {}
+            for sport in ("XC", "TF"):
+                if f"{sport}_result_id" not in z.files:
+                    continue
+                pools = (z[f"{sport}_pool"] if f"{sport}_pool" in z.files
+                         else np.array([""] * z[f"{sport}_result_id"].size))
+                code = np.array([self._poolCode(p) for p in np.unique(pools)], dtype=np.int16)
+                _u, inv = np.unique(pools, return_inverse=True)
+                by[sport] = (z[f"{sport}_result_id"], z[f"{sport}_rating"],
+                             code[inv].astype(np.int16))
+            self.by.append(by)
+            self.cells.append({(int(c), int(d)): float(v) for c, d, v in zip(
+                z["cell_canonical_id"], z["cell_distance_m"], z["cell_difficulty"])})
+        if not self.days:
+            raise SystemExit(f"--asof-dir {folder}: no asof_*.npz in it "
+                             "(deploy/engine_replay.sh writes them)")
+
+    def _poolCode(self, p):
+        p = str(p).split("|")[0]
+        if p not in self._pool_ix:
+            self._pool_ix[p] = len(self.pools)
+            self.pools.append(p)
+        return self._pool_ix[p]
+
+    def at(self, cut):
+        """The index of the latest snapshot on or before `cut`, or None."""
+        from bisect import bisect_right
+        k = bisect_right(self.days, cut) - 1
+        return k if k >= 0 else None
+
+    def cell(self, k, cid, distance):
+        if k is None or cid is None or not distance:
+            return None
+        return self.cells[k].get((int(cid), int(round(float(distance) / 100.0) * 100)))
+
+    def history(self, k, rows):
+        """race_rows' history as snapshot k had it. rows: [(date, today's
+        rating or None, pool, sport, result_id)] oldest first."""
+        import numpy as np
+        d0 = self.days[k]
+        lo = d0 - datetime.timedelta(days=self.window[k])
+        out = [None] * len(rows)
+        for sport in ("XC", "TF"):
+            ix = [i for i, r in enumerate(rows)
+                  if r[3] == sport and lo <= r[0] < d0 and r[4] is not None]
+            if not ix or sport not in self.by[k]:
+                continue
+            rid, val, pc = self.by[k][sport]
+            q = np.array([rows[i][4] for i in ix], dtype=np.int64)
+            pos = np.searchsorted(rid, q)
+            pos_c = np.minimum(pos, rid.size - 1)
+            hit = (pos < rid.size) & (rid[pos_c] == q)
+            for i, h, p in zip(ix, hit, pos_c):
+                if h:
+                    out[i] = (rows[i][0], float(val[p]), self.pools[int(pc[p])] or rows[i][2],
+                              sport)
+        for i, r in enumerate(rows):
+            if r[0] < lo and r[1]:
+                out[i] = (r[0], r[1], r[2], r[3])           # counted, not read
+        return [x for x in out if x is not None]
 
 
 def _people(conn, lo, hi, has_outliers):
@@ -760,6 +845,10 @@ def build(conn, a):
     hi_t = datetime.date.fromisoformat(a.hi)
     val_from = datetime.date.fromisoformat(a.val_from)
     pm = {}
+    snaps = AsOf(a.asof_dir) if getattr(a, "asof_dir", None) else None
+    if snaps is not None:
+        print(f"  as of: {len(snaps.days)} snapshots, {snaps.days[0]} .. {snaps.days[-1]}",
+              flush=True)
     races = {}            # key -> [runner tuple]
     race_dist = {}        # key -> the rows' corrected distances
     n_people = 0
@@ -767,6 +856,8 @@ def build(conn, a):
                              has_out):
         n_people += 1
         hist = []
+        hist_rows = []        # with --asof-dir: (date, rating, pool, sport, result_id)
+        hist_at = {}          # snapshot index -> (rows seen, its history)
         past = []             # (date, raceHash, ln time) of their XC races
         raw = []              # (date, ln 5K-equivalent) of the same, Riegel only
         i = 0
@@ -791,7 +882,17 @@ def build(conn, a):
                         race_dist.setdefault(key, []).append(float(r[11]))
                     for lead in leadsFor(key, a.leads, a.lead_frac):
                         cut = day - datetime.timedelta(days=lead)
-                        got = runnerFeatures(hist, day, {"pool": r[3], "grade": r[9]}, raw,
+                        h = hist
+                        if snaps is not None:
+                            k = snaps.at(cut)
+                            if k is None:
+                                continue
+                            seen = hist_at.get(k)
+                            if seen is None or seen[0] != len(hist_rows):
+                                seen = (len(hist_rows), snaps.history(k, hist_rows))
+                                hist_at[k] = seen
+                            h = seen[1]
+                        got = runnerFeatures(h, day, {"pool": r[3], "grade": r[9]}, raw,
                                              cut=cut)
                         if got is None:
                             continue
@@ -812,6 +913,9 @@ def build(conn, a):
             for r in rows[i:j]:
                 if r[2] and r[2] > 0 and r[3]:
                     hist.append((day, float(r[2]), r[3], "TF" if r[10] else "XC"))
+                if snaps is not None and len(r) > 12:
+                    hist_rows.append((day, float(r[2]) if r[2] and r[2] > 0 else None,
+                                      r[3], "TF" if r[10] else "XC", r[12]))
                 if r[10] == 0 and r[4] and r[5] is not None and r[6] is not None:
                     past.append((day, raceHash(r[5], r[6], r[7], day_s), math.log(float(r[4]))))
                 x = rawPoint(r)
@@ -849,6 +953,10 @@ def build(conn, a):
         rmeta = dict(meta.get(key[:4]) or {}, day=day, source=key[2],
                      lead_days=key[4] if len(key) > 4 else 0)
         rmeta["weather"] = weatherAt(rmeta.get("weather"), rmeta["lead_days"])
+        if snaps is not None:
+            # the course as the snapshot in force at the cut had it
+            rmeta["cell"] = snaps.cell(snaps.at(day - datetime.timedelta(days=rmeta["lead_days"])),
+                                       rmeta.get("canonical_id"), rmeta.get("distance"))
         field = [{"pid": p, "secs": secs, "school": school, "base_ln": b,
                   "f": dict(zip(RUNNER_FEATURES, vec)), "rating": rating, "pool": pool,
                   "past": list(zip(ph, pt))}
@@ -900,6 +1008,9 @@ def main():
                          "lead:share gives a lead its own share")
     ap.add_argument("--lead-frac", type=float, default=0.25,
                     help="share of races copied at each lead (0 = none)")
+    ap.add_argument("--asof-dir", default=None,
+                    help="build every race from the engine as of its cut: the snapshots "
+                         "deploy/engine_replay.sh writes (no hindsight)")
     ap.add_argument("--max-persons", type=int, default=None,
                     help="stop after N people (a code check only; completes few races)")
     a = ap.parse_args()

@@ -243,64 +243,58 @@ td.no-break { white-space: nowrap; }
 .topsearch { margin-left: auto; }          /* pushes search to the right */
 .topsearch input { padding: 0.4rem 0.7rem; min-width: 220px; }
  
-/* ---- home hero: headline + search beside the nine photos (2026-10-10) -- */
+/* ---- home hero: the mural behind the headline (2026-11-07) ------------ */
 /*
- * ★ THE OWNER-APPROVED RENDER (renders4 "NB"), replacing the nine-photo
- *   mosaic with the logo in a merged centre cell. The band keeps the
- *   mosaic's black (#0a0c0e) and its inset (1280px, centred); inside it the
- *   text column (headline, the search, what a rating is, the facts) sits
- *   beside one tidy 5 x 2 photo grid. No second logo: the top bar has it.
- *
- * ★ <img> WITH object-fit, NOT BACKGROUND TILES. Same cover-crop, but the
- *   focal point is object-position on the image itself, and nothing else
- *   on the page sets it.
+ * ★ THE OWNER'S CALL, AFTER A DOZEN RENDERS: the nine photos fill a band the
+ *   width of the window, darkened, and the headline sits centred on them in
+ *   white. It replaces the black block inset at 1280px, whose white gutters
+ *   and empty black around the text "looks so off" in light mode. Same in
+ *   dark mode: the photos carry it, not the page colour.
+ * ! FULL WIDTH THROUGH THE BODY'S MARGIN: 100vw counts a desktop scrollbar,
+ *   so the band would run ~15px past the window; the home page clips the
+ *   sideways overflow (html:has(.hm-band)), nothing else does.
+ * ★ <img> WITH object-fit, NOT BACKGROUND TILES: the focal point is
+ *   object-position on the image itself (the rules below).
  */
-.hm-band { max-width: 1280px; margin: 0 auto; background: #0a0c0e; padding-bottom: 1.6rem; }
-.hm-hero {
-    max-width: 1240px; margin: 0 auto; box-sizing: border-box;
-    padding: 1.6rem 1.5rem 0;
-    display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.6fr);
-    gap: 1.75rem; align-items: center;
+html:has(.hm-band) { overflow-x: clip; }
+.hm-band {
+    position: relative; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw);
+    background: #0a0c0e; overflow: hidden;
 }
-.hm-text h1 {
-    font-size: 2.05rem; line-height: 1.12; letter-spacing: -0.015em;
-    margin: 0 0 1.1rem; color: #fff;
-}
-/* ! THE DROPDOWN LIVES OUTSIDE THE ROUNDED BOX: .hm-search-box clips to its
-     corners (overflow: hidden), and a results list inside it would be cut
-     off at the box's bottom edge. */
-.hm-search { position: relative; }
-.hm-search-box { display: flex; border: 1px solid #fff; border-radius: 6px; overflow: hidden; background: #fff; }
-.hm-search input {
-    flex: 1; min-width: 0; border: 0; padding: .75rem .9rem; font-size: 1rem;
-    outline: none; background: transparent; color: #111;
-}
-.hm-search button {
-    border: 0; border-left: 1px solid #d5d7da; background: #fff; color: #0a0c0e;
-    font-weight: 600; font-size: .95rem; padding: 0 1.1rem; cursor: pointer;
-}
-.hm-search-box:focus-within { box-shadow: 0 0 0 3px rgba(255,255,255,.35); }
-.hm-search .search-results { top: calc(100% + 4px); border-radius: 6px; border-top: 1px solid #ccc; overflow: hidden; }
-.hm-what { margin: .85rem 0 0; color: rgba(255,255,255,.80); font-size: .95rem; line-height: 1.45; }
-.hm-what a { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
-.hm-facts { margin: .6rem 0 0; color: rgba(255,255,255,.62); font-size: .82rem; }
-.hm-facts b { color: #fff; font-weight: 700; }
-/* What's new, one line under the facts (owner, 2026-10-22) */
-.hm-updates { margin: .45rem 0 0; font-size: .82rem; }
-.hm-updates a { color: rgba(255,255,255,.78); text-decoration: none; border-bottom: 1px solid rgba(255,255,255,.3); }
-.hm-updates a:hover { color: #fff; border-bottom-color: #fff; }
-.hm-updates b { color: #fff; font-weight: 700; }
-
-/* photos: one 5 x 2 grid, Bolt's panorama spans two cells */
+.hm-hero { position: relative; height: 470px; }
 .hm-photos {
-    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
-    grid-template-rows: 190px 190px; gap: 6px;
+    position: absolute; inset: 0; display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 3px;
 }
 .hm-photos .hp {
     width: 100%; height: 100%; object-fit: cover; object-position: center;
-    display: block; border-radius: 6px; background: #1a1d21;
+    display: block; background: #1a1d21;
 }
 .hm-photos .hp-m2 { grid-column: span 2; }
+.hm-dim {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at center, rgba(8,10,14,.78) 0%, rgba(8,10,14,.62) 45%, rgba(8,10,14,.38) 100%);
+}
+.hm-text {
+    position: relative; z-index: 1; height: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 0 1.5rem;
+}
+.hm-text > * { max-width: 42rem; }
+.hm-text h1 {
+    text-wrap: balance; font-size: 3rem; line-height: 1.05; letter-spacing: -0.025em;
+    margin: 0 0 .9rem; color: #fff;
+}
+.hm-what { margin: 0; color: rgba(255,255,255,.9); font-size: 1.06rem; line-height: 1.5; text-wrap: pretty; }
+.hm-what a { color: #fff; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+.hm-facts { margin: .8rem 0 0; color: rgba(255,255,255,.75); font-size: .85rem; }
+.hm-facts b { color: #fff; font-weight: 700; }
+/* What's new, one line under the facts (owner, 2026-10-22) */
+.hm-updates { margin: .4rem 0 0; font-size: .82rem; }
+.hm-updates a { color: rgba(255,255,255,.8); text-decoration: none; border-bottom: 1px solid rgba(255,255,255,.3); }
+.hm-updates a:hover { color: #fff; border-bottom-color: #fff; }
+.hm-updates b { color: #fff; font-weight: 700; }
 
 /* ---- per-photo focal points ------------------------------------------ */
 /*
@@ -315,9 +309,9 @@ td.no-break { white-space: nowrap; }
  *   `.hm-photos .hp` (0,2,0) wherever either one sits in the file.
  */
 .hm-photos img.hp-m2 { object-position: 28% 22%; }   /* Bolt's face and the glance back */
-.hm-photos img.hp-m1 { object-position: 48% 30%; }   /* the NXN tape break, arms up */
+.hm-photos img.hp-m1 { object-position: 48% 62%; }   /* the NXN tape break, the baked-in CHAMPION above the crop */
 .hm-photos img.hp-m5 { object-position: 52% 30%; }   /* Hocker crossing the line */
-.hm-photos img.hp-m3 { object-position: 45% 45%; }   /* the DIII start pack */
+.hm-photos img.hp-m3 { object-position: 45% 72%; }   /* the DIII start pack, its baked-in caption above the crop */
 .hm-photos img.hp-m4 { object-position: 30% 28%; }   /* the 1600 under the lights */
 .hm-photos img.hp-m7 { object-position: 47% 45%; }   /* Switzer, Boston 1967 */
 .hm-photos img.hp-m8 { object-position: 48% 50%; }   /* Kipchoge: 48% across keeps the 1:59 clock */
@@ -338,22 +332,19 @@ td.no-break { white-space: nowrap; }
 .hm-tasks a:hover b { text-decoration: underline; }
 .hm-tasks span { display: block; color: #6b7179; font-size: .84rem; margin-top: .15rem; }
 
-/* ★ A PHONE GETS THE PHOTOS AS ONE STRIP THAT SCROLLS INSIDE THE BAND
-     (never the page), and the search stays above the fold */
+/* ★ A PHONE: the same mural behind the text, three photos across, the band
+     as tall as its text needs */
 @media (max-width: 760px) {
-    .hm-band { padding-bottom: 1.1rem; }
-    .hm-hero { grid-template-columns: minmax(0, 1fr); padding: 16px 0 0; gap: .9rem; }
-    .hm-text { order: 2; padding: 0 16px; }
-    .hm-photos {
-        order: 1; display: flex; gap: 6px; overflow-x: auto; scroll-snap-type: x mandatory;
-        padding: 0 16px; scrollbar-width: none;
-    }
-    .hm-photos::-webkit-scrollbar { display: none; }
-    .hm-photos .hp { flex: 0 0 92px; height: 120px; scroll-snap-align: start; }
-    .hm-photos .hp-m2 { flex-basis: 150px; }
-    .hm-text h1 { font-size: 1.5rem; margin-bottom: .75rem; }
+    .hm-hero { height: auto; min-height: 400px; }
+    .hm-photos { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+    .hm-photos .hp-m2 { grid-column: span 1; }
+    .hm-dim { background: rgba(8,10,14,.68); }    /* the text covers most of a phone's band */
+    .hm-text { padding: 2.2rem 16px; min-height: 400px; }
+    .hm-text h1 { font-size: 1.75rem; margin-bottom: .7rem; }
+    .hm-what { font-size: .98rem; }
     .hm-tasks { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .9rem 1rem; padding: 0 16px; margin-top: 1.2rem; }
     .hm-tasks span { font-size: .8rem; }
+}
 }
  
 /* ---- rankings controls ---------------------------------------------- */

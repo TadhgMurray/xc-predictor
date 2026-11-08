@@ -88,3 +88,24 @@ def test_the_rating_order_baseline():
     model, by_rating = S.ratingOrder(fc)
     assert [r["person_id"] for r in model["runners"]] == [1, 2]          # rated only
     assert sorted(by_rating["runners"], key=lambda r: r["seconds"])[0]["person_id"] == 2
+
+
+def test_the_two_archives_averaged_runner_by_runner():
+    import score_frozen_forecasts as S
+    a = {"runners": [{"person_id": 1, "seconds": 900.0, "lo": 880.0, "hi": 920.0},
+                     {"person_id": 2, "seconds": 1000.0}]}
+    b = {"runners": [{"person_id": 1, "seconds": 1000.0, "lo": 980.0, "hi": 1020.0}]}
+    m = S.mixRunners(a, b)
+    assert [r["person_id"] for r in m["runners"]] == [1]
+    assert abs(m["runners"][0]["seconds"] - (900.0 * 1000.0) ** 0.5) < 1e-9
+    assert m["teams"] == []
+
+
+def test_the_mean_miss_is_kailos_statistic():
+    import math
+    import score_frozen_forecasts as S
+    errs = [100.0 * math.log(1.02), 100.0 * math.log(0.98)]
+    s = S.summarize([{"errs": errs, "within": [0.0], "rho": None, "place_err": [0],
+                      "team_err": [], "team_rho": None, "winner": None, "in_band": 0,
+                      "n_band": 0, "listed": 1.0}])
+    assert abs(s["mean"] - 2.0) < 1e-9
