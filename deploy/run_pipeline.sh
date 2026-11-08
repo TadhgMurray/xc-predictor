@@ -1893,6 +1893,13 @@ steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
        13_panels_tf "$PY -u racecast/panels.py --sport TF"
 # Breakouts, precomputed: reads ranking_results and the panels' newest dates
 step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
+# ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py):
+#   every state's marks into wit_marks, which cuts.marksFor reads instead of
+#   computing them in the web workers. After everything cuts reads (the
+#   boards, 10d's units, 10e's meet_unit, 13_panels' season year). A failed
+#   build costs nothing else: the site computes a state live when its row is
+#   missing or older than cuts.MAX_AGE_S.
+step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up
 #   at /account/admin/social. A report step: it never fails the run. Off with
