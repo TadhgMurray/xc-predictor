@@ -32,6 +32,9 @@ import rr_layout   # noqa: E402
 # check requires an index whose WHOLE definition matches it -- a plain
 # leading-column index does not satisfy a covering INCLUDE spec.
 WANTED = [
+    # a state's live board (state filter on ranking_results): see
+    # build_ranking_results._CANONICAL_INDEXES rr_state_year_idx (2026-11-08)
+    ("ranking_results", "pool", "rr_state_year_idx", "(pool, sport, year, state)"),
     # stampRowsHs on every race/compiled/course/compare page -- without
     # this each of those pages seq-scans ranking_results (56M rows).
     ("ranking_results", "result_id", "idx_rr_result", None),
