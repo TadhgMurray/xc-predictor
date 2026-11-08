@@ -103,8 +103,31 @@
   var c = document.getElementById("upd-count");
   if (c && seen) c.textContent = n ? "· " + n + " new since your last visit" : "· nothing new since your last visit";
   if (newest) { try { localStorage.setItem(KEY, newest); } catch (e) {} }
-  // what the bar's dot compares (topbar-search.js): seen once this page is
-  try { localStorage.setItem("rc_updates_stamp", {{ (fd.stamp or "")|tojson }}); } catch (e) {}
+  // what the bar's dot compares (topbar-search.js): seen once this page is.
+  // ★ THE NEWEST STAMP ANYONE HAS SHOWN THIS BROWSER (owner, 2026-11-08: the
+  //   dot came back with nothing new). This page is cached longer than
+  //   /api/updates/latest, so its own stamp could be older than the one the
+  //   dot is measured against -- read here, then beaten by the API's on the
+  //   next page. So the newest of: this page's stamp, the last one the bar
+  //   fetched (rc_updates_check2), and the API's now.
+  function later(a, b) {
+    if (!a) return b || ""; if (!b) return a;
+    var x = a.split("|"), y = b.split("|");
+    return [(x[0] || "") > (y[0] || "") ? x[0] : y[0], (x[1] || "") > (y[1] || "") ? x[1] : y[1]].join("|");
+  }
+  function seenIs(s) { try { localStorage.setItem("rc_updates_stamp", s); } catch (e) {} }
+  var mine = {{ (fd.stamp or "")|tojson }}, checked = "";
+  try { var c2 = localStorage.getItem("rc_updates_check2") || ""; checked = c2.slice(c2.indexOf("~") + 1); } catch (e) {}
+  seenIs(later(mine, checked));
+  fetch("/api/updates/latest", { credentials: "omit", cache: "no-store" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (j) {
+      if (!j || !j.stamp) return;
+      var s = later(later(mine, checked), j.stamp);
+      seenIs(s);
+      try { localStorage.setItem("rc_updates_check2", Date.now() + "~" + j.stamp); } catch (e) {}
+    })
+    .catch(function () {});
   var dots = document.querySelectorAll(".upd-dot");
   for (var j = 0; j < dots.length; j++) dots[j].remove();
 })();
