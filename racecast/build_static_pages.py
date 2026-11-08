@@ -134,6 +134,21 @@ def defaultUrls():
     urls += [f"/api/rankings?board={b}&sport=XC&pool={p}&limit=50"
              for b in ("ability", "performance") for p in _POOLS]
     urls.append("/api/updates/latest")
+    # ★ AND EACH ONE'S CANONICAL SPELLING (2026-11-08): rankings.js now builds
+    #   board URLs through rcBoardUrl (edge_cache.canonicalUrl: parameters
+    #   sorted, offset=0 dropped), so a browser with the new script asks the
+    #   canonical form and one with the old script the spelling above. Both
+    #   are built; a file is only ever served for its exact request line.
+    import edge_cache
+    seen = set(urls)
+    for u in list(urls):
+        path, _, qs = u.partition("?")
+        if not qs:
+            continue
+        c = edge_cache.canonicalUrl(path, qs)
+        if c and c not in seen:
+            seen.add(c)
+            urls.append(c)
     return urls
 
 

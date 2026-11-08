@@ -414,7 +414,13 @@ class FileIsTheLiveAnswer(_App):
         for must in ("/", "/rankings", "/rankings/xc/hs-boys", "/api/updates/latest",
                      "/api/rankings?board=ability&pool=hs_m&sport=XC&scope=usa&scale=hs"
                      "&limit=50&offset=0&sort=rating"):
-            self.assertIn(must, m["files"], m["skipped"].get(must))
+            why = m["skipped"].get(must) or ""
+            # ! /api/updates/latest is a few bytes when the scratch database
+            #   holds no update rows; then it is (rightly) skipped for size,
+            #   since nginx would not compress it as the app does
+            if must == "/api/updates/latest" and "would not compress" in why:
+                continue
+            self.assertIn(must, m["files"], why)
         live = self.run_driver(["live"], os.path.join(self.tmp, "shared-live"),
                                stdin=json.dumps(sorted(m["files"])))
         gen = os.path.join(self.root, "b", S.window())
