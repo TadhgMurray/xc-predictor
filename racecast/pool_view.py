@@ -743,6 +743,7 @@ def refreshConstants(pools, sports=("XC", "TF")):
     old = dict(_CONST_CACHE)
     _CONST_CACHE.clear()
     _FACTOR_CACHE.clear()
+    _MAP_CACHE.clear()
     _NONE_UNTIL.clear()
     out = []
     # ! THE SIDECAR HOLDS THE SAMPLED CONSTANTS WHATEVER XCP_ONE_SCALE SAYS:
@@ -945,8 +946,18 @@ def hsMap(pool, sport=None):
         return powerKnots(f)
     sp = "TF" if str(sport or "").upper() == "TF" else "XC"
     key = (bare, sp)
-    if key in _MAP_CACHE:
-        return _MAP_CACHE[key]
+    # ! KEPT ONLY WHILE THE CLOCK IT WAS READ OFF IS (owner, 2026-11-08: a
+    #   Tufts 8K at 81.1, Rupp's 131 shown as 94, a 13:15 5000 m at 126.6).
+    #   The map is equal time on conversions' clock, and that clock re-reads
+    #   engine_scale every hour -- which the go-live rewrites while the site
+    #   is up. Cached for the worker's life, a map read off a half-written or
+    #   empty scale stayed wrong until a restart, and differently wrong in
+    #   each worker. Now it is rebuilt whenever the scale is re-read, as the
+    #   clock's own tables are, and dropped with the factors on a refresh.
+    stamp = _scaleStamp()
+    hit = _MAP_CACHE.get(key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
     out = powerKnots(f)
     try:
         from normalize_distance import ratedScalePool
@@ -967,8 +978,19 @@ def hsMap(pool, sport=None):
             _FACTOR_WHY[bare + "|map"] = "equal-time map: no clock to read; factor kept"
     except Exception as exc:                            # noqa: BLE001
         _FACTOR_WHY[bare + "|map"] = f"equal-time map failed ({type(exc).__name__}); factor kept"
-    _MAP_CACHE[key] = out
+    _MAP_CACHE[key] = (stamp, out)
     return out
+
+
+def _scaleStamp():
+    """When conversions last read engine_scale (re-reading it if due), or
+    None when it cannot say."""
+    try:
+        import conversions
+        conversions.engineScale("hs_m", "XC")
+        return conversions._scale["at"]
+    except Exception:                                   # noqa: BLE001
+        return None
 
 
 def toHs(rating, pool, sport=None):

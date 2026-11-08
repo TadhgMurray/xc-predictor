@@ -157,8 +157,8 @@ class HeroPhotos(unittest.TestCase):
         self.assertIn("/static/m2.webp?v=1 1100w", a)
         # Bolt's 1100x619 on a 1350 px desktop draws 540 px wide (40vw)
         self.assertIn("max(40vw, 420px)", a)
-        # on a phone the tile is ~131 px tall: 1100/619 * 134 = 239 px drawn
-        self.assertIn("(max-width: 760px) max(34vw, 239px)", a)
+        # on a phone the tile is half the width, ~209 px tall: 1100/619 * 209 = 372 px drawn
+        self.assertIn("(max-width: 760px) max(50vw, 372px)", a)
 
     def test_a_photo_already_small_gets_nothing(self):
         self.assertEqual(self._attrs("m1"), "")          # 399 px wide

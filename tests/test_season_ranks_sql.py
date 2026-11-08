@@ -50,6 +50,10 @@ ROWS = [
     # another sport and another pool share the year and must not mix
     (1,  "hs_m", "TF", 2025, 171.0, 8, "Great Oak",    "CA", "1", None, "CIF-SS", "1", "Inland", "SWL", None, None, None),
     (2,  "hs_f", "XC", 2025, 150.0, 8, "Great Oak",    "CA", "1", None, "CIF-SS", "1", "Inland", "SWL", None, None, None),
+    # the same name's middle school, and a namesake in another state (under the
+    # floor, so the boards above are untouched; the team line has none): not the team
+    (15, "ms_m", "XC", 2025, 175.0, 8, "Great Oak",    "CA", None, None, None,   None, None,    None,  None, None, None),
+    (16, "hs_m", "XC", 2025, 168.0, 2, "Great Oak",    "TX", None, None, None,   None, None,    None,  None, None, None),
     # a season with no rating is nobody's rank
     (14, "hs_m", "XC", 2025, None,  8, "Great Oak",    "CA", "1", None, "CIF-SS", "1", "Inland", "SWL", None, None, None),
 ]
@@ -105,8 +109,9 @@ def _expected(us_states):
             "division": place(r, ["division"]) if r["division"] else None,
             "region": place(r, ["region"]) if r["region"] else None,
             "conference": place(r, ["conference"]) if r["conference"] else None,
-            "team": (1 + len([x for x in rows if x["school"] == r["school"] and x["sport"] == r["sport"]
-                              and x["year"] == r["year"] and x["pool"][-2:] == r["pool"][-2:]
+            "team": (1 + len([x for x in rows if x["school"] == r["school"] and x["state"] == r["state"]
+                              and x["sport"] == r["sport"] and x["year"] == r["year"]
+                              and x["pool"].split("|")[0] == r["pool"].split("|")[0]
                               and x["mean_rating"] > r["mean_rating"]]))
                     if r["school"] else None,
             "grade_key": r["gk"],
@@ -171,6 +176,9 @@ def test_every_scope_matches_a_hand_computation():
     assert got[(4, "hs_m", "XC", 2025)]["nation"] is None      # under the floor: on no board
     assert got[(4, "hs_m", "XC", 2025)]["team"] == 2           # the team line has no floor
     assert got[(2, "hs_f", "XC", 2025)]["team"] == 1           # the boys are not her team rank
+    assert got[(1, "hs_m", "XC", 2025)]["team"] == 1           # nor the middle school, nor Texas's Great Oak
+    assert got[(15, "ms_m", "XC", 2025)]["team"] == 1
+    assert got[(16, "hs_m", "XC", 2025)]["team"] == 1
     assert got[(9, "hs_m", "XC", 2026)]["nation"] == 2         # an open season ranks on one race
     assert got[(7, "hs_m", "XC", 2025)]["nation"] is None      # outside the US
     assert got[(7, "hs_m", "XC", 2025)]["state_rank"] == 1     # but still ranked in its own state

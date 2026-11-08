@@ -123,3 +123,16 @@ def test_a_senior_already_at_this_college_is_this_first_year():
     other = {31: ("Ann Lee", "Some HS", "F", True, False, ("Bates",))}
     pairs, skipped = L.pairsFor(fresh, other)
     assert pairs == [] and skipped.get("senior already on tfrrs") == 1
+
+
+def test_a_college_namesake_on_the_main_feed_keeps_the_pair_apart():
+    """Owner, 2026-11-08: the college feed's copies of Hayden Buck's East Texas
+    Baptist races were joined to a Guam senior of the same name, though the
+    main feed already had those races under the Tennessee Hayden Buck."""
+    import link_freshmen as LF
+    pairs = [("p:-9", 29370341, "Hayden Buck", "East Texas Baptist", "Guam"),
+             ("p:-8", 777, "Ann Lee", "Tufts", "Rivers")]
+    ns = {LF.normName("Hayden Buck"): [(19764025, "East Texas Baptist")],
+          LF.normName("Ann Lee"): [(777, "Tufts")]}           # the senior herself: no rival
+    kept, dropped = LF.dropCollegeNamesakes(pairs, ns)
+    assert dropped == 1 and [p[1] for p in kept] == [777]

@@ -362,6 +362,16 @@ def decideGroup(members, allow_careers=False, keys=()):
             if cy is not None and t_med is not None and abs(cy - t_med) > slack:
                 return Verdict(None, (), "generation mismatch")
 
+    # ★ TWO HIGH SCHOOLS IN THE SAME SEASONS ARE TWO PEOPLE (owner,
+    #   2026-11-08, /athlete/19764025: a Guam career, track 2023-2026, joined
+    #   to a Gatlinburg-Pittman (TN) one, 2022-2025, through a college key a
+    #   linker had put on the wrong one). A runner changes high school once,
+    #   maybe; one who raced for two different ones in two seasons or more is
+    #   two runners, whatever key they share.
+    for m in movers:
+        if highSchoolOverlap(target.rows, m.rows) >= HS_OVERLAP_SEASONS:
+            return Verdict(None, (), "two high schools in the same seasons")
+
     # ★ AND TWO CAREERS MUST FIT ONE ATHLETE'S YEARS AT THE SCHOOL (A6) --
     #   MAX_SEASONS_AT_ONE_SCHOOL, derived above.
     if len(careers) > 1:
@@ -369,6 +379,34 @@ def decideGroup(members, allow_careers=False, keys=()):
         if span and span[1] - span[0] + 1 > MAX_SEASONS_AT_ONE_SCHOOL:
             return Verdict(None, (), "careers too far apart")
     return Verdict(target.pid, tuple(sorted(m.pid for m in movers)), MATCH)
+
+
+HS_OVERLAP_SEASONS = 2
+
+
+def _hsSeasonSchools(rows):
+    """{academic year: {school}} of a member's high school rows (a numeric
+    grade 7-12, a school that identifies something). Pure."""
+    out = defaultdict(set)
+    for r in rows:
+        g = _numGrade(r.grade)
+        if g is None or not 7 <= g <= 12:
+            continue
+        sch = (r.school or "").strip().lower()
+        if not sch or not identifyingSchool(sch):
+            continue
+        d = str(r.date or "")[:10]
+        if len(d) < 7 or not d[:4].isdigit():
+            continue
+        y = int(d[:4]) + (1 if d[5:7] >= "08" else 0)
+        out[y].add(sch)
+    return out
+
+
+def highSchoolOverlap(rows_a, rows_b):
+    """The seasons both raced high school in, at no school in common. Pure."""
+    a, b = _hsSeasonSchools(rows_a), _hsSeasonSchools(rows_b)
+    return sum(1 for y in set(a) & set(b) if not (a[y] & b[y]))
 
 
 def _isNationalKey(school):

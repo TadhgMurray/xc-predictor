@@ -94,3 +94,19 @@ def test_a_schools_unattached_runners_are_not_its_team():
     ros = {"Amarillo": set(range(60)), "Amarillo HS UNATT": set(range(0, 14)),
            "Forest Hills Eastern Ada": set(range(100, 160)), "Ada Unat": set(range(100, 113))}
     assert M.renamedPairs(ros, {n: "hs" for n in ros}) == []
+
+
+def test_a_name_the_feed_cut_off_is_the_full_name():
+    """owner, 2026-11-08: 'The Covenant School of Jackson'"""
+    names = ["The Covenant School of Jacksonville", "The Covenant School of Jackson",
+             "Alabama School of Cyber Technology & Engineering", "Alabama School of Cyber T",
+             "Lincoln Park Academy", "Lincoln Park Academy East"]       # a whole word: no
+    pairs = M.candidatesAll(names)
+    assert ("The Covenant School of Jackson", "The Covenant School of Jacksonville", "cut") in pairs
+    assert any(r == "cut" and "Cyber T" in (a + b) for a, b, r in pairs)
+    assert not any(r == "cut" and "Lincoln Park" in a for a, b, r in pairs)
+    ros = {"The Covenant School of Jacksonville": set(range(34)),
+           "The Covenant School of Jackson": set(range(28, 34))}
+    merged, _r = M.judge([("The Covenant School of Jackson", "The Covenant School of Jacksonville", "cut")],
+                         ros, {"The Covenant School of Jacksonville": {"FL"}})
+    assert merged

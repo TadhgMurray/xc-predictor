@@ -564,14 +564,26 @@ def dupesFor(cur, up):
     days = _dates(up["meet_date"], up.get("meet_date_end"))
     cands = []
     queries = (
+        # ★ has_results: a meet listed (its races known) but with no results
+        #   landed yet has no page here -- the link goes to the feed only
+        #   (owner, 2026-11-08: "These all 404")
         ("meets", "anet XC", """SELECT meet_id, min(meet_name) AS name, min(course_name) AS venue,
-                                       min(left(meet_date, 10)) AS date, min(source) AS source
+                                       min(left(meet_date, 10)) AS date, min(source) AS source,
+                                       EXISTS (SELECT 1 FROM results r
+                                               WHERE r.meet_id = meets.meet_id) AS has_results
                                 FROM meets WHERE left(meet_date, 10) = ANY(%s) GROUP BY meet_id"""),
         ("meets_tf_meta", "anet TF", """SELECT meet_id, meet_name AS name, venue_name AS venue,
-                                              left(meet_date, 10) AS date, source
+                                              left(meet_date, 10) AS date, source,
+                                              EXISTS (SELECT 1 FROM results_tf r
+                                                      WHERE r.meet_id = meets_tf_meta.meet_id) AS has_results
                                        FROM meets_tf_meta WHERE left(meet_date, 10) = ANY(%s)"""),
         ("meets_tfrrs", "tfrrs", """SELECT meet_id, meet_name AS name, venue_name AS venue,
-                                           left(date, 10) AS date, 'tfrrs' AS source, sport
+                                           left(date, 10) AS date, 'tfrrs' AS source, sport,
+                                           (EXISTS (SELECT 1 FROM results r
+                                                    WHERE r.meet_id = meets_tfrrs.meet_id AND r.source = 'tfrrs')
+                                            OR EXISTS (SELECT 1 FROM results_tf r
+                                                    WHERE r.meet_id = meets_tfrrs.meet_id AND r.source = 'tfrrs'))
+                                               AS has_results
                                     FROM meets_tfrrs WHERE left(date, 10) = ANY(%s)"""),
     )
     # ! A BOUND ON THE ADMIN'S REQUEST: left(meet_date, 10) reads every
@@ -584,14 +596,48 @@ def dupesFor(cur, up):
         for r in cur.fetchall():
             d = dict(r)
             d["where"] = label if d.get("source") != SOURCE else "an earlier upload"
+            d.update(dupeLinks(table, d))
             cands.append(d)
     cur.execute("""SELECT id, live_meet_id AS meet_id, meet_name AS name, location AS venue,
-                          meet_date AS date, 'upload' AS source
+                          meet_date AS date, 'upload' AS source, sport
                    FROM result_upload WHERE status = 'approved' AND id <> %s
                      AND meet_date = ANY(%s)""", (up["id"], days))
     for r in cur.fetchall():
-        cands.append(dict(r, where=f"upload #{r['id']}"))
+        d = dict(r, where=f"upload #{r['id']}")
+        d["upload_href"] = f"/account/admin/uploads/{r['id']}"
+        d.update(dupeLinks("result_upload", d))
+        cands.append(d)
     return matchMeets(up.get("meet_name"), up.get("location"), cands)
+
+
+# ★ EVERY CANDIDATE LINKS (owner, 2026-11-08: "these things need links"):
+#   the meet's page here, and on an admin page the feed's own results page,
+#   so a held duplicate is checked in two clicks, not by hand.
+_FEED_PAGE = {
+    ("anet", "XC"): "https://www.athletic.net/CrossCountry/meet/{id}/results",
+    ("anet", "TF"): "https://www.athletic.net/TrackAndField/meet/{id}/results",
+    ("tfrrs", "XC"): "https://www.tfrrs.org/results/xc/{id}",
+    ("tfrrs", "TF"): "https://www.tfrrs.org/results/{id}",
+}
+
+
+def dupeLinks(table, d):
+    """{'href': this site's meet page, 'feed_href': the feed's page} for one
+    candidate; either may be None. Pure."""
+    mid = d.get("meet_id")
+    if mid is None:
+        return {"href": None, "feed_href": None}
+    sport = {"meets": "XC", "meets_tf_meta": "TF"}.get(table) or str(d.get("sport") or "XC").upper()
+    sport = "TF" if sport in ("TF", "TRACK") else "XC"
+    src = d.get("source") or ""
+    q = "?src=2" if src == "tfrrs" else ""
+    feed = _FEED_PAGE.get(("tfrrs" if src == "tfrrs" else "anet", sport))
+    if d.get("has_results") is False:
+        href = None                       # listed, nothing landed: no page here yet
+    else:
+        href = f"/meet/{sport.lower()}/{int(mid)}{q}"
+    return {"href": href,
+            "feed_href": feed.format(id=int(mid)) if feed and src in ("anet", "tfrrs") else None}
 
 
 def linkStatus(cur, up):
@@ -1072,7 +1118,8 @@ def upload_discard(uid):
         if not tablesReady(cur):
             return _notReady()
         cur.execute("""UPDATE result_upload SET status = 'discarded', raw_text = NULL
-                       WHERE id = %s AND account_id = %s AND status IN ('draft', 'submitted')""",
+                       WHERE id = %s AND account_id = %s
+                         AND status IN ('draft', 'submitted', 'flagged')""",
                     (uid, sess["account"]["id"]))
         n = cur.rowcount
         if n:
@@ -1121,7 +1168,7 @@ def guest_discard(token):
             abort(404)
         cur.execute("""UPDATE result_upload SET status = 'discarded', raw_text = NULL
                        WHERE guest_token_hash = %s AND account_id IS NULL
-                         AND status IN ('draft', 'submitted')
+                         AND status IN ('draft', 'submitted', 'flagged')
                        RETURNING id""", (AC.hashToken(token),))
         row = AC._one(cur)
         if row:

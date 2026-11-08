@@ -411,6 +411,8 @@ RULES = {
     # ---------------------------------------------------- normalize_distance
     "engine/normalize_distance.py": {
         "_GRAPH_RETRY_AT": ("INFRA", "retry time after a failed school_level_graph read"),
+        "RACE_WX_HOURS": ("DATA", "a race with its own start reads that hour and the next (race_start)"),
+        "RACE_START_LOCAL": ("DATA", "a scheduled start outside 05-22 local is not a start"),
         **_all("DISTANCE_EXPONENT_BY_POOL DEFAULT_EXPONENT", "STATED",
                KEPT_DIST + " (fallback exponent 1.06 when the fitted spline is absent)"),
         "EVENT_DISTANCES_TF": ("DATA", "event name -> metres"),
@@ -554,6 +556,8 @@ RULES = {
         "TILT_K": ("FITTED", KAPPA),
         **_all("TILT_RATING_LO TILT_RATING_HI", "REMOVED", TILT_ABS),
         "SPORT_RIDGE": ("FITTED", "grass specialisation β_p ~ N(0, s_β²), s_β by EM"),
+        "DAY_EVIDENCE_FULL": ("DATA", "scope: a race-day row counts in full toward its day term only when its "
+                                      "runner has this many other races (a one-race runner's day is no evidence)"),
         "XC_TRACK_GAP": ("REMOVED", XC_LEVEL + "; only if the leave-one-kind-out fits agree (§5)"),
         **_all("CURVE_KNOT_DAYS CURVE_N_KNOTS CURVE_SMOOTH CURVE_SD2_START", "FITTED",
                CURVE + " (statespace knots every 15 d: a resolution, not a level)"),
@@ -863,9 +867,11 @@ ENV_RULES = {
                                     "kept until §8 point 5"),
     **_all("XCP_ALTITUDE XCP_ALTITUDE_FIT", "FITTED", ALT),
     **_all("XCP_GAUGE XCP_GAUGE_UNKNOWN_LENGTH XCP_GAUGE_FALLBACK", "STATED", GAUGE),
+    "XCP_DAY_EVIDENCE": ("DATA", "joint_solve.DAY_EVIDENCE_FULL: other races before a day row counts in full"),
     "XCP_GEOMETRY": ("REMOVED", "course cell c_c per oval (the geometry spline is already off)"),
     **_all("XCP_DISTANCE_BY XCP_DISTANCE_RESIDUAL", "STATED", KEPT_DIST + " (which distance curve family)"),
     **_all("XCP_WEATHER_FIT XCP_MUD_SENS XCP_TF_TEMP_AGG", "STATED", KEPT_WX),
+    "XCP_DB_APP": ("INFRA", "the process's database name tag; 'site' reads the published ratings' distance mode"),
     "XCP_WEATHER_ALLOW_STALE": ("INFRA", "lets normalisation run on a stale weather artifact"),
     **_all("XCP_TEAM_POOL", "DATA", "scope: a team with under 15 athletes all-time pools professional"),
     **_all("XCP_LINK_FEED_TWINS", "DATA", "identity: feed twins merged"),

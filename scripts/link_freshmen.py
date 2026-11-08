@@ -505,6 +505,55 @@ def pairsAll(fresh_by, senior_by, years):
     return out
 
 
+# ★ A NAMESAKE ALREADY RACING FOR THIS COLLEGE ON THE MAIN FEED IS THE
+#   RUNNER (owner, 2026-11-08, /athlete/19764025: "how can we stop this").
+#   Hayden Buck of Gatlinburg-Pittman (TN, class of 2025) runs for East Texas
+#   Baptist, and the main feed already had those college races under his own
+#   profile. A Hayden Buck of Guam was the only senior of 2026 by that name,
+#   so the college feed's copies of the same races were joined to the Guam
+#   career -- and profile_school then welded the two careers together. When
+#   the main feed holds a college race of the same name at the first-year's
+#   college under ANOTHER person, those tfrrs rows are copies of that
+#   person's races (link_feed_twins' business), never a stranger's first
+#   season: the pair is left alone.
+def anetCollegeNamesakes(cur, names):
+    """{normName: [(person_id, school)]}: main-feed persons of these names
+    with a college row, and the colleges."""
+    raw = sorted({str(n).strip().lower() for n in names if n})
+    if not raw:
+        return {}
+    nm = "lower(btrim(a.first_name)) || ' ' || lower(btrim(a.last_name))"
+    cur.execute(f"""
+        SELECT DISTINCT {nm}, r.person_id, r.school
+        FROM   athletes a JOIN results r ON r.athlete_id = a.athlete_id AND r.source = 'anet'
+        WHERE  {nm} = ANY(%(n)s) AND r.person_id IS NOT NULL AND {collegeSql('r')}
+        UNION
+        SELECT DISTINCT {nm}, r.person_id, r.school
+        FROM   athletes a JOIN results_tf r ON r.athlete_id = a.athlete_id AND r.source = 'anet'
+        WHERE  {nm} = ANY(%(n)s) AND r.person_id IS NOT NULL AND {collegeSql('r')}
+    """, {"n": raw})
+    out = defaultdict(list)
+    for name, pid, school in cur.fetchall():
+        k = normName(name)
+        if k:
+            out[k].append((pid, school))
+    return dict(out)
+
+
+def dropCollegeNamesakes(pairs, namesakes):
+    """(kept pairs, n dropped): a pair whose first-year's college already has
+    a main-feed runner of that name under another person is dropped. Pure."""
+    kept, dropped = [], 0
+    for p in pairs:
+        t, a, name, college = p[0], p[1], p[2], p[3]
+        rivals = [s for pid, s in namesakes.get(normName(name), []) if pid != a]
+        if rivals and sameCollege(college, rivals):
+            dropped += 1
+            continue
+        kept.append(p)
+    return kept, dropped
+
+
 def seniorYears(years):
     """The years seniors() must cover for pairsAll: each y and y - 1."""
     return sorted(set(years) | {y - 1 for y in years})
@@ -905,6 +954,14 @@ def main():
                         print(f"    {nm:<28} {str(hs)[:30]:<30} -> {str(col)[:28]:<28}"
                               f"  tfrrs {t} -> anet person {s_}")
                     time_pairs += tp
+            names = [p[2] for p in all_pairs + time_pairs]
+            if names:
+                ns = anetCollegeNamesakes(cur, names)
+                all_pairs, d1 = dropCollegeNamesakes(all_pairs, ns)
+                time_pairs, d2 = dropCollegeNamesakes(time_pairs, ns)
+                if d1 or d2:
+                    print(f"[link] left alone: {d1 + d2:,} pairs whose college already has a "
+                          f"main-feed runner of that name under another person")
             if a.pair:
                 explainPair(cur, a.pair[0], a.pair[1], a.years, fresh_by, senior_by)
                 hit = [p for p in all_pairs + time_pairs

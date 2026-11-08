@@ -51,6 +51,11 @@
   {% if up.status == "approved" %}<p class="ct-warn ct-ok">Approved{% if up.decided_at %} on {{ up.decided_at.strftime("%b %-d, %Y") }}{% endif %}. These results join the site with the next nightly update.{% if up.decision_note %} Note: {{ up.decision_note }}{% endif %}</p>
   {% elif up.status == "rejected" %}<p class="ct-warn ct-bad">Not added.{% if up.decision_note %} {{ up.decision_note }}{% endif %}</p>
   {% elif up.status == "flagged" %}<p class="ct-warn">Held: this looks like a meet Racecast already has. The site owner is checking it.</p>
+  {# ★ A HELD UPLOAD CAN BE PULLED BACK TOO (owner, 2026-11-08): if the meet is on the site after all #}
+  <form method="post" action="{{ base }}/discard" class="ct-actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="acct-x">Withdraw this upload (the meet is on the site already)</button>
+  </form>
   {% elif up.status == "submitted" %}<p class="ct-warn ct-ok">Sent{% if up.submitted_at %} on {{ up.submitted_at.strftime("%b %-d, %Y") }}{% endif %}. The site owner reviews every upload; you can still correct the details below until then.</p>
   {% endif %}
 

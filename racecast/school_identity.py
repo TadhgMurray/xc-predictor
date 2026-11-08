@@ -219,6 +219,11 @@ def withState(school, state):
     #   it has no state to give; panels.isTeamName is the site's one test.
     if not _isTeam(school):
         return school
+    # ! A NUMBER IS NOT A STATE (owner, 2026-11-08, /athlete/19764025: "Guam
+    #   (45)"). Outside the states the feed's region field can hold a numeric
+    #   id; a label says nothing rather than print it.
+    if any(ch.isdigit() for ch in str(state)):
+        return school
     tail = f"({str(state).strip()})".lower()
     if str(school).rstrip().lower().endswith(tail) or namesItsState(school):
         return school

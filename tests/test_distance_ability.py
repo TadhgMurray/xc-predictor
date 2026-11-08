@@ -426,6 +426,32 @@ def test_the_mode_follows_the_rows(monkeypatch, tmp_path):
     assert nd._resolveDistanceMode() == ("pool", "mixed")
 
 
+def test_the_site_reads_the_mode_its_ratings_were_built_in(monkeypatch, tmp_path):
+    """owner, 2026-11-08: a backfill rewrote the rows as ability hours before
+    the go-live rebuilt the ratings, and the site converted the old ratings by
+    the new mode (college men x0.74). The site follows the go-live's record;
+    every other process the rows'."""
+    import json
+    monkeypatch.setattr(nd, "_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("XCP_DISTANCE_BY", raising=False)
+    monkeypatch.delenv("XCP_DISTANCE_RESIDUAL", raising=False)
+    for sp in ("XC", "TF"):
+        (tmp_path / f"distance_applied_{sp}.json").write_text(
+            json.dumps({"distance_by": "ability", "residual": True}))
+    monkeypatch.setenv("XCP_DB_APP", "site")
+    # the backfill has run, the go-live has not: the ratings are pool's
+    assert nd._resolveDistanceMode() == ("pool", "rated: none yet")
+    # the go-live publishes, recording what it built them in
+    monkeypatch.setattr(nd, "_ABILITY", {"kind": "distance_ability"})
+    monkeypatch.setattr(nd, "residualMode", lambda: True)
+    nd.writeRatedRecords()
+    assert nd._resolveDistanceMode() == ("ability", "rated")
+    assert nd._resolveResidual("ability", "rated") == (True, "recorded")
+    # the solve, the backfill, the nightly: the rows' own mode
+    monkeypatch.setenv("XCP_DB_APP", "xcp")
+    assert nd._resolveDistanceMode() == ("ability", "recorded")
+
+
 def test_group_reference_is_the_harmonic_mean():
     import build_group_means as G
     seasons = ([{"pool": "college_m", "r": 100.0, "division": "D1"}] * 40

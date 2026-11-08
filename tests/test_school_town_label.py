@@ -22,3 +22,10 @@ def test_a_known_town_bracket_reads_as_the_state(monkeypatch):
     assert SI.withTown("San Marcos (SB)", "CA") == "San Marcos (CA)"
     assert SI.withTown("San Marcos (SB)", None) == "San Marcos"
     assert SI.withTown("Oak", "OR") == "Oak (OR)"
+
+
+def test_a_numeric_region_is_no_state():
+    # owner, 2026-11-08: "Guam (45)" on /athlete/19764025
+    import school_identity as SI
+    assert SI.withState("Guam", "45") == "Guam"
+    assert SI.withState("Edina", "MN") == "Edina (MN)"

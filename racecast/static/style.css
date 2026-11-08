@@ -295,6 +295,7 @@ html:has(.hm-band) { overflow-x: clip; }
 .hm-updates a { color: rgba(255,255,255,.8); text-decoration: none; border-bottom: 1px solid rgba(255,255,255,.3); }
 .hm-updates a:hover { color: #fff; border-bottom-color: #fff; }
 .hm-updates b { color: #fff; font-weight: 700; }
+.hm-text .rc-nowrap { white-space: nowrap; }   /* a fact or a date never splits across lines */
 
 /* ---- per-photo focal points ------------------------------------------ */
 /*
@@ -332,24 +333,31 @@ html:has(.hm-band) { overflow-x: clip; }
 .hm-tasks a:hover b { text-decoration: underline; }
 .hm-tasks span { display: block; color: #6b7179; font-size: .84rem; margin-top: .15rem; }
 
-/* ★ A PHONE: the same mural behind the text, three photos across, a band
-     of fixed height (below) */
+/* ★ A PHONE: FOUR OF THE PHOTOS, TWO BY TWO, behind the text (owner,
+     2026-11-08: the nine-tile phone mural "still looks off, on every
+     browser"). Nine tiles 128 px wide were a mosaic of slivers and the
+     baked-in words (CHAMPION, the DIII caption, the FINISH banner) fought
+     the headline. Bolt, Hocker, Bannister and Kerr carry no words; the
+     other five are display:none and loading=lazy (home.html), so a phone
+     never fetches them. speed._HERO_ROW_PHONE is this grid's row. */
 @media (max-width: 760px) {
     /* ! A FIXED HEIGHT, NOT auto (owner's iPhone, 2026-11-08: every photo
          drawn several times its cell). Safari cannot resolve the photos'
          height:100% against a band whose height is auto, so it drew them at
-         their own size. 440px holds the text at 320px wide (about 225px of
-         it) with room for a larger text setting. */
-    .hm-hero { height: 440px; }
-    .hm-photos { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+         their own size. */
+    .hm-hero { height: 420px; }
+    .hm-photos { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 2px; }
     .hm-photos .hp-m2 { grid-column: span 1; }
-    .hm-dim { background: rgba(8,10,14,.68); }    /* the text covers most of a phone's band */
+    .hm-photos .hp-m1, .hm-photos .hp-m3, .hm-photos .hp-m4,
+    .hm-photos .hp-m7, .hm-photos .hp-m8 { display: none; }
+    .hm-dim { background: linear-gradient(180deg, rgba(8,10,14,.55) 0%, rgba(8,10,14,.74) 35%, rgba(8,10,14,.74) 70%, rgba(8,10,14,.6) 100%); }
     .hm-text { padding: 1.6rem 16px; }
-    .hm-text h1 { font-size: 1.75rem; margin-bottom: .7rem; }
+    .hm-text h1 { font-size: 2rem; margin-bottom: .7rem; }
+    .hm-updates .hm-sep-new { display: none; }
+    .hm-updates .hm-new { display: block; margin-top: .35rem; }
     .hm-what { font-size: .98rem; }
     .hm-tasks { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .9rem 1rem; padding: 0 16px; margin-top: 1.2rem; }
     .hm-tasks span { font-size: .8rem; }
-}
 }
  
 /* ---- rankings controls ---------------------------------------------- */

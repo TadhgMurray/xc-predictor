@@ -190,6 +190,9 @@
   ('m6', 'Bannister breaking four minutes'),
   ('m9', 'Kerr celebrating')
 ] %}
+{# the four a phone shows (style.css, max-width 760px); the rest are lazy, so
+   a phone that hides them never fetches them #}
+{% set PHONE_PHOTOS = ['m2', 'm5', 'm6', 'm9'] %}
 <div class="hm-band"><section class="hm-hero">
   {# ★ THE MURAL BEHIND THE HEADLINE (owner, 2026-11-07: light mode's black
        block "looks so off with all the whitespace" -- white gutters beside it,
@@ -201,7 +204,7 @@
        178 KB less on a phone's first visit, the largest paint (m2) ~0.4 s
        sooner on a throttled phone. #}
   <div class="hm-photos" aria-hidden="true">
-    {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}"{{ hero_srcset(slot, 2 if slot == 'm2' else 1) }} alt="" title="{{ alt }}" decoding="async">{% endfor %}
+    {% for slot, alt in PHOTOS %}<img class="hp hp-{{ slot }}" src="{{ static_v(slot ~ ('.webp' if static_exists(slot ~ '.webp') else '.png')) }}"{{ hero_srcset(slot, 2 if slot == 'm2' else 1) }} alt="" title="{{ alt }}" decoding="async"{% if slot not in PHONE_PHOTOS %} loading="lazy"{% endif %}>{% endfor %}
   </div>
   <div class="hm-dim" aria-hidden="true"></div>
   <div class="hm-text">
@@ -215,10 +218,10 @@
     {# Facts, from homepage_meta. panels.py pre-formats the NUMBER ("59M")
        and this owns the LABEL. meta.get(key, ' - ') so a key panels.py has
        not written yet degrades to a dash rather than printing None. #}
-    <p class="hm-facts">{% for key, label in [('fact_results', 'rated results'), ('fact_courses', 'courses'), ('fact_years', 'years, era-adjusted')] %}<b>{{ meta.get(key, ' - ') }}</b> {{ label }}{% if not loop.last %} <span aria-hidden="true">&middot;</span> {% endif %}{% endfor %}</p>
+    <p class="hm-facts">{% for key, label in [('fact_results', 'rated results'), ('fact_courses', 'courses'), ('fact_years', 'years, era-adjusted')] %}<span class="rc-nowrap"><b>{{ meta.get(key, ' - ') }}</b> {{ label }}</span>{% if not loop.last %} <span aria-hidden="true">&middot;</span> {% endif %}{% endfor %}</p>
     {# ★ WHAT'S NEW (owner, 2026-10-22): how fresh the site is, one line #}
     {% if updates and (updates.through_text or updates.recomputed) %}
-    <p class="hm-updates"><a href="{{ url_for('updates_page') }}">{% if updates.through_text %}Results through <b>{{ updates.through_text }}</b>{% endif %}{% if updates.through_text and updates.recomputed %} <span aria-hidden="true">&middot;</span> {% endif %}{% if updates.recomputed %}ratings recomputed {{ updates.recomputed.strftime("%b") }} {{ updates.recomputed.day }}{% endif %} <span aria-hidden="true">&middot;</span> <span class="rc-nowrap">What's new &rarr;</span></a></p>
+    <p class="hm-updates"><a href="{{ url_for('updates_page') }}">{% if updates.through_text %}Results through <b>{{ updates.through_text }}</b>{% endif %}{% if updates.through_text and updates.recomputed %} <span aria-hidden="true">&middot;</span> {% endif %}{% if updates.recomputed %}<span class="rc-nowrap">ratings recomputed {{ updates.recomputed.strftime("%b") }} {{ updates.recomputed.day }}</span>{% endif %} <span class="hm-sep-new" aria-hidden="true">&middot;</span> <span class="rc-nowrap hm-new">What's new &rarr;</span></a></p>
     {% endif %}
   </div>
 </section></div>

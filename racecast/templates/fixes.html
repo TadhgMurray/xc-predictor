@@ -46,8 +46,12 @@
     <ul class="ct-list">
       {% for f in mine %}
       <li><b>{{ kind_words.get(f.kind, f.kind) }}</b> <span class="ct-muted">{{ f.summary }} · <a href="/athlete/{{ f.person_id }}">the page</a></span>
-        <span class="ct-pill s-{{ f.status }}">{{ {"open": "Waiting", "approved": "Approved", "rejected": "Not made"}.get(f.status, f.status) }}</span>
+        <span class="ct-pill s-{{ f.status }}">{{ {"open": "Waiting", "approved": "Approved", "rejected": "Not made", "withdrawn": "Withdrawn"}.get(f.status, f.status) }}</span>
         <span class="ct-when">{{ f.created_at.strftime("%b %-d, %Y") if f.created_at else "" }}</span>
+        {% if f.status == "open" %}<form method="post" action="/account/fixes/{{ f.id }}/withdraw" class="ct-inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="acct-x" title="Take this back: it is fixed already, or you sent it by mistake">Withdraw</button>
+        </form>{% endif %}
         {% if f.outcome or f.decision_note %}<span class="ct-muted" style="flex-basis:100%">{{ f.outcome or "" }}{% if f.decision_note %} {{ f.decision_note }}{% endif %}</span>{% endif %}</li>
       {% endfor %}
     </ul>{% endif %}

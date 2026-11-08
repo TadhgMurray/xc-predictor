@@ -422,3 +422,26 @@ def test_era_check_is_for_careers_only():
     car = M(341, "Pat Lee", ["M"], False, [R("2010-05-01", "TF", None, school="Boston AA")])
     stray = M(342, "Pat Lee", ["M"], True, [R("2020-05-01", "TF", None, school="Boston AA")])
     assert L.decideGroup([car, stray], keys=[("pat lee", "boston aa")]).reason == L.MATCH
+
+
+def test_two_high_schools_in_the_same_seasons_are_two_runners():
+    """Owner, 2026-11-08, /athlete/19764025: Hayden Buck of Gatlinburg-Pittman
+    (TN) and Hayden Buck of Guam shared a college key a linker put on the
+    wrong one; each raced high school track for his own school for years."""
+    tn = M(19764025, "Hayden Buck", ["M"], False, [
+        R("2022-03-15", "TF", "9", school="Gatlinburg-Pittman"),
+        R("2023-03-20", "TF", "10", school="Gatlinburg-Pittman"),
+        R("2024-03-25", "TF", "11", school="Gatlinburg-Pittman"),
+        R("2025-03-25", "TF", "12", school="Gatlinburg-Pittman"),
+        R("2026-09-05", "XC", "FR-1", school="East Texas Baptist")])
+    guam = M(29370341, "Hayden Buck", ["M"], False, [
+        R("2023-02-03", "TF", "9", school="Guam"),
+        R("2024-04-06", "TF", "10", school="Guam"),
+        R("2025-03-10", "TF", "11", school="Guam"),
+        R("2026-05-14", "TF", "12", school="Guam")])
+    assert L.highSchoolOverlap(tn.rows, guam.rows) == 3
+    assert L.decideGroup([tn, guam], allow_careers=True).reason == \
+        "two high schools in the same seasons"
+    # one transfer season is not two runners
+    moved = M(5, "Hayden Buck", ["M"], True, [R("2025-03-26", "TF", "12", school="Sevier County")])
+    assert L.highSchoolOverlap(tn.rows, moved.rows) == 1

@@ -33,14 +33,18 @@ html[data-theme="dark"] thead th { background: #181818; }
 html[data-theme="dark"] .topbar { border-bottom: 1px solid #2a2a2a; }
 html[data-theme="dark"] .brand { text-decoration: none; }
 html[data-theme="dark"] .topnav a { text-decoration: none; color: #f1f1f1; }
-html[data-theme="dark"] .hm-updates a { color: rgba(255,255,255,.78); text-decoration: none; border-bottom: 1px solid rgba(42, 42, 42, 0.3); }
+html[data-theme="dark"] .hm-photos .hp { background: #3a3a3a; }
+html[data-theme="dark"] .hm-dim { background: radial-gradient(ellipse at center, rgba(58, 58, 58, 0.78) 0%, rgba(58, 58, 58, 0.62) 45%, rgba(58, 58, 58, 0.38) 100%); }
+html[data-theme="dark"] .hm-updates a { color: rgba(255,255,255,.8); text-decoration: none; border-bottom: 1px solid rgba(42, 42, 42, 0.3); }
 html[data-theme="dark"] .hm-updates a:hover { color: #fff; border-bottom-color: #2a2a2a; }
 html[data-theme="dark"] .hm-updates b { color: #fff; }
-html[data-theme="dark"] .hm-photos .hp { background: #3a3a3a; }
 html[data-theme="dark"] .hm-tasks a { text-decoration: none; color: #f1f1f1; border-top: 2px solid #555b63; }
 html[data-theme="dark"] .hm-tasks b::after { color: #f1f1f1; }
 html[data-theme="dark"] .hm-tasks a:hover b { text-decoration: underline; }
 html[data-theme="dark"] .hm-tasks span { color: #cfcfcf; }
+@media (max-width: 760px) {
+html[data-theme="dark"] .hm-dim { background: linear-gradient(180deg, rgba(58, 58, 58, 0.55) 0%, rgba(58, 58, 58, 0.74) 35%, rgba(58, 58, 58, 0.74) 70%, rgba(58, 58, 58, 0.6) 100%); }
+}
 html[data-theme="dark"] .toggle-group button, html[data-theme="dark"] .chip { border: 1px solid #3f3f3f; background: #0f0f0f; }
 html[data-theme="dark"] .toggle-group button.is-active { background: #3a3a3a; color: #fff; border-color: #555b63; }
 html[data-theme="dark"] .meets-page .month-head { color: #cfcfcf; }
@@ -962,6 +966,8 @@ html[data-theme="dark"] main.rc .rc-teampop::backdrop { background: rgba(58, 58,
 html[data-theme="dark"] main.rc .rc-teampop .rc-pop-x { border: 0; background: none; color: var(--muted); }
 html[data-theme="dark"] main.rc .rc-teampop .rc-pop-t th { color: var(--muted); border-bottom: 1px solid var(--line-2); }
 html[data-theme="dark"] main.rc .rc-teampop .rc-pop-t td { border-bottom: 1px solid var(--line, #2a2a2a); }
+html[data-theme="dark"] main.rc button.pred-team-open { border: 0; background: none; color: var(--link); }
+html[data-theme="dark"] main.rc button.pred-team-open:hover { text-decoration: underline; }
 html[data-theme="dark"] main.rc .rc-tscores .rc-team-name { border: 0; background: none; color: var(--link); }
 html[data-theme="dark"] main.rc .rc-tscores .rc-team-name:hover { text-decoration: underline; }
 html[data-theme="dark"] main.rc .rc-conv-find { border: 1px solid var(--line-2); }

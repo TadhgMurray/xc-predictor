@@ -295,10 +295,16 @@ def all_time_bests(races):
 
         bucket = out[sport]
 
-        if _is_better_rating(race, bucket["rating"]):
-            bucket["rating"] = race
-        if _is_better_rating(race, out["rating"]):
-            out["rating"] = race
+        # ! A ROW THE PAGE MARKS "NOT RANKED" OR "NOT COUNTED" IS NOBODY'S
+        #   BEST RACE (owner, 2026-11-08, /athlete/30177872: "Best race 161.5"
+        #   in the header off a 2020 row the table itself greyed). Its PR
+        #   badges were already dropped (app.py, rating_outlier); the header
+        #   and the per-sport best now skip it too.
+        if not race.get("rank_outlier"):
+            if _is_better_rating(race, bucket["rating"]):
+                bucket["rating"] = race
+            if _is_better_rating(race, out["rating"]):
+                out["rating"] = race
 
         if race.get("speed_rating") is not None:
             bucket["_rating_sum"] += float(race["speed_rating"])

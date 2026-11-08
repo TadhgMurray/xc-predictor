@@ -1030,9 +1030,20 @@ _before_render.connect(_optoutMaskContext, app)
 
 @app.after_request
 def _feedScrub(resp):
-    """★ NO FEED NAME LEAVES THE SITE (owner, 2026-11-06): racecast/feed_scrub.py."""
+    """★ NO FEED NAME LEAVES THE SITE (owner, 2026-11-06): racecast/feed_scrub.py.
+
+    ! EXCEPT THE OWNER'S OWN ADMIN PAGES (owner, 2026-11-08: "I didn't mean
+      hide them to the point of performance issues" -- a missing-result
+      report's link came out as https://the results site/CrossCountry/...,
+      which opens nothing). /account/admin/* is behind the admin login and
+      never public, and its links are the owner's way to the source."""
+    if request.path.startswith(_ADMIN_PREFIX):
+        return resp
     import feed_scrub
     return feed_scrub.scrubResponse(resp)
+
+
+_ADMIN_PREFIX = "/account/admin/"
 
 
 @app.after_request
@@ -2065,18 +2076,21 @@ def buildRankLine(cur, person_id, season):
                 try:
                     # Strictly-better count + 1 = place on the roster, the same
                     # mean-rating order schoolRoster sorts by; ties share it.
-                    # Own gender only (the pool's _m / _f), owner 2026-10-24.
+                    # Own gender only (the pool's _m / _f), owner 2026-10-24;
+                    # and own state and level, as the roster (build_season_ranks).
                     cur.execute("""
                         SELECT count(*) + 1 AS place
                         FROM   athlete_season t
                         WHERE  t.school = %(school)s
+                          AND  t.state IS NOT DISTINCT FROM %(st)s
                           AND  t.sport  = %(sport)s
                           AND  t.year   = %(year)s
                           AND  t.mean_rating > %(mine)s
-                          AND  right(split_part(t.pool, '|', 1), 2)
-                             = right(split_part(%(pool)s, '|', 1), 2)
+                          AND  split_part(t.pool, '|', 1)
+                             = split_part(%(pool)s, '|', 1)
                     """, {"school": school, "sport": sport,
                           "year": season["year"], "pool": season["pool"],
+                          "st": season.get("state"),
                           "mine": season["mean_rating"]})
                     row = cur.fetchone()
                 except Exception:            # noqa: BLE001

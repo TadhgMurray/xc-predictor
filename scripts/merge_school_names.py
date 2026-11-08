@@ -332,7 +332,7 @@ def genericColleges(cur, names, level_of):
             and len(candidateStates(directory, n)) > 1}
 
 
-_REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3, "roster": 4, "renamed": 5}
+_REL_RANK = {"same": 0, "cut": 1, "college": 2, "level": 3, "prefix": 4, "roster": 5, "renamed": 6}
 
 # ★ ONE TEAM BY ITS RUNNERS, WHATEVER THE NAMES (owner, 2026-11-05,
 #   /school/U.%20of%20Chicago: "U. of Chicago" and "Chicago", 622 of the
@@ -382,6 +382,11 @@ def rosterPairs(rosters_by_name, level_of, min_shared=ROSTER_MIN_SHARED,
             out.append((a, b, "roster"))
     return sorted(out)
 
+
+# a cut-off spelling: long enough that its start is one school's name
+CUT_MIN_LEN = 20
+CUT_MIN_SHARED = 3
+CUT_MIN_FRACTION = 0.50
 
 # ★ A HIGH SCHOOL RENAMED KEEPS ITS RUNNERS (owner, 2026-11-08,
 #   /athlete/26510177: Micah Houlihan ran for "Covenant School" in 2024,
@@ -502,6 +507,24 @@ def candidatesAll(names, want_prefix=False, level_of=None, college_key=None):
                 by_level.setdefault((lw, level_of[name]), []).append(name)
         if name in college_key:
             by_college.setdefault(college_key[name], []).append(name)
+    # ★ A NAME THE FEED CUT OFF (owner, 2026-11-08: "The Covenant School of
+    #   Jackson" beside "...of Jacksonville"): a spelling of CUT_MIN_LEN+
+    #   characters that is the start of a longer one and stops mid-word.
+    #   Bucketed on the first CUT_MIN_LEN characters, so no pair scan.
+    by_head = {}
+    for name in names:
+        if mergeable(name) and len(name.strip()) >= CUT_MIN_LEN:
+            by_head.setdefault(name.strip()[:CUT_MIN_LEN].lower(), []).append(name)
+    for group in by_head.values():
+        if len(group) < 2 or len(group) > 40:
+            continue
+        for a in group:
+            sa = a.strip()
+            for b in group:
+                sb = b.strip()
+                if (len(sb) > len(sa) and sb.lower().startswith(sa.lower())
+                        and sa[-1].isalnum() and sb[len(sa)].isalnum()):
+                    add(a, b, "cut")
     for group_map, rel in ((by_level, "level"), (by_college, "college")):
         for group in group_map.values():
             # ! A GENERIC NAME'S BUCKET IS MANY SCHOOLS, NEVER ONE: "central"
@@ -555,9 +578,11 @@ def judge(pairs, rosters_by_name, states_by_name,
         small = min(len(ra), len(rb))
         frac = (shared / small) if small else 0.0
         need_n = {"prefix": prefix_min_shared, "level": LEVEL_MIN_SHARED,
-                  "roster": ROSTER_MIN_SHARED, "renamed": RENAMED_MIN_SHARED}.get(rel, min_shared)
+                  "roster": ROSTER_MIN_SHARED, "renamed": RENAMED_MIN_SHARED,
+                  "cut": CUT_MIN_SHARED}.get(rel, min_shared)
         need_f = {"prefix": prefix_min_fraction, "level": LEVEL_MIN_FRACTION,
-                  "roster": ROSTER_MIN_FRACTION, "renamed": RENAMED_MIN_FRACTION}.get(rel, min_fraction)
+                  "roster": ROSTER_MIN_FRACTION, "renamed": RENAMED_MIN_FRACTION,
+                  "cut": CUT_MIN_FRACTION}.get(rel, min_fraction)
         row = [a, b, rel, len(ra), len(rb), shared, round(frac, 4), None]
         sa = states_by_name.get(a) or set()
         sb = states_by_name.get(b) or set()

@@ -1241,6 +1241,24 @@ bgjoin 10e_meet_units
 #                     never did.)
 #   XCP_JOINT=1       the sequential solve stays live; the joint solve runs
 #                     beside it as a shadow and writes joint_difficulty.npz only.
+# the published ratings' distance mode before the go-live (see 'restarting
+# the site' after 08_golive)
+_ratedKey() {
+  "$PY" - "$ROOT/engine/data" <<'PYEOF' 2>/dev/null || echo "?"
+import json, os, sys
+out = []
+for sp in ("XC", "TF"):
+    try:
+        r = json.load(open(os.path.join(sys.argv[1], f"distance_rated_{sp}.json")))
+    except (OSError, ValueError):
+        r = {}
+    m = r.get("distance_by") or "pool"
+    out.append(m + ("+residual" if m == "ability" and r.get("residual") else ""))
+print(",".join(out))
+PYEOF
+}
+[ "$DRY" -eq 0 ] && _RATED_AT_START=$(_ratedKey)
+
 if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # ! NO --holdout ON THE LIVE STEP: it is a second full solve (three hours
   #   on 59M rows) that scores a split and publishes nothing. The shadow
@@ -1656,6 +1674,23 @@ if failed 08_golive; then
     echo "  or:   XCP_IGNORE_GOLIVE_FAIL=1 ... to publish the ratings as" \
          "they stand." | tee -a "$SUMMARY"
     summarise
+  fi
+fi
+
+# ★★ THE SITE FOLLOWS THE MODE ITS RATINGS WERE BUILT IN (owner, 2026-11-08:
+#    "it should obv not publish new ratings until they are right"). The site
+#    reads distance_rated_<SPORT>.json (normalize_distance._readerRecords),
+#    which only the go-live writes, and reads it once, at start. So when this
+#    go-live changed it -- pool to ability, or back -- the site is restarted
+#    here, the moment the ratings it converts are the new ones; until now it
+#    went on converting the old ratings by the old mode, as it should.
+if [ "$DRY" -eq 0 ] && [ -n "${_RATED_AT_START:-}" ]; then
+  _RATED_NOW=$(_ratedKey)
+  if [ "$_RATED_NOW" != "$_RATED_AT_START" ]; then
+    echo "  the published ratings' distance mode changed ($_RATED_AT_START -> $_RATED_NOW):" \
+         "restarting the site so it converts them by it" | tee -a "$SUMMARY"
+    systemctl restart xc-predictor 2>&1 | tee -a "$SUMMARY" \
+      || echo "  ⚠ restart failed: systemctl restart xc-predictor" | tee -a "$SUMMARY"
   fi
 fi
 
