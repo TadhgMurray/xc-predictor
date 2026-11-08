@@ -1030,9 +1030,20 @@ _before_render.connect(_optoutMaskContext, app)
 
 @app.after_request
 def _feedScrub(resp):
-    """★ NO FEED NAME LEAVES THE SITE (owner, 2026-11-06): racecast/feed_scrub.py."""
+    """★ NO FEED NAME LEAVES THE SITE (owner, 2026-11-06): racecast/feed_scrub.py.
+
+    ! EXCEPT THE OWNER'S OWN ADMIN PAGES (owner, 2026-11-08: "I didn't mean
+      hide them to the point of performance issues" -- a missing-result
+      report's link came out as https://the results site/CrossCountry/...,
+      which opens nothing). /account/admin/* is behind the admin login and
+      never public, and its links are the owner's way to the source."""
+    if request.path.startswith(_ADMIN_PREFIX):
+        return resp
     import feed_scrub
     return feed_scrub.scrubResponse(resp)
+
+
+_ADMIN_PREFIX = "/account/admin/"
 
 
 @app.after_request
