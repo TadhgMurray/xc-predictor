@@ -231,19 +231,35 @@ if [ "$SCRAPE" -eq 1 ]; then
   #   dedup keeps the feed's copy when athletic.net posts the same meet.
   #   TFRRS runs alongside (it does not overlap the local sources).
   #   XCP_NIGHTLY_LOCAL=0 skips; XCP_NIGHTLY_LOCAL_PER_SOURCE new meets a timer.
+  # ★ TWO STEPS, EACH WITH ITS OWN BOUND (owner, 2026-11-08: "I haven't
+  #   seen us ever scrape any local results"). AthleticLIVE and the timing
+  #   companies shared one 45-minute bound, AthleticLIVE first; on the nights
+  #   it hit the bound (11-03, 11-04) the timers never started. Now
+  #   01_local_alive (AthleticLIVE) and 01_local_timers (every enabled
+  #   timing company) each get their own, so neither can starve the other.
+  #   XCP_NIGHTLY_LOCAL_MIN bounds AthleticLIVE, XCP_NIGHTLY_TIMERS_MIN the
+  #   timers.
   if [ "${XCP_NIGHTLY_LOCAL:-1}" != "0" ]; then
-    step 01_local timeout "${XCP_NIGHTLY_LOCAL_MIN:-45}m" bash deploy/scrape_local.sh \
-      --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
-    local_rc=$?
-    # ! THE BOUND IS NOT A FAILURE (owner's server, 2026-11-03 and 04:
-    #   "01_local FAILED (exit 124) after 2700s" failed the whole night). As
-    #   scrape() says for the feeds: what it saved is priced below, the rest
-    #   waits for tomorrow.
-    if [ "$local_rc" -eq 124 ]; then
-      FAILED="${FAILED/ 01_local/}"
-      echo "  01_local stopped at the ${XCP_NIGHTLY_LOCAL_MIN:-45}-minute bound; the rest waits for tomorrow" \
-        | tee -a "$SUMMARY"
-    fi
+    for part in alive timers; do
+      if [ "$part" = alive ]; then
+        mins="${XCP_NIGHTLY_LOCAL_MIN:-45}"
+        step 01_local_alive timeout "${mins}m" env TIMERS=0 bash deploy/scrape_local.sh
+      else
+        mins="${XCP_NIGHTLY_TIMERS_MIN:-40}"
+        step 01_local_timers timeout "${mins}m" env ALIVE=0 bash deploy/scrape_local.sh \
+          --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
+      fi
+      local_rc=$?
+      # ! THE BOUND IS NOT A FAILURE (owner's server, 2026-11-03 and 04:
+      #   "01_local FAILED (exit 124) after 2700s" failed the whole night). As
+      #   scrape() says for the feeds: what it saved is priced below, the rest
+      #   waits for tomorrow.
+      if [ "$local_rc" -eq 124 ]; then
+        FAILED="${FAILED/ 01_local_$part/}"
+        echo "  01_local_$part stopped at the ${mins}-minute bound; the rest waits for tomorrow" \
+          | tee -a "$SUMMARY"
+      fi
+    done
   fi
   # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
   #   blocked the old server and agreed only to a small scrape from the
