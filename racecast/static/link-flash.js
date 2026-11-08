@@ -145,8 +145,8 @@
   });
 
   // ★ A PRERENDERED PAGE FLASHES WHEN IT IS SHOWN (speed pass, 2026-11-08):
-  //   loaded in the background (speed.py's rules, or the browser's own
-  //   guess), the flash would play to nobody before the click
+  //   loaded in the background (the browser's own guess from the address
+  //   bar), the flash would play to nobody before the click
   function whenShown(fn) {
     if (document.prerendering) document.addEventListener("prerenderingchange", fn, { once: true });
     else fn();

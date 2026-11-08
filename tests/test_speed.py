@@ -44,8 +44,9 @@ except ImportError:
 
 
 def _rulesOf(html):
-    m = re.search(r'<script type="speculationrules">(.*?)</script>', str(html), re.S)
-    return json.loads(m.group(1)) if m else None
+    """The rules the head's script adds: a JS string holding the JSON."""
+    m = re.search(r's\.type="speculationrules";s\.textContent=("(?:[^"\\]|\\.)*");', str(html))
+    return json.loads(json.loads(m.group(1).replace("<\\/", "</"))) if m else None
 
 
 def _never(rule):
@@ -62,13 +63,23 @@ class SpeculationRules(unittest.TestCase):
         self.assertEqual(list(rules), ["prefetch"])
         self.assertEqual(rules["prefetch"][0]["eagerness"], "moderate")
 
+    def test_only_for_a_hovering_pointer(self):
+        # a phone has no hover: "moderate" there is Cloudflare's own tap rule
+        html = str(speed.headHtml(_PRIVATE, "prefetch", "off"))
+        self.assertIn('matchMedia("(hover: hover) and (pointer: fine)")', html)
+        self.assertIn('HTMLScriptElement.supports("speculationrules")', html)
+        self.assertNotIn('<script type="speculationrules">', html)
+
+    def test_no_prerender(self):
+        # tried and dropped (speed.py): its gain could not be measured
+        self.assertIsNone(speed.speculationRules("prerender", _PRIVATE))
+        self.assertNotIn("prerender", json.dumps(speed.speculationRules("prefetch", _PRIVATE)))
+
     def test_every_private_prefix_is_excluded(self):
-        for mode in ("prefetch", "prerender"):
-            rules = _rulesOf(speed.headHtml(_PRIVATE, mode, "off"))
-            for kind, rs in rules.items():
-                never = _never(rs[0])
-                for p in _PRIVATE:
-                    self.assertIn(p + "*", never, f"{mode}/{kind} would fetch {p}")
+        rules = _rulesOf(speed.headHtml(_PRIVATE, "prefetch", "off"))
+        never = _never(rules["prefetch"][0])
+        for p in _PRIVATE:
+            self.assertIn(p + "*", never, f"a hover would fetch {p}")
 
     def test_downloads_and_new_tabs_are_excluded(self):
         rule = _rulesOf(speed.headHtml(_PRIVATE, "prefetch", "off"))["prefetch"][0]
@@ -79,15 +90,6 @@ class SpeculationRules(unittest.TestCase):
                if "not" in c and "selector_matches" in c["not"]][0]
         for s in ("[download]", "[rel~=nofollow]", "[target=_blank]", ".no-prefetch"):
             self.assertIn(s, sel)
-
-    def test_prerender_only_on_the_listed_pages(self):
-        rules = _rulesOf(speed.headHtml(_PRIVATE, "prerender", "off"))
-        clauses = rules["prerender"][0]["where"]["and"]
-        only = [c["href_matches"] for c in clauses
-                if "href_matches" in c and isinstance(c["href_matches"], list)]
-        self.assertEqual(only, [list(speed.PRERENDER_PATHS)])
-        for p in ("/updates*", "/rankings*"):
-            self.assertNotIn(p, only[0])
 
     def test_off_prints_no_rules(self):
         self.assertIsNone(_rulesOf(speed.headHtml(_PRIVATE, "off", "off")))
@@ -182,11 +184,11 @@ class HeroPhotos(unittest.TestCase):
 
 
 class PrerenderSafety(unittest.TestCase):
-    """A prerendered page runs its scripts before anyone sees it (speed.py's
-    prerender rules, and Chrome's own address-bar guesses). The scripts on
-    the prerendered pages that record or show something on load wait for
-    the page to be shown: the view beacon (tests/test_usage_beacon.js runs
-    it), the follow help's "seen" mark, and the arrival flash."""
+    """A prerendered page runs its scripts before anyone sees it (Chrome's
+    own address-bar guesses). The scripts that record or show something on
+    load wait for the page to be shown: the view beacon
+    (tests/test_usage_beacon.js runs it), the follow help's "seen" mark, and
+    the arrival flash."""
 
     def test_on_load_effects_wait_for_activation(self):
         for f in ("usage.js", "follow.js", "link-flash.js", "race-page.js"):

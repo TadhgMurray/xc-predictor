@@ -9,11 +9,19 @@ _meta.html ({{ speed_head() }}) that prints what they ask for:
       "prefetch"  (default) the page's HTML, once the pointer has rested on
                   the link ~200 ms or pressed it ("moderate"). No script of
                   the next page runs, so nothing is counted, stored or sent.
-      "prerender" the same moment, the whole next page rendered in the
-                  background, for the pages whose scripts are known to wait
-                  for the reader (see PRERENDER_PATHS); prefetch for the rest.
+                  Only where there IS a hovering pointer (a mouse or
+                  trackpad): a phone has no hover, so "moderate" there fires
+                  on the tap exactly like Cloudflare's own rule below, and
+                  the rules would only cost the page their matching.
       "off"       nothing beyond Cloudflare's own rules (its Speed Brain
                   header already prefetches on pointer-down, "conservative").
+    ! NO "prerender" (tried, 2026-11-08): it renders the next page on the
+      hover, but a browser driven for measurement cannot prerender
+      (Chrome: PrerenderingDisabledByDevTools), so its gain could not be
+      shown, and a prerendered page runs scripts nobody asked for. The
+      scripts that act on load wait for activation anyway (usage.js,
+      follow.js, link-flash.js, race-page.js), because Chrome prerenders
+      on its own from the address bar.
   XCP_SW            the service worker (static/sw.js), served at /sw.js
       "off"       (default) the page registers nothing, and /sw.js is the
                   KILL SWITCH: a worker that deletes its caches and
@@ -23,7 +31,8 @@ _meta.html ({{ speed_head() }}) that prints what they ask for:
                   what it caches (versioned ?v= files; public pages and board
                   answers, stale-while-revalidate, never anything private).
   XCP_SW_MAX_STALE  seconds a stored page may be shown while a fresh one is
-                    fetched behind it (default 3600).
+                    fetched behind it (default 900, the edge's own s-maxage:
+                    never older than Cloudflare may already serve it).
 
 ! WHAT A PREFETCH MAY NEVER TOUCH: the private paths (app._PRIVATE_PREFIXES:
   /api/, /search, /account, /login, /logout ...), a download (?format=csv,
@@ -38,46 +47,34 @@ from markupsafe import Markup
 
 SPECULATION = os.environ.get("XCP_SPECULATION", "prefetch").strip().lower()
 SW = os.environ.get("XCP_SW", "off").strip().lower()
-SW_MAX_STALE = int(os.environ.get("XCP_SW_MAX_STALE", "3600") or 3600)
+SW_MAX_STALE = int(os.environ.get("XCP_SW_MAX_STALE", "900") or 900)
 
 # downloads and machine files a hover must never fetch
 _NEVER_EXT = ("csv", "png", "jpg", "webp", "svg", "ics", "xml", "txt", "json",
               "pdf", "zip", "webmanifest")
-# ★ PRERENDER ONLY WHERE THE SCRIPTS WAIT FOR THE READER. A prerendered page
-#   runs its scripts before anyone looks at it, so a page that stores
-#   something on load (/updates marks itself read, the rankings board keeps
-#   the reader's level, the follow help marks itself seen) would do it for a
-#   page nobody opened. These four only read, and the two that write on load
-#   (usage.js, follow.js) wait for the page to be shown (static/usage.js,
-#   static/follow.js: document.prerendering).
-PRERENDER_PATHS = ("/athlete/*", "/race/*", "/meet/*", "/school/*")
-
-
 def speculationRules(mode, private_prefixes):
-    """The <script type="speculationrules"> body for `mode`, or None."""
-    if mode not in ("prefetch", "prerender"):
+    """The speculation rules for `mode` ("prefetch"), or None."""
+    if mode != "prefetch":
         return None
     # "/api/" -> "/api/*", "/search" -> "/search*" (also /search?q=...)
     never = [p + "*" for p in private_prefixes]
     never += ["/*.%s" % e for e in _NEVER_EXT]
     never += ["/*\\?*format=*", "/img/*", "/static/*", "/sw.js"]
+    where = {"and": [{"href_matches": "/*"},
+                     {"not": {"href_matches": never}},
+                     {"not": {"selector_matches":
+                              "[download], [rel~=nofollow], [target=_blank], .no-prefetch"}}]}
+    return {"prefetch": [{"source": "document", "where": where, "eagerness": "moderate"}]}
 
-    def where(extra=None):
-        clauses = [{"href_matches": "/*"},
-                   {"not": {"href_matches": never}},
-                   {"not": {"selector_matches":
-                            "[download], [rel~=nofollow], [target=_blank], .no-prefetch"}}]
-        if extra:
-            clauses.append(extra)
-        return {"and": clauses}
 
-    rules = {"prefetch": [{"source": "document", "where": where(),
-                           "eagerness": "moderate"}]}
-    if mode == "prerender":
-        rules["prerender"] = [{"source": "document",
-                               "where": where({"href_matches": list(PRERENDER_PATHS)}),
-                               "eagerness": "moderate"}]
-    return rules
+# ★ ADDED BY A LINE OF SCRIPT, ONLY FOR A HOVERING POINTER, and only where
+#   the browser knows speculation rules (Chromium; elsewhere nothing runs).
+#   A rules element added from script is read like one in the markup.
+_RULES_JS = ('<script>(function(){try{if(!matchMedia("(hover: hover) and (pointer: fine)").matches'
+             '||!(window.HTMLScriptElement&&HTMLScriptElement.supports&&'
+             'HTMLScriptElement.supports("speculationrules")))return;'
+             'var s=document.createElement("script");s.type="speculationrules";'
+             's.textContent=%s;document.head.appendChild(s);}catch(e){}})();</script>')
 
 
 def swVersion(static_folder):
@@ -122,8 +119,9 @@ def headHtml(private_prefixes, speculation=None, sw=None):
     out = []
     rules = speculationRules(speculation, private_prefixes)
     if rules:
-        out.append('<script type="speculationrules">%s</script>'
-                   % json.dumps(rules, separators=(",", ":")).replace("</", "<\\/"))
+        # the JSON as a JS string; a "</" in it can never close the script
+        body = json.dumps(json.dumps(rules, separators=(",", ":")))
+        out.append(_RULES_JS % body.replace("</", "<\\/"))
     out.append(_REGISTER if sw == "on" else _UNREGISTER)
     return Markup("".join(out))
 

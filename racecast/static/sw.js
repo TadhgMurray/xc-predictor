@@ -28,7 +28,7 @@
 "use strict";
 
 var VERSION = "__RC_SW_VERSION__";
-var MAX_STALE = +"__RC_SW_MAX_STALE__" || 3600;          /* seconds */
+var MAX_STALE = +"__RC_SW_MAX_STALE__" || 900;           /* seconds */
 var PRIVATE = __RC_SW_PRIVATE__;                          /* path prefixes */
 /* the board APIs are under /api/ but public (app._BOARD_CACHE_CONTROL) */
 var PUBLIC_API = ["/api/rankings", "/api/teams", "/api/courses"];

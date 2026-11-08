@@ -115,9 +115,9 @@
   }
   function view() { send({ k: "v", r: refHost(), u: firstToday() }); }
   /* ★ A PAGE IS VIEWED WHEN IT IS SHOWN, NOT WHEN IT LOADS (speed pass,
-     2026-11-08). A prerendered page (the speculation rules in speed.py,
-     or Chrome guessing from the address bar) loads in the background and
-     may never be opened; it counts once, when the reader switches to it. */
+     2026-11-08). A prerendered page (Chrome guessing from the address bar,
+     or any speculation rules a page adds) loads in the background and may
+     never be opened; it counts once, when the reader switches to it. */
   function whenShown() {
     if (d.prerendering) d.addEventListener("prerenderingchange", view, { once: true });
     else view();
