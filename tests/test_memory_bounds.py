@@ -127,3 +127,46 @@ def test_threads_racing_to_make_the_pool_get_one(monkeypatch):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert len(made) == 1 and D._pool is made[0]
+
+
+def test_a_bonus_connection_does_not_wait_for_the_pool(monkeypatch):
+    """! 2026-11-08: /card/predict.png at 31 s -- predict's parallel readers
+    waited 20 s for a slot the request's own reads were holding."""
+    import threading
+    import time as _t
+    import psycopg2.pool
+    import database as D
+
+    class C:
+        closed = 0
+
+        def cursor(self):
+            class K:
+                def __enter__(s): return s
+                def __exit__(s, *a): pass
+                def execute(s, *a): pass
+            return K()
+
+        def rollback(self):
+            pass
+
+    class P:
+        def getconn(s): return C()
+        def putconn(s, c, close=False): pass
+
+    monkeypatch.setattr(D, "_pool", P())
+    monkeypatch.setattr(D, "_slots", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(D, "POOL_WAIT", 5.0)
+    monkeypatch.setattr(D, "dbQuiet", lambda: False)
+    with D._primaryConn():                       # the only slot is taken
+        t0 = _t.monotonic()
+        try:
+            with D.noWait(), D._primaryConn():
+                pass
+        except psycopg2.pool.PoolError:
+            pass
+        else:
+            raise AssertionError("expected an immediate PoolError")
+        assert _t.monotonic() - t0 < 1
+    with D.noWait(), D._primaryConn():           # a free slot is still taken
+        pass

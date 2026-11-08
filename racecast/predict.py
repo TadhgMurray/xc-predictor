@@ -2044,8 +2044,9 @@ def _ownConnFuture(fn):
     a Future, or None when no thread could be started. psycopg2 lets go of
     the GIL while Postgres works, so two reads overlap for real."""
     def run():
-        from database import getConn
-        with getConn() as conn2, conn2.cursor() as c2:
+        from database import getConn, noWait
+        # a bonus connection: none free now = read in line (noWait)
+        with noWait(), getConn() as conn2, conn2.cursor() as c2:
             try:
                 c2.execute("SET LOCAL join_collapse_limit = 16")
                 c2.execute("SET LOCAL from_collapse_limit = 16")

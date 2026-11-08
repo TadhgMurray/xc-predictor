@@ -54,6 +54,25 @@ MAX_CONN = int(os.environ.get("XCP_DB_MAX_CONN") or 250)
 #   and every page the worker served meanwhile failed at once. A slot is now
 #   waited for up to POOL_WAIT seconds; only then is it the same PoolError.
 POOL_WAIT = float(os.environ.get("XCP_DB_POOL_WAIT") or 20)
+# ! EXCEPT FOR A CONNECTION THAT IS ONLY A BONUS (2026-11-08: /card/predict.png
+#   at 31 s). predict's parallel readers (_ownConnFuture: 2 XC + 2 TF history
+#   reads beside the request's own connection, in a worker that has three)
+#   were written for the old pool: no slot = PoolError at once, and the
+#   request reads that share in line. Waiting 20 s for a slot made the
+#   request wait with them. A thread inside noWait() fails at once, as before.
+_NO_WAIT = threading.local()
+
+
+@contextmanager
+def noWait():
+    """Inside this block (this thread only), a full pool is an immediate
+    PoolError instead of a POOL_WAIT wait."""
+    prev = getattr(_NO_WAIT, "on", False)
+    _NO_WAIT.on = True
+    try:
+        yield
+    finally:
+        _NO_WAIT.on = prev
 
 # We add connect_timeout to PG_CONFIG here so it applies to every connection
 # the pool opens. Without it, if Cloud SQL is slow to accept, psycopg2
@@ -434,7 +453,9 @@ def _primaryConn():
     if _pool is None:
         initPool()
     slots = _slots
-    if slots is not None and not slots.acquire(timeout=POOL_WAIT):
+    if slots is not None and not (slots.acquire(blocking=False)
+                                  if getattr(_NO_WAIT, "on", False)
+                                  else slots.acquire(timeout=POOL_WAIT)):
         raise psycopg2.pool.PoolError(
             f"connection pool exhausted (all {MAX_CONN} in use for {POOL_WAIT:g} s)")
     try:
