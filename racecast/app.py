@@ -9556,7 +9556,11 @@ _SEARCH_CACHE_LOCK = threading.Lock()
 #   and there are few of them: up to SEARCH_SHARED_LEN characters the answer
 #   goes through sharedcache, so one worker computes it for all 24. Longer
 #   queries are many, fast and rarely repeated, and stay per worker.
-SEARCH_SHARED_LEN = 3
+# ★ SIX SINCE 2026-11-08: the slowest dropdown lookups in the slow log were
+#   4-5 letter names ("Andre", "ryan" -- 2.2-2.5 s), past the old 3. A common
+#   name matches hundreds of thousands of rows (john: 363k) that every worker
+#   ranked for itself; now once for the box per hour.
+SEARCH_SHARED_LEN = 6
 SEARCH_SHARED_TTL = 3600.0
 
 

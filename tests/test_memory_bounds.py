@@ -89,3 +89,19 @@ def test_the_front_page_renders_once_and_is_shared(monkeypatch, tmp_path):
     a = c.get("/").get_data(as_text=True)
     b = c.get("/").get_data(as_text=True)
     assert a == b == "<html>front page 1</html>" and len(calls) == 1
+
+
+def test_the_shared_directory_is_swept_of_dead_files(tmp_path, monkeypatch):
+    import sharedcache
+    d = str(tmp_path / "c")
+    sharedcache._safeDir(d)
+    old = os.path.join(d, "search-dead.pkl")
+    fresh = os.path.join(d, "search-live.pkl")
+    for p in (old, fresh):
+        open(p, "wb").close()
+    t = 10_000_000.0
+    os.utime(old, (t - sharedcache.SWEEP_AGE_ANY - 10,) * 2)
+    os.utime(fresh, (t - 60,) * 2)
+    monkeypatch.setattr(sharedcache, "_last_sweep", [0.0])
+    sharedcache.get("k", lambda: 1, ttl=60, now=lambda: t, path=d)
+    assert not os.path.exists(old) and os.path.exists(fresh)

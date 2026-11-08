@@ -955,9 +955,14 @@ def test_short_queries_are_computed_once_for_the_box(tmp_path, monkeypatch):
         A._searchCached(("api", q, "", 10), lambda: n.append(q) or [q], query=q)
     assert n == ["jo", "jo!", "smi"]
     n.clear()
-    for _ in range(2):                                    # a long query stays per worker
+    for _ in range(2):                                    # "smith" is short now (6, 2026-11-08)
         A._SEARCH_CACHE.clear()
         A._searchCached(("api", "smith", "", 10), lambda: n.append(1) or [], query="smith")
+    assert n == [1]
+    n.clear()
+    for _ in range(2):                                    # past SEARCH_SHARED_LEN: per worker
+        A._SEARCH_CACHE.clear()
+        A._searchCached(("api", "smithson", "", 10), lambda: n.append(1) or [], query="smithson")
     assert n == [1, 1]
     A._SEARCH_CACHE.clear()
 
