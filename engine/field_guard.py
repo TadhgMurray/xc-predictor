@@ -130,6 +130,22 @@ def main(argv=None):
     since = since[:4] + "-01-01" if not a.since else since
     from database import getConn
     t0 = time.time()
+    if a.race:
+        # ★ ONE RACE IS ONE SEASON (owner, 2026-11-08: --race with --since
+        #   2004 printed twenty-two seasons' lists and buried the one line).
+        #   Read the race's own year, print that division only, write nothing.
+        m, d = (int(x) for x in a.race.strip("/").split("/")[-2:])
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT min(left(date, 4)) FROM results WHERE meet_id = %s AND div_id = %s"
+                        " AND date ~ '^[0-9]{4}-'", (m, d))
+            yr = cur.fetchone()[0]
+            conn.rollback()
+        if not yr:
+            print(f"[field guard] no dated results for /race/xc/{m}/{d}")
+            return 1
+        a.write, a.show = False, 0
+        guardYear(getConn, a, f"{yr}-01-01", f"{int(yr) + 1}-01-01", t0)
+        return 0
     # ★ ONE SEASON AT A TIME: a runner's reference never leaves their season,
     #   so the full pipeline's all-years run never holds the table at once
     total = 0
@@ -165,13 +181,20 @@ def guardYear(getConn, a, lo, hi, t0):
               f"({time.time() - t0:.0f} s)")
         if a.race:
             m, d = (int(x) for x in a.race.strip("/").split("/")[-2:])
+            found = False
             for div, gs in gaps.items():
                 if div[1] == m and div[2] == d:
+                    found = True
                     med = statistics.median(gs) if gs else 0
                     print(f"  {div[0]} {m}/{d}: {len(gs)} runners with references, median "
                           f"{100 * med:+.1f}% vs their own seasons, "
                           f"{100 * sum(1 for g in gs if g >= UP) / max(len(gs), 1):.0f}% up 2%+ "
-                          f"-> {'PULLED DOWN' if div in hit else 'left alone'}")
+                          f"-> {'PULLED DOWN' if div in hit else 'left alone'}"
+                          + ("" if len(gs) >= MIN_FIELD else f" (under {MIN_FIELD}: not judged)"))
+            if not found:
+                print(f"  {m}/{d}: no runner in it has {MIN_REF}+ other rated races that season"
+                      f" -- not judged")
+            return 0
         print(f"[field guard] {len(hit):,} divisions whose field rated {100 * GAP:.0f}%+ above "
               f"its own seasons ({100 * SHARE:.0f}% of runners up), to be pulled down to "
               f"+{100 * PEAK:.0f}%")
