@@ -276,7 +276,8 @@ def fromMeetPro(index, results, slug, url):
                 continue
             lm.races.append(LandedRace(n=e.number + (PRELIM_OFFSET if prelim else 0),
                                        title=e.title + (" Prelims" if prelim else ""), gender=e.gender,
-                                       sport=sportOf(e.title, index.name, e.meters),
+                                       sport=("XC" if getattr(e, "xc", False)
+                                              else sportOf(e.title, index.name, e.meters)),
                                        meters=e.meters, rows=_landedRows(rows)))
     return lm
 

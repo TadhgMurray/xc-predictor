@@ -35,6 +35,7 @@ class MeetEvent:
     meters: float         # None when the title names no distance
     results_href: str     # relative, e.g. 'results_29.html'; '' before results
     relay: bool = False   # '4 x 800m Relay' -- its meters are a leg's, not a race's
+    xc: bool = False      # the page itself says cross country (a team score's spread)
 
 
 @dataclass
@@ -170,3 +171,64 @@ def _tableRows(table):
             seconds=secondsOf(mark), mark=mark or (place or ""),
             points=int(c["points"]) if c.get("points", "").isdigit() else None))
     return rows
+
+
+# ★ THE ONE-PAGE MEETPRO (owner, 2026-11-08: "you ever scrape diablo
+#   timing?"). MeetProTemplate_v2.0 -- Diablo Timing's mp/ folders -- puts a
+#   whole meet on one page: a <section id="eventN" class="event"> per race,
+#   its title in the header's bold cells ("Race #1", "6th Girls 1.25 Miles"),
+#   a team scoring table, then the individual table (class "result-table",
+#   no header cell for the place: 'athlete-hdr' spans it; the team cell is
+#   'ath-team'). The index-and-event-pages parser above found no event rows
+#   on it, so every such meet read as "no individual races".
+_SECTION = re.compile(r'<section[^>]*id="event(\d+)"[^>]*>(.*?)</section>', re.S | re.I)
+_ONE_TABLE = re.compile(r'<table[^>]*class="[^"]*\bresult-table\b[^"]*"[^>]*>(.*?)</table>', re.S | re.I)
+
+
+def isSinglePage(page):
+    return bool(_SECTION.search(page) and _ONE_TABLE.search(page))
+
+
+def parseSinglePage(page):
+    """A one-page MeetPro meet -> (MeetIndex, {event number: [Row]})."""
+    idx = MeetIndex()
+    nav = re.search(r'nav-title[^>]*>\s*<h\d[^>]*>(.*?)</h\d>', page, re.S | re.I)
+    title = re.search(r"<title>(.*?)</title>", page, re.S | re.I)
+    idx.name = _text(nav.group(1)) if nav else (_text(title.group(1)) if title else "")
+    info = re.search(r'class="[^"]*m-info[^"]*"[^>]*>(.*?)</div>', page, re.S | re.I)
+    for t in (_text(x) for x in re.findall(r"<p[^>]*>(.*?)</p>", info.group(1) if info else "", re.S)):
+        if not idx.date and _isoDate(t):
+            idx.date = _isoDate(t)
+        elif t and not idx.place and re.search(r",\s*[A-Z]{2}\b", t):
+            idx.place = t
+    results = {}
+    for num, body in _SECTION.findall(page):
+        cells = [_text(x) for x in re.findall(r'class="bold-cell"[^>]*>(.*?)</p>', body, re.S | re.I)]
+        name = next((c for c in reversed(cells) if c and not re.match(r"race\s*#", c, re.I)), "")
+        if not name:
+            continue
+        n = int(num)
+        # a cross country team score: five scorers, displacers in brackets, a
+        # 1-5 spread -- no track meet scores a race like that
+        xc = bool(re.search(r'class="(?:spread|scoring-order)"', body))
+        idx.events.append(MeetEvent(n, name, _gender(name), metersOf(name), f"#event{n}",
+                                    bool(re.search(r"\d\s*x\s*\d|relay|medley", name, re.I)), xc))
+        table = _ONE_TABLE.search(body)
+        rows = []
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", table.group(1) if table else "", re.S | re.I):
+            c = _cells(tr)
+            if not c.get("athlete"):
+                continue
+            mark = (c.get("time") or c.get("mark") or "").split(" ")[0]
+            mark = re.sub(r"(?<=\d)[A-Za-z*#]+$", "", mark)
+            last, first = _splitName(c["athlete"])
+            place = c.get("place", "")
+            rows.append(Row(
+                place=int(place) if place.isdigit() else None,
+                last=last, first=first,
+                grade=(c.get("year") or c.get("grade") or "").upper(),
+                school=c.get("ath-team") or c.get("team", ""),
+                seconds=secondsOf(mark), mark=mark or place,
+                points=int(c["score"]) if c.get("score", "").isdigit() else None))
+        results[n] = rows
+    return idx, results

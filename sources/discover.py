@@ -46,7 +46,11 @@ FEED_HOSTS = re.compile(r"(^|\.)(athletic\.net|anet\.live|athletic\.live|milespl
                         r"raceresult\.com|flotrack\.org|flosports\.tv|facebook\.com|"
                         r"instagram\.com|twitter\.com|x\.com|youtube\.com|linktr\.ee|"
                         r"google\.com|apple\.com)$", re.I)
-_A = re.compile(r"<a\b[^>]*?href\s*=\s*[\"']([^\"'#]+)[\"'][^>]*>(.*?)</a>", re.I | re.S)
+# ! AN UNQUOTED HREF IS A LINK TOO (owner, 2026-11-08: "you ever scrape
+#   diablo timing?" -- never: its day pages write <a href = mp/#event2>, and
+#   only quoted values were read, so the results under mp/ were never seen)
+_A = re.compile(r"<a\b[^>]*?href\s*=\s*(?:[\"']([^\"'#]*)[\"']|([^\s>\"'#]+)[^\s>]*)[^>]*>(.*?)</a>",
+                re.I | re.S)
 _TAG = re.compile(r"<[^>]+>")
 _YEAR = re.compile(r"(?<!\d)(20[0-3]\d)(?!\d)")
 _FILE_DATE = re.compile(r"^(\d{1,2}[-_.]\d{1,2}(?:[-_.]\d{2,4})?)\b")
@@ -109,8 +113,10 @@ def meetproRoot(url, own=None):
 def links(page, base):
     """(absolute url, link text) for every <a href> on a page, in order."""
     out, seen = [], set()
-    for href, inner in _A.findall(page)[:MAX_LINKS]:
-        href = _html.unescape(href.strip())
+    for quoted, bare, inner in _A.findall(page)[:MAX_LINKS]:
+        href = _html.unescape((quoted or bare).strip())
+        if not href:
+            continue
         if href.lower().startswith(("mailto:", "javascript:", "tel:")):
             continue
         u = urllib.parse.urljoin(base, href)

@@ -98,6 +98,25 @@ def _isChallenge(body):
             or b"attention required! | cloudflare" in head)
 
 
+def folderDate(url, page_date, slack_days=3):
+    """The meet's date: a page's own, unless the folder it is posted in is
+    named for a date more than `slack_days` away (Diablo Timing's
+    results/2026-11-05/ held a page still headed 11/06/2025 -- last year's
+    header left on the template). Pure."""
+    import datetime as _dt
+    m = re.search(r"/(20\d\d-\d\d-\d\d)/", url or "")
+    if not m:
+        return page_date
+    try:
+        folder = _dt.date.fromisoformat(m.group(1))
+        page = _dt.date.fromisoformat(page_date) if page_date else None
+    except ValueError:
+        return page_date
+    if page is None or abs((page - folder).days) > slack_days:
+        return folder.isoformat()
+    return page_date
+
+
 async def fetchMeet(fetcher, slug, url, kind=None):
     """(LandedMeet | None, note) for one meet url."""
     if registry.offLimits(url):
@@ -110,6 +129,10 @@ async def fetchMeet(fetcher, slug, url, kind=None):
     kind = kind or kindOf(url, got.body)
     if kind == "meetpro":
         page = got.body.decode("utf-8", "replace")
+        if meetpro.isSinglePage(page):              # the whole meet on one page
+            idx, results = meetpro.parseSinglePage(page)
+            idx.date = folderDate(url, idx.date)
+            return land.fromMeetPro(idx, results, slug, url), "meetpro (one page)"
         idx = meetpro.parseMeetIndex(page)
         results = {}
         for e in idx.events:
