@@ -58,6 +58,14 @@ CHANGES = [
      "who have other races to compare it with. A runner whose only race is "
      "that one no longer counts, so days built on such fields, most of them "
      "old meets, move less."),
+    ("2026-11-08",
+     "Converting a race to a common distance now uses one curve set by how "
+     "fast the runner is, with a small adjustment for each level, instead of "
+     "a separate curve per level. Tested on 1.7 million pairs of races it "
+     "had not seen, it predicted a runner's other races better for high "
+     "school and middle school runners, and its predictions were far less "
+     "lopsided, most of all for high school girls in cross country. Every "
+     "rating moves a little."),
 ]
 
 
