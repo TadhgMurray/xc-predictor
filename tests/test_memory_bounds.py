@@ -170,3 +170,32 @@ def test_a_bonus_connection_does_not_wait_for_the_pool(monkeypatch):
         assert _t.monotonic() - t0 < 1
     with D.noWait(), D._primaryConn():           # a free slot is still taken
         pass
+
+
+def test_a_rebuilt_search_index_is_never_answered_from_old_copies(tmp_path, monkeypatch):
+    """★ 2026-11-08: shared short searches live 6 h, keyed by search_index's
+    oid, so the nightly rebuild (a new table) retires every old copy."""
+    A = _app()
+    import sharedcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "shared"))
+    stamp = {"oid": 111}
+    monkeypatch.setattr(A, "_searchStamp", lambda: stamp["oid"])
+    n = []
+    for _ in range(2):
+        A._SEARCH_CACHE.clear()
+        A._searchCached(("api", "jo", "", 10), lambda: n.append(1) or ["old"], query="jo")
+    assert n == [1]                                   # shared within one index
+    stamp["oid"] = 222                                # the nightly rebuild
+    A._SEARCH_CACHE.clear()
+    v = A._searchCached(("api", "jo", "", 10), lambda: n.append(2) or ["new"], query="jo")
+    assert v == ["new"] and n == [1, 2]
+    A._SEARCH_CACHE.clear()
+
+
+def test_warm_site_asks_every_two_letter_search():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "warm_site", os.path.join(_ROOT, "scripts", "warm_site.py"))
+    w = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(w)
+    assert len(w.SEARCH_PATHS) == 676 and "/search/api?q=jo" in w.SEARCH_PATHS

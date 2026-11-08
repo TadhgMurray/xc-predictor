@@ -9591,7 +9591,31 @@ _SEARCH_CACHE_LOCK = threading.Lock()
 #   name matches hundreds of thousands of rows (john: 363k) that every worker
 #   ranked for itself; now once for the box per hour.
 SEARCH_SHARED_LEN = 6
-SEARCH_SHARED_TTL = 3600.0
+# ★ SIX HOURS, TIED TO THE INDEX ITSELF (2026-11-08, p99: /search/api?q=jo
+#   at 1.48 s on a miss, every hour). A short query's answer only changes
+#   when search_index is rebuilt (nightly, a new table), so the shared copy's
+#   key carries search_index's oid: a rebuild makes every old copy unused at
+#   once, and between rebuilds the copy can live six hours instead of one.
+SEARCH_SHARED_TTL = 6 * 3600.0
+_SEARCH_STAMP = {"at": 0.0, "oid": None}
+
+
+def _searchStamp():
+    """search_index's oid (a rebuilt table gets a new one), asked once a
+    minute per worker; None when it cannot be read (then the key is today's)."""
+    now = time.time()
+    if now - _SEARCH_STAMP["at"] < 60:
+        return _SEARCH_STAMP["oid"]
+    oid = None
+    try:
+        with getConn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('search_index')::oid")
+            row = cur.fetchone()
+            oid = int(row[0]) if row and row[0] is not None else None
+    except Exception:                                   # noqa: BLE001
+        oid = None
+    _SEARCH_STAMP.update(at=now, oid=oid)
+    return oid
 
 
 def _searchShared(query, key, compute):
@@ -9601,8 +9625,11 @@ def _searchShared(query, key, compute):
         return compute()
     import hashlib
     import sharedcache
-    name = "search-" + hashlib.sha1(repr(key).encode("utf-8")).hexdigest()
-    value, _at = sharedcache.get(name, compute, ttl=SEARCH_SHARED_TTL)
+    stamp = _searchStamp()
+    # no stamp: an hour, as before (a rebuild could not be seen)
+    ttl = SEARCH_SHARED_TTL if stamp is not None else min(SEARCH_SHARED_TTL, 3600.0)
+    name = "search-" + hashlib.sha1(repr((key, stamp)).encode("utf-8")).hexdigest()
+    value, _at = sharedcache.get(name, compute, ttl=ttl)
     return value
 
 

@@ -54,6 +54,16 @@ def fetch(path):
         return path, type(exc).__name__, time.time() - t
 
 
+# ★ THE SEARCH BOX'S FIRST TWO LETTERS (2026-11-08, p99). The dropdown asks
+#   /search/api?q=<text> from two characters; a two-letter query matches a
+#   hundred thousand rows or more (0.3-1.5 s), and its answer is shared by
+#   every worker until search_index is rebuilt (app._searchShared). Asked
+#   once, one at a time, after the pages: ~676 requests of a few tenths of
+#   a second on one connection. XCP_WARM_SEARCH=0 skips them.
+_LETTERS = "abcdefghijklmnopqrstuvwxyz"
+SEARCH_PATHS = [f"/search/api?q={a}{b}" for a in _LETTERS for b in _LETTERS]
+
+
 def main():
     time.sleep(DELAY)
     t0 = time.time()
@@ -64,6 +74,12 @@ def main():
     print(f"[warm] {len(results)} pages in {time.time() - t0:.1f}s; slowest: "
           + ", ".join(f"{p} {s:.1f}s" for p, _c, s in slow)
           + (f"; NOT 200: {bad}" if bad else ""), flush=True)
+    if os.environ.get("XCP_WARM_SEARCH", "1") == "1":
+        t1 = time.time()
+        res = [fetch(p) for p in SEARCH_PATHS]
+        bad = [r for r in res if r[1] != 200]
+        print(f"[warm] {len(res)} two-letter searches in {time.time() - t1:.0f}s"
+              + (f"; {len(bad)} not 200" if bad else ""), flush=True)
     return 0
 
 
