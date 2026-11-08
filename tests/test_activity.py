@@ -226,7 +226,10 @@ def test_the_public_page_and_latest_api(monkeypatch):
     j = client.get("/api/updates/latest")
     assert j.get_json() == {"latest": "2026-10-22T03:00:00",
                             "stamp": "2026-10-18|2026-10-19T08:00:00"}
-    assert 'rc_updates_stamp", "2026-10-18|2026-10-19T08:00:00"' in html
+    # the page's own stamp, recorded as seen -- the newest of it, the bar's
+    # last fetch and the API's (owner, 2026-11-08: the dot came back)
+    assert 'var mine = "2026-10-18|2026-10-19T08:00:00"' in html
+    assert 'localStorage.setItem("rc_updates_stamp", s)' in html and "/api/updates/latest" in html
     # the pages' own header, s-maxage included, so the edge answers it too
     # (2026-11-08, tests/test_edge_cache.py)
     assert j.headers["Cache-Control"] == A.PUBLIC_CACHE_CONTROL
