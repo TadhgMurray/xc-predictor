@@ -1,3 +1,4 @@
+import os
 # Project: xc-predictor / racecast
 # File:    edge_cache.py
 # Purpose: what Cloudflare may keep, and ONE spelling per URL (2026-11-08).
@@ -187,6 +188,35 @@ def scrubLocation(headers):
             for k, v in headers]
 
 
+# ★ NGINX'S OWN 60-SECOND MEMORY (2026-11-08, deploy/nginx_microcache.sh).
+#   nginx keeps a public answer for MICRO_TTL seconds: repeats inside that
+#   window never reach Python, a burst of identical misses becomes one
+#   request (proxy_cache_lock), and while gunicorn restarts or fails nginx
+#   answers from its last copy instead of a 502. The app decides, per
+#   response, with X-Accel-Expires -- which nginx acts on and strips, so no
+#   visitor ever sees it: a 200 whose final Cache-Control is public, with no
+#   cookie set, may be kept MICRO_TTL seconds; everything else "0" (never).
+#   Without the nginx config the header does nothing. XCP_NGINX_MICRO_TTL=0
+#   makes every answer "0".
+MICRO_TTL = int(os.environ.get("XCP_NGINX_MICRO_TTL") or 60)
+
+
+def microcacheHeader(status, headers):
+    """The X-Accel-Expires value for a finished response (headers are the
+    final [(name, value)] after guardHeaders)."""
+    if MICRO_TTL <= 0 or not str(status).startswith("200"):
+        return "0"
+    names = {k.lower() for k, _v in headers}
+    if "set-cookie" in names:
+        return "0"
+    cc = " ".join(v.lower() for k, v in headers if k.lower() == "cache-control")
+    if "public" not in cc or "no-store" in cc or "private" in cc or "no-cache" in cc:
+        return "0"
+    if any(k.lower() == "vary" and "cookie" in v.lower() for k, v in headers):
+        return "0"
+    return str(MICRO_TTL)
+
+
 class _Guard:
     """WSGI middleware OUTSIDE every after_request hook, so it sees the
     headers that really leave: whatever a hook registered later adds, a
@@ -198,6 +228,8 @@ class _Guard:
     def __call__(self, environ, start_response):
         def start(status, headers, exc_info=None):
             headers = scrubLocation(guardHeaders(list(headers)))
+            headers = [(k, v) for k, v in headers if k.lower() != "x-accel-expires"]
+            headers.append(("X-Accel-Expires", microcacheHeader(status, headers)))
             return start_response(status, headers, exc_info)
         return self.wsgi(environ, start)
 
