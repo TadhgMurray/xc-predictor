@@ -296,6 +296,33 @@ def publicSrcQuery(qs):
 
 
 app.wsgi_app = _PublicSrc(app.wsgi_app)
+
+# ★ OUR OWN IDS ON EVERY PUBLIC PAGE (owner, 2026-11-08, public_ids.py): the
+#   feeds' athlete, meet, race and result numbers leave as keyed tokens and
+#   come back as integers here, so no route changes. The after_request hook
+#   is REGISTERED FIRST SO IT RUNS LAST (Flask runs them in reverse): the
+#   opt-out mask and every other hook still see the integers.
+import public_ids as _public_ids                                 # noqa: E402
+app.wsgi_app = _public_ids.Middleware(app.wsgi_app)
+
+
+@app.after_request
+def _publicIds(resp):
+    return _public_ids.rewriteResponse(resp)
+
+
+@app.before_request
+def _publicIdLegacy():
+    """An old URL with a feed's number in it: 301 to its token URL (search
+    engines and shared links follow), or 404 once XCP_PUBLIC_ID_LEGACY=off."""
+    target = request.environ.get("rc.public_id.legacy")
+    if not target:
+        return None
+    if _public_ids.legacyMode() == "off":
+        abort(404)
+    resp = redirect(target, code=301)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 # ! A CAP ON THE REQUEST BODY (sweep 2026-10-10). Werkzeug parsed a whole
 #   multipart upload before accounts' 8 MB photo check ran; the largest
 #   thing anyone posts is that photo.

@@ -77,7 +77,7 @@ def links(cur):
             SELECT {_sys(sport)}, r.native_id, l.to_person,
                    mode() WITHIN GROUP (ORDER BY btrim(r.athlete_name)),
                    mode() WITHIN GROUP (ORDER BY r.school), count(*),
-                   min(CASE WHEN substring(r.date, 6, 2) >= '08'
+                   min(CASE WHEN substring(r.date, 6, 5) >= '08-15'
                             THEN substring(r.date, 1, 4)::int + 1
                             ELSE substring(r.date, 1, 4)::int END)
             FROM   person_link_log l

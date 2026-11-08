@@ -561,7 +561,7 @@ def hsSchools(cur, pids):
     if not pids:
         return {}
     school_grade = r"'^\s*(1[0-2]|[1-9])\s*$'"
-    year = ("(CASE WHEN substring(date, 6, 2) >= '08' THEN substring(date, 1, 4)::int + 1 "
+    year = ("(CASE WHEN substring(date, 6, 5) >= '08-15' THEN substring(date, 1, 4)::int + 1 "
             "ELSE substring(date, 1, 4)::int END)")
     cur.execute(f"""
         SELECT DISTINCT person_id, {year}, lower(btrim(school)), btrim(grade)::int FROM results

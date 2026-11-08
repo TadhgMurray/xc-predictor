@@ -399,6 +399,16 @@ def sendMail(to, subject, text, headers=None, log_as=None, html=None):
       Postmark HtmlBody+TextBody), so a text-only client gets the text.
     ! log_as: what a failure line names instead of the address (the digest
       passes "account <id>": no address in a log)."""
+    # ★ THE SITE'S OWN IDS IN EVERY LINK A MAIL CARRIES (public_ids.py): the
+    #   pages encode theirs on the way out; a mail is built here, not as a
+    #   response, so its links are encoded here
+    try:
+        import public_ids as _pi
+        if _pi.enabled():
+            text = _pi.rewritePaths(text or "")
+            html = _pi.rewriteHtml(html) if html else html
+    except Exception:                                   # noqa: BLE001 -- never lose a mail
+        pass
     provider, key = _env("XCP_MAIL_PROVIDER").lower(), _env("XCP_MAIL_KEY")
     sender = _env("XCP_MAIL_FROM", "Racecast <login@racecast.co>")
     # ★ WHERE A REPLY GOES (owner, 2026-11-05: "If they replied to this would

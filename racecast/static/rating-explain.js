@@ -120,7 +120,7 @@
     ensurePanel();
     var td = rv.closest("td[data-rx]");
     var key = (td.getAttribute("data-rx") || "").toLowerCase();
-    var m = /^(xc|tf):(-?\d+)$/.exec(key);
+    var m = /^(xc|tf):(-?\d+|[amdrv][0-9a-z]{13})$/.exec(key);
     if (!m) return;
     opener = rv;
     anchorCell = td;

@@ -164,7 +164,7 @@ class ResultLinksUseTheFragment(unittest.TestCase):
         self.assertIn('class="race-alias"', ath)
         lf = read("racecast", "static", "link-flash.js")
         self.assertIn("race-alias", lf)
-        self.assertIn("r=(-?\\d+)", lf)
+        self.assertIn("r=(-?\\d+|[amdrv][0-9a-z]{13})", lf)
 
     def _routeWithOneFeed(self, url):
         """GET `url` with a database whose meet has ONE feed, 'anet'."""

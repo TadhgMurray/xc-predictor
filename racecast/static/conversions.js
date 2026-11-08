@@ -511,9 +511,9 @@
             // anything else
             src.scale = hsMode() ? 'hs' : 'pool';
         } else if (t === 'athlete') {
-            src.person_id = parseInt(chosenAthlete.person_id);
+            src.person_id = chosenAthlete.person_id;   // an id, not a number (public_ids)
         } else if (t === 'result') {
-            src.result_id = parseInt(document.getElementById('in-result-select').value);
+            src.result_id = document.getElementById('in-result-select').value;
         }
         return src;
     }
@@ -589,7 +589,7 @@
                            || (rows && rows[0] && (rows[0].name || rows[0].label))
                            || ('athlete ' + pid);
                 if (typeSel) { typeSel.value = 'athlete'; paintFields(); }
-                chosenAthlete = { person_id: Number(pid), name: name };
+                chosenAthlete = { person_id: pid, name: name };
                 var box = document.getElementById('athlete-chosen');
                 if (box) box.textContent = name;
                 var inp = document.getElementById('in-athlete');

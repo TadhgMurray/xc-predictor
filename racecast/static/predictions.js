@@ -606,7 +606,7 @@ function showWho(who) {
 async function restoreFromQuery(p, names, snap) {
   names = names || {};
   const id = (p.get("meet_id") || "").trim();
-  if (!/^\d+$/.test(id)) return false;
+  if (!/^(-?\d+|[amdrv][0-9a-z]{13})$/.test(id)) return false;
   const sport = (p.get("sport") || "XC").toUpperCase() === "TF" ? "tf" : "xc";
   const divIds = (p.get("div_ids") || "").split(",").filter(Boolean);
   const div = (p.get("div_id") || "").trim();
@@ -1313,7 +1313,7 @@ function parseMeetLink(link) {
      it (app._feedPin). Only on links that carried it; null otherwise. */
   const sm = /[?&]src=(anet|tfrrs|1|2)\b/.exec(link || "");
   const src = sm ? sm[1] : null;
-  const race = /^\/race\/(xc|tf)\/(\d+)\/(\d+)(?:\/(\d+))?/.exec(link || "");
+  const race = /^\/race\/(xc|tf)\/(-?\d+|[amdrv][0-9a-z]{13})\/(-?\d+|[amdrv][0-9a-z]{13})(?:\/(-?\d+|[amdrv][0-9a-z]{13}))?/.exec(link || "");
   if (race) {
     /* ★ A TRACK RACE IS AN EVENT (owner, 2026-10-10: "predictions for tf
        races are majorly messed up"). /race/tf/<meet>/<event>/<div> named
@@ -1325,7 +1325,7 @@ function parseMeetLink(link) {
              div: race[1] === "tf" ? tfDiv : race[3], alt: alt,
              src: src };
   }
-  const meet = /^\/meet\/(xc|tf)\/(\d+)/.exec(link || "");
+  const meet = /^\/meet\/(xc|tf)\/(-?\d+|[amdrv][0-9a-z]{13})/.exec(link || "");
   if (meet) {
     return { sport: meet[1].toUpperCase(), id: meet[2], div: null, alt: alt,
              src: src };
@@ -1336,7 +1336,7 @@ function parseMeetLink(link) {
 /* The race page's link for a race key: parseMeetLink's inverse. A track key
    "<div>-<event>" is /race/tf/<meet>/<event>/<div>, the race page's order. */
 function raceLink(sport, id, key) {
-  const m = /^(\d+)-(\d+)$/.exec(String(key));
+  const m = /^(-?\d+|[amdrv][0-9a-z]{13})-(\d+)$/.exec(String(key));
   if (sport === "tf" && m) return `/race/tf/${id}/${m[2]}/${m[1]}`;
   return `/race/${sport}/${id}/${key}`;
 }

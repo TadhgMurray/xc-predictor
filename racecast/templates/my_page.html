@@ -69,7 +69,7 @@
   {% for c in cards %}
   {% if c.missing %}
   <section class="mp-card">
-    <h2>{% if c.kind == "athlete" %}<a href="/athlete/{{ c.person_id }}">Athlete {{ c.person_id }}</a>{% else %}<a href="{{ school_href(c.school, c.state) }}">{{ c.school }}</a>{% endif %}</h2>
+    <h2>{% if c.kind == "athlete" %}<a href="/athlete/{{ c.person_id }}">Athlete</a>{% else %}<a href="{{ school_href(c.school, c.state) }}">{{ c.school }}</a>{% endif %}</h2>
     <p class="mp-empty">No rated season on record yet.</p>
   </section>
 

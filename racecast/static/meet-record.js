@@ -24,7 +24,7 @@
 
   function read() {
     var a = box.classList.contains("hidden") ? null : box.querySelector("a.mc-name");
-    var m = a && /\/meet\/(xc|tf)\/(\d+)(?:\?alt=(\d+))?/.exec(a.getAttribute("href") || "");
+    var m = a && /\/meet\/(xc|tf)\/(-?\d+|[amdrv][0-9a-z]{13})(?:\?alt=(\d+))?/.exec(a.getAttribute("href") || "");
     if (!m) { hide(); return; }
     if (m[1] !== "xc") { hide(); return; }            // cross country only
     var key = m[2] + "|" + (m[3] || "");

@@ -75,13 +75,13 @@
     <nav class="seg rc-tabs" role="tablist" aria-label="Races">
       {% for r in rc.races %}
       {% set lw = (r.label or "")|lower %}
-      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#race-{{ r.div_id }}" data-tab="race-{{ r.div_id }}">{{ r.label or "Race" }}{% if r.gender and not ('boy' in lw or 'girl' in lw or 'men' in lw) %} · {{ "Boys" if r.gender == "M" else "Girls" }}{% endif %}{% if r.recap %}<span class="n">{{ r.recap.top_hits }}/{{ r.recap.top_n }}</span>{% endif %}</a>
+      <a class="seg-btn{{ ' is-on' if loop.first }}" href="#div-{{ r.div_id }}" data-tab="div-{{ r.div_id }}">{{ r.label or "Race" }}{% if r.gender and not ('boy' in lw or 'girl' in lw or 'men' in lw) %} · {{ "Boys" if r.gender == "M" else "Girls" }}{% endif %}{% if r.recap %}<span class="n">{{ r.recap.top_hits }}/{{ r.recap.top_n }}</span>{% endif %}</a>
       {% endfor %}
     </nav>
   </div>
 
   {% for r in rc.races %}{% set x = r.recap %}
-  <section class="rc-panel rp-race" data-panel="race-{{ r.div_id }}" id="race-{{ r.div_id }}">
+  <section class="rc-panel rp-race" data-panel="div-{{ r.div_id }}" id="div-{{ r.div_id }}">
     {% if not x %}
     <p class="pv-status">No results are posted for this race yet. The forecast is kept; this page scores it when they are.</p>
     {% else %}
