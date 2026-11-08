@@ -476,6 +476,13 @@ fi
 #   01a OVERWRITES the probe. Gated on the boards, a failed night lost its
 #   redirects for good: every id merged away tonight would 404.
 step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
+# ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py),
+#   WHATEVER PUBLISHING DID: it reads the live tables as they now stand
+#   (after the publish block above, when it ran), so every night's rows match
+#   what the site would compute, and none ages past cuts.MAX_AGE_S (30 h) on
+#   a night that published nothing. A failure costs nothing else: the site
+#   computes a state live when its row is missing or old.
+step 13f2_wit_marks "$PY" -u racecast/build_wit_marks.py
 
 # --no-publish: rated and redirected; the sitemap, forecasts and watchdog
 # read the boards, which tonight's run did not rebuild -- the next night does

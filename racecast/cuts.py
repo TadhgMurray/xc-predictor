@@ -45,6 +45,11 @@
 #
 # ! anet AND tfrrs MEET IDS COLLIDE. Every join from meet_unit to meets to
 #   results is on (meet_id, source), never meet_id alone.
+import datetime
+import decimal
+import hashlib
+import json
+import os
 import re
 import threading
 import time
@@ -788,8 +793,185 @@ def _empty(state, why):
             "error": why}
 
 
+# ------------------------------------------------------------------ #
+#  the stored marks (build_wit_marks.py: pipeline 13f2, nightly)
+# ------------------------------------------------------------------ #
+
+# ★ COMPUTED ONCE BY THE PIPELINE, NOT IN THE WEB WORKERS (2026-11-08).
+#   Every state's marks were computed inside the site, in a background
+#   thread, every 6 h -- the slow log's largest item (~830 s of database
+#   time a day outside any request, competing with visitors; every state
+#   again after each restart). build_wit_marks.py runs _computeUncached for
+#   every state after the boards are built and stores each answer here;
+#   marksFor reads that row (one primary-key read) and computes live only
+#   when it cannot be served (storedMarks).
+TABLE = "wit_marks"
+
+# ★ HOW OLD A STORED ROW MAY BE: one nightly cadence (24 h: the nightly
+#   rebuilds every state, nightly_update.sh) plus the 6 h the page always
+#   tolerated (_TTL). A build that failed or did not run therefore costs at
+#   most the staleness the page already had: past the bound marksFor goes
+#   back to the live compute, so a failed build never freezes old marks.
+#   XCP_WIT_MAX_AGE_H overrides.
+MAX_AGE_S = float(os.environ.get("XCP_WIT_MAX_AGE_H") or 30) * 3600.0
+# a worker re-reads its stored copy hourly, so a new build reaches every
+# worker within the hour (and a copy is never kept past its age bound)
+_STORED_TTL = 3600.0
+# ★ ONLY A ROW THIS CODE BUILT. The row carries a hash of this file; a deploy
+#   that changes cuts.py serves the live compute until the next build, so a
+#   stored answer is never one the running code would not give.
+with open(os.path.abspath(__file__), "rb") as _fh:
+    CODE = hashlib.sha1(_fh.read()).hexdigest()[:16]
+_TABLE_SRC = "table"
+_NO_TABLE = {"until": 0.0}          # no table yet: not asked again for 5 min
+
+# ★ THE PAYLOAD IS JSON TEXT, AND EXACT. Plain JSON would change what the
+#   page can be handed (a date, a Decimal, a tuple, a non-string key), so
+#   those go in as tagged objects and come back as the same type, and
+#   payloadText refuses a value it cannot hold (NaN, an unknown type) rather
+#   than storing it changed. ! TEXT, NOT jsonb: jsonb reorders object keys,
+#   and the page iterates some dicts (a season's lines) in their order.
+_TAG = "__wit__"
+
+
+def _enc(v):
+    if v is None or type(v) in (bool, str, int):
+        return v
+    if type(v) is float:
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError("a non-finite number")
+        return v
+    if type(v) is dict:
+        if _TAG not in v and all(type(k) is str for k in v):
+            return {k: _enc(x) for k, x in v.items()}
+        return {_TAG: "dict", "v": [[_enc(k), _enc(x)] for k, x in v.items()]}
+    if type(v) is list:
+        return [_enc(x) for x in v]
+    if type(v) is tuple:
+        return {_TAG: "tuple", "v": [_enc(x) for x in v]}
+    if type(v) is datetime.datetime and v.tzinfo is None:
+        return {_TAG: "datetime", "v": v.isoformat()}
+    if type(v) is datetime.date:
+        return {_TAG: "date", "v": v.isoformat()}
+    if type(v) is decimal.Decimal:
+        return {_TAG: "decimal", "v": str(v)}
+    raise TypeError(f"cannot store a {type(v).__name__}")
+
+
+def _dec(d):
+    t = d.get(_TAG)
+    if t is None or len(d) != 2 or "v" not in d:
+        return d
+    v = d["v"]
+    if t == "dict":
+        return {k: x for k, x in v}
+    if t == "tuple":
+        return tuple(v)
+    if t == "datetime":
+        return datetime.datetime.fromisoformat(v)
+    if t == "date":
+        return datetime.date.fromisoformat(v)
+    if t == "decimal":
+        return decimal.Decimal(v)
+    return d
+
+
+def payloadFrom(text):
+    return json.loads(text, object_hook=_dec)
+
+
+def sameValue(a, b):
+    """Equal AND of the same types, dict keys in the same order: what the
+    page renders from `a` it renders from `b`."""
+    if type(a) is not type(b):
+        return False
+    if type(a) is dict:
+        return list(a) == list(b) and all(sameValue(a[k], b[k]) for k in a)
+    if type(a) in (list, tuple):
+        return len(a) == len(b) and all(sameValue(x, y) for x, y in zip(a, b))
+    return a == b
+
+
+def payloadText(data):
+    """marksFor's answer as stored text. Raises when it would not come back
+    exactly (sameValue) -- the builder then stores nothing for the state,
+    which the site computes live as before."""
+    text = json.dumps(_enc(data), ensure_ascii=True, allow_nan=False,
+                      separators=(",", ":"))
+    if not sameValue(payloadFrom(text), data):
+        raise ValueError("the payload does not round-trip")
+    return text
+
+
+def storedMarks(cur, state, now=time.time):
+    """(payload, built_at as epoch seconds) of the state's stored row when it
+    may be served -- built by this code, inside MAX_AGE_S -- else None. One
+    primary-key read under a savepoint; never raises."""
+    t = now()
+    if t < _NO_TABLE["until"]:
+        return None
+    try:
+        cur.execute("SAVEPOINT wit_stored")
+    except Exception:                                   # noqa: BLE001
+        return None
+    try:
+        cur.execute(f"""SELECT payload, extract(epoch FROM built_at) AS at,
+                               code
+                        FROM   {TABLE} WHERE state = %s""", (state,))
+        r = cur.fetchone()
+        cur.execute("RELEASE SAVEPOINT wit_stored")
+    except Exception as exc:                            # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT wit_stored")
+        except Exception:                               # noqa: BLE001
+            cur.connection.rollback()
+        if getattr(exc, "pgcode", None) == "42P01":     # undefined_table
+            _NO_TABLE["until"] = t + 300.0
+        return None
+    if not r:
+        return None
+    payload, at, code = _row(r, "payload", "at", "code")
+    if at is None or code != CODE:
+        return None
+    at = float(at)
+    if not (t - MAX_AGE_S <= at <= t + 300.0):
+        return None
+    try:
+        return payloadFrom(payload), at
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def _fromStore(cur, state):
+    """The stored marks as a cache entry (marksFor's shape), or None."""
+    hit = storedMarks(cur, state)
+    if hit is None:
+        return None
+    payload, at = hit
+    return dict(payload, _shared_at=at, _src=_TABLE_SRC)
+
+
+def _ttlOf(v):
+    """How long a worker keeps a value in memory (ttlcache)."""
+    if v.get("error"):
+        return 300.0
+    at = v.get("_shared_at", time.time())
+    if v.get("_src") == _TABLE_SRC:
+        # re-read hourly, and never kept past the row's own age bound
+        return max(60.0, min(_STORED_TTL, at + MAX_AGE_S - time.time()))
+    return max(60.0, _TTL - (time.time() - at))
+
+
+def _public(val, stamp):
+    val = dict(val)
+    val.pop("_src", None)
+    return dict(val, computed_at=val.pop("_shared_at", stamp))
+
+
 def marksFor(cur, state):
-    """The cached marks for one state (both genders); stamp is when."""
+    """The marks for one state (both genders). computed_at is when they were
+    computed: by the pipeline (the stored row, storedMarks) or, when no
+    stored row can be served, live -- once for the box, as before."""
     def compute():
         try:
             return _computeUncached(cur, state)
@@ -804,7 +986,8 @@ def marksFor(cur, state):
     #   24 workers each computed every state every 6 h -- ~55,000 s of
     #   database time a week. The first worker computes and shares; the
     #   others read its copy, and keep it in memory only for what is left of
-    #   its 6 h, so no state is ever older than it was before.
+    #   its 6 h, so no state is ever older than it was before. Since
+    #   2026-11-08 only the fallback behind the stored row.
     import sharedcache
 
     def shared():
@@ -812,13 +995,10 @@ def marksFor(cur, state):
                                 keep=lambda v: not v.get("error"))
         return dict(v, _shared_at=at)
 
-    def ttl_of(v):
-        if v.get("error"):
-            return 300.0
-        return max(60.0, _TTL - (time.time() - v.get("_shared_at", time.time())))
-    val, stamp = ttlcache.get(("wit", state), shared, ttl=_TTL, ttl_of=ttl_of)
-    val = dict(val)
-    return dict(val, computed_at=val.pop("_shared_at", stamp))
+    def fill():
+        return _fromStore(cur, state) or shared()
+    val, stamp = ttlcache.get(("wit", state), fill, ttl=_TTL, ttl_of=_ttlOf)
+    return _public(val, stamp)
 
 
 def findDivision(data, gender, slug):
@@ -1243,6 +1423,14 @@ def athleteLine(cur, person_id):
             return None
         state = season["state"].upper()
         data = ttlcache.peek(("wit", state))
+        if data is None:
+            # ★ THE STORED ROW FIRST (2026-11-08): one primary-key read, so
+            #   the line shows on the first visit and no thread computes the
+            #   state's history; _warm only when no row can be served
+            hit = _fromStore(cur, state)
+            if hit is not None:
+                data, _at = ttlcache.get(("wit", state), lambda: hit,
+                                         ttl=_TTL, ttl_of=_ttlOf)
         if data is None:
             _warm(state)
             return None

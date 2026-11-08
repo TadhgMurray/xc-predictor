@@ -51,6 +51,9 @@ _PRODUCTION = {
     "dist_override", "dist_drop", "dist_override_snap",
     "course_canonical", "course_difficulties", "course_boards",
     "venue_tf_boards",
+    # "What it takes" (build_wit_marks.py, 13f2): the site serves from it
+    # and computes live without it, so it ships rather than regenerates
+    "wit_marks",
     "athlete_ratings", "tfrrs_meet_geometry", "meet_extras",
     # ! THE TABLE IS issue_reports. "reports" was a name that never
     #   existed, so the real one would have landed in REVIEW -- unlisted,
