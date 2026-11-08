@@ -22,6 +22,7 @@ Swap discipline: build into _new, rename over the old -- readers keep
 the previous tables until the new ones are whole.
 """
 
+import re
 import sys
 import time
 
@@ -1390,6 +1391,7 @@ def main():
         conn.commit()
 
         buildCollegePersonState(conn)
+        buildQualifierCity(conn)
 
     print(f"done in {(time.time() - t0) / 60:.1f} min")
 
@@ -1405,6 +1407,60 @@ def main():
 #   home in CT), and a race of theirs anywhere is that team's. The college
 #   runner count per candidate decides for a row with no runner to ask.
 #   school_identity.teamState reads it (person_id) and loadLabels loads it.
+# ★ A BRACKET THAT IS A TOWN, NOT A STATE (owner, 2026-11-08: "San Marcos
+#   (SB)?"). athletic.net tells same-named schools of one state apart with a
+#   short bracket -- "San Marcos (SB)" is Santa Barbara's, beside the San
+#   Marcos high school in San Marcos -- which reads as nothing to a person.
+#   Each such name's anet team carries its city; the commonest city across
+#   the name's rows (QUAL_CITY_SHARE of them) is the town the label shows:
+#   "San Marcos (Santa Barbara, CA)" (school_identity.schoolLabelIn).
+QUAL_CITY_SHARE = 0.6
+_QUAL_RX = r"\(([A-Za-z.]{1,5})\)\s*$"
+
+
+def buildQualifierCity(conn):
+    from school_name import STATE_CODES
+    try:
+        with conn.cursor() as cur:
+            parts = []
+            for table in ("results", "results_tf"):
+                cur.execute("""SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = 'public' AND table_name = %s
+                                 AND column_name = 'team_id'""", (table,))
+                if cur.fetchone():
+                    parts.append(f"""SELECT btrim(r.school) AS school, btrim(t.city) AS city
+                                     FROM {table} r JOIN anet_team t ON t.team_id = r.team_id
+                                     WHERE r.school ~ %(rx)s AND COALESCE(btrim(t.city), '') <> ''""")
+            if not parts:
+                return
+            cur.execute(f"""SELECT school, city, count(*) FROM ({' UNION ALL '.join(parts)}) x
+                            GROUP BY 1, 2""", {"rx": _QUAL_RX})
+            by = {}
+            for school, city, n in cur.fetchall():
+                inner = re.search(_QUAL_RX, school).group(1).strip(".").upper()
+                if inner in STATE_CODES:
+                    continue                    # a state, already a label
+                by.setdefault(school, []).append((int(n), city))
+            rows = []
+            for school, cs in by.items():
+                tot = sum(n for n, _c in cs)
+                n, city = max(cs)
+                if tot and n / tot >= QUAL_CITY_SHARE:
+                    rows.append((school, city.title() if city.isupper() else city, n))
+            cur.execute("DROP TABLE IF EXISTS school_qualifier_city_new")
+            cur.execute("CREATE TABLE school_qualifier_city_new (school text PRIMARY KEY, city text, n int)")
+            if rows:
+                psycopg2.extras.execute_values(
+                    cur, "INSERT INTO school_qualifier_city_new VALUES %s", rows)
+            cur.execute("DROP TABLE IF EXISTS school_qualifier_city")
+            cur.execute("ALTER TABLE school_qualifier_city_new RENAME TO school_qualifier_city")
+            conn.commit()
+            print(f"  qualifier towns: {len(rows):,} names with a town bracket")
+    except Exception as exc:                    # noqa: BLE001 -- labels are optional
+        conn.rollback()
+        print(f"  qualifier towns not built ({type(exc).__name__}: {exc})")
+
+
 def buildCollegePersonState(conn):
     try:
         from build_college_directory import loadDirectory, candidateStates

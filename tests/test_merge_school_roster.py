@@ -32,3 +32,43 @@ def test_unattached_for_a_college_is_not_its_team():
     ros = {"Adams State": set(range(55)), "UNAT-Adams State": set(range(51)),
            "Augustana (S.D.)": set(range(100, 127)), "UNA-Augustana (S.D.)": set(range(100, 127))}
     assert M.rosterPairs(ros, {n: "college" for n in ros}) == []
+
+
+# ---- a high school renamed (owner, 2026-11-08, /athlete/26510177) --------
+def test_a_renamed_high_school_is_one_school():
+    """'Covenant School' (2024), 'Covenant Christian' (2025), 'The Covenant
+    School of Jacksonville' (2026): the same team under three names."""
+    ros = {"Covenant School": set(range(0, 40)),
+           "Covenant Christian": set(range(20, 60)),
+           "The Covenant School of Jacksonville": set(range(40, 80))}
+    lvl = {n: "hs" for n in ros}
+    pairs = M.renamedPairs(ros, lvl)
+    assert ("Covenant Christian", "Covenant School", "renamed") in pairs
+    assert ("Covenant Christian", "The Covenant School of Jacksonville", "renamed") in pairs
+    fl = {n: {"FL"} for n in ros}
+    merged, _r = M.judge(pairs, ros, fl, level_of=lvl)
+    assert len(merged) == 2
+
+
+def test_a_transfer_or_a_common_word_is_not_a_rename():
+    lvl = {}
+    # two runners moving between two schools: not a team
+    ros = {"Covenant School": set(range(40)), "Covenant Day": set(range(38, 80))}
+    lvl = {n: "hs" for n in ros}
+    assert M.renamedPairs(ros, lvl) == []
+    # many shared runners but only a common word in common ("Christian")
+    ros = {"Grace Christian": set(range(40)), "Faith Christian": set(range(0, 40))}
+    lvl = {n: "hs" for n in ros}
+    assert M.renamedPairs(ros, lvl) == []
+
+
+def test_a_rename_needs_one_known_state_and_two_high_schools():
+    ros = {"Covenant School": set(range(40)), "Covenant Christian": set(range(20, 60))}
+    lvl = {n: "hs" for n in ros}
+    pairs = M.renamedPairs(ros, lvl)
+    merged, refused = M.judge(pairs, ros, {"Covenant School": {"FL"}, "Covenant Christian": {"GA"}},
+                              level_of=lvl)
+    assert not merged and refused
+    merged, refused = M.judge(pairs, ros, {}, level_of=lvl)        # no state known
+    assert not merged and "one known state" in refused[0][7]
+    assert M.renamedPairs(ros, {n: "ms" for n in ros}) == []      # middle schools: never

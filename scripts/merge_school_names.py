@@ -332,7 +332,7 @@ def genericColleges(cur, names, level_of):
             and len(candidateStates(directory, n)) > 1}
 
 
-_REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3, "roster": 4}
+_REL_RANK = {"same": 0, "college": 1, "level": 2, "prefix": 3, "roster": 4, "renamed": 5}
 
 # ★ ONE TEAM BY ITS RUNNERS, WHATEVER THE NAMES (owner, 2026-11-05,
 #   /school/U.%20of%20Chicago: "U. of Chicago" and "Chicago", 622 of the
@@ -377,6 +377,61 @@ def rosterPairs(rosters_by_name, level_of, min_shared=ROSTER_MIN_SHARED,
         small = min(len(rosters_by_name[a]), len(rosters_by_name[b]))
         if shared >= min_shared and shared >= min_fraction * small:
             out.append((a, b, "roster"))
+    return sorted(out)
+
+
+# ★ A HIGH SCHOOL RENAMED KEEPS ITS RUNNERS (owner, 2026-11-08,
+#   /athlete/26510177: Micah Houlihan ran for "Covenant School" in 2024,
+#   "Covenant Christian" in 2025 and "The Covenant School of Jacksonville" in
+#   2026 -- the same meets each year, three school pages). No name rule
+#   proposes those (no shared key, no word prefix), and the college roster
+#   rule above is college only. A transfer moves a runner or two; a rename
+#   moves the team. So two high-school spellings that share a distinctive
+#   word and RENAMED_MIN_SHARED+ runners, RENAMED_MIN_FRACTION of the
+#   smaller roster, are proposed; judge then also wants them in ONE known
+#   state, the same one, with every other veto as before.
+RENAMED_MIN_SHARED = 8
+RENAMED_MIN_FRACTION = 0.40
+# words a hundred schools wear: a pair sharing only these is not proposed
+_COMMON_WORDS = {"the", "of", "school", "schools", "high", "hs", "christian", "academy",
+                 "prep", "preparatory", "catholic", "central", "north", "south", "east",
+                 "west", "saint", "st", "county", "city", "community", "charter",
+                 "regional", "senior", "junior", "middle", "day", "country", "valley",
+                 "lake", "mount", "mt", "new", "public", "classical", "christ", "holy",
+                 "memorial", "international", "science", "arts", "and", "at", "for"}
+
+
+def _distinctive(name):
+    """A name's words a few schools share at most (len 3+, not common). Pure."""
+    return {w for w in nameWords(name) if len(w) >= 3 and w not in _COMMON_WORDS}
+
+
+def renamedPairs(rosters_by_name, level_of, min_shared=RENAMED_MIN_SHARED,
+                 min_fraction=RENAMED_MIN_FRACTION):
+    """[(a, b, 'renamed')] for high-school spellings sharing a distinctive
+    word and most of a roster. Pure."""
+    names = [n for n, r in rosters_by_name.items()
+             if level_of.get(n) == "hs" and len(r) >= min_shared
+             and mergeable(n) and not _NOT_A_TEAM.search(n)]
+    words = {n: _distinctive(n) for n in names}
+    by_person = {}
+    for n in names:
+        if words[n]:
+            for pid in rosters_by_name[n]:
+                by_person.setdefault(pid, []).append(n)
+    together = {}
+    for ns in by_person.values():
+        if 1 < len(ns) <= 4:
+            ns = sorted(ns)
+            for i, x in enumerate(ns):
+                for y in ns[i + 1:]:
+                    if words[x] & words[y]:
+                        together[(x, y)] = together.get((x, y), 0) + 1
+    out = []
+    for (x, y), shared in together.items():
+        small = min(len(rosters_by_name[x]), len(rosters_by_name[y]))
+        if shared >= min_shared and shared >= min_fraction * small:
+            out.append((x, y, "renamed"))
     return sorted(out)
 
 
@@ -473,9 +528,9 @@ def judge(pairs, rosters_by_name, states_by_name,
         small = min(len(ra), len(rb))
         frac = (shared / small) if small else 0.0
         need_n = {"prefix": prefix_min_shared, "level": LEVEL_MIN_SHARED,
-                  "roster": ROSTER_MIN_SHARED}.get(rel, min_shared)
+                  "roster": ROSTER_MIN_SHARED, "renamed": RENAMED_MIN_SHARED}.get(rel, min_shared)
         need_f = {"prefix": prefix_min_fraction, "level": LEVEL_MIN_FRACTION,
-                  "roster": ROSTER_MIN_FRACTION}.get(rel, min_fraction)
+                  "roster": ROSTER_MIN_FRACTION, "renamed": RENAMED_MIN_FRACTION}.get(rel, min_fraction)
         row = [a, b, rel, len(ra), len(rb), shared, round(frac, 4), None]
         sa = states_by_name.get(a) or set()
         sb = states_by_name.get(b) or set()
@@ -600,6 +655,12 @@ def judge(pairs, rosters_by_name, states_by_name,
                 (sa and sb and sa == sb and len(sa) == 1)
                 or (len(sa | sb) == 1 and shared >= 20 and frac >= 0.5)):
             row[7] = "level words differ; a school pair needs one known state"
+            refused.append(tuple(row))
+        elif rel == "renamed" and not (sa and sb and sa == sb and len(sa) == 1):
+            row[7] = "a renamed school needs both spellings in one known state"
+            refused.append(tuple(row))
+        elif rel == "renamed" and (la != "hs" or lb != "hs"):
+            row[7] = f"a renamed school is a high school pair ({la} vs {lb})"
             refused.append(tuple(row))
         elif rel == "college" and not (coll_a and coll_b):
             row[7] = "the directory's match, but not both college-level"
@@ -809,6 +870,10 @@ def main():
         # the runners propose too: college spellings sharing most of a roster
         have = {(x, y) for x, y, _r in pairs}
         pairs = sorted(pairs + [p for p in rosterPairs(by_name, level_of)
+                                if (p[0], p[1]) not in have and (p[1], p[0]) not in have])
+        # ...and high-school spellings a rename left behind
+        have = {(x, y) for x, y, _r in pairs}
+        pairs = sorted(pairs + [p for p in renamedPairs(by_name, level_of)
                                 if (p[0], p[1]) not in have and (p[1], p[0]) not in have])
         kinds = {}
         for _x, _y, rel in pairs:
