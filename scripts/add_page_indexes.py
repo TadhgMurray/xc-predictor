@@ -14,11 +14,19 @@ Usage:  python scripts/add_page_indexes.py            # report + build
         python scripts/add_page_indexes.py --check    # report only
 """
 
+import os
 import re
 import sys
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "racecast"))
 from database import getConn   # noqa: E402
+# ★ THE BOARDS TABLES' LAYOUT SWITCH (XCP_RR_LEAN). Step 10 builds
+#   rr_perf_dist_rating_idx partial and every tree WITH (fillfactor=100)
+#   under it; read here so this step sees those trees as the ones it
+#   wants. Without it, a lean tree read as "PART" / a spec mismatch and
+#   this step built a full `_f` copy beside it on every run.
+import rr_layout   # noqa: E402
 
 # (table, leading column, name, full spec or None). With a spec, the
 # check requires an index whose WHOLE definition matches it -- a plain
@@ -330,6 +338,11 @@ def main():
         drop_first = []
         drop_dupes = []
         for table, col, name, spec in WANTED:
+            # ! a FULL tree still serves everything the lean partial one
+            #   does: accepted as it is (fits), never rebuilt over
+            full_spec = spec
+            if spec and table in rr_layout.TABLES:
+                spec = rr_layout.leanSpec(table, name, spec)
             # ⚠ VALIDITY, NOT JUST EXISTENCE. A failed CREATE INDEX
             #   CONCURRENTLY leaves an INVALID index behind: pg_indexes
             #   lists it, the planner ignores it, and "OK" would be a lie
@@ -358,6 +371,9 @@ def main():
             #   full spec where one is given (a covering INCLUDE index is
             #   not satisfied by a plain one on the same column).
             def norm(s):
+                # ! the storage clause out first: a lean tree is written
+                #   back `... WITH (fillfactor='100')` (rr_layout.indexSig)
+                s = rr_layout._ANY_WITH.sub("", s)
                 i = s.find("(")
                 return s[i:].replace(" ", "").lower() if i >= 0 else s
 
@@ -381,6 +397,8 @@ def main():
                     return (("using gin" in want) == ("using gin" in have)
                             and ("gin_trgm_ops" in want)
                             == ("gin_trgm_ops" in have))
+                if spec != full_spec and norm(idxdef) == norm(full_spec):
+                    return True
                 if want_partial:
                     # Postgres re-parenthesises the predicate it stores
                     def bare(x):
@@ -448,8 +466,10 @@ def main():
             for table, name, spec in todo:
                 print(f"building {name} on {table} {spec} "
                       f"(concurrent, minutes on the big tables)...")
-                cur.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS "
-                            f"{name} ON {table} {spec}")
+                sql = f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} {spec}"
+                if table in rr_layout.TABLES:
+                    sql = rr_layout.withStorage(sql)     # lean: fillfactor 100
+                cur.execute(sql)
                 print(f"  done {name}")
         finally:
             conn.autocommit = old

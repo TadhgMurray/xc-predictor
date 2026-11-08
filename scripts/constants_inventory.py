@@ -410,6 +410,7 @@ RULES = {
     },
     # ---------------------------------------------------- normalize_distance
     "engine/normalize_distance.py": {
+        "_GRAPH_RETRY_AT": ("INFRA", "retry time after a failed school_level_graph read"),
         **_all("DISTANCE_EXPONENT_BY_POOL DEFAULT_EXPONENT", "STATED",
                KEPT_DIST + " (fallback exponent 1.06 when the fitted spline is absent)"),
         "EVENT_DISTANCES_TF": ("DATA", "event name -> metres"),
@@ -708,7 +709,8 @@ RULES = {
                "_SWAP_BACKOFF _COLUMNS _TF_DISTANCE _UNIT_COLS _UNITS _TEAM_CACHE _SCHOOL_OK _COPY_ESCAPES "
                "_GATE _TIMED_KIND _LOAD_TABLE _LOAD_SEASON _CANONICAL_INDEXES _BOARD_SIZE_SPORTS "
                "_BOARD_SIZE_BOARDS _ANCHOR _SEASON_WORK_MEM _SEASON_SHARDS _SEASON_SHARD_WORK_MEM "
-               "_EVENT_ID", "INFRA", "plumbing: batches, swaps, caches, indexes, counters"),
+               "_EVENT_ID _NARROW_TABLES _ORDERED_ROOM", "INFRA",
+               "plumbing: batches, swaps, caches, indexes, counters"),
         **_all("_RATING_MIN _RATING_MAX", "DISPLAY", "board rails: a rating outside 20..200 is not shown"),
         "RACE_MARGIN": ("DISPLAY", "board gate: one race may sit 10 above the pool ceiling; §5: an SD gate "
                                    "does it honestly, keep as a sanity net at first"),
@@ -726,6 +728,9 @@ RULES = {
                "the season and career numbers on the boards (80th percentile, 20-point drop, 0.996/day "
                "decay): with θ a season number could be the smoothed state, which the review does not decide"),
     },
+    "racecast/rr_layout.py": _all(
+        "TABLES LEAN_FILLFACTOR LEAN_PARTIAL BOARD_ORDER _FF_ONLY _ANY_WITH", "INFRA",
+        "the boards tables' layout switches: index fillfactor, partial rating trees, heap order"),
     "racecast/pool_ceiling.py": _all(
         "POOL_CEILING DEFAULT_CEILING", "DISPLAY",
         "board ceiling per pool; §5: an SD gate does it honestly, keep as a sanity net at first"),
@@ -737,6 +742,7 @@ RULES = {
                "_GROUP_TTL _MAP_CACHE", "INFRA", "caches, samples and timeouts"),
     },
     "racecast/conversions.py": {
+        "_CLOCK_MAX": ("INFRA", "cap on cached clock tables per worker"),
         **_all("_POOL_MEAN_CACHE _SAMPLE_PER_POOL _OFFSET_TTL", "INFRA", "caches and samples"),
         **_all("_DIST_BANDS _BAND_ANCHORS", "REMOVED", "mirrors joint_solve.DIST_BANDS; " + ENDUR),
         "_TILT_K": ("FITTED", KAPPA + " (mirror)"),
@@ -877,10 +883,15 @@ ENV_RULES = {
            "XCP_SWAP_ATTEMPTS XCP_PACK_PREFETCH XCP_PRECOND XCP_SCHUR XCP_CG_TRACE XCP_RANK_SEAM "
            "XCP_BACKFILL_XC XCP_RUNG_TIMEOUT XCP_IGNORE_BACKFILL_FAIL XCP_IGNORE_GOLIVE_FAIL "
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
+    **_all("XCP_BOARD_SEEK XCP_STATIC_PAGES", "INFRA",
+           "speed pass 2026-11-08: the deep-page seek table, nginx static pages"),
     **_all("XCP_PREWARM XCP_SEASON_EV XCP_VACUUM_RESULTS XCP_RANK_PARTS XCP_RANK_STREAMS "
            "XCP_REPORT_STREAMS XCP_RESTAMP_BY_KEY", "INFRA",
            "speed pass 2026-11-06/07: prewarm, the events precompute, the results vacuum, "
            "rankings streams, the report tail, the restamp by key"),
+    **_all("XCP_RR_LEAN XCP_RR_ORDERED", "INFRA",
+           "the boards tables' physical layout (docs/TABLE-LAYOUT-EXPERIMENTS.md steps 1-2): "
+           "lean indexes and rows, board-ordered heap; same rows to every query"),
     **_all("XCP_LADDER XCP_LADDER_ALL XCP_LADDER_MIN_DAYS XCP_LADDER_ONLY XCP_LADDER_PCT XCP_LADDER_TUNE "
            "XCP_HOLDOUT_DUMP XCP_HOLDOUT_PCT XCP_HOLDOUT_VERBOSE XCP_DIST_HOLDOUT XCP_SPORT_HOLDOUT "
            "XCP_EVIDENCE XCP_EVIDENCE_BG XCP_BRACKET XCP_BACKTEST XCP_BACKTEST_DIVS XCP_LACCTIC "
