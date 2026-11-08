@@ -166,6 +166,23 @@ class HeroPhotos(unittest.TestCase):
     def test_no_copy_no_srcset(self):
         self.assertEqual(self._attrs("m-not-there"), "")
 
+    def test_a_copy_older_than_its_photo_is_not_offered(self):
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            shutil.copy(os.path.join(_STATIC, "m3-640.webp"), d)
+            shutil.copy(os.path.join(_STATIC, "m3.webp"), d)
+            now = os.path.getmtime(os.path.join(d, "m3.webp"))
+            os.utime(os.path.join(d, "m3-640.webp"), (now - 3600, now - 3600))   # photo replaced since
+            self.assertEqual(str(speed.heroSrcset(d, lambda f: f, "m3")), "")
+            os.utime(os.path.join(d, "m3-640.webp"), (now - 0.01, now - 0.01))   # one checkout
+            self.assertIn("m3-640.webp 640w", str(speed.heroSrcset(d, lambda f: f, "m3")))
+            os.utime(os.path.join(d, "m3-640.webp"), (now + 60, now + 60))       # copy remade
+            self.assertIn("m3-640.webp 640w", str(speed.heroSrcset(d, lambda f: f, "m3")))
+        finally:
+            shutil.rmtree(d)
+
     def test_every_copy_is_640_wide_and_smaller(self):
         from PIL import Image
         for i in range(1, 10):

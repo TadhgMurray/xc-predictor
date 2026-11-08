@@ -182,7 +182,15 @@ def heroSrcset(static_folder, url_for_static, slot, span=1):
     640 px copy of it (or anything about it cannot be read)."""
     big = os.path.join(static_folder, slot + ".webp")
     small = os.path.join(static_folder, "%s-%d.webp" % (slot, _HERO_SMALL))
-    if not os.path.exists(small):
+    # ! A COPY OLDER THAN ITS PHOTO IS ANOTHER PICTURE: a replaced mN.webp
+    #   whose copy was not remade would show the old photo on every phone.
+    #   Not offered until the copy is remade (it is a resize of the photo).
+    #   60 s of slack: a checkout writes mN-640.webp a moment BEFORE mN.webp
+    #   (it sorts first); a replaced photo arrives in a later pull.
+    try:
+        if os.path.getmtime(small) < os.path.getmtime(big) - 60:
+            return Markup("")
+    except OSError:
         return Markup("")
     size = _imgSize(big)
     if not size or not size[0] or not size[1] or size[0] <= _HERO_SMALL:
