@@ -741,3 +741,56 @@ def test_the_backfill_refuses_a_partial_write_across_the_residual(monkeypatch, r
     assert "XCP_DISTANCE_RESIDUAL=0" in guard(["XC"], True, False, 0)
     monkeypatch.setattr(nd, "DISTANCE_RESIDUAL", False)
     assert guard(["XC"], True, False, 0) is None
+
+
+# ---- 2026-11-08: the dry run OOMed the server ---------------------------
+FD = F          # the fitter; F inside a test below is the pool loader
+def _loader():
+    import types
+    sys.modules.setdefault("corrections", types.SimpleNamespace(
+        distanceOverrideSQL=lambda *a, **k: "", distanceDropSQL=lambda *a, **k: ""))
+    import fit_distance_exponent as F
+    return F
+
+
+def test_tuples_to_arrays_keeps_what_the_dict_path_keeps():
+    """The array path applies the loader's four cache-side filters exactly
+    as its per-pair functions do."""
+    import random
+    F = _loader()
+    rnd = random.Random(7)
+    pools = ["hs_m", "hs_f", "college_f", "college_m", "ms_m", "ms_unknown_gender", "pro_f"]
+    tuples = []
+    for _ in range(4000):
+        pl = rnd.choice(pools)
+        d1 = rnd.choice([800, 1600, 3000, 3200, 4000, 5000, 5000.5, 6000, 8000, 10000, 13000, 0])
+        d2 = rnd.choice([1600, 3200, 5000, 5001, 6000, 8000, 10000, 8046720])
+        t1 = d1 / rnd.uniform(2.0, 7.5) if d1 else 0
+        t2 = d2 / rnd.uniform(2.0, 7.5)
+        tuples.append((pl, d1, d2, t1, t2))
+    for sport in ("XC", "TF"):
+        pairs = F._tuplesToPairs(tuples)
+        pairs = F._dropOverMaxPairs(pairs, sport)
+        pairs = F._dropBadPairs(pairs, sport)
+        if sport == "XC":
+            pairs = F._dropOverPoolRange(pairs)
+        want = FD.pairArrays(pairs)
+        got = FD.tuplesToArrays(tuples, sport, F)
+        assert len(got["d1"]) == len(want["d1"]) > 0, sport
+        for k in ("d1", "d2", "t1", "t2"):
+            assert np.allclose(got[k], want[k]), (sport, k)
+        assert list(got["pool"]) == list(want["pool"])
+
+
+def test_a_family_is_capped_and_small_pools_keep_every_pair():
+    rng = np.random.default_rng(1)
+    n_big, n_small = 50_000, 300
+    arr = {"pool": np.array(["hs_m"] * n_big + ["pro_m"] * n_small, dtype=object),
+           "d1": np.arange(n_big + n_small, dtype=float) + 1}
+    for k in ("d2", "t1", "t2"):
+        arr[k] = arr["d1"].copy()
+    got = FD.capFamily(arr, rng, cap=10_000, keep_all=1_000)
+    pools = list(got["pool"])
+    assert pools.count("pro_m") == n_small                 # small pool whole
+    assert 9_000 <= len(pools) <= 11_000                   # about the cap
+    assert FD.capFamily(arr, rng, cap=10**6) is arr        # fits: unchanged
