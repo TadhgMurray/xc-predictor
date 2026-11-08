@@ -12696,7 +12696,7 @@ def api_predict_athletes():
     #   that cannot be acted on: "Could not search." Same fix the predict
     #   routes got earlier today.
     try:
-        rows = _athleteSearchRows(where, params)
+        rows = _athleteSearchRows(where, params, tokens)
     except Exception as exc:                             # noqa: BLE001
         app.logger.exception("athlete search failed")
         return jsonify({"error": f"Athlete search failed: {exc}"}), 500
@@ -12739,21 +12739,63 @@ def api_predict_athletes():
 #   outright; ties go to the better athlete, who is who a bare name most
 #   often means. 200 to rank rather than 40, so a common surname has room for
 #   the right person to be in the set at all.
-def _athleteSearchRows(where, params):
+# ★ THE NAMES FIRST, THEN THEIR SEASONS (2026-11-08, the latency report:
+#   p50 13 s, max 33.6 s on "Collin ha"). A two-letter token cannot use the
+#   trigram index (no whole trigram in it), and with one in the WHERE the
+#   planner walked athlete_season in person_id order hoping 200 matches came
+#   early -- for an uncommon name, the whole join. When any token has three
+#   letters or more, the people whose names hold those tokens are read first
+#   through idx_athletes_name_trgm, at most NAME_FIRST_CAP of them; when they
+#   all fit, only those people's seasons are read (the short tokens filter
+#   the same names in SQL). athlete_id is the key of athletes, so that is the
+#   same join and the same 200 lowest person_ids: the same rows.
+# ! A COMMON NAME KEEPS THE WALK. Past the cap ("Smith", "mar") reading
+#   every match costs more than the walk, which stops early on exactly those
+#   names -- and so do only short tokens ("jo li").
+# ! AND A SEARCH-AS-YOU-TYPE ANSWER PAST 10 s IS NOBODY'S ANSWER: the
+#   statement stops there (the route answers JSON) rather than holding a
+#   worker and a connection for the site's full 55 s.
+ATHLETE_SEARCH_TIMEOUT_MS = 10000
+NAME_FIRST_CAP = 5000
+
+
+def _athleteSearchRows(where, params, tokens=()):
     """/api/predict/athletes' one query. Split out so the route can report a
     failure as JSON rather than letting it become an HTML error page."""
+    keys = {f"%(t{i})s": len(t) for i, t in enumerate(tokens)}
+    is_name = [next((k for k in keys if w.endswith(k)), None) for w in where]
+    indexed = [w for w, k in zip(where, is_name) if k and keys[k] >= 3]
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SET LOCAL statement_timeout = " + str(int(ATHLETE_SEARCH_TIMEOUT_MS)))
+            source = "athlete_season s JOIN athletes a ON a.athlete_id = s.person_id"
+            name_col = _ATHLETE_NAME_SQL
+            conds = list(where)
+            params = dict(params)      # m_ids / m_names below are this call's
+            if indexed:
+                cur.execute("SELECT a.athlete_id, " + _ATHLETE_NAME_SQL + " AS name"
+                            " FROM athletes a WHERE " + " AND ".join(indexed)
+                            + " LIMIT " + str(int(NAME_FIRST_CAP) + 1), params)
+                people = cur.fetchall()
+                if not people:
+                    return []
+                if len(people) <= NAME_FIRST_CAP:
+                    params["m_ids"] = [r["athlete_id"] for r in people]
+                    params["m_names"] = [r["name"] for r in people]
+                    source = ("unnest(%(m_ids)s::bigint[], %(m_names)s::text[])"
+                              " AS m(athlete_id, name)"
+                              " JOIN athlete_season s ON s.person_id = m.athlete_id")
+                    name_col = "m.name"
+                    conds = [w if k is None else "m.name ILIKE " + k
+                             for w, k in zip(where, is_name)
+                             if not (k and keys[k] >= 3)]
             cur.execute(f"""
                 SELECT * FROM (
                     SELECT DISTINCT ON (s.person_id)
                            s.person_id, s.school, s.year, s.mean_rating,
-                           s.pool,
-                           COALESCE(a.first_name,'') || ' '
-                               || COALESCE(a.last_name,'') AS name
-                    FROM   athlete_season s
-                    JOIN   athletes a ON a.athlete_id = s.person_id
-                    WHERE  {' AND '.join(where)}
+                           s.pool, {name_col} AS name
+                    FROM   {source}
+                    WHERE  {' AND '.join(conds)}
                     ORDER  BY s.person_id, s.year DESC
                     LIMIT  200
                 ) x
@@ -12764,6 +12806,10 @@ def _athleteSearchRows(where, params):
                 LIMIT  40
             """, params)
             return cur.fetchall()
+
+
+# the name as the select list and idx_athletes_name_trgm spell it
+_ATHLETE_NAME_SQL = "COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')"
 
 
 @app.route("/api/predict/weather")
