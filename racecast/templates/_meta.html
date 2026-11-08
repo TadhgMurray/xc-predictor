@@ -111,7 +111,7 @@ if(t==="dark"){document.write('<link rel="stylesheet" id="rc-dark-css" href="'+w
 <link rel="manifest" href="/manifest.webmanifest">
 {# ★ SPEED (2026-11-08): the speculation rules and the service worker's
    switch, from the XCP_SPECULATION / XCP_SW flags -- see racecast/speed.py #}
-{{ speed_head() }}
+{% if speed_head is defined %}{{ speed_head() }}{% endif %}
 <link rel="apple-touch-icon" href="{{ static_v('icons/apple-touch-icon.png') }}">
 <meta name="apple-mobile-web-app-title" content="Racecast">
 <meta name="theme-color" content="#ffffff">
