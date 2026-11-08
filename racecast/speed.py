@@ -154,7 +154,7 @@ def swBody(static_folder, private_prefixes, sw=None):
 # ! A browser that cannot read max() in sizes falls back to 100vw and takes
 #   the original: never a blurrier picture, only no saving.
 _HERO_ROW_DESKTOP = 236
-_HERO_ROW_PHONE = 134
+_HERO_ROW_PHONE = 209    # style.css: a 420 px band, two rows
 _HERO_SMALL = 640
 _heroDims = {}
 
@@ -199,7 +199,7 @@ def heroSrcset(static_folder, url_for_static, slot, span=1):
     aspect = w / h
     phone = -(-_HERO_ROW_PHONE * aspect // 1)
     desk = -(-_HERO_ROW_DESKTOP * aspect // 1)
-    sizes = "(max-width: 760px) max(34vw, %dpx), max(%dvw, %dpx)" % (
+    sizes = "(max-width: 760px) max(50vw, %dpx), max(%dvw, %dpx)" % (
         phone, 20 * span, desk)
     srcset = "%s %dw, %s %dw" % (url_for_static("%s-%d.webp" % (slot, _HERO_SMALL)),
                                  _HERO_SMALL, url_for_static(slot + ".webp"), w)
