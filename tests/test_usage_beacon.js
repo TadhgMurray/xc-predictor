@@ -25,6 +25,7 @@ function run(nav, opts) {
     readyState: "loading",
     referrer: opts.referrer || "",
     visibilityState: "visible",
+    prerendering: !!opts.prerendering,
     addEventListener: on,
   };
   const window = {
@@ -99,6 +100,18 @@ for (const nav of [{ doNotTrack: "1" }, { doNotTrack: "yes" }, { msDoNotTrack: "
   const errs = t.bodies().filter((b) => b.k === "x");
   ok(errs.length === 3, `capped at three, got ${errs.length}`);
   ok(errs[0].x.f === "/static/rankings.js" && errs[0].x.l === 7, "path of the script, no query");
+}
+
+/* 5. A prerendered page (speed pass, 2026-11-08) is not a view until it is
+      shown: loaded in the background, nothing is sent; on activation, one. */
+{
+  const t = run({}, { prerendering: true });
+  t.fire("load"); t.flushTimers();
+  ok(t.sent.length === 0, "a prerendered page sent a view before it was shown");
+  t.document.prerendering = false;
+  t.fire("prerenderingchange"); t.flushTimers();
+  const b = t.bodies();
+  ok(b.length === 1 && b[0].k === "v", "one view once the prerendered page is shown");
 }
 
 if (failed) { console.error(`${failed} failed`); process.exit(1); }

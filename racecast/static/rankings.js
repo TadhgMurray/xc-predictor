@@ -21,6 +21,13 @@
 
 const PAGE_SIZE = 50;
 
+/* ★ EVERY BOARD REQUEST GOES OUT IN ONE SPELLING (board-url.js, 2026-11-08):
+   the edge keys on the URL byte for byte, so the same view must always be
+   the same URL. The fallback is the old spelling, for a page whose
+   board-url.js did not load. */
+const boardUrl = window.rcBoardUrl
+  || ((path, q) => path + "?" + new URLSearchParams(q).toString());
+
 /* College is division/region/conference; high school is league/division/
    section/district/county/class. The sets do not overlap, so one group is
    shown at a time -- see the note in rankings.html. */
@@ -45,6 +52,9 @@ const state = {
   // Set by a jump; the row for this person_id is marked once and then
   // cleared, so it does not stay highlighted as the user pages away.
   highlight: null,
+  // A filtered board's deep limit, from a refused page (api_rankings'
+  // deep_limit); cleared by the next board that loads.
+  deepLimit: null,
   // The sort is HERE, not in a <select>. Clicking a column header sets it;
   // clicking the same header again flips the direction.
   sort: "rating",
@@ -2123,7 +2133,7 @@ async function load() {
                    : state.board === "courses" ? "/api/courses"
                    : state.board === "units" ? "/api/rankings/units"
                    : "/api/rankings";
-    const res = await fetch(endpoint + "?" + query.toString());
+    const res = await fetch(boardUrl(endpoint, query));
     const data = await readJson(res);
     // the board changed while this was in flight: the queued load draws it
     if (state.board !== boardAsked) return;
@@ -2136,12 +2146,26 @@ async function load() {
         `<div class="status error">${esc(data.error || res.statusText || `The server had a problem (error ${res.status}).`)}` +
         (res.status >= 500 ? ' <button type="button" class="rc-retry">Retry</button>' : "") +
         `</div>`;
-      $("pager").classList.add("hidden");
       $("csv-wrap").classList.add("hidden");   // under the pager now, so hide it with it
+      /* ★ A FILTERED BOARD STOPS AT ITS DEEP LIMIT (deep_limit, 2026-11-08):
+         the message above says why; the pager stays so First and Prev lead
+         back, and Next is off -- there is nothing further to fetch. */
+      if (Number.isInteger(data.deep_limit) && state.offset > 0) {
+        state.deepLimit = data.deep_limit;
+        $("pager").classList.remove("hidden");
+        $("first").disabled = false;
+        $("prev").disabled = false;
+        $("next").disabled = true;
+        $("last").disabled = true;
+        $("pageLabel").textContent = `${state.offset + 1}–`;
+      } else {
+        $("pager").classList.add("hidden");
+      }
       return;
     }
 
     const rows = data.rows || [];
+    state.deepLimit = null;
 
     /* TWO NOTICES, TWO CONDITIONS, and neither is always on.
 
@@ -2682,7 +2706,9 @@ $("first").addEventListener("click", () => {
 });
 
 $("prev").addEventListener("click", () => {
-  state.offset = Math.max(0, state.offset - PAGE_SIZE);
+  /* past a filtered board's deep limit, Prev lands on its last page */
+  const top = state.deepLimit ? Math.floor(state.deepLimit / PAGE_SIZE) * PAGE_SIZE : Infinity;
+  state.offset = Math.max(0, Math.min(state.offset - PAGE_SIZE, top));
   load();
 });
 
@@ -2711,7 +2737,7 @@ $("last").addEventListener("click", async () => {
   try {
     const q = buildQuery();
     q.set("count", "1");
-    const res = await fetch("/api/rankings?" + q.toString());
+    const res = await fetch(boardUrl("/api/rankings", q));
     const data = await res.json();
     if (!res.ok || !Number.isInteger(data.total)) {
       /* the server gave up inside its time limit: say so where the eye
@@ -3145,7 +3171,7 @@ async function jumpTo(personId, label) {
   q.delete("offset");
 
   try {
-    const res = await fetch("/api/rankings/rank?" + q.toString());
+    const res = await fetch(boardUrl("/api/rankings/rank", q));
     const data = await res.json();
 
     if (!res.ok) { findStatus(data.error || res.statusText, true); return; }

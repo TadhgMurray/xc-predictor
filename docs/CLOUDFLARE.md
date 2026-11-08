@@ -53,6 +53,17 @@ well past 15 minutes. See docs/PERF-2026-11-06.md.
 Browser Cache TTL: "Respect Existing Headers" (nginx sends 7 days for
 /static/).
 
+**2026-11-08: the full caching setup is in deploy/cloudflare/README.md.**
+It covers the measured cache status of every page type, the two Cache Rules
+with their exact expressions (the API rule now lists `/api/rankings/units`,
+`/api/updates/latest` and the lookup APIs the app made public), Tiered
+Cache, Crawler Hints, the longer edge TTL behind the purge, why Cache
+Reserve is not worth it yet, bot limits, and the optional Worker that
+serves the most-read boards from Workers KV. The origin now 301s
+tracking parameters (`utm_*`, `fbclid`, `gclid` ...) to the plain URL, and
+never marks public anything that sets a cookie or read a session
+(racecast/edge_cache.py).
+
 ## 5. Visit counts (Analytics & Logs > Web Analytics)
 
 Free, no script on the page, no cookies, no banner: once the records are

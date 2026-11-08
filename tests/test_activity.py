@@ -230,7 +230,9 @@ def test_the_public_page_and_latest_api(monkeypatch):
     # last fetch and the API's (owner, 2026-11-08: the dot came back)
     assert 'var mine = "2026-10-18|2026-10-19T08:00:00"' in html
     assert 'localStorage.setItem("rc_updates_stamp", s)' in html and "/api/updates/latest" in html
-    assert j.headers["Cache-Control"] == "public, max-age=300"
+    # the pages' own header, s-maxage included, so the edge answers it too
+    # (2026-11-08, tests/test_edge_cache.py)
+    assert j.headers["Cache-Control"] == A.PUBLIC_CACHE_CONTROL
 
 
 def test_accuracy_lines_use_every_test_a_run_has():

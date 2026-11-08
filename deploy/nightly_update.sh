@@ -406,6 +406,11 @@ if [ "$PEOPLE_OK" -eq 1 ] && step 05_normalize_new "$PY" -u backfill/backfill_no
         if [ "${XCP_SEASON_EV:-1}" != "0" ]; then
           step 10f4_season_events "$PY" -u racecast/build_season_events.py || true
         fi
+        # ★ where tonight's default boards' pages start (build_board_seek.py);
+        #   until it finishes their deep pages run live
+        if [ "${XCP_BOARD_SEEK:-1}" != "0" ]; then
+          step 10f8_board_seek "$PY" -u racecast/build_board_seek.py || true
+        fi
         # ★ tonight's swapped-in tables into memory before the visitors
         #   (scripts/prewarm.py)
         if [ "${XCP_PREWARM:-1}" != "0" ]; then
@@ -476,6 +481,13 @@ fi
 #   01a OVERWRITES the probe. Gated on the boards, a failed night lost its
 #   redirects for good: every id merged away tonight would 404.
 step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
+# ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py),
+#   WHATEVER PUBLISHING DID: it reads the live tables as they now stand
+#   (after the publish block above, when it ran), so every night's rows match
+#   what the site would compute, and none ages past cuts.MAX_AGE_S (30 h) on
+#   a night that published nothing. A failure costs nothing else: the site
+#   computes a state live when its row is missing or old.
+step 13f2_wit_marks "$PY" -u racecast/build_wit_marks.py
 
 # --no-publish: rated and redirected; the sitemap, forecasts and watchdog
 # read the boards, which tonight's run did not rebuild -- the next night does
@@ -556,6 +568,10 @@ fi
 #   now, and again once the workers' 15-minute board copies have run out.
 #   A no-op until XCP_CF_ZONE_ID / XCP_CF_API_TOKEN are set.
 if [ "$PUBLISH" -eq 1 ]; then
+  # static pages (racecast/build_static_pages.py): the new boards, before the edge refills
+  if [ "${XCP_STATIC_PAGES:-0}" = "1" ]; then
+    step 14_static_pages env XCP_DB_APP=site XCP_DB_MIN_CONN=1 XCP_DB_MAX_CONN=2 "$PY" -u racecast/build_static_pages.py || true
+  fi
   step 14_edge_purge "$PY" -u scripts/edge_purge.py || true
   if [ "$DRY" -ne 1 ]; then
     nohup "$PY" -u scripts/edge_purge.py --delay 960 >> "$LOGDIR/14_edge_purge_again.log" 2>&1 &

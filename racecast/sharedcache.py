@@ -113,6 +113,7 @@ def get(key, compute, ttl, keep=lambda v: True, now=time.time, path=None, ttl_of
     d = _safeDir(path)
     if d is None:
         return compute(), now()
+    _sweepMany(d, now())
     base = os.path.join(d, _name(key))
     pkl = base + ".pkl"
     hit = _usable(pkl, ttl, ttl_of, now())
@@ -204,6 +205,13 @@ SWEEP_AGE = 3600.0
 _last_sweep = [0.0]
 
 
+# ! AND EVERY OTHER FILE A DAY AFTER ITS LAST WRITE (2026-11-08). The
+#   directory now lives where a reboot does not empty it (/var/cache), and a
+#   key per distinct short search is a file per query: past SWEEP_AGE_ANY
+#   (no ttl here is longer than six hours) a file is dead and goes.
+SWEEP_AGE_ANY = 86400.0
+
+
 def _sweepMany(d, t):
     if t - _last_sweep[0] < SWEEP_EVERY:
         return
@@ -213,11 +221,10 @@ def _sweepMany(d, t):
     except OSError:
         return
     for n in names:
-        if not n.startswith("many-"):
-            continue
+        age = SWEEP_AGE if n.startswith("many-") else SWEEP_AGE_ANY
         p = os.path.join(d, n)
         try:
-            if t - os.stat(p).st_mtime > SWEEP_AGE:
+            if t - os.stat(p).st_mtime > age:
                 os.unlink(p)
         except OSError:
             pass

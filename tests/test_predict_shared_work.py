@@ -524,3 +524,17 @@ def test_a_failed_graph_read_is_retried_not_kept(monkeypatch):
     monkeypatch.setattr(ND, "_GRAPH_RETRY_AT", 0.0)
     ND.loadGraphLevels()
     assert len(calls) == 2                                  # and then it reads again
+
+
+def test_the_entrants_cache_is_bounded_by_rows(monkeypatch):
+    """! 2026-11-08: 512 whole fields per worker was gigabytes a worker."""
+    monkeypatch.setattr(P, "_ENTRANTS_CACHE", {})
+    monkeypatch.setattr(P, "_ENTRANTS_MAX_ROWS", 10)
+    P._entrantsKeep("a", [1] * 4, 100.0)
+    P._entrantsKeep("b", [1] * 4, 101.0)
+    P._entrantsKeep("c", [1] * 4, 102.0)                   # 12 > 10: "a" goes
+    assert list(P._ENTRANTS_CACHE) == ["b", "c"]
+    P._entrantsKeep("big", [1] * 11, 103.0)                 # alone past the cap
+    assert "big" not in P._ENTRANTS_CACHE
+    P._entrantsKeep("d", [1], 102.0 + P._ENTRANTS_TTL_S + 1)     # b and c expired
+    assert list(P._ENTRANTS_CACHE) == ["d"]

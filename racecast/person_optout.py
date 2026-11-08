@@ -28,6 +28,8 @@
 #
 # ! THE OWNER DECIDES. Nothing here detects; an id is added by hand with
 #   scripts/optout.py, at the athlete's request.
+import datetime
+import decimal
 import json
 import re
 
@@ -169,6 +171,17 @@ def _maskDict(d, ids):
     return not has_id and any(_linkId(d.get(k)) in ids for k in _LINK_KEYS)
 
 
+# ★ A LEAF IS SKIPPED BY ITS EXACT TYPE FIRST (2026-11-08). With anyone
+#   hidden, every render walks its whole context: 25 values a row, each
+#   tested `isinstance(v, (dict, list, tuple))` -- ~30 ms for a 3,000-row
+#   page. These exact types can never pass that test (none is a subclass of
+#   the three), so skipping them first changes nothing the walk does and
+#   halves it (tests/test_optout_mask_fast.py holds it to the old walk).
+_LEAF_TYPES = frozenset((str, int, float, bool, type(None), bytes,
+                         datetime.date, datetime.datetime, decimal.Decimal))
+_CONTAINERS = (dict, list, tuple)
+
+
 def maskTree(obj, ids=None, depth=0, _seen=None):
     """Walk dicts and lists, renaming every hidden person's row in place and
     dropping search hits that point at one. Tuples are walked (their dicts
@@ -183,7 +196,9 @@ def maskTree(obj, ids=None, depth=0, _seen=None):
         _seen.add(id(obj))
         _maskDict(obj, ids)
         for k, v in obj.items():
-            if k not in _SKIP_KEYS and isinstance(v, (dict, list, tuple)):
+            if type(v) in _LEAF_TYPES:
+                continue
+            if k not in _SKIP_KEYS and isinstance(v, _CONTAINERS):
                 maskTree(v, ids, depth + 1, _seen)
     elif isinstance(obj, (list, tuple)):
         _seen.add(id(obj))
@@ -192,7 +207,9 @@ def maskTree(obj, ids=None, depth=0, _seen=None):
             obj[:] = [v for v in obj
                       if not (isinstance(v, dict) and _maskDict(v, ids))]
         for v in obj:
-            if isinstance(v, (dict, list, tuple)):
+            if type(v) in _LEAF_TYPES:
+                continue
+            if isinstance(v, _CONTAINERS):
                 maskTree(v, ids, depth + 1, _seen)
 
 

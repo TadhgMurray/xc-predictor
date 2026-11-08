@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
 build_season_events.py -- the ability board's Events presets, precomputed:
-athlete_season_ev, one row per (dist_min, person, pool, sport, year).
+athlete_season_ev, one row per (dist_min, person, pool, sport, year), and
+athlete_season_ev_grade, one row per (dist_min, gkey, person, pool, sport,
+year) -- the same seasons cut by the grade each race was run in.
 
-    python racecast/build_season_events.py                # all four presets
+    python racecast/build_season_events.py                # both tables
     python racecast/build_season_events.py --workers 8
+    python racecast/build_season_events.py --only grade   # one of them
 
 ★ WHY (owner, 2026-11-06: "build it"). With an Events preset ("3000m and up")
   the ability board cannot read athlete_season, which has aggregated the
@@ -30,6 +33,18 @@ athlete_season_ev, one row per (dist_min, person, pool, sport, year).
 
 ! IN SHARDS, IN PARALLEL: each (preset, person shard) is one INSERT on its
   own connection, as build_ranking_results shards athlete_season.
+
+★ ONE GRADE TOO (owner, 2026-11-08: the grade-10 Events board at 3-22 s).
+  A grade filter picks RACES -- a grade-10 board aggregates only the races
+  the row's grade key (rankings.GRADE_KEY_SQL) calls 10th grade -- so it
+  cannot be a filter on athlete_season_ev. athlete_season_ev_grade is the
+  same query with that key added to every window partition and the GROUP BY
+  (rankings._abilitySource(by_grade=True)): the group with key k holds
+  exactly the races the live query keeps for grade=k, and the same SQL runs
+  over them. rankings._evGradePreset sends a board here for ONE grade key,
+  on the same terms as the plain table; several grades run live. Built
+  after athlete_season_ev (that one swaps in first), with the same rr_oid
+  stamp. XCP_SEASON_EV_GRADE=0 skips it.
 """
 import argparse
 import concurrent.futures as cf
@@ -46,8 +61,9 @@ from database import getConn                                   # noqa: E402
 from dbfast import swapTable                                   # noqa: E402
 import rankings as R                                           # noqa: E402
 
-TABLE = "athlete_season_ev"
+TABLE = R.EV_TABLE
 NEW = f"{TABLE}_new"
+GRADE_TABLE = R.EV_GRADE_TABLE
 SHARDS = int(os.environ.get("XCP_SEASON_EV_SHARDS", "4"))
 # the indexes the boards order by (rankings._SORTS_ABILITY's rating and best,
 # with and without a year, with and without a pool/sport), and the rank line
@@ -58,43 +74,61 @@ INDEXES = (
     ("pool_mean", "(dist_min, pool, mean_rating DESC NULLS LAST, person_id)"),
     ("person", "(person_id)"),
 )
+# the same orders, after the grade key: a board reads one (dist_min, gkey)
+GRADE_INDEXES = tuple((n, cols if n == "person" else cols.replace("(dist_min,", "(dist_min, gkey,", 1))
+                      for n, cols in INDEXES)
 
 
-def presetSql(dist_min, shard=None, shards=SHARDS):
+def presetSql(dist_min, shard=None, shards=SHARDS, by_grade=False):
     """(sql, params): _abilitySource's season aggregate for one preset over
     every pool, sport and year, the board's default scope (US races), one
-    person shard when `shard` is given."""
+    person shard when `shard` is given; by_grade, per race grade key too."""
     f = {"board": "ability", "pool": "all", "sport": "both", "scope": "usa",
          "dist_min": float(dist_min), "dist_max": None}
     params = {}
     where = R._whereClauses(f, params, with_dates=False)
     if shard is not None:
         where += f" AND mod(abs(person_id), {int(shards)}) = {int(shard)}"
-    src = R._abilitySource(f, params, where)
+    src = R._abilitySource(f, params, where, by_grade=by_grade)
     return f"SELECT {int(dist_min)}::int AS dist_min, s.* FROM {src}", params
 
 
-def build(workers=4, presets=R.EV_PRESETS, shards=SHARDS, log=print):
+def build(workers=4, presets=R.EV_PRESETS, shards=SHARDS, log=print,
+          tables=("ev", "grade")):
+    """Both tables by default (`tables`: "ev", "grade"); returns the rows."""
+    total = 0
+    if "ev" in tables:
+        total += buildTable(TABLE, INDEXES, False, workers, presets, shards, log)
+    if "grade" in tables:
+        total += buildTable(GRADE_TABLE, GRADE_INDEXES, True, workers, presets, shards, log)
+    return total
+
+
+def buildTable(table, indexes, by_grade, workers=4, presets=R.EV_PRESETS,
+               shards=SHARDS, log=print):
+    """One table: prepare (an empty shadow), the (preset, shard) INSERTs in
+    parallel, then indexes, the rr_oid stamp and the swap."""
     t0 = time.time()
+    new = f"{table}_new"
     with getConn() as conn:
         with conn.cursor() as cur:
             cur.execute("SET statement_timeout = 0")
             cur.execute("SELECT 'ranking_results'::regclass::oid")
             rr_oid = int(cur.fetchone()[0])
-            cur.execute(f"DROP TABLE IF EXISTS {NEW}")
-            sql, params = presetSql(presets[0])
-            cur.execute(f"CREATE TABLE {NEW} AS {sql} WITH NO DATA", params)
+            cur.execute(f"DROP TABLE IF EXISTS {new}")
+            sql, params = presetSql(presets[0], by_grade=by_grade)
+            cur.execute(f"CREATE TABLE {new} AS {sql} WITH NO DATA", params)
         conn.commit()
 
     def one(job):
         d, k = job
-        sql, params = presetSql(d, k, shards)
+        sql, params = presetSql(d, k, shards, by_grade=by_grade)
         t = time.time()
         with getConn() as c:
             with c.cursor() as cur:
                 cur.execute("SET statement_timeout = 0")
                 cur.execute("SET LOCAL work_mem = '512MB'")
-                cur.execute(f"INSERT INTO {NEW} {sql}", params)
+                cur.execute(f"INSERT INTO {new} {sql}", params)
                 n = cur.rowcount
             c.commit()
         return d, k, n, time.time() - t
@@ -104,15 +138,16 @@ def build(workers=4, presets=R.EV_PRESETS, shards=SHARDS, log=print):
     with cf.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for d, k, n, dt in pool.map(one, jobs):
             total += n
-            log(f"  [{dt:7.1f}s] {d}m and up, shard {k + 1}/{shards}: {n:,} seasons")
+            log(f"  [{dt:7.1f}s] {table} {d}m and up, shard {k + 1}/{shards}: "
+                f"{n:,} seasons")
 
     with getConn() as conn:
         with conn.cursor() as cur:
             cur.execute("SET statement_timeout = 0")
-            for name, cols in INDEXES:
-                cur.execute(f"CREATE INDEX idx_{NEW}_{name} ON {NEW} {cols}")
-            cur.execute(f"ANALYZE {NEW}")
-            cur.execute(f"COMMENT ON TABLE {NEW} IS %s", (f"rr_oid={rr_oid}",))
+            for name, cols in indexes:
+                cur.execute(f"CREATE INDEX idx_{new}_{name} ON {new} {cols}")
+            cur.execute(f"ANALYZE {new}")
+            cur.execute(f"COMMENT ON TABLE {new} IS %s", (f"rr_oid={rr_oid}",))
             cur.execute("SELECT 'ranking_results'::regclass::oid")
             now_oid = int(cur.fetchone()[0])
         conn.commit()
@@ -120,9 +155,9 @@ def build(workers=4, presets=R.EV_PRESETS, shards=SHARDS, log=print):
             log("  ! ranking_results was swapped during the build: the table is "
                 "kept, and the board will not read it (it runs live) until the "
                 "next build")
-        swapTable(conn, TABLE, renames=[(f"idx_{NEW}_{n}", f"idx_{TABLE}_{n}")
-                                        for n, _c in INDEXES])
-    log(f"  {TABLE}: {total:,} seasons over {len(presets)} presets "
+        swapTable(conn, table, renames=[(f"idx_{new}_{n}", f"idx_{table}_{n}")
+                                        for n, _c in indexes])
+    log(f"  {table}: {total:,} seasons over {len(presets)} presets "
         f"[{time.time() - t0:.0f}s]")
     return total
 
@@ -132,8 +167,17 @@ def main(argv=None):
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--workers", type=int,
                     default=int(os.environ.get("XCP_SEASON_EV_WORKERS", "4")))
+    ap.add_argument("--only", choices=("ev", "grade"),
+                    help="build one table: ev (athlete_season_ev) or grade "
+                         "(athlete_season_ev_grade)")
     a = ap.parse_args(argv)
-    build(workers=a.workers)
+    if a.only:
+        tables = (a.only,)
+    elif os.environ.get("XCP_SEASON_EV_GRADE", "1") == "0":
+        tables = ("ev",)
+    else:
+        tables = ("ev", "grade")
+    build(workers=a.workers, tables=tables)
     return 0
 
 

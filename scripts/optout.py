@@ -47,6 +47,10 @@ next:
      XCP_CF_API_TOKEN are set; then purge in the Cloudflare dashboard, or
      wait XCP_PAGE_S_MAXAGE):
        /srv/venv/bin/python scripts/edge_purge.py
+  4. only if the edge board snapshot is in use (deploy/cloudflare/README.md):
+     switch it off -- a purge does not reach Workers KV -- and republish it
+     once the restart is done:
+       /srv/venv/bin/python scripts/edge_snapshot.py --off
 """
 
 

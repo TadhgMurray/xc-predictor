@@ -25,6 +25,8 @@
 #
 # ! A FAILURE IS NOT CACHED. A compute that raises leaves the key empty, so a
 #   database blip costs one request rather than six hours of an error page.
+import os
+import pickle
 import threading
 import time
 
@@ -34,9 +36,37 @@ _DEFAULT_TTL = 6 * 3600.0
 #   invent cannot grow a worker without limit.
 _MAX_KEYS = 2000
 
+# ★ AND BOUNDED BY BYTES (2026-11-08, the 11-07 23:28 OOM: the 24 workers
+#   held 80 GB). 2000 keys of a whole race prediction, a meet recap or a
+#   board body is gigabytes a worker; a key count says nothing about that.
+#   Each value is sized once when stored (its pickle); past _MAX_BYTES the
+#   expired go first, then the oldest. A value past _MAX_ONE is handed back
+#   but not kept. A key's lock goes with its entry.
+_MAX_BYTES = int(float(os.environ.get("XCP_TTLCACHE_MB") or 256) * 1048576)
+_MAX_ONE = int(float(os.environ.get("XCP_TTLCACHE_ONE_MB") or 64) * 1048576)
+_UNSIZED = 65536          # a value pickle cannot size is counted as this
+
 _store = {}               # key -> (stamp, value, ttl)
+_sizes = {}               # key -> bytes
+_total = [0]
 _locks = {}               # key -> Lock
 _guard = threading.Lock()
+
+
+def _sizeOf(value):
+    try:
+        return len(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
+    except Exception:                                   # noqa: BLE001
+        return _UNSIZED
+
+
+def _drop(key):
+    """Forget `key` (under _guard): its value, its size and its lock."""
+    _store.pop(key, None)
+    _total[0] -= _sizes.pop(key, 0)
+    lk = _locks.get(key)
+    if lk is not None and not lk.locked():
+        _locks.pop(key, None)
 
 
 def _lockFor(key):
@@ -69,8 +99,12 @@ def get(key, compute, ttl=_DEFAULT_TTL, now=time.time, ttl_of=None):
         value = compute()
         stamp = now()
         keep = ttl_of(value) if ttl_of else ttl
+        size = _sizeOf(value)
+        if size > _MAX_ONE:
+            return value, stamp          # too big to keep: handed back only
         with _guard:
-            if len(_store) >= _MAX_KEYS:
+            _drop(key)                   # a replaced entry's size goes with it
+            if len(_store) >= _MAX_KEYS or _total[0] + size > _MAX_BYTES:
                 # ! THE EXPIRED GO FIRST (2026-10-05). The predictions page's
                 #   squads live here too now, five minutes each and many per
                 #   visit; "oldest first" alone would throw out a six-hour
@@ -78,14 +112,22 @@ def get(key, compute, ttl=_DEFAULT_TTL, now=time.time, ttl_of=None):
                 #   for them, while their own dead entries sat there.
                 t = now()
                 for k in [k for k, v in _store.items() if t - v[0] > v[2]]:
-                    _store.pop(k, None)
+                    _drop(k)
             if len(_store) >= _MAX_KEYS:
                 # drop the oldest tenth; cheaper than an LRU and the keys are
                 # all the same size of problem
                 for k, _v in sorted(_store.items(),
                                     key=lambda kv: kv[1][0])[:_MAX_KEYS // 10]:
-                    _store.pop(k, None)
+                    _drop(k)
+            if _total[0] + size > _MAX_BYTES:
+                # then by bytes, oldest first, until this one fits
+                for k, _v in sorted(_store.items(), key=lambda kv: kv[1][0]):
+                    if _total[0] + size <= _MAX_BYTES:
+                        break
+                    _drop(k)
             _store[key] = (stamp, value, keep)
+            _sizes[key] = size
+            _total[0] += size
         return value, stamp
 
 
@@ -104,3 +146,6 @@ def clear():
     """Forget everything (tests)."""
     with _guard:
         _store.clear()
+        _sizes.clear()
+        _total[0] = 0
+        _locks.clear()

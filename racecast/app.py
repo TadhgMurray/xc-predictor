@@ -389,6 +389,31 @@ def _prewarmTemplates():
             app.logger.exception("template warm-up failed: %s", name)
 
 
+# ★ EVERY TEMPLATE COMPILED ONCE, IN THE GUNICORN MASTER (2026-11-08).
+#   Each worker compiled each template it used on first use: ~1.7 s of CPU
+#   for the 92, ~8.5 MB of private memory per worker, and 24 workers (and
+#   every --max-requests respawn) paid it again. deploy/gunicorn.conf.py's
+#   when_ready calls this before gc.freeze() and the fork, so the workers
+#   inherit them shared; measured in a forked child that then rendered
+#   every template: 1.9 s -> 0.15 s first use, +21 MB -> +13 MB private.
+#   The same files through the same environment: what a page shows is the
+#   same (tests/test_template_precompile.py). auto_reload is off, as it was:
+#   a template edit needs the restart it already needed.
+# ! THE CACHE MUST HOLD THEM ALL, or the LRU evicts the oldest and a
+#   worker compiles it again (Jinja's default holds 400; the test checks).
+def precompileTemplates():
+    """Compile every template into the environment's cache. Returns how
+    many loaded; one that fails is logged and left for its first use."""
+    n = 0
+    for name in app.jinja_env.list_templates():
+        try:
+            app.jinja_env.get_template(name)
+            n += 1
+        except Exception:                               # noqa: BLE001
+            app.logger.exception("template precompile failed: %s", name)
+    return n
+
+
 def _prewarmPredict():
     _prewarmTemplates()
     try:
@@ -930,6 +955,11 @@ app.jinja_env.globals["site_origin"] = SITE_ORIGIN
 import seo as _seo
 _seo.install(app, SITE_ORIGIN)
 
+# ★ SPEED IN THE BROWSER (2026-11-08): speculation rules and the service
+#   worker's flag and /sw.js route, see speed.py. Same private list as above.
+import speed as _speed
+_speed.install(app, _PRIVATE_PREFIXES)
+
 
 # ★ ONE SPELLING PER PAGE: NO TRAILING SLASH (2026-10-10). No route but "/"
 #   ends in a slash, so /athlete/123/ was a 404 -- a shared link with a slash
@@ -1312,8 +1342,40 @@ def _homeSport(meta):
     return meta.get("default_sport") or "XC"
 
 
+# ★ THE FRONT PAGE, RENDERED ONCE FOR THE BOX (2026-11-08: 0.87 s a miss,
+#   five queries and the clock tables, the same HTML for everyone -- the top
+#   bar renders signed-out on every page and the browser fills in the rest).
+#   The first worker to miss renders it and shares it (sharedcache); the
+#   others send that copy until it is HOME_TTL old. The key carries the day
+#   (on-this-day, the season) and this process's boot stamp, so a deploy
+#   never serves an older template's HTML.
+HOME_TTL = float(os.environ.get("XCP_HOME_TTL") or 300)
+_BOOT_STAMP = str(int(time.time()))
+
+
+def sharedPageKey(name):
+    """The shared-copy key of a page whose HTML is the same for everyone, made
+    of everything its templates read off the request: the host (url_for's
+    absolute links), the canonical path with its kept arguments (_meta.html),
+    and whether ?r= is present (the noindex line). A request that differs in
+    any of them gets, and files, its own copy."""
+    import datetime as _dt
+    import hashlib
+    from seo import canonicalPath
+    parts = (request.host_url, canonicalPath(request.path, request.args),
+             bool(request.args.get("r")))
+    dig = hashlib.sha1(repr(parts).encode("utf-8")).hexdigest()[:16]
+    return f"{name}-{_BOOT_STAMP}-{_dt.date.today().isoformat()}-{dig}"
+
+
 @app.route("/")
 def home():
+    import sharedcache
+    body, _at = sharedcache.get(sharedPageKey("home"), _renderHome, ttl=HOME_TTL)
+    return body
+
+
+def _renderHome():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             rows = get_homepage_panels(cur)
@@ -6177,6 +6239,11 @@ def _tf_seed_points_cache(meet_id, source, rows, scored):
             names[k] = r["event_short"]
     _TF_POINTS_CACHE[(meet_id, source)] = (
         _time.time(), scored["points_by_result"], names)
+    # ! THE SAME CAP AS _tf_points_cached (2026-11-08 memory audit): this
+    #   path filed one meet per TF meet/compiled page view, without limit
+    while len(_TF_POINTS_CACHE) > _TF_POINTS_MAX:
+        oldest = min(_TF_POINTS_CACHE, key=lambda k: _TF_POINTS_CACHE[k][0])
+        _TF_POINTS_CACHE.pop(oldest, None)
 
 
 def _tfRaceSource(cur, meet_id, div_id, event_id, args):
@@ -9519,7 +9586,11 @@ _SEARCH_CACHE_LOCK = threading.Lock()
 #   and there are few of them: up to SEARCH_SHARED_LEN characters the answer
 #   goes through sharedcache, so one worker computes it for all 24. Longer
 #   queries are many, fast and rarely repeated, and stay per worker.
-SEARCH_SHARED_LEN = 3
+# ★ SIX SINCE 2026-11-08: the slowest dropdown lookups in the slow log were
+#   4-5 letter names ("Andre", "ryan" -- 2.2-2.5 s), past the old 3. A common
+#   name matches hundreds of thousands of rows (john: 363k) that every worker
+#   ranked for itself; now once for the box per hour.
+SEARCH_SHARED_LEN = 6
 SEARCH_SHARED_TTL = 3600.0
 
 
@@ -10810,7 +10881,8 @@ def athlete_results():
 
 
 from rankings import (UNIT_COLUMNS, parseFilters, getPerformanceRankings, getPrRankings,
-                      getAbilityRankings, rankOf, countOf, countRows, PR_DISTANCES)
+                      getAbilityRankings, rankOf, countOf, countRows, PR_DISTANCES,
+                      deepPageRefusal, LIVE_DEEP_MAX)
 from season_floor import floorFor, floorLabel, poolWords, percentileWords, clockFor
 
 
@@ -10968,6 +11040,14 @@ def api_rankings():
                                 "reason": (None if n is not None else
                                            "This board is too long to count "
                                            "quickly. Narrow it, or use Next.")})
+            # ★ A FILTERED BOARD STOPS AT LIVE_DEEP_MAX ROWS (2026-11-08):
+            #   it is ranked live for every page, so a deep one ranks
+            #   millions of rows. The default boards seek from a stored
+            #   position and are never refused (rankings "DEEP PAGES").
+            #   deep_limit tells the page to keep its way back (rankings.js).
+            deep = deepPageRefusal(f)
+            if deep:
+                return jsonify({"error": deep, "deep_limit": LIVE_DEEP_MAX}), 400
             try:
                 rows = {"performance": getPerformanceRankings,
                         "pr": getPrRankings,
@@ -13822,7 +13902,10 @@ def updates_latest():
     # `stamp` decides the dot (activity.stampOf); `latest` stays for old pages
     resp = jsonify({"latest": latest.isoformat(timespec="seconds") if latest else None,
                     "stamp": fd.get("stamp") or ""})
-    resp.headers["Cache-Control"] = "public, max-age=300"
+    # ★ THE PAGES' HEADER, s-maxage INCLUDED (2026-11-08): every reader's
+    #   first view in ten minutes asks this, and with max-age alone the edge
+    #   answered DYNAMIC each time; the go-live purge bounds its staleness
+    resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return resp
 
 
@@ -13884,6 +13967,13 @@ def status_resolve():
 #   monitor.py, usage.py, app_errors.py.
 import monitor as _monitor                                       # noqa: E402
 _monitor.install(app, _statusAdmin)
+
+# ★ THE EDGE'S RULES (2026-11-08, edge_cache.py): tracking parameters are a
+#   301 to the plain page, the read-only lookup APIs are public, and nothing
+#   that sets a cookie or read a session is ever public. LAST, so its
+#   after_request runs before _headers and its WSGI guard sees every header.
+import edge_cache as _edge_cache                                 # noqa: E402
+_edge_cache.install(app, PUBLIC_CACHE_CONTROL)
 
 if __name__ == "__main__":
     app.run(debug=True)

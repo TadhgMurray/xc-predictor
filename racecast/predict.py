@@ -6148,6 +6148,11 @@ def _keepIdentity(cur, squads, states):
 #            their latest rated race; None while nothing is rated.
 _ENTRANTS_CACHE = {}
 _ENTRANTS_TTL_S = 600
+# ! BOUNDED BY ROWS, NOT BY FIELDS (2026-11-08: the 11-07 23:28 OOM -- the
+#   24 site workers held 80 GB). Up to 512 whole fields per worker, each every
+#   athlete row of every school in a big invitational, was gigabytes a
+#   worker. Past _ENTRANTS_MAX_ROWS the oldest fields go first.
+_ENTRANTS_MAX_ROWS = int(os.environ.get("XCP_ENTRANTS_MAX_ROWS") or 60000)
 
 
 def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
@@ -6166,11 +6171,42 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
     if hit and _t.time() - hit[0] < _ENTRANTS_TTL_S:
         rows = hit[1]
     else:
-        rows = _raceEntrantRows(cur, schools, sport, year)
-        if len(_ENTRANTS_CACHE) > 512:
-            _ENTRANTS_CACHE.clear()
-        _ENTRANTS_CACHE[key] = (_t.time(), rows)
+        rows = _raceEntrantRowsShared(cur, key)
+        _entrantsKeep(key, rows, _t.time())
     return _entrantsFromRows(cur, rows, sport, year, gender, levels)
+
+
+def _raceEntrantRowsShared(cur, key):
+    """_raceEntrantRows once for the box, not once per worker (2026-11-08:
+    1.1 s a run, p95 2.3 s, in the slow log under /api/predict/field). The
+    first worker to need a field reads it and shares it (sharedcache) for
+    _ENTRANTS_TTL_S, the same ten minutes each worker already kept it; the
+    others read that copy. The key is the sorted schools, sport and year."""
+    import hashlib
+    import sharedcache
+    schools, sport, year = key
+    name = "entrants-%s-%s-%s" % (sport, year, hashlib.sha1(
+        repr(schools).encode("utf-8")).hexdigest()[:20])
+    rows, _at = sharedcache.get(
+        name, lambda: _raceEntrantRows(cur, list(schools), sport, year),
+        ttl=_ENTRANTS_TTL_S)
+    return rows
+
+
+def _entrantsKeep(key, rows, now):
+    """File `rows` under `key`, then drop expired fields and, past
+    _ENTRANTS_MAX_ROWS rows in all, the oldest (dicts keep insertion order,
+    and a refreshed key is re-inserted last)."""
+    _ENTRANTS_CACHE.pop(key, None)
+    if len(rows) > _ENTRANTS_MAX_ROWS:
+        return                                   # one field past the cap: not kept
+    _ENTRANTS_CACHE[key] = (now, rows)
+    for k in [k for k, v in _ENTRANTS_CACHE.items() if now - v[0] >= _ENTRANTS_TTL_S]:
+        _ENTRANTS_CACHE.pop(k, None)
+    total = sum(len(v[1]) for v in _ENTRANTS_CACHE.values())
+    while total > _ENTRANTS_MAX_ROWS and len(_ENTRANTS_CACHE) > 1:
+        k = next(iter(_ENTRANTS_CACHE))
+        total -= len(_ENTRANTS_CACHE.pop(k)[1])
 
 
 _PERSON_GENDER_SQL = """COALESCE(max(pg.gender),
