@@ -564,14 +564,26 @@ def dupesFor(cur, up):
     days = _dates(up["meet_date"], up.get("meet_date_end"))
     cands = []
     queries = (
+        # ★ has_results: a meet listed (its races known) but with no results
+        #   landed yet has no page here -- the link goes to the feed only
+        #   (owner, 2026-11-08: "These all 404")
         ("meets", "anet XC", """SELECT meet_id, min(meet_name) AS name, min(course_name) AS venue,
-                                       min(left(meet_date, 10)) AS date, min(source) AS source
+                                       min(left(meet_date, 10)) AS date, min(source) AS source,
+                                       EXISTS (SELECT 1 FROM results r
+                                               WHERE r.meet_id = meets.meet_id) AS has_results
                                 FROM meets WHERE left(meet_date, 10) = ANY(%s) GROUP BY meet_id"""),
         ("meets_tf_meta", "anet TF", """SELECT meet_id, meet_name AS name, venue_name AS venue,
-                                              left(meet_date, 10) AS date, source
+                                              left(meet_date, 10) AS date, source,
+                                              EXISTS (SELECT 1 FROM results_tf r
+                                                      WHERE r.meet_id = meets_tf_meta.meet_id) AS has_results
                                        FROM meets_tf_meta WHERE left(meet_date, 10) = ANY(%s)"""),
         ("meets_tfrrs", "tfrrs", """SELECT meet_id, meet_name AS name, venue_name AS venue,
-                                           left(date, 10) AS date, 'tfrrs' AS source, sport
+                                           left(date, 10) AS date, 'tfrrs' AS source, sport,
+                                           (EXISTS (SELECT 1 FROM results r
+                                                    WHERE r.meet_id = meets_tfrrs.meet_id AND r.source = 'tfrrs')
+                                            OR EXISTS (SELECT 1 FROM results_tf r
+                                                    WHERE r.meet_id = meets_tfrrs.meet_id AND r.source = 'tfrrs'))
+                                               AS has_results
                                     FROM meets_tfrrs WHERE left(date, 10) = ANY(%s)"""),
     )
     # ! A BOUND ON THE ADMIN'S REQUEST: left(meet_date, 10) reads every
@@ -620,7 +632,11 @@ def dupeLinks(table, d):
     src = d.get("source") or ""
     q = "?src=2" if src == "tfrrs" else ""
     feed = _FEED_PAGE.get(("tfrrs" if src == "tfrrs" else "anet", sport))
-    return {"href": f"/meet/{sport.lower()}/{int(mid)}{q}",
+    if d.get("has_results") is False:
+        href = None                       # listed, nothing landed: no page here yet
+    else:
+        href = f"/meet/{sport.lower()}/{int(mid)}{q}"
+    return {"href": href,
             "feed_href": feed.format(id=int(mid)) if feed and src in ("anet", "tfrrs") else None}
 
 

@@ -190,3 +190,16 @@ def test_a_milesplit_results_page_follows_its_raw_files(monkeypatch):
     assert name == "fetched.htm"
     assert seen[1:] == [f"{base}/results/11/raw", f"{base}/results/12/raw"]
     assert b"<pre>A</pre>" in data and b"<pre>B</pre>" in data
+
+
+def test_a_held_duplicate_links_its_page_only_when_it_has_one():
+    # owner, 2026-11-08: "These all 404" -- listed meets with no results yet
+    import uploads as U
+    got = U.dupeLinks("meets", {"meet_id": 278358, "source": "anet", "has_results": False})
+    assert got["href"] is None
+    assert got["feed_href"].endswith("/CrossCountry/meet/278358/results")
+    got = U.dupeLinks("meets", {"meet_id": 290015, "source": "anet", "has_results": True})
+    assert got["href"] == "/meet/xc/290015"
+    got = U.dupeLinks("meets_tfrrs", {"meet_id": 9, "source": "tfrrs", "sport": "TF",
+                                      "has_results": True})
+    assert got["href"] == "/meet/tf/9?src=2"
