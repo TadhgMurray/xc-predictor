@@ -21,6 +21,13 @@
 
 const PAGE_SIZE = 50;
 
+/* ★ EVERY BOARD REQUEST GOES OUT IN ONE SPELLING (board-url.js, 2026-11-08):
+   the edge keys on the URL byte for byte, so the same view must always be
+   the same URL. The fallback is the old spelling, for a page whose
+   board-url.js did not load. */
+const boardUrl = window.rcBoardUrl
+  || ((path, q) => path + "?" + new URLSearchParams(q).toString());
+
 /* College is division/region/conference; high school is league/division/
    section/district/county/class. The sets do not overlap, so one group is
    shown at a time -- see the note in rankings.html. */
@@ -2123,7 +2130,7 @@ async function load() {
                    : state.board === "courses" ? "/api/courses"
                    : state.board === "units" ? "/api/rankings/units"
                    : "/api/rankings";
-    const res = await fetch(endpoint + "?" + query.toString());
+    const res = await fetch(boardUrl(endpoint, query));
     const data = await readJson(res);
     // the board changed while this was in flight: the queued load draws it
     if (state.board !== boardAsked) return;
@@ -2711,7 +2718,7 @@ $("last").addEventListener("click", async () => {
   try {
     const q = buildQuery();
     q.set("count", "1");
-    const res = await fetch("/api/rankings?" + q.toString());
+    const res = await fetch(boardUrl("/api/rankings", q));
     const data = await res.json();
     if (!res.ok || !Number.isInteger(data.total)) {
       /* the server gave up inside its time limit: say so where the eye
@@ -3145,7 +3152,7 @@ async function jumpTo(personId, label) {
   q.delete("offset");
 
   try {
-    const res = await fetch("/api/rankings/rank?" + q.toString());
+    const res = await fetch(boardUrl("/api/rankings/rank", q));
     const data = await res.json();
 
     if (!res.ok) { findStatus(data.error || res.statusText, true); return; }

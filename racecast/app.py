@@ -13863,7 +13863,10 @@ def updates_latest():
     # `stamp` decides the dot (activity.stampOf); `latest` stays for old pages
     resp = jsonify({"latest": latest.isoformat(timespec="seconds") if latest else None,
                     "stamp": fd.get("stamp") or ""})
-    resp.headers["Cache-Control"] = "public, max-age=300"
+    # ★ THE PAGES' HEADER, s-maxage INCLUDED (2026-11-08): every reader's
+    #   first view in ten minutes asks this, and with max-age alone the edge
+    #   answered DYNAMIC each time; the go-live purge bounds its staleness
+    resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return resp
 
 
@@ -13925,6 +13928,13 @@ def status_resolve():
 #   monitor.py, usage.py, app_errors.py.
 import monitor as _monitor                                       # noqa: E402
 _monitor.install(app, _statusAdmin)
+
+# ★ THE EDGE'S RULES (2026-11-08, edge_cache.py): tracking parameters are a
+#   301 to the plain page, the read-only lookup APIs are public, and nothing
+#   that sets a cookie or read a session is ever public. LAST, so its
+#   after_request runs before _headers and its WSGI guard sees every header.
+import edge_cache as _edge_cache                                 # noqa: E402
+_edge_cache.install(app, PUBLIC_CACHE_CONTROL)
 
 if __name__ == "__main__":
     app.run(debug=True)
