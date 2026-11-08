@@ -263,13 +263,15 @@ _ABILITY_FILE = os.path.join(_DATA_DIR, "distance_ability.pkl")
 DISTANCE_MODES = ("pool", "ability")
 
 
-def appliedDistanceRecords():
+def appliedDistanceRecords(kind="applied"):
     """{'XC': {...}, 'TF': {...}}: the records the last full backfill of
-    each sport wrote (distance_applied_<SPORT>.json), as written."""
+    each sport wrote (distance_applied_<SPORT>.json), as written. With
+    kind='rated', the records the last go-live wrote beside the ratings it
+    published (distance_rated_<SPORT>.json, writeRatedRecords)."""
     import json
     out = {}
     for sp in ("XC", "TF"):
-        path = os.path.join(_DATA_DIR, f"distance_applied_{sp}.json")
+        path = os.path.join(_DATA_DIR, f"distance_{kind}_{sp}.json")
         try:
             with open(path) as f:
                 rec = json.load(f) or {}
@@ -295,9 +297,58 @@ def appliedResiduals():
             if r["distance_by"] == "ability"}
 
 
+# ★★ THE SITE READS THE MODE ITS RATINGS WERE BUILT IN, NOT THE ROWS' (owner,
+#    2026-11-08: "it should obv not publish new ratings until they are right,
+#    like why would it publish fucking 90?"). A full backfill rewrites every
+#    normalized_time and records its mode at once, hours before the go-live
+#    rebuilds the ratings and engine_scale on them. The site read the
+#    backfill's record, so for those hours it converted pool-anchored ratings
+#    and pool means on the ability family's 5000 m: college men x0.74 (Rupp's
+#    131 shown as 94), middle school x1.4-1.6. The ratings and the scale are
+#    what a page shows, so the site (XCP_DB_APP=site) follows the record the
+#    go-live writes WITH them (distance_rated_<SPORT>.json); every other
+#    process -- the backfill, the solve, the nightly -- reads the rows' own.
+#    No rated record yet: the ratings predate it, built in the pool mode.
+#    The pipeline restarts the site when the go-live changes the record.
+def _siteReader():
+    return (os.environ.get("XCP_DB_APP") or "").strip() == "site"
+
+
+def _readerRecords():
+    """(records, label) this process resolves its mode from."""
+    if _siteReader():
+        return appliedDistanceRecords("rated"), "rated"
+    return appliedDistanceRecords(), "recorded"
+
+
+def writeRatedRecords():
+    """Record, beside the ratings a go-live just published, the distance mode
+    and residual they were built in (the site reads these). Returns the
+    body written."""
+    import json
+    from datetime import datetime
+    mode = "ability" if abilityMode() else "pool"
+    body = {"distance_by": mode, "residual": bool(residualMode()),
+            "written": datetime.now().isoformat(timespec="seconds")}
+    for sp in ("XC", "TF"):
+        path = os.path.join(_DATA_DIR, f"distance_rated_{sp}.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(dict(body, sport=sp), f, indent=2)
+        os.replace(tmp, path)
+    return body
+
+
 def _resolveDistanceMode():
     env = os.environ.get("XCP_DISTANCE_BY", "").strip().lower()
-    rec = appliedDistanceModes()
+    recs, label = _readerRecords()
+    rec = {sp: r["distance_by"] for sp, r in recs.items()}
+    if label == "rated":
+        rows = appliedDistanceModes()
+        if rows and set(rows.values()) != set(rec.values() or {"pool"}):
+            print(f"[normalize_distance] ⚠ the rows were rewritten as {rows} but the "
+                  f"published ratings were built as {rec or 'pool (no rated record)'}: "
+                  f"the site reads the ratings' mode until the go-live rebuilds them")
     if env:
         if env not in DISTANCE_MODES:
             print(f"[normalize_distance] ⚠ XCP_DISTANCE_BY={env!r} is not one of "
@@ -311,7 +362,9 @@ def _resolveDistanceMode():
         return env, "env"
     modes = set(rec.values())
     if len(modes) == 1:
-        return modes.pop(), "recorded"
+        return modes.pop(), label
+    if not modes and label == "rated":
+        return "pool", "rated: none yet"
     if len(modes) > 1:
         print(f"[normalize_distance] ⚠ the two sports' rows were written in "
               f"different distance modes {rec}; reading as 'pool'. Re-run the "
@@ -326,7 +379,9 @@ def _resolveResidual(mode, mode_source):
     if mode != "ability":
         return False, "n/a"
     env = os.environ.get("XCP_DISTANCE_RESIDUAL", "").strip()
-    rec = appliedResiduals()
+    recs, _label = _readerRecords()
+    rec = {sp: bool(r.get("residual", False)) for sp, r in recs.items()
+           if r["distance_by"] == "ability"}
     if env and env not in ("0", "1"):
         print(f"[normalize_distance] ⚠ XCP_DISTANCE_RESIDUAL={env!r} is not 0 or "
               f"1; ignored")

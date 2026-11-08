@@ -1447,6 +1447,11 @@ def writeLive(live):
         print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
+    # ★ THE MODE THESE RATINGS WERE BUILT IN, for the site to read them by
+    #   (normalize_distance._readerRecords): written with the ratings, never
+    #   with the backfill, so the site never converts across two modes
+    import normalize_distance as _nd
+    print(f"[joint/live] rated distance mode recorded: {_nd.writeRatedRecords()}")
     writeSuspectDays(live.get("suspect_days", []))
     writeCourseGuard(live.get("guarded"))
     writeSportGain(live.get("gain_rows", []))
