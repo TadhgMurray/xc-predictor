@@ -51,6 +51,8 @@ def test_the_same_question_is_answered_from_memory(monkeypatch):
             return False
 
         def execute(self, sql, params=None):
+            if "to_regclass('search_index')" in sql:
+                return                  # app._searchStamp, once a minute
             calls.append(sql)
 
         def fetchall(self):
