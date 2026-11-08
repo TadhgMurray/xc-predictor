@@ -44,7 +44,7 @@ def accountsPage(cur, q="", claims_only=False, limit=PAGE_MAX):
           AND  (NOT %(co)s OR EXISTS (SELECT 1 FROM account_claim c WHERE c.account_id = a.id))
         ORDER  BY a.created_at DESC
         LIMIT  %(lim)s""", {"q": q, "co": bool(claims_only), "lim": limit})
-    accounts = [dict(r, claims=[], n_follows=0) for r in cur.fetchall()]
+    accounts = [dict(r, claims=[], follows=[], n_follows=0) for r in cur.fetchall()]
     by_id = {a["id"]: a for a in accounts}
     ids = list(by_id)
     if ids and _has(cur, "account_claim"):
@@ -55,10 +55,25 @@ def accountsPage(cur, q="", claims_only=False, limit=PAGE_MAX):
         for c in cur.fetchall():
             by_id[c["account_id"]]["claims"].append(dict(c))
     if ids and _has(cur, "account_follow"):
-        cur.execute("""SELECT account_id, count(*) AS n FROM account_follow
-                       WHERE account_id = ANY(%s) GROUP BY 1""", (ids,))
-        for r in cur.fetchall():
-            by_id[r["account_id"]]["n_follows"] = r["n"]
+        # ★ WHO, NOT ONLY HOW MANY (owner, 2026-11-08: "on the accounts page
+        #   I still can't see who people follow"): each follow named --
+        #   follows.followsFor's read, for every account on the page at once
+        from school_identity import schoolLabelIn
+        cur.execute("""SELECT account_id, kind, person_id, school, state, level
+                       FROM   account_follow
+                       WHERE  account_id = ANY(%s)
+                       ORDER  BY created_at, id""", (ids,))
+        rows = cur.fetchall()
+        names = _who(cur, [r["person_id"] for r in rows if r["kind"] == "athlete"])
+        for r in rows:
+            acct = by_id[r["account_id"]]
+            w = names.get(r["person_id"]) or {}
+            acct["follows"].append({
+                "kind": r["kind"], "person_id": w.get("person_id") or r["person_id"],
+                "name": w.get("name"), "school": r["school"], "state": r["state"],
+                "school_label": schoolLabelIn(r["school"], r["state"]) if r["school"] else "",
+                "level_label": AC.LEVEL_WORDS.get(r["level"] or "", "")})
+            acct["n_follows"] = len(acct["follows"])
     who = _who(cur, [c["person_id"] for a in accounts for c in a["claims"]])
     for a in accounts:
         for c in a["claims"]:

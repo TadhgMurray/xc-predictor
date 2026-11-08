@@ -98,6 +98,9 @@ def test_the_list_and_its_claims(pg):
     assert totals["n"] == 3 and totals["live"] == 2 and totals["recent"] == 1 and totals["claims"] == 3
     assert by["ann@example.com"]["claims"][0]["who"]["name"] == "Ann Lee"
     assert by["ann@example.com"]["n_follows"] == 1
+    # who, not only how many (owner, 2026-11-08)
+    f = by["ann@example.com"]["follows"][0]
+    assert f["kind"] == "athlete" and f["person_id"] == 20 and f["name"] == "Bo Ray"
     parent = [c for c in by["coach@example.com"]["claims"] if c["kind"] == "parent"][0]
     assert parent["who"]["merged_into"] == 20 and parent["who"]["name"] == "Bo Ray"
     assert [a["email"] for a in AA.accountsPage(cur, q="coach")[0]] == ["coach@example.com"]
