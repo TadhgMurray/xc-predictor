@@ -2236,6 +2236,14 @@ _CANONICAL_INDEXES = {
         # rankings performance boards: pool/sport/year equality, then
         #   ORDER BY speed_rating DESC LIMIT cand
         ("rr_board_rating_idx", "(pool, sport, year, speed_rating DESC)"),
+        # ★ A STATE'S RACES WITHOUT THE REST OF THE COUNTRY (2026-11-08).
+        #   A live board with a state filter -- the Events board with a
+        #   grade, a performance board -- walked rr_board_rating_idx through
+        #   every race of the pool and season and dropped all but one state:
+        #   hs_m XC 2026 CA grade 11 read 1.1M rows to keep 33,719 (0.64-1.19 s,
+        #   EXPLAIN 2026-11-08). With state in the key the scan reads that
+        #   state's rows only. The answers are the same; only the rows read.
+        ("rr_state_year_idx", "(pool, sport, year, state)"),
         # ★ THE DEFAULT BOARDS WALK THE RATING IN INDEX ORDER (owner,
         #   2026-09-02: "make the rankings faster"). A board narrowed only
         #   by pool, or by pool and sport, has no year to pin the index
