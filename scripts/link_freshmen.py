@@ -518,19 +518,32 @@ def pairsAll(fresh_by, senior_by, years):
 #   season: the pair is left alone.
 def anetCollegeNamesakes(cur, names):
     """{normName: [(person_id, school)]}: main-feed persons of these names
-    with a college row, and the colleges."""
+    and the schools of their rows that are not high school rows.
+
+    ! NOT level_conflict.collegeSql: that test is the college FEED's (a tfrrs
+      row with a college slug or an eligibility grade at a known college) and
+      is false on every main-feed row -- the first version of this guard used
+      it and never fired (owner's recheck, 2026-11-08: 0 of 15,449). A main-
+      feed row counts here when its grade is not a school grade 1-12; the
+      caller's sameCollege() against the first-year's own college is the
+      real test."""
     raw = sorted({str(n).strip().lower() for n in names if n})
     if not raw:
         return {}
     nm = "lower(btrim(a.first_name)) || ' ' || lower(btrim(a.last_name))"
+    school_grade = r"'^\s*(1[0-2]|[1-9])\s*$'"
     cur.execute(f"""
         SELECT DISTINCT {nm}, r.person_id, r.school
         FROM   athletes a JOIN results r ON r.athlete_id = a.athlete_id AND r.source = 'anet'
-        WHERE  {nm} = ANY(%(n)s) AND r.person_id IS NOT NULL AND {collegeSql('r')}
+        WHERE  {nm} = ANY(%(n)s) AND r.person_id IS NOT NULL
+          AND  NULLIF(btrim(r.school), '') IS NOT NULL
+          AND  COALESCE(r.grade, '') !~ {school_grade}
         UNION
         SELECT DISTINCT {nm}, r.person_id, r.school
         FROM   athletes a JOIN results_tf r ON r.athlete_id = a.athlete_id AND r.source = 'anet'
-        WHERE  {nm} = ANY(%(n)s) AND r.person_id IS NOT NULL AND {collegeSql('r')}
+        WHERE  {nm} = ANY(%(n)s) AND r.person_id IS NOT NULL
+          AND  NULLIF(btrim(r.school), '') IS NOT NULL
+          AND  COALESCE(r.grade, '') !~ {school_grade}
     """, {"n": raw})
     out = defaultdict(list)
     for name, pid, school in cur.fetchall():
@@ -540,14 +553,51 @@ def anetCollegeNamesakes(cur, names):
     return dict(out)
 
 
-def dropCollegeNamesakes(pairs, namesakes):
+def hsSchools(cur, pids):
+    """{person_id: {school, lowercased}} of each person's high school rows
+    (a school grade 1-12), both sports."""
+    pids = sorted({int(p) for p in pids if p is not None})
+    if not pids:
+        return {}
+    school_grade = r"'^\s*(1[0-2]|[1-9])\s*$'"
+    cur.execute(f"""
+        SELECT person_id, lower(btrim(school)) FROM results
+        WHERE  person_id = ANY(%(p)s) AND COALESCE(grade, '') ~ {school_grade}
+          AND  NULLIF(btrim(school), '') IS NOT NULL
+        UNION
+        SELECT person_id, lower(btrim(school)) FROM results_tf
+        WHERE  person_id = ANY(%(p)s) AND COALESCE(grade, '') ~ {school_grade}
+          AND  NULLIF(btrim(school), '') IS NOT NULL
+    """, {"p": pids})
+    out = defaultdict(set)
+    for pid, school in cur.fetchall():
+        out[pid].add(school)
+    return dict(out)
+
+
+def rivalsOf(a, name, college, namesakes, hs):
+    """The main-feed persons that hold this name at this college and are
+    provably someone else: a high school career of their own, at no school
+    person `a` raced for. A namesake with no high school rows may be a's own
+    college profile, split -- not a rival. Pure."""
+    out = []
+    for pid, school in namesakes.get(normName(name or ""), []):
+        if pid == a or not sameCollege(college, [school]):
+            continue
+        theirs, mine = hs.get(pid, set()), hs.get(a, set())
+        if theirs and not (theirs & mine):
+            out.append(pid)
+    return sorted(set(out))
+
+
+def dropCollegeNamesakes(pairs, namesakes, hs):
     """(kept pairs, n dropped): a pair whose first-year's college already has
-    a main-feed runner of that name under another person is dropped. Pure."""
+    a main-feed runner of that name who is provably someone else (rivalsOf)
+    is dropped. Pure."""
     kept, dropped = [], 0
     for p in pairs:
         t, a, name, college = p[0], p[1], p[2], p[3]
-        rivals = [s for pid, s in namesakes.get(normName(name), []) if pid != a]
-        if rivals and sameCollege(college, rivals):
+        if rivalsOf(a, name, college, namesakes, hs):
             dropped += 1
             continue
         kept.append(p)
@@ -957,11 +1007,13 @@ def main():
             names = [p[2] for p in all_pairs + time_pairs]
             if names:
                 ns = anetCollegeNamesakes(cur, names)
-                all_pairs, d1 = dropCollegeNamesakes(all_pairs, ns)
-                time_pairs, d2 = dropCollegeNamesakes(time_pairs, ns)
+                hs = hsSchools(cur, {pid for v in ns.values() for pid, _s in v}
+                               | {p[1] for p in all_pairs + time_pairs})
+                all_pairs, d1 = dropCollegeNamesakes(all_pairs, ns, hs)
+                time_pairs, d2 = dropCollegeNamesakes(time_pairs, ns, hs)
                 if d1 or d2:
                     print(f"[link] left alone: {d1 + d2:,} pairs whose college already has a "
-                          f"main-feed runner of that name under another person")
+                          f"main-feed runner of that name with a high school career of his own")
             if a.pair:
                 explainPair(cur, a.pair[0], a.pair[1], a.years, fresh_by, senior_by)
                 hit = [p for p in all_pairs + time_pairs

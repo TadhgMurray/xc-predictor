@@ -134,5 +134,6 @@ def test_a_college_namesake_on_the_main_feed_keeps_the_pair_apart():
              ("p:-8", 777, "Ann Lee", "Tufts", "Rivers")]
     ns = {LF.normName("Hayden Buck"): [(19764025, "East Texas Baptist")],
           LF.normName("Ann Lee"): [(777, "Tufts")]}           # the senior herself: no rival
-    kept, dropped = LF.dropCollegeNamesakes(pairs, ns)
+    hs = {19764025: {"gatlinburg-pittman"}, 29370341: {"guam"}, 777: {"rivers"}}
+    kept, dropped = LF.dropCollegeNamesakes(pairs, ns, hs)
     assert dropped == 1 and [p[1] for p in kept] == [777]
