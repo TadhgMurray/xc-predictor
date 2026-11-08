@@ -378,6 +378,8 @@ def account_follow_remove():
             dropPending(cur, sess["account"]["id"], subjectKey(gone))
         AC.logEvent(cur, "unfollow", sess["account"]["id"], detail={"id": int(fid)})
         conn.commit()
+    if (request.form.get("back") or "") == "account":
+        return redirect("/account?" + urllib.parse.urlencode({"notice": "Unfollowed."}) + "#following")
     return _toMyPage(notice="Unfollowed.", anchor="#following")
 
 

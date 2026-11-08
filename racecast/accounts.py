@@ -1100,9 +1100,17 @@ def account_page():
     with _db() as (conn, cur):
         claims = claimsFor(cur, sess["account"]["id"])
         photo = accountPhoto(cur, sess["account"]["id"])
+        # who this account follows (follows.py); none where following is not set up
+        follows = []
+        try:
+            import follows as _F
+            if _F.tablesReady(cur):
+                follows = _F.followsFor(cur, sess["account"]["id"])
+        except Exception:                                   # noqa: BLE001 -- the page without them
+            conn.rollback()
         conn.commit()
     return render_template("account.html", account=sess["account"], csrf=sess["csrf"], claims=claims,
-                           photo=photo, name_max=NAME_MAX,
+                           photo=photo, name_max=NAME_MAX, follows=follows,
                            roles=ROLES, levels=[(k, LEVEL_WORDS[k]) for k in LEVELS],
                            admin=isAdmin(sess["account"]), google=googleEnabled(),
                            notice=request.args.get("notice", "")[:200],
