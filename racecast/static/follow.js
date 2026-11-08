@@ -79,7 +79,13 @@
   //   (or follows); a per-browser convenience, so storage may fail quietly
   var KEY = 'rc_follow_help_seen';
   function helpSeen() { try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; } }
-  function markSeen() { try { localStorage.setItem(KEY, '1'); } catch (e) { /* private mode */ } }
+  function store() { try { localStorage.setItem(KEY, '1'); } catch (e) { /* private mode */ } }
+  // ★ SEEN MEANS SHOWN (speed pass, 2026-11-08): a prerendered page is
+  //   drawn before anyone opens it, so the line counts as seen on activation
+  function markSeen() {
+    if (document.prerendering) document.addEventListener('prerenderingchange', store, { once: true });
+    else store();
+  }
 
   function mount() {
     style();

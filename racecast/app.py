@@ -930,6 +930,11 @@ app.jinja_env.globals["site_origin"] = SITE_ORIGIN
 import seo as _seo
 _seo.install(app, SITE_ORIGIN)
 
+# ★ SPEED IN THE BROWSER (2026-11-08): speculation rules and the service
+#   worker's flag and /sw.js route, see speed.py. Same private list as above.
+import speed as _speed
+_speed.install(app, _PRIVATE_PREFIXES)
+
 
 # ★ ONE SPELLING PER PAGE: NO TRAILING SLASH (2026-10-10). No route but "/"
 #   ends in a slash, so /athlete/123/ was a 404 -- a shared link with a slash
