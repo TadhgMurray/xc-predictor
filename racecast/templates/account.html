@@ -152,6 +152,23 @@
     </form>
   </section>
 
+  {# ★ WHO YOU FOLLOW, HERE TOO (owner, 2026-11-08: "make the account pages
+       list the follows"). The same list as My page; unfollowing comes back
+       here. Alerts are set on My page. #}
+  <section class="acct-block" id="following">
+    <h2>Following <small class="dist-note">{{ follows|length }}</small></h2>
+    {% if follows %}
+    <ul class="acct-list">
+      {% for f in follows %}
+      <li>{% if f.kind == "athlete" %}<a href="/athlete/{{ f.person_id }}">{{ f.name or ("Athlete " ~ f.person_id) }}</a>
+          {% else %}<a href="{{ school_href(f.school, f.state) }}">{{ f.school_label or f.school }}</a>{% if f.level_label %} <span class="dist-note">{{ f.level_label }}</span>{% endif %}{% endif %}
+        <form method="post" action="/account/follow/remove" class="acct-inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ f.id }}"><input type="hidden" name="back" value="account"><button type="submit" class="acct-x">unfollow</button></form></li>
+      {% endfor %}
+    </ul>
+    <p class="meta"><a href="/account/me#alerts">Email alerts for these &rarr;</a></p>
+    {% else %}<p class="meta">Nobody yet: press Follow on an athlete or school page.</p>{% endif %}
+  </section>
+
   {# the exits, apart from each other: signing out is routine, deleting is
      not, and the two sat in one box a thumb's width apart (2026-10-03) #}
   <section class="acct-block acct-exits" id="sessions">
