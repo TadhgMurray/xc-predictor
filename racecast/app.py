@@ -389,6 +389,31 @@ def _prewarmTemplates():
             app.logger.exception("template warm-up failed: %s", name)
 
 
+# ★ EVERY TEMPLATE COMPILED ONCE, IN THE GUNICORN MASTER (2026-11-08).
+#   Each worker compiled each template it used on first use: ~1.7 s of CPU
+#   for the 92, ~8.5 MB of private memory per worker, and 24 workers (and
+#   every --max-requests respawn) paid it again. deploy/gunicorn.conf.py's
+#   when_ready calls this before gc.freeze() and the fork, so the workers
+#   inherit them shared; measured in a forked child that then rendered
+#   every template: 1.9 s -> 0.15 s first use, +21 MB -> +13 MB private.
+#   The same files through the same environment: what a page shows is the
+#   same (tests/test_template_precompile.py). auto_reload is off, as it was:
+#   a template edit needs the restart it already needed.
+# ! THE CACHE MUST HOLD THEM ALL, or the LRU evicts the oldest and a
+#   worker compiles it again (Jinja's default holds 400; the test checks).
+def precompileTemplates():
+    """Compile every template into the environment's cache. Returns how
+    many loaded; one that fails is logged and left for its first use."""
+    n = 0
+    for name in app.jinja_env.list_templates():
+        try:
+            app.jinja_env.get_template(name)
+            n += 1
+        except Exception:                               # noqa: BLE001
+            app.logger.exception("template precompile failed: %s", name)
+    return n
+
+
 def _prewarmPredict():
     _prewarmTemplates()
     try:

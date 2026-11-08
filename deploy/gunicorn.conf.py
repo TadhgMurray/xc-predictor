@@ -63,6 +63,12 @@ def when_ready(server):
             fn()
         except Exception as exc:                        # noqa: BLE001
             server.log.warning("preload: %s not loaded in the master (%s)", name, exc)
+    # every template compiled here, shared by the workers (app.precompileTemplates)
+    try:
+        import app as _app
+        server.log.info("preload: %d templates compiled", _app.precompileTemplates())
+    except Exception as exc:                            # noqa: BLE001
+        server.log.warning("preload: templates not compiled in the master (%s)", exc)
     database.closePool()               # no socket crosses a fork
     gc.collect()
     gc.freeze()                        # shared pages stay shared
