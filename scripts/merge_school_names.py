@@ -349,9 +349,12 @@ ROSTER_MIN_FRACTION = 0.85
 #   racing UNATTACHED (a redshirt, an open race) -- the college's people,
 #   never its team: folded in, they would score for it (owner's dry run,
 #   2026-11-05)
+# ! AND "UNATT" / "Unat" ANYWHERE IN THE NAME (owner's dry run, 2026-11-08:
+#   "Amarillo HS UNATT" into Amarillo, "Ada Unat" into Forest Hills Eastern --
+#   a school's runners racing unattached, never its team)
 _NOT_A_TEAM = re.compile(r"\bclub\b|alumni|unattached|unaffiliated|\belite\b|\btc\b|"
                          r"track club|running club|striders|\baa\b|\bac\b|"
-                         r"^\s*unat?\b|^\s*una?t?\s*-", re.I)
+                         r"^\s*unat?\b|^\s*una?t?\s*-|\bunatt?\b", re.I)
 
 
 def rosterPairs(rosters_by_name, level_of, min_shared=ROSTER_MIN_SHARED,

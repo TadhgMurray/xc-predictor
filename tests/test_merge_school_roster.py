@@ -87,3 +87,10 @@ def test_a_rename_without_a_team_record_takes_its_runners_state():
     # a name its runners spread over many states gets no state, so no merge
     merged, refused = M.judge(pairs, ros, {"Reading": {"MA"}}, level_of=lvl, identity_states={})
     assert not merged
+
+
+def test_a_schools_unattached_runners_are_not_its_team():
+    """owner's dry run, 2026-11-08: 'Amarillo HS UNATT', 'Ada Unat'"""
+    ros = {"Amarillo": set(range(60)), "Amarillo HS UNATT": set(range(0, 14)),
+           "Forest Hills Eastern Ada": set(range(100, 160)), "Ada Unat": set(range(100, 113))}
+    assert M.renamedPairs(ros, {n: "hs" for n in ros}) == []
