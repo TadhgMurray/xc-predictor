@@ -639,3 +639,15 @@
 
 /* the next-season caption: the expectation in ink, where it comes from muted */
 .chart-cap .chart-cap-why { color: var(--muted, #6b7280); }
+
+/* ★ ROOM FOR THE CHART BEFORE IT IS DRAWN (speed pass, 2026-11-08). A slot
+   is empty until athlete-charts.js fills it, so the season tables under it
+   were laid out once without the chart and jumped down by its height when it
+   arrived: a layout shift of 0.21 on every athlete page (0.25 on a phone),
+   the worst on the site. The empty slot now takes the drawn chart's height --
+   the title row (1.375rem with its margin) and --chart-h -- so the tables
+   are where they will stay from the first paint. Nothing changes once the
+   chart is in: :empty stops matching and height is auto again. Only the
+   athlete charts (data-chart), whose height is known; a hidden pane takes no
+   room either way. */
+.chart-slot.chart-wide[data-chart]:empty { min-height: calc(var(--chart-h) + 1.375rem); }

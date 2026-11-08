@@ -183,6 +183,22 @@ class HeroPhotos(unittest.TestCase):
         self.assertIn("hero_srcset(slot", src)
 
 
+class ChartRoom(unittest.TestCase):
+    """athlete-charts.css (speed pass, 2026-11-08): an athlete chart's slot
+    holds the drawn chart's height before the script fills it, so the season
+    tables under it do not jump (CLS 0.21 -> 0.01 desktop, 0.25 -> 0.06 phone).
+    Outside every media query, keyed on :empty (so a drawn chart sizes itself)
+    and on --chart-h (so each breakpoint's height carries over)."""
+
+    def test_empty_athlete_chart_slot_holds_its_height(self):
+        css = open(os.path.join(_STATIC, "athlete-charts.css"), encoding="utf-8").read()
+        m = re.search(r"\.chart-slot\.chart-wide\[data-chart\]:empty\s*\{([^}]*)\}", css)
+        self.assertIsNotNone(m, "the reserved-height rule is gone")
+        self.assertRegex(m.group(1), r"min-height:\s*calc\(var\(--chart-h\)\s*\+\s*1\.375rem\)")
+        before = css[:m.start()]
+        self.assertEqual(before.count("{") - before.count("}"), 0, "the rule sits inside a block")
+
+
 class PrerenderSafety(unittest.TestCase):
     """A prerendered page runs its scripts before anyone sees it (Chrome's
     own address-bar guesses). The scripts that record or show something on
