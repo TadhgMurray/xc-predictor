@@ -20,15 +20,14 @@
 #   in XCP_REPLAY_SEASONS (default 2025 2026 2024 2023: the validation
 #   season first, so an honest score comes soonest). A done cutoff (its file
 #   exists) is skipped, so the script can be stopped and started again.
-# ! NEVER BESIDE THE PIPELINE: each solve takes .pipeline.lock (the nightly
-#   SKIPS a night it finds held, so no cutoff STARTS in XCP_REPLAY_QUIET,
-#   default 03:30-09:30 UTC: Postgres restarts 04:30-07:00 and the nightly
-#   starts 09:17 UTC). A solve holds the whole pack in memory.
-# ! AND NOT BESIDE ANY OF ITS PARTS (owner, 2026-11-07: "I ran it with the
-#   pipeline and it OOMed"). The lock alone let a cutoff start while heavy
-#   work still ran. A cutoff now also waits until no pipeline, nightly,
-#   solve, race_rows or race_trees process is running (busy) and the
-#   machine has XCP_REPLAY_MIN_GB of memory available (default 70).
+# ! NOT THE PIPELINE LOCK (owner, 2026-11-08: "change the replay thing to not
+#   wait for pipeline lock"): a replay writes nothing the pipeline reads, and
+#   holding the lock made the nightly skip. What it waits for is MEMORY
+#   (owner, 2026-11-07: run beside a race_trees fit, the box ran out): no
+#   other engine solve, race_rows, race_trees or race_blend running (busy),
+#   XCP_REPLAY_MIN_GB available (default 70), and not in XCP_REPLAY_QUIET
+#   (default 03:30-07:00 UTC, the Postgres restart). A pipeline that is only
+#   running its other steps does not hold it up.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -37,7 +36,7 @@ if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
 PY="${XCP_PYTHON:-/srv/venv/bin/python}"
 OUT="${XCP_PRED_DIR:-/srv/pred}/asof"
 LOGDIR="$ROOT/logs/replay"
-QUIET="${XCP_REPLAY_QUIET:-03:30-09:30}"
+QUIET="${XCP_REPLAY_QUIET:-03:30-07:00}"
 . "$ROOT/deploy/joint_flags.sh"
 jointFlags
 
@@ -58,7 +57,7 @@ inQuiet() {
   [ "$now" -ge "$lo" ] && [ "$now" -lt "$hi" ]
 }
 busy() {
-  pgrep -f "deploy/run_pipeline.sh|deploy/nightly_update.sh|deploy/race_model_weekly.sh|engine/run_joint.py|model/race_rows.py|model/race_trees.py|model/race_blend.py" >/dev/null
+  pgrep -f "engine/run_joint.py|model/race_rows.py|model/race_trees.py|model/race_blend.py" >/dev/null
 }
 availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
 ready() { ! inQuiet && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
@@ -78,9 +77,8 @@ for d in $DATES; do
   snap="$OUT/asof_$d.npz"
   if [ -f "$snap" ]; then say "$d already done"; continue; fi
   waited=0
-  exec 9>"$ROOT/.pipeline.lock"
-  until ready && flock -n 9; do
-    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, other heavy work, under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB, or the pipeline lock)"
+  until ready; do
+    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
     waited=1
     sleep 300
   done
@@ -94,7 +92,5 @@ for d in $DATES; do
   fi
   # the solve's own npz and state are large and read by nothing: the snapshot is the output
   rm -f "${snap%.npz}_joint.npz" "${snap%.npz}_joint_state.npz"
-  flock -u 9
-  exec 9>&-
 done
 say "all cutoffs tried: $(ls "$OUT"/asof_*.npz 2>/dev/null | wc -l) snapshots in $OUT"

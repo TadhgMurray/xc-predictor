@@ -1048,9 +1048,10 @@ The honest model orders better than the hindsight-flattered ratings. Built:
   (refuses --golive, --golive-dry, holdouts; its own npz/state beside the
   snapshot).
 - `deploy/engine_replay.sh`: one solve per cutoff (1st and 15th, mid-August
-  to December 1; seasons 2025, 2026, 2024, 2023), skips done ones, takes
-  .pipeline.lock, starts nothing 03:30-09:30 UTC (Postgres restart, the
-  nightly at 09:17 UTC). `--list` shows what is done.
+  to December 1; seasons 2025, 2026, 2024, 2023), skips done ones. Not the
+  pipeline lock (owner, 2026-11-08); it waits for memory instead: no other
+  solve or model fit running, 70 GB free, not 03:30-07:00 UTC (Postgres
+  restart). `--list` shows what is done.
 - `race_rows --asof-dir`: each race from the snapshot in force at its cut
   (race day - lead): its runners' ratings and its course cell. Rows after
   the snapshot are unrated (as that morning); rows older than its window
