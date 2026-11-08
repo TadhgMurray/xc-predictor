@@ -79,3 +79,15 @@ if __name__ == "__main__":
         print("  - " + str(e).replace("\n", "\n  - "))
         sys.exit(1)
     print("test_athlete_bests_marks: all checks passed")
+
+
+def test_a_not_ranked_row_is_not_the_best_race():
+    # owner, 2026-11-08: a header "Best race 161.5" off a row the table greys
+    import os, sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "racecast"))
+    from athlete_bests import all_time_bests
+    races = [{"sport": "XC", "result_id": 1, "speed_rating": 161.5, "rank_outlier": "thin"},
+             {"sport": "XC", "result_id": 2, "speed_rating": 138.9}]
+    got = all_time_bests(races)
+    assert got["rating"]["result_id"] == 2
+    assert got["XC"]["rating"]["result_id"] == 2
