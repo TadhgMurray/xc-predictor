@@ -42,6 +42,7 @@ def _workerTorchThreads():
 
 def when_ready(server):
     """In the master, after the app is imported and before the first fork."""
+    _startWarmer(server)
     if not preload_app:
         return
     import gc
@@ -66,6 +67,27 @@ def when_ready(server):
     gc.collect()
     gc.freeze()                        # shared pages stay shared
     server.log.info("preload: app and model loaded once; pool closed; gc frozen")
+
+
+def _startWarmer(server):
+    """scripts/warm_site.py in its own process, detached (XCP_WARM_SITE=0:
+    off). Never a thread here: the master forks workers for its whole life
+    (max-requests), and a thread alive at a fork can leave a lock held in
+    the child."""
+    if os.environ.get("XCP_WARM_SITE", "1") != "1":
+        return
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.join(root, "scripts", "warm_site.py")
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.Popen([sys.executable, "-u", script], start_new_session=True,
+                         stdin=subprocess.DEVNULL)
+        server.log.info("warm: scripts/warm_site.py started")
+    except Exception as exc:                            # noqa: BLE001
+        server.log.warning("warm: not started (%s)", exc)
 
 
 def post_fork(server, worker):
