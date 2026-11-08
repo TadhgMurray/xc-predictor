@@ -105,3 +105,25 @@ def test_the_shared_directory_is_swept_of_dead_files(tmp_path, monkeypatch):
     monkeypatch.setattr(sharedcache, "_last_sweep", [0.0])
     sharedcache.get("k", lambda: 1, ttl=60, now=lambda: t, path=d)
     assert not os.path.exists(old) and os.path.exists(fresh)
+
+
+def test_threads_racing_to_make_the_pool_get_one(monkeypatch):
+    """! 2026-11-08: four builder threads each made a pool; connections went
+    back to a pool that had not lent them."""
+    import threading
+    import time as _t
+    import psycopg2.pool
+    import database as D
+    made = []
+
+    class P:
+        def __init__(self, *a, **k):
+            _t.sleep(0.05)                  # widen the race
+            made.append(self)
+    monkeypatch.setattr(psycopg2.pool, "ThreadedConnectionPool", P)
+    monkeypatch.setattr(D, "_pool", None)
+    monkeypatch.setattr(D, "_slots", None)
+    ts = [threading.Thread(target=D.initPool) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert len(made) == 1 and D._pool is made[0]

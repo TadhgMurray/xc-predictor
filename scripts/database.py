@@ -300,13 +300,28 @@ _slots = None     # one per MAX_CONN: getConn waits on it (POOL_WAIT)
 #          Safe to call multiple times - if pool exists it won't do anything.
 # Arguments: None.
 # Output: None.
+# ! ONE POOL EVEN WHEN THREADS RACE TO MAKE IT (2026-11-08: build_wit_marks
+#   runs four states at once; all four found no pool, each made one, the
+#   last replaced the others, and the first states' connections went back to
+#   a pool that had not lent them -- "PoolError: trying to put unkeyed
+#   connection" for AK, AL and AR). Made under a lock, checked again inside.
+_INIT_LOCK = threading.Lock()
+
+
 def initPool():
     global _pool
 
     # Giuard: don't create a second pool if one already exists.
     if _pool is not None:
         return
-    
+    with _INIT_LOCK:
+        if _pool is not None:
+            return
+        _initPoolLocked()
+
+
+def _initPoolLocked():
+    global _pool
     try:
         # Creates a pool with at least MIN_CONN connections and less than MAX_CONN
         # connections. Other functions can take/open the connections as they please
@@ -315,11 +330,13 @@ def initPool():
         # 5 connections in the pool instantly.
         global _slots
         _slots = threading.BoundedSemaphore(MAX_CONN)
-        _pool = psycopg2.pool.ThreadedConnectionPool(
+        # built first, published last: a thread that sees _pool sees _slots
+        pool = psycopg2.pool.ThreadedConnectionPool(
             min(MIN_CONN, MAX_CONN),
             MAX_CONN,
             **_PG_CONFIG_WITH_TIMEOUT
         )
+        _pool = pool
         print(f"[DB] Connection pool created ({MIN_CONN}-{MAX_CONN} connections)")
     except Exception as e:
         # Pool creation failure is fatal — nothing can run without it.
