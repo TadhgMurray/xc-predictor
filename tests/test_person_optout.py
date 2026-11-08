@@ -133,3 +133,46 @@ def test_race_page_names_them_hidden_and_unlinked(client):
     other = next(r for r in T.fixtureRows()
                  if r["name"] != "Dq Runner" and r["div_id"] == dq["div_id"])
     assert f'href="/athlete/{other["person_id"]}' in html
+
+
+def test_an_added_athlete_is_hidden_without_a_restart(monkeypatch):
+    """(owner, 2026-11-08) The list is re-read once it is REFRESH_S old."""
+    import contextlib
+    import person_optout as P
+    table = {"ids": [5]}
+
+    class Cur:
+        def execute(self, sql, args=None):
+            self.sql = sql
+
+        def fetchone(self):
+            return ("person_optout",)
+
+        def fetchall(self):
+            return [(i,) for i in table["ids"]]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return Cur()
+
+    @contextlib.contextmanager
+    def factory():
+        yield Conn()
+    clock = {"t": 1000.0}
+    monkeypatch.setattr("time.monotonic", lambda: clock["t"])
+    monkeypatch.setitem(P._STATE, "loaded", False)
+    P.loadHidden(factory)
+    assert P.hiddenIds() == {5}
+    table["ids"] = [5, 9]                       # scripts/optout.py --add 9
+    clock["t"] += P.REFRESH_S - 1
+    assert P.hiddenIds() == {5}                 # not yet
+    clock["t"] += 2
+    assert P.hiddenIds() == {5, 9}              # picked up, no restart
+    P.setHidden(set())
+    monkeypatch.setitem(P._STATE, "factory", None)

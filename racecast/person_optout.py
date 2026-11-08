@@ -22,8 +22,13 @@
 #   anchor still points at a hidden id (one pass over the HTML) covers every
 #   one of them, including the next template someone writes.
 #
-# ! LOADED ONCE PER PROCESS, like the crests and the labels: restart the
-#   site after scripts/optout.py --add. A missing table is an empty set --
+# ★ RE-READ EVERY REFRESH_S (owner, 2026-11-08: "if I just remove them ...
+#   will the data be hidden if I don't do anything else"). It was loaded once
+#   per process, and nothing but a full pipeline run restarts the site, so an
+#   --add alone did nothing for days. Every worker now re-reads the table
+#   (one tiny query) when the list is older than REFRESH_S, on the request
+#   that finds it stale (app._optoutGone asks hiddenIds() first thing). A
+#   failed read keeps the list it had. A missing table is an empty set --
 #   nothing hidden, never an error.
 #
 # ! THE OWNER DECIDES. Nothing here detects; an id is added by hand with
@@ -43,7 +48,8 @@ CREATE TABLE IF NOT EXISTS person_optout (
 )
 """
 
-_STATE = {"ids": frozenset(), "loaded": False}
+_STATE = {"ids": frozenset(), "loaded": False, "factory": None, "due": 0.0}
+REFRESH_S = 300.0
 
 # ★ WHICH KEY NAMES WHICH PERSON. A row that carries the id under one key
 #   carries the name under the keys beside it; a team row's best runner is
@@ -104,15 +110,25 @@ def loadIds(cur):
 def loadHidden(conn_factory, force=False):
     """Fill the process cache. Safe to call always: no table, no database,
     an empty set."""
+    import time
+    _STATE["factory"] = conn_factory
     if _STATE["loaded"] and not force:
         return
+    _STATE["due"] = time.monotonic() + REFRESH_S
     try:
         with conn_factory() as conn:
             with conn.cursor() as cur:
                 _STATE["ids"] = loadIds(cur)
-    except Exception:                    # noqa: BLE001 -- an empty set is the safe default
+    except Exception:                    # noqa: BLE001 -- the list it had is the safe default
         pass
     _STATE["loaded"] = True
+
+
+def _refresh():
+    """Re-read the table when the list is older than REFRESH_S."""
+    import time
+    if _STATE["factory"] is not None and time.monotonic() >= _STATE["due"]:
+        loadHidden(_STATE["factory"], force=True)
 
 
 def setHidden(ids):
@@ -122,6 +138,7 @@ def setHidden(ids):
 
 
 def hiddenIds():
+    _refresh()
     return _STATE["ids"]
 
 

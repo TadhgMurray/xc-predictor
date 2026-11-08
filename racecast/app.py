@@ -11656,6 +11656,11 @@ import uploads as _uploads                                     # noqa: E402
 import fixes as _fixes                                         # noqa: E402
 for _bp in (_uploads.bp, _fixes.bp):
     app.register_blueprint(_bp)
+# ★ A RUNNER'S OWN TRAINING (owner, 2026-11-08): uploaded from their watch's
+#   files, a summary per run, only the runner sees it -- see training_log.py.
+#   Under /account, so private (no-store, not crawled).
+import training_log as _training_log                           # noqa: E402
+app.register_blueprint(_training_log.bp)
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): the owner's page at
 #   /account/admin/social, see social.py; step 13g_social builds them.
 import social as _social                                       # noqa: E402

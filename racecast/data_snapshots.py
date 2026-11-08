@@ -90,6 +90,10 @@ def take(cur, label, sport, year):
                     ORDER  BY (u.is_college = (split_part(s.pool, '|', 1) LIKE 'college%%')) DESC
                     LIMIT  1) un ON TRUE""" if has_units else "")
     cols = "un.league, un.conference" if has_units else "NULL::text, NULL::text"
+    # an athlete who opted out is never copied in (person_optout)
+    cur.execute("SELECT to_regclass('person_optout')")
+    optout = ("AND NOT EXISTS (SELECT 1 FROM person_optout o WHERE o.person_id = s.person_id)"
+              if cur.fetchone()[0] is not None else "")
     cur.execute(f"""
         SELECT s.person_id, a.name, s.school, s.state, split_part(s.pool, '|', 1) AS level,
                s.grade, s.mean_rating, s.best_rating, s.n_races, {cols}
@@ -97,7 +101,7 @@ def take(cur, label, sport, year):
         {nameLateral("s")}
         {units}
         WHERE  s.sport = %(sport)s AND s.year = %(year)s AND s.mean_rating IS NOT NULL
-          AND  a.name IS NOT NULL""", {"sport": sport, "year": year})
+          AND  a.name IS NOT NULL {optout}""", {"sport": sport, "year": year})
     rows = []
     for pid, name, school, state, level, grade, mean, best, n, league, conf in cur.fetchall():
         hs = pool_view.toHs(mean, level, sport)
@@ -206,8 +210,14 @@ def athletes_csv(snap_id):
         rows = cur.fetchall()
         conn.rollback()
     site = request.host_url.rstrip("/")
+    # ★ NEVER AN ATHLETE WHO OPTED OUT (person_optout), whenever the
+    #   snapshot was taken: a file copied before their request must not
+    #   name them after it. Left out at download, so every old snapshot
+    #   obeys a new opt-out.
+    import person_optout
+    hidden = person_optout.hiddenIds()
     out = ((lv, nm, sc, st, gr, lg, cf, r, b, n, f"{site}/athlete/{pid}")
-           for lv, nm, sc, st, gr, r, b, n, lg, cf, pid in rows)
+           for lv, nm, sc, st, gr, r, b, n, lg, cf, pid in rows if pid not in hidden)
     name = f"racecast-{snap[2].lower()}-{snap[3]}-ratings-{snap_id}" \
            + (f"-{state}" if state else "") + (f"-{level}" if level else "") + ".csv"
     return _csv(["level", "name", "school", "state", "grade", "league", "conference",
