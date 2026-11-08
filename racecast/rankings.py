@@ -859,7 +859,10 @@ def eventRestricted(f):
 #   which RACES count (_evPreset) and only while the table was built from
 #   the live ranking_results (_evTableFresh); anything else runs live.
 EV_PRESETS = (800, 1500, 3000, 5000)
+EV_TABLE = "athlete_season_ev"
+EV_GRADE_TABLE = "athlete_season_ev_grade"
 _EV_FRESH = {"at": 0.0, "ok": False}
+_EV_GRADE_FRESH = {"at": 0.0, "ok": False}
 _EV_FRESH_TTL = 60.0
 
 
@@ -867,7 +870,43 @@ def _evPreset(f):
     """The preset (metres) a board can read from athlete_season_ev, or None.
     Every filter that picks RACES -- a state, a school, a grade, a unit, the
     scope beyond the default, a dist_max -- changes the seasons themselves,
-    and those boards run live."""
+    and those boards run live (one grade: _evGradePreset)."""
+    if f.get("grade"):
+        return None
+    return _evWindow(f)
+
+
+# ★ ONE GRADE, PRECOMPUTED TOO (owner, 2026-11-08: the grade-10 Events board
+#   at 3-22 s). The grade filter picks RACES by the row's own grade key
+#   (GRADE_KEY_SQL on ranking_results' grade/pool/year, inside
+#   _abilitySource's `ev`), so a grade-10 season is the aggregate over the
+#   races run as a 10th grader -- a different season, not a slice of the
+#   all-grades one. athlete_season_ev_grade holds exactly that:
+#   _abilitySource(by_grade=True) adds the row's key to every window
+#   partition and to the GROUP BY, and the group whose key is k IS the live
+#   query's season under grade=k (same rows in, same SQL over them).
+#   ! ONE KEY ONLY. grade=10,11 aggregates the union of both grades' races,
+#     and a percentile of a union is not a function of its parts: several
+#     keys run live. Spellings of one key (10, 10th) are one key.
+#   ! EVERY NON-NULL KEY IS BUILT, not a list of grades, so a key no row
+#     carries is an empty board here exactly as it is live. A NULL grade
+#     never matches `= ANY(...)`, so no NULL key is built.
+def _evGradePreset(f):
+    """(preset, grade key) a one-grade board can read from
+    athlete_season_ev_grade, or None: _evPreset's window, one grade key."""
+    g = f.get("grade")
+    if not g:
+        return None
+    keys = {_gradeKey(v) for v in g}
+    if len(keys) != 1:
+        return None
+    d = _evWindow(f)
+    return None if d is None else (d, keys.pop())
+
+
+def _evWindow(f):
+    """The preset when dist_min is one and no filter but grade (the
+    callers' to judge), pool, sport, gender and year narrows the races."""
     d = f.get("dist_min")
     if d is None or f.get("dist_max") is not None:
         return None
@@ -879,35 +918,37 @@ def _evPreset(f):
         return None
     if f.get("scope", "usa") != "usa":
         return None
-    if any(f.get(k) for k in ("state", "school", "grade")):
+    if any(f.get(k) for k in ("state", "school")):
         return None
     if any(f.get(k) for k in UNIT_FILTERS):
         return None
     return int(d)
 
 
-def _evTableFresh(now=None):
-    """athlete_season_ev exists and was built from the live ranking_results
-    (its comment names that table's oid). Asked once a minute per worker."""
+def _evTableFresh(now=None, table=EV_TABLE):
+    """athlete_season_ev (or athlete_season_ev_grade) exists and was built
+    from the live ranking_results (its comment names that table's oid).
+    Asked once a minute per worker and table."""
     import time as _t
+    slot = _EV_GRADE_FRESH if table == EV_GRADE_TABLE else _EV_FRESH
     now = _t.time() if now is None else now
-    if now - _EV_FRESH["at"] < _EV_FRESH_TTL:
-        return _EV_FRESH["ok"]
+    if now - slot["at"] < _EV_FRESH_TTL:
+        return slot["ok"]
     ok = False
     try:
         from database import getConn
         with getConn() as conn, conn.cursor() as c:
-            c.execute("""SELECT obj_description(to_regclass('athlete_season_ev'), 'pg_class'),
-                                'ranking_results'::regclass::oid""")
+            c.execute("""SELECT obj_description(to_regclass(%s), 'pg_class'),
+                                'ranking_results'::regclass::oid""", (table,))
             desc, oid = c.fetchone()
             ok = desc is not None and desc == f"rr_oid={int(oid)}"
     except Exception as exc:                            # noqa: BLE001
-        print(f"athlete_season_ev check: {type(exc).__name__}: {exc}", flush=True)
-    _EV_FRESH.update(at=now, ok=ok)
+        print(f"{table} check: {type(exc).__name__}: {exc}", flush=True)
+    slot.update(at=now, ok=ok)
     return ok
 
 
-def _abilitySource(f, params, where="", precomputed=False):
+def _abilitySource(f, params, where="", precomputed=False, by_grade=False):
     """The FROM fragment for the ability board, aliased `s`.
 
     Unrestricted this is the prebuilt table. Restricted it is the same
@@ -922,17 +963,28 @@ def _abilitySource(f, params, where="", precomputed=False):
       carries them (they are stamped per school+state at build time, same
       as on athlete_season), and leaving one out would make a division
       filter fail only in the restricted case.
+
+    by_grade (build_season_events only) adds the race's grade key, gkey, to
+    every window partition and to the GROUP BY: one season per (person,
+    pool, sport, year, gkey), the season the live query makes of grade=gkey.
     """
     if not eventRestricted(f):
         return "athlete_season s"
     # ! precomputed is the CALLER's word that `where` is _whereClauses(f) for
     #   this board -- the team board passes its own inner filter (no scope),
     #   whose seasons the table does not hold, and never sets it
-    if precomputed:
+    if precomputed and not by_grade:
         ev = _evPreset(f)
         if ev is not None and _evTableFresh():
             params["ev_dist"] = ev
             return "(SELECT * FROM athlete_season_ev WHERE dist_min = %(ev_dist)s) s"
+        # ! the outer `where` keeps its grade clause; on these rows it is
+        #   always true (s.grade is the mode of races carrying that key)
+        evg = _evGradePreset(f)
+        if evg is not None and _evTableFresh(table=EV_GRADE_TABLE):
+            params["ev_dist"], params["ev_gkey"] = evg
+            return ("(SELECT * FROM athlete_season_ev_grade"
+                    " WHERE dist_min = %(ev_dist)s AND gkey = %(ev_gkey)s) s")
 
     dist = []
     if f.get("dist_min") is not None:
@@ -988,6 +1040,16 @@ def _abilitySource(f, params, where="", precomputed=False):
     ev_cols = ", ".join(["r.person_id", "r.pool", "r.sport", "r.year", "r.speed_rating",
                          "r.race_date", "r.state", "r.school", "r.grade"]
                         + [f'r."{c}"' for c in cols if c in have])
+    # the season's key; by_grade adds the race's grade key -- the very
+    # GRADE_KEY_SQL _whereClauses compares for grade=, on the same r columns
+    part = "person_id, pool, sport, year"
+    gsel = ""
+    if by_grade:
+        gk = gradeKeySql("r")
+        ev_cols += f", {gk} AS gkey"
+        where_dist += f" AND {gk} IS NOT NULL"
+        part += ", gkey"
+        gsel = " e.gkey,"
     return f"""(
         WITH ev AS (
             SELECT {ev_cols}
@@ -996,9 +1058,9 @@ def _abilitySource(f, params, where="", precomputed=False):
         ),
         ranked AS (
             SELECT ev.*,
-                   row_number() OVER (PARTITION BY person_id, pool, sport, year
+                   row_number() OVER (PARTITION BY {part}
                                       ORDER BY speed_rating) AS rn_,
-                   count(*) OVER (PARTITION BY person_id, pool, sport, year) AS n_
+                   count(*) OVER (PARTITION BY {part}) AS n_
             FROM   ev
         ),
         withmed AS (
@@ -1006,12 +1068,12 @@ def _abilitySource(f, params, where="", precomputed=False):
                    -- the lower and upper middle (the same race when n_ is
                    -- odd), halved in double precision: percentile_cont(0.5)
                    (max(speed_rating::float8) FILTER (WHERE rn_ = (n_ + 1) / 2)
-                        OVER (PARTITION BY person_id, pool, sport, year)
+                        OVER (PARTITION BY {part})
                     + max(speed_rating::float8) FILTER (WHERE rn_ = (n_ + 2) / 2)
-                        OVER (PARTITION BY person_id, pool, sport, year)) / 2 AS m_
+                        OVER (PARTITION BY {part})) / 2 AS m_
             FROM   ranked
         )
-        SELECT e.person_id, e.pool, e.sport, e.year,
+        SELECT e.person_id, e.pool, e.sport, e.year,{gsel}
                {seasonQuantileSql("e.speed_rating", _SEASON_Q)}::real
                                                       AS mean_rating,
                max(e.speed_rating)::real              AS best_rating,
@@ -1026,7 +1088,7 @@ def _abilitySource(f, params, where="", precomputed=False):
                          for c in cols)[:-2] or "NULL AS _no_units"}
         FROM   withmed e
         WHERE  e.speed_rating >= e.m_ - {_SEASON_OUTLIER_PTS}
-        GROUP  BY e.person_id, e.pool, e.sport, e.year
+        GROUP  BY e.person_id, e.pool, e.sport, e.year{", e.gkey" if by_grade else ""}
     ) s"""
 
 

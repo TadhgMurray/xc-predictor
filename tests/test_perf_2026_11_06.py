@@ -811,6 +811,178 @@ def test_events_boards_from_the_table_equal_the_live_ones(pg):
         R._EV_FRESH.update(at=0.0, ok=False)
 
 
+# --------------------------------------------------------------- 13b --
+# One grade, precomputed (athlete_season_ev_grade, owner 2026-11-08)
+
+def test_ev_grade_preset_only_for_one_grade_key():
+    import rankings as R
+    base = {"dist_min": 1500.0, "dist_max": None, "scope": "usa"}
+    assert R._evGradePreset(base) is None                      # no grade: the plain table
+    assert R._evGradePreset(dict(base, grade=["10"])) == (1500, "10")
+    assert R._evGradePreset(dict(base, grade=["10", "10th"])) == (1500, "10")   # one key
+    assert R._evGradePreset(dict(base, grade=["Senior"], year=[2026], pool="hs_m",
+                                 sport="XC", gender="m")) == (1500, "sr")
+    assert R._evGradePreset(dict(base, grade=["10", "11"])) is None   # a union: live
+    for extra in ({"dist_min": 2000.0}, {"dist_max": 9000.0}, {"scope": "all"},
+                  {"state": ["CA"]}, {"school": ["Calvin"]}, {"conference": ["HCC"]}):
+        assert R._evGradePreset(dict(base, grade=["10"], **extra)) is None, extra
+    assert R._evPreset(dict(base, grade=["10"])) is None       # never the all-grades table
+
+
+def test_ability_source_reads_the_grade_table_only_when_asked_and_fresh():
+    import rankings as R
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    f = {"dist_min": 3000.0, "dist_max": None, "scope": "usa", "grade": ["11th"]}
+    R._EV_FRESH.update(at=1e18, ok=True)
+    R._EV_GRADE_FRESH.update(at=1e18, ok=True)
+    try:
+        p = {}
+        src = R._abilitySource(f, p, "", precomputed=True)
+        assert "athlete_season_ev_grade" in src and (p["ev_dist"], p["ev_gkey"]) == (3000, "11")
+        assert "athlete_season_ev" not in R._abilitySource(f, {}, "")         # the team board
+        assert "athlete_season_ev" not in R._abilitySource(
+            dict(f, grade=["9", "10"]), {}, "", precomputed=True)            # two grades
+        R._EV_GRADE_FRESH.update(ok=False)                             # built from another rr
+        assert "athlete_season_ev" not in R._abilitySource(f, {}, "", precomputed=True)
+    finally:
+        R._EV_FRESH.update(at=0.0, ok=False)
+        R._EV_GRADE_FRESH.update(at=0.0, ok=False)
+    # the owner's board (2026-11-08, 3-22 s live) walks an index in its own
+    # order after the equalities, with and without a year
+    import build_season_events as B
+    ix = {n: _cols(c) for n, c in B.GRADE_INDEXES}
+    for yr, name in (("", "mean"), ("&year=2026", "year_mean")):
+        order = _boardOrder("board=ability&pool=hs_m&sport=XC&scope=usa&scale=hs&limit=50"
+                            f"&offset=0&dist_min=1500&grade=10&sort=rating{yr}")
+        keys = [k.replace("s.", "").strip() for k in order.split(",")]
+        assert ix[name] == ["dist_min", "gkey", "pool", "sport"] + (["year"] if yr else []) + keys
+    assert ix["person"] == ["person_id"]
+
+
+# hs_m, college_m and ms_m athletes (person % 3), 70 races each (r) over two
+# seasons. Each season's ratings sit in their own band (2025: 70-153, 2026:
+# 170-253), so one athlete's two seasons never tie on (rating, person) and
+# the boards' order is total; inside a band ratings are whole numbers, so
+# athletes tie on rating and the person_id tiebreak decides pages. Grades:
+# every spelling the key folds (10, 10th, Sr, a class year, Fr/So/Jr/Sr,
+# 13-16 in college), mixed within a season, NULL on one race in six, and
+# every seventh athlete moves up a grade halfway through the season (two
+# keys in one season) and runs 35 points faster after it -- so the
+# season's median, and the outlier cut, differ from each grade's own.
+_EVG_FIXTURE = """
+    CREATE TEMP TABLE ranking_results AS
+    WITH b AS (
+        SELECT g, g % 900 AS person, g / 900 AS r, 2025 + (g / 900) % 2 AS year,
+               CASE (g % 900) % 3 WHEN 0 THEN 'hs_m' WHEN 1 THEN 'college_m' ELSE 'ms_m' END AS pool,
+               (g / 900) AS day
+        FROM generate_series(0, 62999) g),
+    c AS (
+        SELECT b.*, ((person / 3) + year) % 4 + moved AS step, moved, (r + person / 3) % 6 AS sp
+        FROM b, LATERAL (SELECT CASE WHEN person % 7 = 0 AND day >= 35 THEN 1 ELSE 0 END
+                         AS moved) m)
+    SELECT pool, 'XC'::text AS sport,
+           CASE WHEN (r * 7 + person) % 53 = 0 THEN NULL
+                ELSE (ARRAY[800, 1600, 3000, 5000, 1500])[1 + (r + person) % 5] END::real
+               AS distance,
+           (900 + g % 600)::real AS time_seconds, g::bigint AS result_id,
+           person::bigint AS person_id,
+           ((CASE WHEN year = 2025 THEN 100 ELSE 200 END)
+            + CASE WHEN (r + person) % 17 = 0 THEN -30
+                   ELSE ((g::bigint * 7919) % 19) + 35 * moved END)::real AS speed_rating,
+           make_date(year, 9, 1) + day AS race_date, year,
+           CASE WHEN (r + person) % 41 = 0 THEN 'ON'
+                ELSE (ARRAY['WI','CA','TX'])[1 + person % 3] END AS state,
+           'School ' || person % 30 AS school,
+           CASE WHEN sp = 0 THEN NULL
+                WHEN pool = 'hs_m' THEN
+                    CASE WHEN sp = 1 THEN (9 + step) || 'th'
+                         WHEN sp = 2 AND 9 + step = 12 THEN 'Sr'
+                         WHEN sp = 3 AND 9 + step = 12 THEN (year + 1)::text
+                         ELSE (9 + step)::text END
+                WHEN pool = 'college_m' THEN
+                    CASE WHEN sp = 1 THEN (13 + step)::text
+                         ELSE (ARRAY['Fr','So','Jr','Sr','Sr'])[1 + step] END
+                ELSE (6 + step % 3)::text END AS grade
+    FROM c"""
+
+
+def test_events_grade_boards_from_the_table_equal_the_live_ones(pg):
+    import json
+    import rankings as R
+    import build_season_events as B
+    from werkzeug.datastructures import MultiDict
+    from urllib.parse import parse_qsl
+    R._rowHasUnit = lambda c, t="ranking_results": False
+    _conn, cur = pg
+    cur.execute(_EVG_FIXTURE)
+    cur.execute("CREATE TEMP TABLE athletes (athlete_id bigint, person_id bigint,"
+                " first_name text, last_name text, gender text)")
+    cur.execute("INSERT INTO athletes SELECT g, g, 'A', 'B' || g, 'M' FROM generate_series(0, 899) g")
+    cur.execute("CREATE TEMP TABLE results_tf (person_id bigint, athlete_name text)")
+    cur.execute("ALTER TABLE results ADD COLUMN person_id bigint, ADD COLUMN athlete_name text")
+    # the build's own shape: an empty shadow, (preset, shard) INSERTs, indexes
+    sql, params = B.presetSql(800, by_grade=True)
+    cur.execute(f"CREATE TEMP TABLE athlete_season_ev_grade AS {sql} WITH NO DATA", params)
+    for d in R.EV_PRESETS:
+        for k in range(3):
+            sql, params = B.presetSql(d, k, 3, by_grade=True)
+            cur.execute(f"INSERT INTO athlete_season_ev_grade {sql}", params)
+    for name, cols in B.GRADE_INDEXES:
+        cur.execute(f"CREATE INDEX evg_{name} ON athlete_season_ev_grade {cols}")
+    cur.execute("ANALYZE athlete_season_ev_grade")
+
+    # the fixture holds what the test is about
+    cur.execute("""SELECT count(*) AS n FROM (
+                       SELECT 1 FROM athlete_season_ev_grade WHERE dist_min = 800
+                       GROUP BY person_id, pool, sport, year HAVING count(*) > 1) q""")
+    assert cur.fetchone()["n"] > 20                            # mid-season grade changes
+    cur.execute("SELECT count(*) AS n FROM ranking_results WHERE grade IS NULL")
+    assert cur.fetchone()["n"] > 1000
+    cur.execute("SELECT count(*) AS n FROM athlete_season_ev_grade WHERE gkey IS NULL")
+    assert cur.fetchone()["n"] == 0
+
+    tcur = cur.connection.cursor()
+    boards = []
+    for pool, grades in (("hs_m", ("9", "10", "10th", "11", "12", "Sr", "senior", "13", "zz")),
+                         ("college_m", ("fr", "So", "16", "senior", "12")),
+                         ("ms_m", ("7", "8"))):
+        for d in R.EV_PRESETS:
+            for g in grades:
+                for yr in ("", "&year=2026"):
+                    for off in (0, 20):
+                        boards.append(f"pool={pool}&sport=XC&scope=usa&scale=hs&dist_min={d}"
+                                      f"&grade={g}{yr}&sort=rating&limit=20&offset={off}")
+    boards += ["pool=hs_m&sport=XC&dist_min=1500&grade=10&sort=best&limit=20&offset=20",
+               "pool=hs_m&sport=XC&dist_min=1500&grade=10&min_races=1&sort=races&limit=20",
+               "pool=hs_m&sport=both&dist_min=3000&grade=11&year=2026&limit=20&offset=20",
+               "pool=hs_m&sport=XC&dist_min=800&grade=12&year=2025&limit=20&offset=20",
+               "pool=college_m&sport=XC&dist_min=5000&grade=jr&sort=name&limit=20&offset=20",
+               "pool=hs_m&sport=XC&dist_min=800&grade=10&min_races=2&limit=20&offset=40"]
+    full = ties = 0
+    try:
+        for b in boards:
+            f, err = R.parseFilters(MultiDict(parse_qsl("board=ability&" + b)))
+            assert not err, err
+            got = {}
+            for mode in (True, False):
+                R._EV_GRADE_FRESH.update(at=1e18, ok=mode)
+                p = {}
+                src = R._abilitySource(f, p, R._whereClauses(f, p, False), precomputed=True)
+                assert ("athlete_season_ev_grade" in src) is mode, b
+                rows = [dict(r) for r in R.getAbilityRankings(cur, dict(f))]
+                pid = rows[len(rows) // 2]["person_id"] if rows else 1
+                got[mode] = (json.dumps(rows, default=str, sort_keys=True),
+                             R.countOf(tcur, dict(f)), R.rankOf(tcur, dict(f), pid))
+            assert got[True] == got[False], b
+            rows = json.loads(got[True][0])
+            full += len(rows) == 20
+            ratings = [r["rating"] for r in rows]
+            ties += len(ratings) != len(set(ratings))
+        assert full > 100 and ties > 50, (full, ties)
+    finally:
+        R._EV_GRADE_FRESH.update(at=0.0, ok=False)
+
+
 # --------------------------------------------------------------- 14 --
 # prewarm: the swapped-in tables into memory before the first visitor
 
