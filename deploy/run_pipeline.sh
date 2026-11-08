@@ -974,7 +974,8 @@ fi
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE
 #   (measured at a 64% rating error, frozen into the row).
-# ★ XCP_DISTANCE_BY=ability (2026-09-29, default OFF) normalises every row
+# ★ XCP_DISTANCE_BY=ability (2026-09-29; the full backfill's default since
+#   2026-11-08, see 05 below) normalises every row
 #   with the curve by ability (engine/data/distance_ability.pkl, fitted by
 #   engine/fit_distance_ability.py) onto 5000 m, whatever its pool. The
 #   backfill records the mode it wrote (engine/data/distance_applied_*.json)
@@ -1032,8 +1033,17 @@ else
     steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply --only-changed" \
            05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
   else
-    steps2 05_backfill_xc "$PY -u backfill/backfill_normalize.py --sport XC --apply" \
-           05_backfill_tf "$PY -u backfill/backfill_normalize.py --sport TF --apply"
+    # ★ THE CURVE BY ABILITY IS THE DEFAULT NOW (owner, 2026-11-08: "if it's
+    #   better please just make it regular"). On 1.7M held-out pairs
+    #   (scripts/diag_one_scale.py --holdout) it beat the pool curves for
+    #   high school and middle school in both sports, and cut the high
+    #   school girls' XC bias from -2.7% to -0.3%; college about tied. Only
+    #   the FULL backfill writes it -- a partial write in a new mode is
+    #   refused -- and records it, so every later step, the nightly and the
+    #   site follow the record. XCP_DISTANCE_BY=pool on a run reverts.
+    _DBY="${XCP_DISTANCE_BY:-ability}"
+    steps2 05_backfill_xc "env XCP_DISTANCE_BY=$_DBY $PY -u backfill/backfill_normalize.py --sport XC --apply" \
+           05_backfill_tf "env XCP_DISTANCE_BY=$_DBY $PY -u backfill/backfill_normalize.py --sport TF --apply"
   fi
 fi
 

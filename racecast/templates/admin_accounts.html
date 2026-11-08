@@ -64,7 +64,7 @@
             </div>
           {% else %}<span class="ct-muted">none</span>{% endfor %}
         </td>
-        <td>{{ a.n_follows or "" }}</td>
+        <td>{% for f in a.follows %}{% if f.kind == "athlete" %}<a href="/athlete/{{ f.person_id }}">{{ f.name or ("Athlete " ~ f.person_id) }}</a>{% else %}<a href="{{ school_href(f.school, f.state) }}">{{ f.school_label or f.school }}</a>{% if f.level_label %} <span class="ct-muted">{{ f.level_label }}</span>{% endif %}{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
       </tr>
     {% endfor %}
     </tbody>
