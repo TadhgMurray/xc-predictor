@@ -227,7 +227,9 @@ def test_the_public_page_and_latest_api(monkeypatch):
     assert j.get_json() == {"latest": "2026-10-22T03:00:00",
                             "stamp": "2026-10-18|2026-10-19T08:00:00"}
     assert 'rc_updates_stamp", "2026-10-18|2026-10-19T08:00:00"' in html
-    assert j.headers["Cache-Control"] == "public, max-age=300"
+    # the pages' own header, s-maxage included, so the edge answers it too
+    # (2026-11-08, tests/test_edge_cache.py)
+    assert j.headers["Cache-Control"] == A.PUBLIC_CACHE_CONTROL
 
 
 def test_accuracy_lines_use_every_test_a_run_has():
