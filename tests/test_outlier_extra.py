@@ -147,3 +147,32 @@ def test_an_ungraded_youth_row_in_an_open_race():
     # ungraded, a middle school race with two older runners: stays
     assert RO.extraSide(120.0, 0, None, None, 107, "ms_m", 3200, 0, False, 2) is None
 
+
+
+def test_a_race_far_above_everything_else_they_ran():
+    """owner's audit, 2026-11-09: Morgan Thompson, 168.4 in 2018 with 51
+    other races, none above 133.8; the neighbourhood's z was +4.85."""
+    assert RO.careerSide(168.37, 133.8, 6) == "fast"
+    assert RO.careerSide(140.0, 128.0, 10) is None       # a 9% breakout is a breakout
+    assert RO.careerSide(168.37, 133.8, 2) is None       # too few races to say
+
+
+@pytest.mark.skipif(not DSN, reason="needs XCP_TWIN_TEST_DSN")
+def test_the_career_sql_finds_it():
+    import psycopg2
+    c = psycopg2.connect(DSN)
+    cur = c.cursor()
+    cur.execute("""
+        DROP SCHEMA IF EXISTS ocr CASCADE; CREATE SCHEMA ocr; SET search_path = ocr;
+        CREATE TABLE results (result_id bigint, person_id bigint, date text, speed_rating real);
+        INSERT INTO results VALUES (1, 7, '2018-09-22', 168.4), (2, 7, '2018-10-06', 107.0),
+          (3, 7, '2019-09-12', 128.2), (4, 7, '2019-09-26', 133.8), (5, 7, '2023-10-01', 132.0),
+          -- a real breakout: the races after it are near it
+          (11, 8, '2020-09-01', 120.0), (12, 8, '2020-10-01', 150.0), (13, 8, '2020-10-15', 148.0),
+          (14, 8, '2020-11-01', 149.0);
+    """)
+    got = {r[0]: r[6] for r in RO.careerRows(cur)}
+    cur.execute("DROP SCHEMA ocr CASCADE")
+    c.commit()
+    c.close()
+    assert got == {1: "fast"}

@@ -895,6 +895,54 @@ def copyRows(cur):
             for rid, pid, yr, s, tw in cur.fetchall() if copySide(s, tw)]
 
 
+# ★ ABOVE EVERYTHING ELSE THEY RAN (owner's audit, 2026-11-09: Morgan
+#   Thompson, 7:38.2 for 2574 m in 2018, rated 168.4 -- 51 other cross
+#   country races, none above 133.8 -- #1 on the middle school girls'
+#   board). The neighbourhood missed it: with K = 3 its neighbours were
+#   107.0, 128.2 and 133.8, the spread came out 8.3 and the z +4.85, under
+#   the +8 cut -- one noisy neighbour hides a 27% jump. Her own career is
+#   the decider: a race more than CAREER_GAP (log, about 20%) above the BEST
+#   of every other race within CAREER_DAYS either side, with CAREER_MIN or
+#   more of them, is a wrong time or distance. A real breakout is followed
+#   or preceded by races near it; a race a fifth better than anything in
+#   four years is not run. Rows rated COPY_MIN or more: the boards' end.
+CAREER_GAP = 0.18
+CAREER_DAYS = 730
+CAREER_MIN = 3
+CAREER_SQL = """
+    WITH a AS (
+        SELECT result_id, person_id, left(date, 10)::date AS d, speed_rating AS s
+        FROM   results
+        WHERE  speed_rating >= %(min_s)s AND person_id IS NOT NULL
+          AND  date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}')
+    SELECT a.result_id, a.person_id, extract(year FROM a.d)::int, a.s, o.best, o.k
+    FROM   a
+    CROSS  JOIN LATERAL (
+        SELECT max(b.speed_rating) AS best, count(*) AS k
+        FROM   results b
+        WHERE  b.person_id = a.person_id AND b.result_id <> a.result_id
+          AND  b.speed_rating > 0 AND b.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          AND  abs(left(b.date, 10)::date - a.d) <= %(days)s) o
+    WHERE  o.k >= %(k)s AND ln(a.s / o.best) > %(gap)s
+"""
+
+
+def careerSide(s, best, k, gap=CAREER_GAP, k_min=CAREER_MIN):
+    """'fast' when a row rates more than `gap` (log) above the best of its
+    `k` other races nearby, k_min or more. Pure."""
+    if not s or not best or (k or 0) < k_min:
+        return None
+    return "fast" if math.log(float(s) / float(best)) > gap else None
+
+
+def careerRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, best, 'fast')]."""
+    cur.execute(CAREER_SQL, {"min_s": COPY_MIN, "days": CAREER_DAYS,
+                             "k": CAREER_MIN, "gap": CAREER_GAP})
+    return [(rid, "XC", pid, yr, float(s), float(best), "fast")
+            for rid, pid, yr, s, best, k in cur.fetchall() if careerSide(s, best, k)]
+
+
 def writeExtra(cur, rows):
     cur.executemany("""
         INSERT INTO rating_outlier (result_id, sport, person_id, season, rating, med, side)
@@ -1158,6 +1206,7 @@ def main():
                                 connect=getConn, streams=args.streams)
                 extra = extraRows(cur)
                 extra += copyRows(cur)
+                extra += careerRows(cur)
                 printExtra(extra, args.show)
                 if args.write:
                     if args.since:
