@@ -246,7 +246,11 @@ if [ "$SCRAPE" -eq 1 ]; then
         step 01_local_alive timeout "${mins}m" env TIMERS=0 bash deploy/scrape_local.sh
       else
         mins="${XCP_NIGHTLY_TIMERS_MIN:-40}"
-        step 01_local_timers timeout "${mins}m" env ALIVE=0 bash deploy/scrape_local.sh \
+        # ! THE TIMERS STOP THEMSELVES FIRST: no new meet is started after
+        #   the bound less 8 minutes, so what was parsed is landed, deduped
+        #   and promoted before the timeout kills the step
+        step 01_local_timers timeout "${mins}m" env ALIVE=0 XCP_TIMERS_MINUTES="$(( mins > 12 ? mins - 8 : mins / 2 ))" \
+          bash deploy/scrape_local.sh \
           --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
       fi
       local_rc=$?

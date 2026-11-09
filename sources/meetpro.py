@@ -80,15 +80,30 @@ def parseMeetIndex(page):
             out.place = t
     if not out.date:
         out.date = _isoDate(_text(page[:4000]))
+    seen = set()
     for row in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S | re.I):
         num = re.search(r'class="event-num"[^>]*>(.*?)</td>', row, re.S)
         ev = re.search(r'class="event"[^>]*>(.*?)</td>', row, re.S)
-        if not (num and ev and _text(num.group(1)).isdigit()):
-            continue
         res = re.search(r'class="results"[^>]*>.*?href=[\'"]([^\'"]+)[\'"]', row, re.S)
+        if not ev:
+            continue
+        # ★ NO NUMBER CELL (MeetProTemplate_v1.3 / v1.6, 2026-11-09: Tiffin
+        #   Timing, Goddard Schools): the event's number is the one in its
+        #   page names, results_35.html / start_list_35.html -- and each
+        #   round is its own row pointing at the same page (#round_1, _2),
+        #   which parseRounds already splits, so a number is read once
+        n = _text(num.group(1)) if num else ""
+        if not n.isdigit():
+            byHref = re.search(r"(?:results|start_list)_(\d+)\.html?", row, re.I)
+            if num or not byHref:
+                continue
+            n = byHref.group(1)
+        if int(n) in seen:
+            continue
+        seen.add(int(n))
         name = _text(ev.group(1))
-        out.events.append(MeetEvent(int(_text(num.group(1))), name, _gender(name),
-                                    metersOf(name), res.group(1) if res else "",
+        href = res.group(1).split("#")[0] if res else ""
+        out.events.append(MeetEvent(int(n), name, _gender(name), metersOf(name), href,
                                     bool(re.search(r"\d\s*x\s*\d|relay|medley", name, re.I))))
     return out
 

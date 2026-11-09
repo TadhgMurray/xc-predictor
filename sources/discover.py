@@ -101,13 +101,89 @@ def meetproRoot(url, own=None):
         parts = [p for p in path.split("/") if p]
         if len(parts) < 2:
             return None                      # a timer's root, not a meet
-        return urllib.parse.urlunsplit((sp.scheme or "https", sp.netloc,
+        # ! PLAIN HTTP: results.tfmeetpro.com is an S3 website endpoint, which
+        #   has no https -- an https link to it never answers
+        return urllib.parse.urlunsplit(("http", sp.netloc,
                                         f"/{parts[0]}/{parts[1]}/index.html", "", ""))
     if own and _site(host.split(":")[0]) != own:
         return None                          # another site's index.html is not this timer's meet
     if re.search(r"/mp/", path) or re.search(r"/index\.html?$", path, re.I):
         return urllib.parse.urlunsplit((sp.scheme, sp.netloc, path, "", ""))
     return None
+
+
+# ★ THE MEETPRO BUCKET LISTS ITSELF (2026-11-09: 39 registered MeetPro
+#   accounts had "no index; S3 NoSuchKey" -- results.tfmeetpro.com/<Account>/
+#   has no index.html, so nothing was ever found for them). The bucket behind
+#   it is publicly listable through S3's own ListObjects call: every key under
+#   <Account>/ with its upload time, i.e. every meet folder the account has
+#   posted and when. That listing is the account's index. One request lists
+#   up to 1,000 files (a meet is ~20-150), at most MAX_BUCKET_PAGES a run.
+MEETPRO_BUCKET_LIST = "https://s3.amazonaws.com/results.tfmeetpro.com/"
+MAX_BUCKET_PAGES = 100
+_S3_ENTRY = re.compile(r"<Contents>\s*<Key>(.*?)</Key>\s*<LastModified>(.*?)</LastModified>", re.S)
+
+
+def meetproAccount(url):
+    """'http://results.tfmeetpro.com/FTR_Race_Management/' -> 'FTR_Race_Management';
+    None for a meet's own url or any other host."""
+    sp = urllib.parse.urlsplit((url or "").split(" ")[0])
+    if not sp.netloc.lower().split(":")[0].endswith("results.tfmeetpro.com"):
+        return None
+    parts = [p for p in urllib.parse.unquote(sp.path).split("/") if p]
+    return parts[0] if len(parts) == 1 else None
+
+
+def bucketPage(xml):
+    """One ListObjects (v1) answer -> ([(key, 'YYYY-MM-DD...')], next marker
+    or None when it is the last page). Pure."""
+    entries = [(_html.unescape(k), d) for k, d in _S3_ENTRY.findall(xml or "")]
+    truncated = re.search(r"<IsTruncated>\s*true\s*</IsTruncated>", xml or "", re.I)
+    nxt = re.search(r"<NextMarker>(.*?)</NextMarker>", xml or "", re.S)
+    marker = _html.unescape(nxt.group(1)) if nxt else (entries[-1][0] if entries else None)
+    return entries, (marker if truncated else None)
+
+
+def accountMeets(entries, account, since_year):
+    """The account's meet folders from its bucket keys -> [(meet index url,
+    newest upload date)], newest first; a folder is a meet when it holds an
+    index.htm(l); folders last touched before since_year are left out. Pure."""
+    newest, has_index = {}, set()
+    for key, modified in entries:
+        parts = key.split("/")
+        if len(parts) < 3 or parts[0] != account or not parts[1]:
+            continue
+        meet = parts[1]
+        if len(parts) == 3 and re.fullmatch(r"index\.html?", parts[2], re.I):
+            has_index.add((meet, parts[2]))
+        if modified > newest.get(meet, ""):
+            newest[meet] = modified
+    out = []
+    for meet, page in has_index:
+        date = newest[meet][:10]
+        if date[:4].isdigit() and int(date[:4]) < since_year:
+            continue
+        url = "http://results.tfmeetpro.com/" + urllib.parse.quote(f"{account}/{meet}/{page}")
+        out.append((url, date))
+    return sorted(out, key=lambda x: (x[1], x[0]), reverse=True)
+
+
+async def listMeetproAccount(fetcher, account, since_year, max_age):
+    """([(meet url, date)], note): an account's meets read off the bucket listing."""
+    entries, marker, pages = [], "", 0
+    while marker is not None and pages < MAX_BUCKET_PAGES:
+        q = {"prefix": account + "/"}
+        if marker:
+            q["marker"] = marker
+        got = await fetcher.fetch(MEETPRO_BUCKET_LIST + "?" + urllib.parse.urlencode(q), max_age)
+        pages += 1
+        if not got.body:
+            return [], got.note or f"bucket listing HTTP {got.status}"
+        page, marker = bucketPage(got.body.decode("utf-8", "replace"))
+        entries += page
+    meets = accountMeets(entries, account, since_year)
+    return meets, (f"bucket listing: {len(entries):,} files in {pages} pages"
+                   + (" (cut short)" if marker else ""))
 
 
 def links(page, base):
@@ -289,6 +365,11 @@ async def discover(fetcher, source, since_year=None, per_source=10, known=frozen
     index = source.results_url.split(" ")[0] if source.results_url else source.website
     if not index or not index.startswith("http"):
         return [], "no results page on record"
+    account = meetproAccount(index)
+    if account:
+        meets, note = await listMeetproAccount(fetcher, account, since_year, index_max_age)
+        new = [(u, "meetpro") for u, _d in meets if u not in known][:per_source]
+        return new, f"{note}; {len(meets)} meets from {since_year} on, {len(new)} new"
     got = await fetcher.fetch(index, index_max_age)
     if not got.body:
         return [], got.note or f"index HTTP {got.status}"
