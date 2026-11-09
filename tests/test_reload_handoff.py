@@ -24,7 +24,8 @@ def _free_port():
     return p
 
 
-def test_usr2_reload_hands_off_without_a_failed_request(tmp_path):
+@pytest.mark.parametrize("activated", [False, True], ids=["bind", "systemd-socket"])
+def test_usr2_reload_hands_off_without_a_failed_request(tmp_path, activated):
     pytest.importorskip("gunicorn")
     version = tmp_path / "version"
     version.write_text("v1")
@@ -37,10 +38,15 @@ def test_usr2_reload_hands_off_without_a_failed_request(tmp_path):
                XCP_WARM_SITE="0", XCP_HANDOFF_DELAY="1",
                HANDOFF_VERSION_FILE=str(version), HANDOFF_BOOT_S="3",
                PYTHONPATH=os.path.join(_ROOT, "tests", "data"))
-    master = subprocess.Popen(
-        [sys.executable, "-m", "gunicorn", "-c", os.path.join(_ROOT, "deploy", "gunicorn.conf.py"),
-         "-w", "2", "-b", f"127.0.0.1:{port}", "--preload", "handoff_app:app"],
-        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = [sys.executable, "-m", "gunicorn", "-c", os.path.join(_ROOT, "deploy", "gunicorn.conf.py"),
+           "-w", "2", "-b", f"127.0.0.1:{port}", "--preload", "handoff_app:app"]
+    if activated:
+        # ! 2026-11-09 on the server: under socket activation the re-exec'd
+        #   master was told "fd 3" and found gunicorn's control socket there
+        cmd = [sys.executable, os.path.join(_ROOT, "tests", "data", "socket_activate.py"),
+               str(port)] + cmd
+    master = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL,
+                              stderr=open(tmp_path / "gunicorn.log", "w"))
     msgs = []
 
     def drain():
@@ -87,7 +93,8 @@ def test_usr2_reload_hands_off_without_a_failed_request(tmp_path):
         stop.set()
         th.join()
         drain()
-        assert master.poll() is not None, "the old master did not stop"
+        assert master.poll() is not None, \
+            "the old master did not stop:\n" + (tmp_path / "gunicorn.log").read_text()[-3000:]
         new = [m for m in msgs if m.startswith("MAINPID=") and not m.startswith(f"MAINPID={master.pid}")]
         assert new, msgs
         assert not fails, fails[:3]
