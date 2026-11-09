@@ -300,16 +300,29 @@ _TF_PR = ("1600m", "Mile", "3200m", "800m", "1500m", "3000m", "2 Mile", "5000m")
 
 
 def _pr(alltime):
-    """[(label, time)] -- at most one cross country and one track PR."""
+    """[(label, time)] -- at most one cross country and one track PR.
+
+    ★ ANY EVENT WHEN NONE OF THE USUAL ONES (Bing, 2026-11-09: 271 athlete
+      pages flagged "meta description too short", every one a sprinter or a
+      runner with no 5K -- the description was the name, the school and the
+      closing line, 83-100 characters). The first event the page lists
+      stands in, so a 100 m runner's description carries their 100 m."""
     out = []
     for sport, keys, fmt in (("XC", _XC_PR, "{} XC"), ("TF", _TF_PR, "{}")):
         events = ((alltime or {}).get(sport) or {}).get("events") or {}
+        got = None
         for k in keys:
             race = events.get(k)
             if race and race.get("result"):
-                label = "5K" if sport == "XC" else k
-                out.append((fmt.format(label), str(race["result"]).strip()))
+                got = ("5K" if sport == "XC" else k, race)
                 break
+        if got is None:
+            for k, race in events.items():
+                if race and race.get("result") and k:
+                    got = (k, race)
+                    break
+        if got:
+            out.append((fmt.format(got[0]), str(got[1]["result"]).strip()))
     return out
 
 
@@ -366,7 +379,15 @@ def athleteSeo(athlete, alltime=None, rank_line=None, school_label=None,
             if st:
                 r += f", #{st[1]} in {st[0]}"
             parts.append(r + ".")
-    parts.append("Every race, PR and season rating on one comparable scale.")
+    n = a.get("n_races")
+    try:
+        n = int(n) if n is not None else None
+    except (TypeError, ValueError):
+        n = None
+    if n and n > 1:
+        parts.append(f"{n} races on record.")
+    parts.append("Every race and PR, rated on one scale that compares any course, "
+                 "distance and season.")
     description = fitDescription(parts)
 
     url = f"{origin}/athlete/{pid}" if pid is not None else None

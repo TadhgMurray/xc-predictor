@@ -484,3 +484,15 @@ def test_a_feeds_retired_team_is_no_school():
     rows = [{"school": "DON'T USE", "state": "TN"}]
     S.stampCrests(rows)
     assert rows[0]["school"] is None
+
+
+def test_a_sprinters_description_is_long_enough():
+    """Bing, 2026-11-09: 271 athlete pages with descriptions of 83-100
+    characters -- no 5K and no rating, so only the name and the closer."""
+    import seo as S
+    out = S.athleteSeo({"name": "Daikyvius Phillips", "person_id": 1, "n_races": 23},
+                       {"TF": {"events": {"100m": {"result": "11.02"}, "200m": {"result": "22.6"}}}},
+                       None, "Macon County (GA)", None, "https://racecast.co")
+    d = out["description"]
+    assert "100m PR 11.02." in d and "23 races on record." in d
+    assert 120 <= len(d) <= S.DESC_MAX, (len(d), d)

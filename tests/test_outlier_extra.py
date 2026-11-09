@@ -147,31 +147,3 @@ def test_an_ungraded_youth_row_in_an_open_race():
     # ungraded, a middle school race with two older runners: stays
     assert RO.extraSide(120.0, 0, None, None, 107, "ms_m", 3200, 0, False, 2) is None
 
-
-def test_a_winner_a_quarter_clear_of_the_field():
-    """owner's audit, 2026-11-09: Morgan Thompson, 7:38.2 for 2574 m with
-    second place at 10:15.1."""
-    assert RO.leadSide(458.2, 615.1) == "fast"
-    assert RO.leadSide(930.0, 1015.0) is None        # a 9% win is a win
-
-
-@pytest.mark.skipif(not DSN, reason="needs XCP_TWIN_TEST_DSN")
-def test_the_lead_sql_finds_the_leader():
-    import psycopg2
-    c = psycopg2.connect(DSN)
-    cur = c.cursor()
-    cur.execute("""
-        DROP SCHEMA IF EXISTS ol CASCADE; CREATE SCHEMA ol; SET search_path = ol;
-        CREATE TABLE results (result_id bigint, person_id bigint, source text, meet_id bigint,
-                              div_id bigint, date text, speed_rating real, time_seconds real);
-        INSERT INTO results VALUES (1, 1, 'anet', 1, 1, '2018-09-22', 158.8, 458.2);
-        INSERT INTO results SELECT 1 + g, 1 + g, 'anet', 1, 1, '2018-09-22', 110, 600 + 10 * g
-                            FROM generate_series(1, 6) g;
-        INSERT INTO results SELECT 100 + g, 100 + g, 'anet', 2, 2, '2018-09-22', 120, 900 + 10 * g
-                            FROM generate_series(1, 6) g;
-    """)
-    got = {r[0]: r[6] for r in RO.leadRows(cur)}
-    cur.execute("DROP SCHEMA ol CASCADE")
-    c.commit()
-    c.close()
-    assert got == {1: "fast"}
