@@ -254,6 +254,28 @@ _LOG_ROOT = os.environ.get("XCP_LOG_ROOT") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
 
 
+_PIPELINE_LOCK = os.environ.get("XCP_PIPELINE_LOCK") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".pipeline.lock")
+
+
+def _pipelineLockHeld(path=None):
+    """Is run_pipeline.sh's flock held? A shared lock that cannot be had,
+    taken and given straight back. False when the file is not there."""
+    import fcntl
+    try:
+        fh = open(path or _PIPELINE_LOCK, "rb")
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        fh.close()
+
+
 def serverContext(now=None, log_root=None, fresh_s=120):
     """'pipeline: 10_rankings_finish, 13j_record_books running; load 31.2 / 32
     cores' -- or just the load. Never raises."""
@@ -273,6 +295,17 @@ def serverContext(now=None, log_root=None, fresh_s=120):
             if live:
                 parts.append(f"pipeline {os.path.basename(runs[0])}: "
                              f"{', '.join(live[:6])}{' ...' if len(live) > 6 else ''} running")
+            elif _pipelineLockHeld():
+                # ! A QUIET STEP IS STILL A STEP (2026-11-09: the go-live's
+                #   index builds wrote nothing for minutes, so a 42 s page
+                #   at load 39 read as "no pipeline"). The lock says a run
+                #   is on; its newest log says where it got to.
+                logs = [f for f in glob.glob(os.path.join(runs[0], "*.log"))
+                        if not f.endswith("summary.log")]
+                newest = max(logs, key=os.path.getmtime) if logs else None
+                parts.append(f"pipeline {os.path.basename(runs[0])}: running (lock held)"
+                             + (f", last step {os.path.basename(newest)[:-4]}, its log quiet "
+                                f"{int(now - os.path.getmtime(newest))} s" if newest else ""))
     except Exception:                                    # noqa: BLE001
         pass
     try:

@@ -47,3 +47,22 @@ def test_the_context_adds_it_only_under_load(monkeypatch):
     assert "busy: pg_dump 3" in E.serverContext(log_root="/nonexistent")
     monkeypatch.setattr(os, "getloadavg", lambda: (3.0, 2.0, 1.0))
     assert "busy" not in E.serverContext(log_root="/nonexistent")
+
+
+def test_a_held_pipeline_lock_names_the_quiet_step(tmp_path, monkeypatch):
+    import fcntl
+    import time
+    run = tmp_path / "logs" / "20261109_0300"
+    run.mkdir(parents=True)
+    (run / "16_merge.log").write_text("building 9 indexes")
+    old = time.time() - 600
+    os.utime(run / "16_merge.log", (old, old))
+    lock = tmp_path / ".pipeline.lock"
+    lock.write_text("")
+    monkeypatch.setattr(E, "_PIPELINE_LOCK", str(lock))
+    assert "pipeline" not in E.serverContext(log_root=str(tmp_path / "logs"))
+    with open(lock, "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        # flock is per open file: another descriptor sees it held
+        ctx = E.serverContext(log_root=str(tmp_path / "logs"))
+    assert "running (lock held), last step 16_merge" in ctx and "quiet 6" in ctx
