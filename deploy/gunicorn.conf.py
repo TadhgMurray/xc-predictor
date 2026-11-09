@@ -42,6 +42,45 @@ def _workerTorchThreads():
 
 def when_ready(server):
     """In the master, after the app is imported and before the first fork."""
+    try:
+        _whenReady(server)
+    finally:
+        _handoff(server)
+
+
+# ★ A DEPLOY WITHOUT A COLD WINDOW (2026-11-09: two of the day's five busiest
+#   minutes were the owner's restarts -- 16-20 of 24 workers "busy" at 13
+#   req/s, every request queued behind the new master's preload).
+#   `systemctl reload xc-predictor` sends USR2: gunicorn starts a NEW master
+#   on the same listening socket, with the new code, while the old master's
+#   workers keep answering. When the new one is ready (the end of this hook,
+#   the model and templates loaded), it tells systemd it is now the main
+#   process (MAINPID; deploy/site_reload.sh makes the unit Type=notify with
+#   NotifyAccess=all), and asks the old master to stop gracefully
+#   XCP_HANDOFF_DELAY seconds later -- after its own workers have forked --
+#   so in-flight requests finish and nothing waits on a boot.
+# ! ON A PLAIN START this only says MAINPID (the master it already is).
+def _handoff(server):
+    try:
+        from gunicorn import systemd as _sd
+        _sd.sd_notify(f"MAINPID={os.getpid()}\nREADY=1", server.log)
+    except Exception as exc:                            # noqa: BLE001
+        server.log.warning("handoff: no systemd notify (%s)", exc)
+    old = getattr(server, "master_pid", 0)
+    if not old:
+        return
+    import subprocess
+    delay = float(os.environ.get("XCP_HANDOFF_DELAY") or 3)
+    try:
+        # a separate process, as the warmer: no thread in the master
+        subprocess.Popen(["/bin/sh", "-c", f"sleep {delay:g}; kill -TERM {int(old)}"],
+                         start_new_session=True, stdin=subprocess.DEVNULL)
+        server.log.info("handoff: the old master (%d) stops in %gs", old, delay)
+    except Exception as exc:                            # noqa: BLE001
+        server.log.warning("handoff: the old master was not stopped (%s)", exc)
+
+
+def _whenReady(server):
     _startWarmer(server)
     if not preload_app:
         return
