@@ -69,6 +69,12 @@ if [ "$DRY" -eq 1 ]; then
   exit 0
 fi
 mkdir -p "$LOGDIR" "$DIR"
+# ★ THE TABLE BUILD AND THE FITS GO THROUGH THE MEMORY LEDGER (2026-11-09,
+#   scripts/jobrun.py; docs/PIPELINE-ORDER.md): each reserves its size
+#   (XCP_RACE_ROWS_GB, XCP_RACE_TREES_GB) and waits for it, up to 4 h, so a
+#   fit never lands on top of an engine replay or the go-live; the peak each
+#   one reached is written beside its log (.mem).
+JR=("$PY" -u "$ROOT/scripts/jobrun.py" --wait-min 240)
 say() { echo "[race model] $(date -u +%H:%M) UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 fail() {
   echo "[race model] FAILED: $1 -- the served model is unchanged" | tee -a "$LOGDIR/summary.log"
@@ -77,21 +83,22 @@ fail() {
   exit 1
 }
 
-exec 9>"$ROOT/.pipeline.lock"
+. "$ROOT/deploy/lockctl.sh"
 say "waiting for the pipeline lock (up to $WAIT_MIN min)"
-if ! flock -w $(( WAIT_MIN * 60 )) 9; then
+if ! lock_take race_model queued $(( WAIT_MIN * 60 )) "race_rows table build (about 1.5 h; xcp-race-model.service): $LOGDIR/race_rows.log"; then
   echo "[race model] the pipeline held $ROOT/.pipeline.lock for $WAIT_MIN min -- skipping this week"
   exit 0
 fi
 say "building the table (about 1.5 h): tail -f $LOGDIR/race_rows.log"
-"$PY" -u model/race_rows.py --out "$ROWS_NEW" --to "$TO" --val-from "$VAL_FROM" \
+"${JR[@]}" --name race_rows --gb "${XCP_RACE_ROWS_GB:-20}" --peak-out "$LOGDIR/race_rows.mem" -- \
+  "$PY" -u model/race_rows.py --out "$ROWS_NEW" --to "$TO" --val-from "$VAL_FROM" \
       --train-frac 1 > "$LOGDIR/race_rows.log" 2>&1 || fail race_rows
-flock -u 9
-exec 9>&-
+lock_release
 say "table built; lock released"
 
 say "fitting, held out then on every season (about 1.5 h): tail -f $LOGDIR/race_trees.log"
-"$PY" -u model/race_trees.py --rows "$ROWS_NEW" --val-from "$VAL_FROM" \
+"${JR[@]}" --name race_trees --gb "${XCP_RACE_TREES_GB:-30}" --peak-out "$LOGDIR/race_trees.mem" -- \
+  "$PY" -u model/race_trees.py --rows "$ROWS_NEW" --val-from "$VAL_FROM" \
       --without dist_vs_course --refit-all --out "$PKL_NEW" > "$LOGDIR/race_trees.log" 2>&1 \
       || fail race_trees
 GAIN="$(grep -m1 'model - ratings, pairs:' "$LOGDIR/race_trees.log" \
@@ -117,7 +124,8 @@ echo "[race model] swapped in $MODEL (the last one is $MODEL.prev)" | tee -a "$L
 RAW="${XCP_RACE_MODEL_RAW:-$(dirname "$MODEL")/race_trees_raw.pkl}"
 if [ "${XCP_RACE_RAW:-1}" = "1" ]; then
   say "fitting the no-ratings model (about 1.5 h): tail -f $LOGDIR/race_trees_raw.log"
-  if "$PY" -u model/race_trees.py --rows "$DIR/rows_weekly.npz" --val-from "$VAL_FROM" \
+  if "${JR[@]}" --name race_trees_raw --gb "${XCP_RACE_TREES_GB:-30}" --peak-out "$LOGDIR/race_trees_raw.mem" -- \
+       "$PY" -u model/race_trees.py --rows "$DIR/rows_weekly.npz" --val-from "$VAL_FROM" \
        --without dist_vs_course --refit-all --no-ratings --out "$RAW.new" \
        > "$LOGDIR/race_trees_raw.log" 2>&1; then
     [ -f "$RAW" ] && cp -p "$RAW" "$RAW.prev"
@@ -148,8 +156,7 @@ FROM_SEASON="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1])).get
                "$ROUTES" 2>/dev/null || echo 0)"
 if [ "${FROM_SEASON:-0}" -lt $(( SEASON - 1 )) ]; then
   say "qualifying routes are from ${FROM_SEASON:-none}: learning them from $(( SEASON - 1 )) (about 20 min)"
-  exec 9>"$ROOT/.pipeline.lock"
-  if flock -w $(( WAIT_MIN * 60 )) 9; then
+  if lock_take qualifier_routes queued $(( WAIT_MIN * 60 )) "qualifier routes (about 20 min): $LOGDIR/qualifier_routes.log"; then
     if "$PY" -u scripts/qualifier_audit.py --season "$SEASON" --max-races 3000 \
          --write-routes "$ROUTES.new" > "$LOGDIR/qualifier_routes.log" 2>&1; then
       mv -f "$ROUTES.new" "$ROUTES"
@@ -158,9 +165,8 @@ if [ "${FROM_SEASON:-0}" -lt $(( SEASON - 1 )) ]; then
       rm -f "$ROUTES.new"
       say "qualifying routes failed, the old file kept: $LOGDIR/qualifier_routes.log"
     fi
-    flock -u 9
+    lock_release
   else
     say "the pipeline held the lock: qualifying routes next week"
   fi
-  exec 9>&-
 fi
