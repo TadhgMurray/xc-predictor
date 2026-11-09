@@ -394,3 +394,13 @@ def test_hytek_real_time_files_of_one_day_are_one_meet():
     assert got == [("http://t.example/e/", ("group", ["http://t.example/e/260730F001.htm",
                                                       "http://t.example/e/260730P002.htm",
                                                       "http://t.example/e/260730F003.htm"]))]
+
+
+def test_a_split_is_not_a_race_and_a_real_time_file_is_dated_by_its_name():
+    assert land.isSplit("Women 1.93 Mile Run CC Split #1") and not land.isSplit("Girls 5000 Meters")
+    assert discover._years("https://t.example/jpi222/220222F001.htm") == [2022]
+    assert discover.tooOld("https://t.example/e/231104F003.htm", "#3 Men 10k Run CC", 2026)
+    page = ('<a href="261017F001.htm">#1 Women 6k Run CC</a>'
+            '<a href="261017F001C.htm">#1 Women 6k Run CC Score</a>')
+    got = [u for u, _k in discover.candidates(page, "https://t.example/events/meet26/evtindex.htm", 2026)]
+    assert got == ["https://t.example/events/meet26/261017F001.htm"]

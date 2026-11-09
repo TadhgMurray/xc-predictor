@@ -70,7 +70,9 @@ _NAV_WORDS = re.compile(r"(?<![a-z])(?:contact|about|privacy|terms|login|sign[-_
                         # ★ PAPERS BEFORE THE MEET (2026-11-09: Finished Results' "Meet
                         #   Program", CFPI's "Participant Manual", "Declared ... Entries")
                         r"programs?|programme|manual|packet|declared|psych[-_ ]?sheet|seed(?:ing)?s?|"
-                        r"bus[-_ ]?schedule|parking|waiver|flyer|timeline)(?![a-z])", re.I)
+                        r"bus[-_ ]?schedule|parking|waiver|flyer|timeline|"
+                        # a race's team score page (Hy-Tek real time: 231104F001C.htm "... Score")
+                        r"scores?)(?![a-z])", re.I)
 
 
 def isAliveTenant(page):
@@ -97,9 +99,14 @@ def _site(host):
 _SHORT_DATE = re.compile(r"(?<![\d/.-])\d{1,2}[-/.]\d{1,2}(?:[-/]\d{1,2})?[-/.](\d{2})(?![\d/.-])")
 
 
+# and Hy-Tek's real-time files are named for their day: 220222F001.htm
+_REALTIME = re.compile(r"(?<![\d])(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[A-Z]\d{3}[A-Z]?\.html?\b", re.I)
+
+
 def _years(text):
     return [int(y) for y in _YEAR.findall(text or "")] + \
-        [2000 + int(y) for y in _SHORT_DATE.findall(text or "")]
+        [2000 + int(y) for y in _SHORT_DATE.findall(text or "")] + \
+        [2000 + int(m[0]) for m in _REALTIME.findall(text or "")]
 
 
 def tooOld(url, text, since_year):
@@ -504,7 +511,7 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
     page = got.body.decode("utf-8", "replace")
     if isAliveTenant(page):
         return [], "AthleticLIVE tenant -- read by sources.athleticlive", 0
-    found, subindexes, subpages = [], 0, [0]
+    found, subindexes, subpages, verified = [], 0, [0], set()
 
     def fresh():
         return [(u, k) for u, k in found if u not in known]
@@ -522,6 +529,12 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
             if len(freshMeets()) > per_source:
                 return
             if any(u == f for f, _ in found):
+                continue
+            # ! ONE FILE OF A NUMBERED GROUP SAYS WHAT THE REST ARE (Hy-Tek real
+            #   time: 100 event files, each fetched only to be called a report)
+            m = _NUMBERED.match(u) if kind == "hytek" else None
+            if m and (m.group("dir"), m.group("stem").lower()) in verified:
+                found.append((u, "hytek"))
                 continue
             if kind == "listing":
                 need = per_source + 1 - len(freshMeets())
@@ -546,6 +559,8 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
                     found.append((u, "meetpro"))
                 elif isReport(got.body):
                     found.append((u, "hytek"))
+                    if m:
+                        verified.add((m.group("dir"), m.group("stem").lower()))
                 elif got.body and (depth == 0 or kind == "meetpro"):
                     subindexes += 1
                     body = got.body.decode("utf-8", "replace")

@@ -206,6 +206,17 @@ _AGE_GROUP = re.compile(r"\b\d{1,2}\s*(?:&|and)\s*(?:under|younger)\b|\b\d{1,2}\
                         r"|\b(?:sub[\s-]*)?bantam\b|\bmidget\b|\b\d{1,2}U\b|\bage[\s-]*group\b", re.I)
 
 
+# ★ A SPLIT IS NOT A RACE (2026-11-09, Hy-Tek real time at Live Running
+#   Results: "#2 Women 1.93 Mile Run CC Split #1" is its own event, the
+#   runners' times at the first split). Landed, it would rate a partial
+#   distance as a finished race.
+_SPLIT = re.compile(r"\bsplits?\b(?!\s*(?:squad|team))", re.I)
+
+
+def isSplit(title):
+    return bool(_SPLIT.search(title or ""))
+
+
 def isAgeGroup(title):
     return bool(_AGE_GROUP.search(title or ""))
 
@@ -334,7 +345,7 @@ def fromHytek(meet, slug, url):
         lm.skipped += e.skipped
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
             continue
-        if isAgeGroup(e.title) or isCommunity(e.rows) or isElementary(e.rows):
+        if isAgeGroup(e.title) or isCommunity(e.rows) or isElementary(e.rows) or isSplit(e.title):
             lm.skipped += len(e.rows)
             continue
         sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters, track)
@@ -361,7 +372,7 @@ def fromMeetPro(index, results, slug, url):
     track = isTrackMeet([e.title for e in index.events])
     for e in index.events:
         got = results.get(e.number) or []
-        if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title):
+        if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title) or isSplit(e.title):
             continue
         rounds = got if isinstance(got[0], tuple) else [("", got)]
         for rnd, rows in rounds:
