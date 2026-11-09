@@ -32,7 +32,7 @@ def main():
         print(f"  {pool:<10} {sport}: {o:>10} -> {n}{note}")
     print(f"written to {pool_view._constFile()}"
           + (f"  ({stale} kept from before -- see above)" if stale else ""))
-    print("  ! restart the site (systemctl restart xc-predictor): running "
+    print("  ! restart the site (systemctl reload xc-predictor): running "
           "workers hold the old constants in memory.")
 
 

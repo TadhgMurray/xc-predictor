@@ -87,7 +87,7 @@ def main(argv=None):
         out = LPS.write(conn, [(a.old, a.keep, name, a.note)])
         print(f"\nmerged {a.old} -> {a.keep}: {out}")
         print(f"undo: /srv/venv/bin/python scripts/link_profile_school.py --undo {a.old}")
-        print("then: sudo systemctl restart xc-predictor (and the next pipeline run rebuilds the boards)")
+        print("then: sudo systemctl reload xc-predictor (and the next pipeline run rebuilds the boards)")
     return 0
 
 

@@ -80,6 +80,25 @@ def _handoff(server):
         server.log.warning("handoff: the old master was not stopped (%s)", exc)
 
 
+# ! THE SOCKET BACK ON fd 3 BEFORE THE RE-EXEC (2026-11-09, the first reload
+#   on the server: "OSError: [Errno 88] Socket operation on non-socket").
+#   Under socket activation gunicorn tells the new master LISTEN_FDS=1 --
+#   "your socket is fd 3", systemd's convention -- but at startup it copied
+#   the socket systemd passed to another descriptor and closed 3, which its
+#   control socket then took. In the forked child, just before the exec,
+#   each listener is put back on 3, 4, ... and left open across the exec.
+def pre_exec(server):
+    if not getattr(server, "systemd", False):
+        return
+    import fcntl
+    # parked high first, so moving one listener cannot overwrite another
+    parked = [fcntl.fcntl(lnr.fileno(), fcntl.F_DUPFD_CLOEXEC, 1000)
+              for lnr in server.LISTENERS]
+    for i, fd in enumerate(parked):
+        os.dup2(fd, 3 + i, inheritable=True)
+        os.set_inheritable(3 + i, True)
+
+
 def _whenReady(server):
     _startWarmer(server)
     if not preload_app:

@@ -1705,9 +1705,13 @@ if [ "$DRY" -eq 0 ] && [ -n "${_RATED_AT_START:-}" ]; then
   _RATED_NOW=$(_ratedKey)
   if [ "$_RATED_NOW" != "$_RATED_AT_START" ]; then
     echo "  the published ratings' distance mode changed ($_RATED_AT_START -> $_RATED_NOW):" \
-         "restarting the site so it converts them by it" | tee -a "$SUMMARY"
-    systemctl restart xc-predictor 2>&1 | tee -a "$SUMMARY" \
-      || echo "  ⚠ restart failed: systemctl restart xc-predictor" | tee -a "$SUMMARY"
+         "reloading the site so it converts them by it" | tee -a "$SUMMARY"
+    # ! RELOAD, NOT RESTART (CLAUDE.md, 2026-11-09): the new master reads the
+    #   file at its preload while the old workers keep serving; a restart is
+    #   only the fallback where the reload handoff is not installed
+    #   (deploy/site_reload.sh)
+    { systemctl reload xc-predictor || systemctl restart xc-predictor; } 2>&1 | tee -a "$SUMMARY" \
+      || echo "  ⚠ reload failed: systemctl reload xc-predictor" | tee -a "$SUMMARY"
   fi
 fi
 
