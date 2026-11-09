@@ -215,7 +215,8 @@ CANADA = {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK"
 #   Results: "#2 Women 1.93 Mile Run CC Split #1" is its own event, the
 #   runners' times at the first split). Landed, it would rate a partial
 #   distance as a finished race.
-_SPLIT = re.compile(r"\bsplits?\b(?!\s*(?:squad|team))", re.I)
+#   Nor is a timing system's test event (Mancos' "Zero Test").
+_SPLIT = re.compile(r"\bsplits?\b(?!\s*(?:squad|team))|\btest\b", re.I)
 
 
 def isSplit(title):

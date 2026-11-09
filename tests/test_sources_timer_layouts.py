@@ -398,6 +398,7 @@ def test_hytek_real_time_files_of_one_day_are_one_meet():
 
 def test_a_split_is_not_a_race_and_a_real_time_file_is_dated_by_its_name():
     assert land.isSplit("Women 1.93 Mile Run CC Split #1") and not land.isSplit("Girls 5000 Meters")
+    assert land.isSplit("Zero Test") and not land.isSplit("Boys Contest Mile")
     assert discover._years("https://t.example/jpi222/220222F001.htm") == [2022]
     assert discover.tooOld("https://t.example/e/231104F003.htm", "#3 Men 10k Run CC", 2026)
     page = ('<a href="261017F001.htm">#1 Women 6k Run CC</a>'
