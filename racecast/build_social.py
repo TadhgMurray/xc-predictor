@@ -227,6 +227,7 @@ def main():
                 cap = int(os.environ.get("XCP_SOCIAL_PREVIEW_MAX") or 40)
                 budget = 60 * float(os.environ.get("XCP_SOCIAL_PREVIEW_MINUTES") or 15)
                 try:
+                    conn.rollback()
                     targets = S.previewTargets(cur)
                 except Exception as exc:                # noqa: BLE001
                     conn.rollback()
@@ -237,16 +238,26 @@ def main():
                     if time.time() - t2 > budget:
                         print(f"[social] previews: out of time after {n_prev} race(s)")
                         break
+                    # ! NO SAVEPOINT HERE (the server, 2026-11-09: "savepoint
+                    #   sp_prev does not exist"): the prediction code ends
+                    #   the transaction itself on a failure it handles
+                    #   (upcoming_preview._endTransaction, predict), which
+                    #   drops any savepoint around it. These are reads, so a
+                    #   whole-transaction rollback loses nothing.
                     try:
-                        cur.execute("SAVEPOINT sp_prev")
-                        cur.execute("SET LOCAL statement_timeout = '180s'")
+                        conn.rollback()
+                        cur.execute("SET statement_timeout = '180s'")
                         got = S.previewPosts(cur, sport, week0, *t)
-                        cur.execute("RELEASE SAVEPOINT sp_prev")
                         posts += got
                         n_prev += bool(got)
+                        if not got:
+                            print(f"[social] preview {t}: no post (no prediction, or under "
+                                  f"{S.PREVIEW_MIN_FIELD} runners)")
                     except Exception as exc:            # noqa: BLE001
-                        cur.execute("ROLLBACK TO SAVEPOINT sp_prev")
+                        conn.rollback()
                         print(f"[social] preview {t}: {type(exc).__name__}: {str(exc)[:160]}")
+                conn.rollback()
+                cur.execute("RESET statement_timeout")
                 print(f"[social] previews: {n_prev} of {len(targets)} race(s) "
                       f"[{time.time() - t2:.0f}s]")
             conn.rollback()

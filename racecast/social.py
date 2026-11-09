@@ -1100,12 +1100,12 @@ def previewTargets(cur, today=None, days=PREVIEW_DAYS):
     out, seen = [], set()
     champs = U.storedChampionships(today)
     if champs is None:
+        # ! no savepoint: the championship code may end the transaction
+        #   itself (upcoming_preview._endTransaction)
         try:
-            cur.execute("SAVEPOINT sp_champs")
             champs = U.upcomingChampionships(cur, today)
-            cur.execute("RELEASE SAVEPOINT sp_champs")
         except Exception as exc:                        # noqa: BLE001
-            cur.execute("ROLLBACK TO SAVEPOINT sp_champs")
+            cur.connection.rollback()
             print(f"[social] championships: {type(exc).__name__}: {exc}", flush=True)
             champs = []
     for m in champs:
@@ -1537,14 +1537,17 @@ def admin_social_compose_new():
             if div_id is not None and not races:
                 races = [{"div_id": div_id}]
             for r in races[:6]:
+                # ! no savepoint: the prediction code may end the transaction
+                #   itself (build_social, 2026-11-09); nothing is written yet
                 try:
-                    cur.execute("SAVEPOINT sp_cprev")
-                    cur.execute("SET LOCAL statement_timeout = '180s'")
+                    conn.rollback()
+                    cur.execute("SET statement_timeout = '180s'")
                     made += previewPosts(cur, "XC", week, src, meet_id, r["div_id"], day=day)
-                    cur.execute("RELEASE SAVEPOINT sp_cprev")
                 except Exception as exc:                 # noqa: BLE001
-                    cur.execute("ROLLBACK TO SAVEPOINT sp_cprev")
+                    conn.rollback()
                     print(f"[compose] preview {src} {meet_id}/{r['div_id']}: {type(exc).__name__}: {exc}", flush=True)
+            conn.rollback()
+            cur.execute("RESET statement_timeout")     # a pooled connection: as it came
         elif what == "picks":
             st, div, g = (request.form.get("state") or "").upper(), request.form.get("division"), request.form.get("gender")
             pool = {"boys": "hs_m", "girls": "hs_f"}.get(g)
