@@ -223,8 +223,19 @@ def isSplit(title):
     return bool(_SPLIT.search(title or ""))
 
 
-def isAgeGroup(title):
-    return bool(_AGE_GROUP.search(title or ""))
+# an AAU or Junior Olympics meet is age groups throughout (Snake River's
+# "AAU Region 21B": "Boys 2000m Steeple (15-16)", "Girls 3000 Meters (11)")
+_AGE_MEET = re.compile(r"\bAAU\b|junior\s+olympic|\bJ\.?O\.?\s+(?:champ|qualif)", re.I)
+_AGE_PAREN = re.compile(r"\((\d{1,2})(?:\s*-\s*(\d{1,2}))?\)\s*$")
+
+
+def isAgeGroup(title, meet_name=""):
+    """An age-group race: by its title ('8 and Under', 'U18', '(15-16)': an
+    age past any grade), or any race of an AAU / Junior Olympics meet."""
+    if _AGE_GROUP.search(title or "") or _AGE_MEET.search(meet_name or ""):
+        return True
+    m = _AGE_PAREN.search(title or "")
+    return bool(m and int(m.group(2) or m.group(1)) >= 13)
 
 
 # ★ A COMMUNITY RACE, NOT A SCHOOL RACE (2026-11-09, Finished Results'
@@ -351,7 +362,7 @@ def fromHytek(meet, slug, url):
         lm.skipped += e.skipped
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
             continue
-        if isAgeGroup(e.title) or isCommunity(e.rows) or isElementary(e.rows) or isSplit(e.title):
+        if isAgeGroup(e.title, meet.name) or isCommunity(e.rows) or isElementary(e.rows) or isSplit(e.title):
             lm.skipped += len(e.rows)
             continue
         sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters, track)
@@ -378,7 +389,7 @@ def fromMeetPro(index, results, slug, url):
     track = isTrackMeet([e.title for e in index.events])
     for e in index.events:
         got = results.get(e.number) or []
-        if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title) or isSplit(e.title):
+        if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title, index.name) or isSplit(e.title):
             continue
         rounds = got if isinstance(got[0], tuple) else [("", got)]
         for rnd, rows in rounds:

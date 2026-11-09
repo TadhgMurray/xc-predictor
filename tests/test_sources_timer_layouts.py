@@ -421,3 +421,10 @@ def test_a_page_that_mentions_meetpro_is_not_a_meetpro_page():
     assert not meetpro.isMeetProPage(home) and not discover.isReport(home)
     assert meetpro.isMeetProPage(b"<!--DO NOT ERASE! VERSION:&MeetProTemplate_v1.6-->")
     assert meetpro.isMeetProPage(b"<title>Meet | MeetPro by DirectAthletics</title>")
+
+
+def test_ages_in_parentheses_and_aau_meets_are_age_groups():
+    assert land.isAgeGroup("Boys 2000m Steeple (15-16)") and land.isAgeGroup("Girls 200m Hurdles (13)")
+    assert land.isAgeGroup("Girls 3000 Meters (11)", "AAU Region 21B")
+    assert not land.isAgeGroup("Boys 1600 Meters (7-8)") and not land.isAgeGroup("Girls 1600 (9)")
+    assert not land.isAgeGroup("Girls 3200 Meters", "Valley Invitational")
