@@ -410,8 +410,16 @@ def _buildOneIndex(connect, name, ddl):
             # SET LOCAL: the pooled connection goes back as it came
             cur.execute(f"SET LOCAL maintenance_work_mem = "
                         f"'{_dbSetting('maintenance_work_mem', _INDEX_MEM)}'")
-            cur.execute(f"SET LOCAL max_parallel_maintenance_workers = "
-                        f"{_dbSetting('max_parallel_maintenance_workers', _INDEX_WORKERS)}")
+            # ! NEVER MORE THAN _INDEX_WORKERS PER BUILD (2026-11-09: the
+            #   go-live's results rebuild ran three builds at the quiet cap's
+            #   4 workers each -- quiet mode handed a side-by-side build MORE
+            #   than the 2 it gets without it; fifteen sorting processes and
+            #   their temp files took the box to load 39, and a meet page's
+            #   one-meet count waited 42 s on the disk). The cap still wins
+            #   when it is stricter (strict mode's 0).
+            workers = min(int(_dbSetting('max_parallel_maintenance_workers', _INDEX_WORKERS)),
+                          _INDEX_WORKERS)
+            cur.execute(f"SET LOCAL max_parallel_maintenance_workers = {workers}")
             cur.execute(ddl)
         c.commit()
     return name, time.time() - t0

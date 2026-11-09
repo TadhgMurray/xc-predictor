@@ -675,14 +675,21 @@ def schoolTopAthletes(cur, school, sport, limit=12,
     #   HS-equivalent number (no data-hs on the live Amherst page) and could
     #   not be split by pool -- app.rowsByPool read every row as poolless and
     #   left men and women in one ranked list.
+    # ★ GROUPED FIRST, NAMED AFTER (2026-11-09). The name lookup ran on
+    #   every season row of the school before the GROUP BY -- thousands of
+    #   probes for a big programme, to keep ~100 people per pool. It depends
+    #   only on person_id, so every row of one person carried the same name
+    #   and max() of it was that name: looking it up once per kept person is
+    #   the same answer.
     cur.execute(f"""
-        SELECT person_id, name, best, pool, seasons, first_year, last_year
+        SELECT x.person_id,
+               COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '')       AS name,
+               x.best, x.pool, x.seasons, x.first_year, x.last_year
         FROM (SELECT y.*, row_number() OVER (PARTITION BY y.pool
                                              ORDER BY y.best DESC) AS rn_pool
               FROM (
             SELECT s.person_id,
-                   max(COALESCE(a.first_name, '') || ' '
-                       || COALESCE(a.last_name, ''))  AS name,
                    max(s.best_rating)                 AS best,
                    -- the pool of the season holding that best, for the
                    -- HS-equivalent view (an athlete can span pools).
@@ -693,14 +700,6 @@ def schoolTopAthletes(cur, school, sport, limit=12,
                    max(CASE WHEN s.sport = 'TF' THEN s.year + 1
                             ELSE s.year END)          AS last_year
             FROM   athlete_season s
-            LEFT JOIN LATERAL (
-                SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
-                       NULLIF(TRIM(x.last_name),  '') AS last_name
-                FROM   athletes x
-                WHERE  x.athlete_id = s.person_id
-                ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
-                LIMIT  1
-            ) a ON TRUE
             WHERE  s.school = %(school)s
               AND  s.sport  = %(sport)s
               AND  s.best_rating IS NOT NULL
@@ -708,10 +707,70 @@ def schoolTopAthletes(cur, school, sport, limit=12,
             GROUP  BY s.person_id
               ) y
         ) x
+        LEFT JOIN LATERAL (
+            SELECT NULLIF(TRIM(z.first_name), '') AS first_name,
+                   NULLIF(TRIM(z.last_name),  '') AS last_name
+            FROM   athletes z
+            WHERE  z.athlete_id = x.person_id
+            ORDER  BY (NULLIF(TRIM(z.last_name), '') IS NOT NULL) DESC
+            LIMIT  1
+        ) a ON TRUE
         -- the cap is per pool, as schoolBest's
         WHERE  x.rn_pool <= %(lim)s
-        ORDER  BY best DESC
+        ORDER  BY x.best DESC
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
     rows = fetchCappedPerPool(cur, limit)
     _fillRowNames(cur, rows)               # as schoolBest (sweep 2026-10-10)
     return rows
+
+# ★ THE SCHOOL'S HISTORY ONCE, NOT ONCE PER LINK (2026-11-09: /school/:name
+#   was the slow log's costliest page kind, 3,229 statements over 250 ms in
+#   48 h). The header, the year bar, the current season, the all-time best
+#   and the top athletes are the same for every ?year= of a school, and a
+#   crawler walks every year. They are shared by every worker
+#   (sharedcache) for SCHOOL_SHARED_TTL, keyed by the call, the boards
+#   tables' oids (a swapped-in build is a new copy) and the day; the roster
+#   and the meet list change with the year and are read per request.
+# ! A DEGRADED ANSWER IS NOT SHARED: a header whose count ran out of budget
+#   (athletes None) or a missing school (None) is computed again next time.
+SCHOOL_SHARED_TTL = 1800.0
+
+
+def _plain(v):
+    """Rows as plain dicts (RealDictRow does not pickle reliably), lists
+    keeping their own type and attributes (capped.Capped's truncated)."""
+    if isinstance(v, dict):
+        return {k: _plain(x) for k, x in v.items()}
+    if isinstance(v, list):
+        items = [_plain(x) for x in v]
+        if type(v) is list:
+            return items
+        out = type(v)(items)
+        out.__dict__.update(getattr(v, "__dict__", {}))
+        return out
+    if isinstance(v, tuple):
+        return tuple(_plain(x) for x in v)
+    return v
+
+
+def _keepShared(v):
+    if v is None:
+        return False
+    return not (isinstance(v, dict) and "athletes" in v and v["athletes"] is None)
+
+
+def sharedSchool(cur, fn, *args, **kw):
+    """fn(cur, *args, **kw), shared across the box's workers."""
+    import datetime
+    import hashlib
+    import sharedcache
+    oids = (sharedcache.tableOid(cur, "athlete_season"),
+            sharedcache.tableOid(cur, "ranking_results"))
+    if None in oids:
+        return fn(cur, *args, **kw)
+    key = repr((fn.__name__, args, sorted(kw.items()), oids,
+                datetime.date.today().isoformat()))
+    name = "school-" + hashlib.sha1(key.encode("utf-8")).hexdigest()
+    value, _at = sharedcache.get(name, lambda: _plain(fn(cur, *args, **kw)),
+                                 ttl=SCHOOL_SHARED_TTL, keep=_keepShared)
+    return value

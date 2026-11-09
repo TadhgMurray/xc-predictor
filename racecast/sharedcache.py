@@ -269,3 +269,35 @@ def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
                     pass
         finally:
             fcntl.flock(lk, fcntl.LOCK_UN)
+
+
+# ★ A TABLE'S IDENTITY, FOR A KEY (2026-11-09). The boards tables are rebuilt
+#   as a shadow and swapped in, so a new build is a new oid: a key carrying
+#   the oid never serves a copy read from the table before. Read at most
+#   once a minute per process per table, under a savepoint so a failure
+#   leaves the caller's transaction as it was; None when it cannot be read
+#   (then the caller computes, as if this module did not exist).
+_OIDS = {}
+
+
+def tableOid(cur, table, now=time.time):
+    t = now()
+    hit = _OIDS.get(table)
+    if hit is not None and t - hit[0] < 60:
+        return hit[1]
+    oid = None
+    try:
+        with cur.connection.cursor() as c:
+            c.execute("SAVEPOINT shared_oid")
+            try:
+                c.execute("SELECT to_regclass(%s)::oid", (table,))
+                row = c.fetchone()
+                oid = int(row[0]) if row and row[0] is not None else None
+                c.execute("RELEASE SAVEPOINT shared_oid")
+            except Exception:                           # noqa: BLE001
+                c.execute("ROLLBACK TO SAVEPOINT shared_oid")
+                oid = None
+    except Exception:                                   # noqa: BLE001
+        oid = None
+    _OIDS[table] = (t, oid)
+    return oid

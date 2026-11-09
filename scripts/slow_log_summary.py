@@ -79,15 +79,21 @@ def main(argv=None):
     ap.add_argument("--worst", type=int, default=0, metavar="N",
                     help="also list the N slowest single statements with their full URL")
     ap.add_argument("--path", default="",
-                    help="with --worst: only URLs starting with this, e.g. /api/rankings")
+                    help="only URLs starting with this, e.g. /school/ (the tables and --worst)")
     a = ap.parse_args(argv)
     if not os.path.exists(a.log):
         print(f"no log at {a.log}")
         return 1
     since = dt.datetime.now() - dt.timedelta(hours=a.hours)
     with open(a.log, encoding="utf-8", errors="replace") as fh:
-        by_page, by_sql = summarise(fh, since)
-    print(f"slow statements (>250 ms) in the last {a.hours:g} h, by page kind:")
+        # ! --path NARROWS THE TABLES TOO (2026-11-09: it used to apply to
+        #   --worst only, and "--path /school/" printed the whole site)
+        lines = fh if not a.path else (
+            ln for ln in fh
+            if (m := _LINE.match(ln.rstrip("\n"))) and m.group(3).startswith(a.path))
+        by_page, by_sql = summarise(lines, since)
+    print(f"slow statements (>250 ms) in the last {a.hours:g} h"
+          + (f" under {a.path}" if a.path else "") + ", by page kind:")
     print(table(by_page, a.top))
     print("\nby statement:")
     print(table(by_sql, a.top))

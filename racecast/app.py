@@ -5489,6 +5489,16 @@ def _finishedSqlFor(cur):
     return "r.time_seconds < 999999"
 
 
+# ★ ONCE PER MEET FOR THE BOX (2026-11-09: the slow log's second costliest
+#   statement, 836 runs over 250 ms in 48 h). The meet page, each of its
+#   ?school= / ?r= links and every race page of the meet ask the same
+#   question, and it reads every result's profile for the gender. Shared by
+#   every worker for MEET_DIVISIONS_TTL, keyed by the meet, the feed and
+#   results' oid (a go-live rebuilds results as a new table); an empty
+#   answer is not kept, so a meet still arriving is read again.
+MEET_DIVISIONS_TTL = 1800.0
+
+
 def get_meet_divisions(cur, meet_id, source=None):
     """Every division in this meet, with how many results each has.
 
@@ -5496,6 +5506,18 @@ def get_meet_divisions(cur, meet_id, source=None):
       DISTANCE come from the jsonb blob when `meets` has nothing, which is what
       turns a row of blanks into a usable link.
     """
+    import sharedcache
+    oid = sharedcache.tableOid(cur, "results")
+    if oid is None:
+        return _meetDivisionsRows(cur, meet_id, source)
+    rows, _at = sharedcache.get(
+        f"meetdiv-{oid}-{int(meet_id)}-{source or ''}",
+        lambda: [dict(r) for r in _meetDivisionsRows(cur, meet_id, source)],
+        ttl=MEET_DIVISIONS_TTL, keep=bool)
+    return [dict(r) for r in rows]
+
+
+def _meetDivisionsRows(cur, meet_id, source=None):
     cur.execute(f"""
         SELECT r.div_id                              AS div_id,
                COALESCE(m.division,
@@ -7570,7 +7592,7 @@ def school_page(school_name):
     """
     from school import (schoolHeader, schoolYears, schoolRoster, schoolMeets,
                         schoolBest, schoolTopAthletes, currentSeason,
-                        seasonLabel, storedYear)
+                        seasonLabel, storedYear, sharedSchool)
     from school_identity import stateChips
     from panels import isTeamName
 
@@ -7617,7 +7639,7 @@ def school_page(school_name):
                 state = primary_state
             # ! AFTER THE CHIP, so the span is this school's and not every
             #   namesake's (sweep 2026-10-10)
-            header = schoolHeader(cur, school_name, state, primary_state)
+            header = sharedSchool(cur, schoolHeader, school_name, state, primary_state)
             if header is None:
                 abort(404)
             # long form here: this line is not shared with a grade and a
@@ -7682,7 +7704,7 @@ def school_page(school_name):
                     units = unitsFor(cur, school_name, state or primary_state,
                                      sport, long=True, level=_main)
 
-            years = schoolYears(cur, school_name, state, primary_state)
+            years = sharedSchool(cur, schoolYears, school_name, state, primary_state)
 
             # ★ THE SCHOOL NAME LANDS ON THE HISTORY, NOT ON A YEAR. With no
             #   ?year the page is the whole programme, with the CURRENT roster
@@ -7698,8 +7720,8 @@ def school_page(school_name):
             picked = int(raw) if raw and raw.isdigit() else None
             picked_stored = storedYear(sport, picked)
 
-            year   = picked_stored or currentSeason(cur, school_name, sport,
-                                                 state, primary_state)
+            year   = picked_stored or sharedSchool(cur, currentSeason, school_name, sport,
+                                                        state, primary_state)
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state)
                       if year else [])
@@ -7708,10 +7730,10 @@ def school_page(school_name):
                                  level=level)
             # deeper than the old 25: the tables reveal in place now, and
             # the cap is what "show more" runs out against
-            best   = schoolBest(cur, school_name, sport, limit=100,
-                                state=state, primary=primary_state)
-            top    = schoolTopAthletes(cur, school_name, sport, limit=100,
-                                       state=state, primary=primary_state)
+            best   = sharedSchool(cur, schoolBest, school_name, sport, limit=100,
+                                  state=state, primary=primary_state)
+            top    = sharedSchool(cur, schoolTopAthletes, school_name, sport, limit=100,
+                                  state=state, primary=primary_state)
             # ★ THE RECORD BOOK TAB (2026-10-10): one primary-key read of
             #   the precomputed book (build_record_books.py); None until built
             import record_books as _RB
@@ -10507,15 +10529,28 @@ def _default_xc_courses(cur, n=10, pool=None):
     lv = (_cv._bare(pool) or "").split("_", 1)[0]
     km = _cv.readerDistance(pool, "XC") if pool and lv != "hs" else None
     where = "AND round(cd.distance_m / 1000.0) = round(%(m)s / 1000.0)" if km else ""
-    cur.execute(_XC_COURSE_SQL.format(where=where, name_where=""), {"n": n, "m": km})
-    # `or 0.0` would swallow a course genuinely fitted at 0.0 AND turn a NULL
-    # (no fitted cell) into a claim of averageness. Pass NULL through as None
-    # so the conversion layer can tell "unrated" from "average".
-    return [{"course_name": r["name"],
-             "canonical_id": r["canonical_id"],
-             "difficulty": r["difficulty"],
-             "distance":   r["distance"] or 5000.0}
-            for r in cur.fetchall()]
+
+    def compute():
+        cur.execute(_XC_COURSE_SQL.format(where=where, name_where=""), {"n": n, "m": km})
+        # `or 0.0` would swallow a course genuinely fitted at 0.0 AND turn a
+        # NULL (no fitted cell) into a claim of averageness. Pass NULL through
+        # as None so the conversion layer can tell "unrated" from "average".
+        return [{"course_name": r["name"],
+                 "canonical_id": r["canonical_id"],
+                 "difficulty": r["difficulty"],
+                 "distance":   r["distance"] or 5000.0}
+                for r in cur.fetchall()]
+    # ★ ONCE PER FIVE MINUTES FOR THE BOX, NOT ONCE PER VIEW (2026-11-09: the
+    #   latency report, /conversions 51,327 views at a flat 35-70 ms -- this
+    #   DISTINCT ON over every course cell, the same ten rows for every
+    #   visitor of a level). course_difficulties is rewritten in place by the
+    #   solve, hours before a go-live, so a copy at most COURSES_TTL old.
+    import sharedcache
+    rows, _at = sharedcache.get(f"xc-courses-{n}-{km}", compute, ttl=_XC_COURSES_TTL)
+    return [dict(r) for r in rows]
+
+
+_XC_COURSES_TTL = 300.0
 
 
 @app.route("/conversions")

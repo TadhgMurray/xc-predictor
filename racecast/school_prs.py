@@ -158,6 +158,36 @@ def hurdleSql():
     """
 
 
+# ★ ONE FETCH PER SCHOOL, NOT PER LINK (2026-11-09, the latency report:
+#   41,389 PR pages, 4,386 s). Every ?year= and ?course= variant of a
+#   school's PR page fetches the same unfiltered rows and cuts them in
+#   Python, and a crawler walks every variant. A big school's rows are
+#   shared by every worker (sharedcache) for PRS_SHARED_TTL, keyed by the
+#   tables' oids, so a rebuilt board is a new copy; a school under
+#   PRS_SHARED_MIN rows is fetched as before (fast, and not worth a file).
+PRS_SHARED_TTL = 3600.0
+PRS_SHARED_MIN = 500
+
+
+def _sharedRows(cur, kind, key, tables, fetch):
+    """fetch()'s rows as plain dicts, shared across workers when big."""
+    import hashlib
+    import sharedcache
+    oids = tuple(sharedcache.tableOid(cur, t) for t in tables)
+    if None in oids:
+        return [dict(r) for r in fetch()]
+
+    def compute():
+        rows = fetch()
+        cols = list(rows[0].keys()) if rows else []
+        return (cols, [tuple(r[c] for c in cols) for r in rows])
+    name = "prs-" + hashlib.sha1(repr((kind, key, oids)).encode("utf-8")).hexdigest()
+    (cols, data), _at = sharedcache.get(
+        name, compute, ttl=PRS_SHARED_TTL,
+        keep=lambda v: len(v[1]) >= PRS_SHARED_MIN)
+    return [dict(zip(cols, t)) for t in data]
+
+
 def _runningRows(cur, school, sport):
     """Every rated-or-timed race for this school in one sport, with the
     course name for XC.
@@ -168,9 +198,14 @@ def _runningRows(cur, school, sport):
       athlete per meet. Gender comes from the pool; names are looked up
       in ONE bulk query afterwards, for only the rows that display."""
     from rankings import _hasEventKind
-    cur.execute(runningSql(sport, event_kind=_hasEventKind()),
-                {"school": school, "sport": sport})
-    return cur.fetchall()
+    ek = _hasEventKind()
+
+    def fetch():
+        cur.execute(runningSql(sport, event_kind=ek),
+                    {"school": school, "sport": sport})
+        return cur.fetchall()
+    tables = ("ranking_results", "meets") if sport == "XC" else ("ranking_results",)
+    return _sharedRows(cur, "running", (school, sport, ek), tables, fetch)
 
 
 
@@ -179,14 +214,18 @@ def _fieldRows(cur, school):
     coalesces the meets_tf copy with the result's own, the scoring
     query's rule. Names AND genders resolve in one bulk lookup after --
     same reasoning as _runningRows."""
-    cur.execute(fieldSql(), {"school": school})
-    return cur.fetchall()
+    def fetch():
+        cur.execute(fieldSql(), {"school": school})
+        return cur.fetchall()
+    return _sharedRows(cur, "field", school, ("results_tf", "meets_tf"), fetch)
 
 
 def _hurdleRows(cur, school):
     """Every individual hurdle/steeple time for this school."""
-    cur.execute(hurdleSql(), {"school": school, "pat": HURDLE_PATTERN})
-    return cur.fetchall()
+    def fetch():
+        cur.execute(hurdleSql(), {"school": school, "pat": HURDLE_PATTERN})
+        return cur.fetchall()
+    return _sharedRows(cur, "hurdles", school, ("results_tf", "meets_tf"), fetch)
 
 
 def _athleteInfo(cur, ids):
