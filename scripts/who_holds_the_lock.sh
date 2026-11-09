@@ -110,3 +110,12 @@ echo ""
 echo "  memory-heavy jobs (scripts/jobrun.py --status):"
 _py="${XCP_PYTHON:-/srv/venv/bin/python}"; [ -x "$_py" ] || _py=python3
 "$_py" scripts/jobrun.py --status 2>&1 | sed 's/^/      /'
+# ★ ENGINE REPLAYS STOPPED FOR THE PIPELINE OR FOR MEMORY (review, 2026-11-09)
+if [ -f logs/replay/summary.log ]; then
+    n=$(grep -c ': STOPPED' logs/replay/summary.log)
+    if [ "$n" -gt 0 ]; then
+        echo ""
+        echo "  engine replays stopped so far: $n (logs/replay/summary.log); the last:"
+        grep ': STOPPED' logs/replay/summary.log | tail -3 | cut -c1-160 | sed 's/^/      /'
+    fi
+fi

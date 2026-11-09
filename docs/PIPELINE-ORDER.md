@@ -61,6 +61,15 @@ in the same minute both started (1.5 GB left, 2026-11-09).
    cutoff is unclaimed and solved again later. Anything else in the way is
    waited for up to `XCP_GOLIVE_MEM_WAIT_MIN` (90); then the go-live runs
    anyway, and says so.
+   A stopped cutoff is not lost work beyond itself: each cutoff is its own
+   solve (~65 min) and a finished one is never redone (the snapshot is
+   written to a temp file and renamed, so a stopped solve never leaves one
+   that reads as done). The retry waits until no want is posted -- after the
+   run's last solve -- instead of polling into the run. Each stop is a
+   `STOPPED ... (N times so far)` line in logs/replay/summary.log, and
+   who_holds_the_lock.sh prints the count. A stop is SIGTERM, a 30 s grace
+   (`XCP_JOBRUN_GRACE_S`) for the job's own cleanup, then SIGKILL; the
+   replay's only database use is one short read at its start.
 2. **Replays one at a time, in practice.** A replay reserves `XCP_REPLAY_GB`
    (60) and starts only with `XCP_REPLAY_MIN_GB` (70) free after everyone
    else's reservations. On the 125 GB box that is one replay at a time
