@@ -185,6 +185,13 @@ def accountMeets(entries, account, since_year):
         date = newest[meet][:10]
         if date[:4].isdigit() and int(date[:4]) < since_year:
             continue
+        # ! A FOLDER OF PAPERS, NOT RESULTS (Clennie Wilkins' "..._full_roster_
+        #   and_entries", Aldrich's "Sample"): never lands, so it would take
+        #   a meet's place in every night's budget
+        words = meet.replace("_", " ")
+        if (_NAV_WORDS.search(words) and not re.search(r"result", words, re.I)) or ROAD.search(words) \
+                or re.search(r"(?<![a-z])(roster|rosters|sample|test|template|practice)(?![a-z])", words, re.I):
+            continue
         url = "http://results.tfmeetpro.com/" + urllib.parse.quote(f"{account}/{meet}/{page}")
         out.append((url, date))
     return sorted(out, key=lambda x: (x[1], x[0]), reverse=True)

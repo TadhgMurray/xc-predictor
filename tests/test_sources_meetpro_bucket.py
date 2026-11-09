@@ -198,3 +198,11 @@ def test_a_timer_whose_page_is_a_feeds_is_read_off_its_accounts():
     assert [u for u, _k in urls] == ["http://results.tfmeetpro.com/Acct/Reused_Folder/index.html",
                                      "http://results.tfmeetpro.com/Acct/River%20%26%20Pines%20XC/index.html"]
     assert "feed" in note and not any("milesplit" in u for u in fetcher.asked)
+
+
+def test_folders_of_rosters_samples_and_road_races_are_not_meets():
+    entries = [("A/conference_full_roster_and_entries/index.html", "2026-10-01"),
+               ("A/Sample/index.html", "2026-10-02"), ("A/Turkey_Trot_5K/index.html", "2026-11-01"),
+               ("A/Valley_XC_Invite/index.html", "2026-09-01"), ("A/County_Results_Final/index.html", "2026-09-02")]
+    assert [u.rsplit("/", 2)[1] for u, _d in discover.accountMeets(entries, "A", 2026)] == \
+        ["County_Results_Final", "Valley_XC_Invite"]
