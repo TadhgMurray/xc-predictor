@@ -162,6 +162,32 @@ def _nameRows(cur, rows):
     return rows
 
 
+def _wholeRows(cur, picked, where, dist, params):
+    """The picked comps as whole season_comps rows (c.* and dist), in the
+    picked order: the same band query, narrowed to their people and years.
+    A comp whose key now matches no row (the table swapped in between) is
+    kept as it was picked."""
+    if not picked:
+        return []
+    cur.execute(f"""
+        SELECT c.*, {dist}
+        {where}
+          AND  c.person_id = ANY(%(ex_p)s) AND c.year = ANY(%(ex_y)s)
+    """, dict(params, ex_p=[int(c["person_id"]) for c in picked],
+              ex_y=sorted({int(c["year"]) for c in picked})))
+    whole = {}
+    for r in cur.fetchall():
+        r = dict(r)
+        whole.setdefault((r["person_id"], r["year"]), []).append(r)
+    out = []
+    for c in picked:
+        rows = whole.get((c["person_id"], c["year"])) or []
+        # two rows on one key: the one this comp was (its distance)
+        same = [r for r in rows if r.get("dist") == c.get("dist")] or rows
+        out.append(same[0] if same else c)
+    return out
+
+
 def _runnersLikeYou(cur, person_id, sport):
     s = subjectSeason(cur, person_id, sport)
     if not s or s.get("grade") is None:
@@ -194,15 +220,25 @@ def _runnersLikeYou(cur, person_id, sport):
     #   for every comp in the band -- hundreds to thousands of rows -- when
     #   only the EXAMPLES rows ever print a name. The stats read none; the
     #   examples are named below, after they are picked.
-    cur.execute(f"""
-        SELECT c.*,
-               abs(c.rating - %(r)s) / sqrt(%(var_s)s + %(sig2)s / c.n_races) AS dist
+    # ★ EIGHT NUMBERS PER COMP, NOT THE WHOLE ROW (2026-11-09: still the
+    #   recruit page's costliest statement, 1,224 runs over 250 ms in 48 h).
+    #   The stats read only these columns of the ~10k comps in a band; the
+    #   five examples that print are read whole below, by key. With
+    #   idx_season_comps_match carrying them (build_comps: INCLUDE, and the
+    #   table vacuumed before it goes live) the band is read from the index
+    #   alone.
+    where = f"""
         FROM   season_comps c
         WHERE  c.sport = %(sport)s AND c.pool = %(pool)s AND c.grade = %(g)s
           AND  c.rating BETWEEN %(lo)s AND %(hi)s
           AND  c.person_id <> %(me)s AND c.year < %(y)s
           AND  abs(c.rating - %(r)s) <= sqrt(%(var_s)s + %(sig2)s / c.n_races)
-          {traj}
+          {traj}"""
+    dist = "abs(c.rating - %(r)s) / sqrt(%(var_s)s + %(sig2)s / c.n_races) AS dist"
+    cur.execute(f"""
+        SELECT c.person_id, c.year, c.next_rating, c.senior_rating,
+               c.college, c.college_division, {dist}
+        {where}
     """, params)
     comps = [dict(r) for r in cur.fetchall()]
 
@@ -219,7 +255,8 @@ def _runnersLikeYou(cur, person_id, sport):
     # the closest comps whose story is complete enough to tell: senior season
     # known (or, for a senior, the college question settled)
     told = sen if g < 12 else col
-    examples = sorted(told, key=lambda c: (float(c["dist"]), -c["year"]))[:EXAMPLES]
+    picked = sorted(told, key=lambda c: (float(c["dist"]), -c["year"]))[:EXAMPLES]
+    examples = _wholeRows(cur, picked, where, dist, params)
     _nameRows(cur, examples)
 
     model = None

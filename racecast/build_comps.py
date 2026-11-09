@@ -152,8 +152,14 @@ def main():
                 " NULL::text AS state, NULL::text AS division, NULL::real AS first_rating,"
                 " NULL::int AS first_year) cr ON FALSE")
             cur.execute(build)
+            # ★ THE BAND READ FROM THE INDEX ALONE (2026-11-09): every
+            #   column comps._runnersLikeYou's band query touches rides in
+            #   the index, and the table is vacuumed below so the visibility
+            #   map lets Postgres skip the heap
             cur.execute("CREATE INDEX idx_season_comps_new_match "
-                        "ON season_comps_new (sport, pool, grade, rating)")
+                        "ON season_comps_new (sport, pool, grade, rating) "
+                        "INCLUDE (person_id, year, n_races, prev_rating, prev_n, "
+                        "next_rating, senior_rating, college, college_division)")
             cur.execute("CREATE INDEX idx_season_comps_new_person "
                         "ON season_comps_new (person_id)")
             for sp, pool, sg, n in sigmas:
@@ -163,6 +169,15 @@ def main():
                                   count(college) FROM season_comps_new""")
             n, n_next, n_senior, n_college = cur.fetchone()
             conn.commit()
+        # VACUUM cannot run inside a transaction; nothing reads _new yet
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute("VACUUM (ANALYZE) season_comps_new")
+        except Exception as exc:                        # noqa: BLE001
+            print(f"  vacuum of season_comps_new skipped ({type(exc).__name__}: {exc})")
+        finally:
+            conn.autocommit = False
         swapTable(conn, "season_comps", renames=[
             ("idx_season_comps_new_match", "idx_season_comps_match"),
             ("idx_season_comps_new_person", "idx_season_comps_person")])
