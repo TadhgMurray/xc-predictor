@@ -719,6 +719,9 @@ THIN_GAP = 0.30          # 35% above the best of their only other races
 FIELD_MIN = 3
 FIELD_GAP = 0.10
 LEVEL_MIN_M = 6000
+MIXED_MIN = 3            # rows of each gender (or older rows) to call a list mixed
+MIXED_SHARE_INV = 10     # the smaller gender at least a tenth of the field
+OPEN_SHARE_INV = 20      # older runners at least a twentieth of the field
 
 EXTRA_SQL = r"""
     WITH x AS (
@@ -733,7 +736,10 @@ EXTRA_SQL = r"""
     fld AS (
         SELECT source, meet_id, div_id, count(*) AS n,
                count(*) FILTER (WHERE pool LIKE 'college%%') AS n_college,
-               count(*) FILTER (WHERE pool LIKE 'college%%' OR pool LIKE 'hs%%') AS n_older
+               count(*) FILTER (WHERE pool LIKE 'college%%' OR pool LIKE 'hs%%'
+                                  OR pool LIKE 'pro%%') AS n_older,
+               count(*) FILTER (WHERE right(pool, 2) = '_m') AS n_m,
+               count(*) FILTER (WHERE right(pool, 2) = '_f') AS n_f
         FROM   x GROUP BY 1, 2, 3),
     -- ! UP TO SIX RACES, NOT THREE (owner's audit, 2026-11-09: Amy Soliz,
     --   Whiteface (TX), 163.6 against three other races at a median of 91,
@@ -747,16 +753,19 @@ EXTRA_SQL = r"""
                CASE WHEN distance < 50 THEN distance * 1609.34 ELSE distance END AS m
         FROM   meets WHERE distance > 0),
     cand AS (
-        SELECT x.*, f.n, f.n_college, f.n_older, dm.m
+        SELECT x.*, f.n, f.n_college, f.n_older, f.n_m, f.n_f, dm.m
         FROM   x
         JOIN   fld f ON f.source = x.source AND f.meet_id = x.meet_id AND f.div_id = x.div_id
         LEFT   JOIN dist dm ON x.source = 'anet' AND dm.div_id = x.div_id
         WHERE  f.n < %(field_min)s
+           OR  (least(f.n_m, f.n_f) >= %(mixed_min)s
+                AND least(f.n_m, f.n_f) * %(mixed_share)s >= f.n_m + f.n_f)
            OR  x.person_id IN (SELECT person_id FROM few)
            OR  (x.pool IN ('ms_m', 'ms_f', 'elem_m', 'elem_f')
                 AND (dm.m >= %(level_m)s OR f.n_college * 2 > f.n OR NOT x.graded)))
     SELECT c.result_id, c.person_id, extract(year FROM c.d)::int, c.s,
            o.k, o.best, o.med, c.n, c.pool, c.m, c.n_college, c.graded, c.n_older,
+           c.n_m, c.n_f,
            -- an ungraded youth row on a profile with high school or college
            -- races before it (David Bowdoin, 2009: a track mile, ms_m, on a
            -- profile that ran high school in 1994)
@@ -779,9 +788,30 @@ EXTRA_SQL = r"""
 
 
 def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=0,
-              older_before=False):
+              older_before=False, n_m=0, n_f=0):
     """The side for one candidate row of EXTRA_SQL, or None. Pure."""
     s = float(s)
+    # ★ MEN AND WOMEN IN ONE RESULT LIST (owner's audit, 2026-11-09: the
+    #   Coast-to-Coast Battle in Beantown "Combined 5k", its men at 15:31
+    #   rated as college women; the Steve Reeder and Sagebrush
+    #   invitationals, Utah State's women at the men's 7000 m and three of
+    #   the top five college women all time). A combined list carries one
+    #   distance and one division gender for two races: neither can be
+    #   trusted for any row in it. MIXED_MIN rows of each and the smaller
+    #   side MIXED_SHARE or more of the field -- a girl or two in a boys'
+    #   race is not a combined list.
+    n_m, n_f = int(n_m or 0), int(n_f or 0)
+    if min(n_m, n_f) >= MIXED_MIN and min(n_m, n_f) * MIXED_SHARE_INV >= n_m + n_f:
+        return "mixed"
+    # ★ AN UNGRADED YOUTH ROW IN AN OPEN RACE (same audit: the Bowerman 5K
+    #   "Adults and Youth" again -- Cole Hoff, a professional, 14:03 as a
+    #   middle schooler; ten older runners in 107 was under the quarter and
+    #   the tenth below). MIXED_MIN or more high school, college or pro rows
+    #   and one in twenty of the field: the race is open, and no grade is no
+    #   evidence of the youth level.
+    if (pool in ("ms_m", "ms_f", "elem_m", "elem_f") and not graded and n
+            and (n_older or 0) >= MIXED_MIN and (n_older or 0) * OPEN_SHARE_INV >= n):
+        return "level"
     # ! AND AN UNGRADED YOUTH ROW NOTHING VOUCHES FOR (owner's audit,
     #   2026-11-09: the Bowerman 5K at Nike, 14:06 by 'Bowerman Track' and
     #   'ARC' with no grade and no other race, ranked as middle schoolers;
@@ -807,10 +837,13 @@ def extraRows(cur):
     """[(result_id, 'XC', person_id, season, rating, med, side)] for the
     rows the neighbourhood cannot judge."""
     cur.execute(EXTRA_SQL, {"field_min": FIELD_MIN, "level_m": LEVEL_MIN_M,
-                            "days": THIN_DAYS})
+                            "days": THIN_DAYS, "mixed_min": MIXED_MIN,
+                            "mixed_share": MIXED_SHARE_INV})
     out = []
-    for rid, pid, yr, s, k, best, med, n, pool, metres, n_col, graded, n_old, older in cur.fetchall():
-        side = extraSide(s, k, best, med, n, pool, metres, n_col, graded, n_old, bool(older))
+    for (rid, pid, yr, s, k, best, med, n, pool, metres, n_col, graded, n_old,
+         n_m, n_f, older) in cur.fetchall():
+        side = extraSide(s, k, best, med, n, pool, metres, n_col, graded, n_old,
+                         bool(older), n_m, n_f)
         if side:
             out.append((rid, "XC", pid, yr, float(s), med and float(med), side))
     return out
@@ -875,7 +908,7 @@ def printExtra(rows, show):
     by = Counter(r[6] for r in rows)
     print(f"\n  rows the neighbourhood cannot judge: {len(rows):,} "
           f"({', '.join(f'{k} {v:,}' for k, v in sorted(by.items()))})")
-    for side in ("level", "thin", "field"):
+    for side in ("mixed", "level", "thin", "field"):
         top = sorted((r for r in rows if r[6] == side), key=lambda r: -r[4])[:show]
         for r in top:
             print(f"    {side:<5} result {r[0]}  /athlete/{r[2]}  {r[3]}  rating {r[4]:.1f}"

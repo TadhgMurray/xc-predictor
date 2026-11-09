@@ -2581,8 +2581,9 @@ def athlete(person_id):
                     continue
                 race["rank_outlier"] = side
                 # thin = another person's row or a wrong distance, like fast;
+                # mixed = a combined men's and women's list, distance unknown;
                 # field / level rows were really run, so their marks stay
-                if side in ("fast", "thin"):
+                if side in ("fast", "thin", "mixed"):
                     for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
                               "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):

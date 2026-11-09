@@ -71,6 +71,11 @@ def test_the_sql_finds_them():
         INSERT INTO results SELECT 200 + g, 2000 + g, 'anet', 2, 21, '2026-09-12', 150,
                                    CASE WHEN g = 1 THEN 'ms_m|XC' ELSE 'college_m|XC' END
                             FROM generate_series(1, 5) g;
+        -- a combined men's and women's list (mixed): six of each
+        INSERT INTO meets VALUES (41, 4, 5000);
+        INSERT INTO results SELECT 400 + g, 4000 + g, 'anet', 4, 41, '2026-09-19', 120,
+                                   CASE WHEN g <= 6 THEN 'college_m|XC' ELSE 'college_f|XC' END
+                            FROM generate_series(1, 12) g;
     """)
     got = {r[0]: r[6] for r in RO.extraRows(cur)}
     cur.execute("DROP SCHEMA ox CASCADE")
@@ -79,6 +84,7 @@ def test_the_sql_finds_them():
     assert got.get(1) == "thin"
     assert got.get(201) == "level"
     assert 2 not in got and 202 not in got
+    assert all(got.get(400 + g) == "mixed" for g in range(1, 13))
 
 
 def test_the_2026_11_09_audit_rows():
@@ -115,3 +121,28 @@ def test_the_same_time_sql_finds_the_high_copy():
     c.commit()
     c.close()
     assert got == {1: "fast"}
+
+
+def test_men_and_women_in_one_list_are_mixed():
+    """owner's audit, 2026-11-09: the Coast-to-Coast 'Combined 5k' (men at
+    15:31 rated as college women) and Utah State's women at the men's 7000 m."""
+    assert RO.extraSide(163.3, 9, 150.0, 148.0, 104, "college_f", 5000, 104,
+                        n_m=15, n_f=89) == "mixed"
+    assert RO.extraSide(175.6, 5, 150.0, 149.0, 72, "college_f", 7000, 72,
+                        n_m=48, n_f=24) == "mixed"
+    # two girls in a boys' race of forty: not a combined list
+    assert RO.extraSide(120.0, 5, 125.0, 119.0, 42, "hs_m", 5000, 0,
+                        n_m=40, n_f=2) is None
+    # three girls in a field of fifty: under a tenth
+    assert RO.extraSide(120.0, 5, 125.0, 119.0, 50, "hs_m", 5000, 0,
+                        n_m=47, n_f=3) is None
+
+
+def test_an_ungraded_youth_row_in_an_open_race():
+    """The Bowerman 5K 'Adults and Youth': Cole Hoff 14:03 as a middle
+    schooler, ten older runners in 107."""
+    assert RO.extraSide(141.1, 0, None, None, 107, "ms_m", 5000, 5, False, 10) == "level"
+    # graded, the same race: the grade is evidence
+    assert RO.extraSide(130.0, 0, None, None, 107, "ms_m", 5000, 5, True, 10) is None
+    # ungraded, a middle school race with two older runners: stays
+    assert RO.extraSide(120.0, 0, None, None, 107, "ms_m", 3200, 0, False, 2) is None

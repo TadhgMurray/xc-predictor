@@ -28,6 +28,15 @@ SITEMAPS = os.path.join(HERE, "..", "racecast", "static", "sitemaps")
 ORIGIN = os.environ.get("XCP_SITE_ORIGIN", "https://racecast.co").rstrip("/")
 ENDPOINT = "https://api.indexnow.org/indexnow"
 BATCH = 10000
+# ★ AT MOST ONE BATCH A RUN (owner, 2026-11-09: Bing Webmaster Tools, "Avoid
+#   IndexNow Batch Mode to prevent excessive server load and potential
+#   indexing delays"). The public ids (2026-11-08) gave every page a new URL,
+#   so every school, course and meet URL was "new since the last run" and
+#   went out at once -- hundreds of thousands in 10,000-URL posts. Each run
+#   now sends up to MAX: the landing pages and the newest dated changes
+#   first, then new URLs; a new URL left over is not marked seen, so the
+#   next run sends it.
+MAX = int(os.environ.get("XCP_INDEXNOW_MAX", "10000") or 10000)
 _URL = re.compile(r"<url><loc>([^<]+)</loc>(?:<lastmod>([^<]+)</lastmod>)?</url>")
 
 
@@ -64,21 +73,30 @@ def _writeSeen(path, urls):
     os.replace(tmp, path)
 
 
-def pick(entries, cutoff, seen):
+def pick(entries, cutoff, seen, limit=None):
     """entries: [(file name, loc, lastmod or "")]. Returns (urls to submit,
-    the no-lastmod set to remember). `seen` None means no state yet."""
-    out, undated = [], set()
+    the no-lastmod set to remember). `seen` None means no state yet.
+    `limit` caps the urls: landing pages first, then the newest dated
+    changes, then new urls; a new url past the cap is not remembered."""
+    landing, dated, fresh, undated = [], [], [], set()
     for name, loc, lastmod in entries:
         if lastmod:
             if lastmod >= cutoff:
-                out.append(loc)
+                dated.append((lastmod, loc))
             continue
         if name.startswith("sitemap-pages"):
-            out.append(loc)
+            landing.append(loc)
             continue
         undated.add(loc)
         if seen is not None and loc not in seen:
-            out.append(loc)
+            fresh.append(loc)
+    dated = [loc for _m, loc in sorted(dated, key=lambda x: x[0], reverse=True)]
+    out = landing + dated + fresh
+    if limit is not None and len(out) > limit:
+        out = out[:limit]
+        if seen is not None:
+            sent = set(out)
+            undated = {u for u in undated if u in seen or u in sent}
     return out, undated
 
 
@@ -109,7 +127,7 @@ def collect(days, state=None, update_state=True):
             entries.append((name, html.unescape(loc), lastmod or ""))
     state = state or STATE
     seen = _readSeen(state)
-    out, undated = pick(entries, cutoff, seen)
+    out, undated = pick(entries, cutoff, seen, MAX)
     if seen is None:
         print(f"indexnow: no state at {state}; seeding it with {len(undated):,} "
               f"undated urls (none submitted this run)")
