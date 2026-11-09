@@ -448,6 +448,17 @@ async def walkListing(fetcher, url, since_year, max_age, need, depth=0):
     return meets
 
 
+def seasonUrls(url, since_year):
+    """[this season's url, the url on record] for a url naming an older
+    year once ('/2025-results.html'); [url] otherwise. Pure."""
+    ys = [int(y) for y in _YEAR.findall(urllib.parse.urlsplit(url).path)]
+    if len(ys) != 1 or ys[0] >= since_year:
+        return [url]
+    sp = urllib.parse.urlsplit(url)
+    path = re.sub(rf"(?<!\d){ys[0]}(?!\d)", str(since_year), sp.path)
+    return [urllib.parse.urlunsplit(sp._replace(path=path)), url]
+
+
 _ACCOUNT_IN_TEXT = re.compile(r"tfmeetpro\.com/([\w\-]+)/?((?:\s*(?:and|,|&)\s*/[\w\-]+/?)*)")
 
 
@@ -487,7 +498,14 @@ async def discover(fetcher, source, since_year=None, per_source=10, known=frozen
     elif FEED_HOSTS.search(_host(index)):
         note = "results page on record is a feed's (not read)"
     else:
-        own, note, listed = await _ownIndex(fetcher, index, since_year, per_source, known, index_max_age)
+        # ★ A PAGE NAMED FOR ITS SEASON FOLLOWS THE SEASON (2026-11-09: Hero's
+        #   Timing's page on record is 2025-results.html; 2026-results.html is
+        #   this fall's). The same url for since_year is read first, the one
+        #   on record when that one lists nothing.
+        for url in seasonUrls(index, since_year):
+            own, note, listed = await _ownIndex(fetcher, url, since_year, per_source, known, index_max_age)
+            if listed:
+                break
     # ! ONLY WHEN THE OWN PAGE LISTS NO MEETS: a timer whose own index works
     #   (Mitchell Timing links its MeetPro meets itself) is not listed again
     #   off the bucket every night -- 700 meet folders are 70 listing pages

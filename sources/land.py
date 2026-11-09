@@ -275,6 +275,17 @@ def sportByTimes(sport, meters, rows):
     return "XC" if secs and secs[len(secs) // 2] >= 600 else sport
 
 
+def oneSport(races, track_meet):
+    """A meet that is not a track meet and has a cross country race is a
+    cross country meet: all its races are XC. (2026-11-09, Jacksonville AC's
+    Parker Valby Invitational: the varsity races carried the team score that
+    says XC, the "BOYS (MS) • 3 Kilometers" race scored no teams and read TF.)"""
+    if not track_meet and any(r.sport == "XC" for r in races):
+        for r in races:
+            r.sport = "XC"
+    return races
+
+
 def withoutReprints(races):
     """Races, less any that only re-prints others of the same meet: a
     combined 'Boys and Girls 2K' whose every runner (name and time) is in
@@ -371,7 +382,7 @@ def fromHytek(meet, slug, url):
                                    meters=e.meters, rows=_landedRows(e.rows)))
     kept = withoutReprints(lm.races)
     lm.skipped += sum(len(r.rows) for r in lm.races if r not in kept)
-    lm.races = kept
+    lm.races = oneSport(kept, track)
     return lm
 
 
@@ -405,6 +416,7 @@ def fromMeetPro(index, results, slug, url):
                                               else sportByTimes(sportOf(e.title, index.name, e.meters, track),
                                                                 e.meters, rows)),
                                        meters=e.meters, rows=_landedRows(rows)))
+    lm.races = oneSport(lm.races, track)
     return lm
 
 

@@ -428,3 +428,18 @@ def test_ages_in_parentheses_and_aau_meets_are_age_groups():
     assert land.isAgeGroup("Girls 3000 Meters (11)", "AAU Region 21B")
     assert not land.isAgeGroup("Boys 1600 Meters (7-8)") and not land.isAgeGroup("Girls 1600 (9)")
     assert not land.isAgeGroup("Girls 3200 Meters", "Valley Invitational")
+
+
+def test_a_season_named_page_follows_the_season():
+    assert discover.seasonUrls("https://t.example/2025-results.html", 2026) == [
+        "https://t.example/2026-results.html", "https://t.example/2025-results.html"]
+    assert discover.seasonUrls("https://t.example/results/", 2026) == ["https://t.example/results/"]
+    assert discover.seasonUrls("https://t.example/2026-results.html", 2026) == ["https://t.example/2026-results.html"]
+
+
+def test_one_xc_race_makes_a_non_track_meet_xc():
+    xc, ms = _race(1, "Varsity Boys 5K", [("a", 1000), ("b", 1010)]), _race(2, "BOYS (MS) 3 Kilometers", [("c", 900)])
+    ms.sport = "TF"
+    assert [r.sport for r in land.oneSport([xc, ms], False)] == ["XC", "XC"]
+    ms.sport = "TF"
+    assert [r.sport for r in land.oneSport([xc, ms], True)] == ["XC", "TF"]
