@@ -675,14 +675,21 @@ def schoolTopAthletes(cur, school, sport, limit=12,
     #   HS-equivalent number (no data-hs on the live Amherst page) and could
     #   not be split by pool -- app.rowsByPool read every row as poolless and
     #   left men and women in one ranked list.
+    # ★ GROUPED FIRST, NAMED AFTER (2026-11-09). The name lookup ran on
+    #   every season row of the school before the GROUP BY -- thousands of
+    #   probes for a big programme, to keep ~100 people per pool. It depends
+    #   only on person_id, so every row of one person carried the same name
+    #   and max() of it was that name: looking it up once per kept person is
+    #   the same answer.
     cur.execute(f"""
-        SELECT person_id, name, best, pool, seasons, first_year, last_year
+        SELECT x.person_id,
+               COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '')       AS name,
+               x.best, x.pool, x.seasons, x.first_year, x.last_year
         FROM (SELECT y.*, row_number() OVER (PARTITION BY y.pool
                                              ORDER BY y.best DESC) AS rn_pool
               FROM (
             SELECT s.person_id,
-                   max(COALESCE(a.first_name, '') || ' '
-                       || COALESCE(a.last_name, ''))  AS name,
                    max(s.best_rating)                 AS best,
                    -- the pool of the season holding that best, for the
                    -- HS-equivalent view (an athlete can span pools).
@@ -693,14 +700,6 @@ def schoolTopAthletes(cur, school, sport, limit=12,
                    max(CASE WHEN s.sport = 'TF' THEN s.year + 1
                             ELSE s.year END)          AS last_year
             FROM   athlete_season s
-            LEFT JOIN LATERAL (
-                SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
-                       NULLIF(TRIM(x.last_name),  '') AS last_name
-                FROM   athletes x
-                WHERE  x.athlete_id = s.person_id
-                ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
-                LIMIT  1
-            ) a ON TRUE
             WHERE  s.school = %(school)s
               AND  s.sport  = %(sport)s
               AND  s.best_rating IS NOT NULL
@@ -708,9 +707,17 @@ def schoolTopAthletes(cur, school, sport, limit=12,
             GROUP  BY s.person_id
               ) y
         ) x
+        LEFT JOIN LATERAL (
+            SELECT NULLIF(TRIM(z.first_name), '') AS first_name,
+                   NULLIF(TRIM(z.last_name),  '') AS last_name
+            FROM   athletes z
+            WHERE  z.athlete_id = x.person_id
+            ORDER  BY (NULLIF(TRIM(z.last_name), '') IS NOT NULL) DESC
+            LIMIT  1
+        ) a ON TRUE
         -- the cap is per pool, as schoolBest's
         WHERE  x.rn_pool <= %(lim)s
-        ORDER  BY best DESC
+        ORDER  BY x.best DESC
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
     rows = fetchCappedPerPool(cur, limit)
     _fillRowNames(cur, rows)               # as schoolBest (sweep 2026-10-10)
