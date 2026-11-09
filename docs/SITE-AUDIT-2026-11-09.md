@@ -115,6 +115,7 @@ bare list of states. The plan:
 
 ## For the pipeline / data track
 
+- Step 10 now builds six more athlete_season indexes (as_sort_grade, as_sort_last and as_sort_races, each all-time and per season; build_ranking_results' index list). They add build time and disk to step 10. They serve the athletes board's grade, last-race and races sorts (rankings.sortServed).
 - 1986-94 Maryland (Hereford) and 1980s Woodward Park races rate about 17
   points above the same time on the same course in 2016. "Field ran" reads
   +3 to +6% in those years against 0 to -4% now. The race-day term is
