@@ -16,8 +16,8 @@
 #   NEVER to the database. race_rows --asof-dir then builds every training
 #   race from the snapshot in force the day it was predicted.
 #
-# ! THE CUTOFFS: the 1st and 15th, mid-August to December 1, of every season
-#   in XCP_REPLAY_SEASONS (default 2025 2026 2024 2023: the validation
+# ! THE CUTOFFS: the 1st and 15th, mid-August to December 1 (XCP_REPLAY_DAYS,
+#   month-day), of every season in XCP_REPLAY_SEASONS (default 2025 2026 2024 2023: the validation
 #   season first, so an honest score comes soonest). A done cutoff (its file
 #   exists) is skipped, so the script can be stopped and started again.
 # ! NOT THE PIPELINE LOCK (owner, 2026-11-08: "change the replay thing to not
@@ -50,7 +50,7 @@ cutoffs() {
   local today s m
   today="$(date -u +%F)"
   for s in ${XCP_REPLAY_SEASONS:-2025 2026 2024 2023}; do
-    for m in 08-15 09-01 09-15 10-01 10-15 11-01 11-15 12-01; do
+    for m in ${XCP_REPLAY_DAYS:-08-15 09-01 09-15 10-01 10-15 11-01 11-15 12-01}; do
       [[ "$s-$m" < "$today" ]] && echo "$s-$m"
     done
   done
