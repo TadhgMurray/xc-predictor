@@ -101,8 +101,15 @@ availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
 #   (8), and stops it the moment a pipeline go-live needs the memory -- the
 #   cutoff is unclaimed and done again later. While a pipeline has a solve
 #   ahead (its standing want), no cutoff starts. docs/PIPELINE-ORDER.md.
-ready() { ! inQuiet && packReady && ! busy; }
+# ★ AND WAITS OUT A PIPELINE'S SOLVES BEFORE ASKING (review, 2026-11-09): a
+#   want posted (a run with its go-live or evidence chain still ahead) is a
+#   "not ready", so a stopped cutoff is retried after the run's last solve,
+#   not polled into it.
 JOBRUN=("$PY" -u "$ROOT/scripts/jobrun.py")
+pipelineSolving() { "${JOBRUN[@]}" --wants >/dev/null 2>&1; }
+ready() { ! inQuiet && packReady && ! busy && ! pipelineSolving; }
+# how many times a cutoff was stopped for the pipeline or for memory
+stops() { grep -c "^.*UTC  $1: STOPPED" "$LOGDIR/summary.log" 2>/dev/null || echo 0; }
 say() { echo "[replay] $(date -u '+%F %H:%M') UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 
 if [ "${1:-}" = "--list" ]; then
@@ -129,7 +136,7 @@ for d in $DATES; do
   waited=0
   while :; do
     until ready; do
-      [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, the pack being rebuilt, or another solve or model fit)"
+      [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, the pack being rebuilt, a pipeline solve ahead, or another solve or model fit)"
       waited=1
       sleep 300
     done
@@ -146,10 +153,16 @@ for d in $DATES; do
     [ "$rc" -ne 75 ] && break
     # not admitted in 30 min, or stopped for a pipeline solve: not a failure
     unclaim "$d"
-    rm -f "$snap" "${snap%.npz}_joint.npz" "${snap%.npz}_joint_state.npz"
-    say "$d: $(grep -m1 -E 'not admitted|STOPPING' "$LOGDIR/asof_$d.log" | cut -c1-200) -- trying again later"
+    # the snapshot is written to a temp file and renamed, so a stopped solve
+    # leaves no snapshot that reads as done -- only its temp and its state
+    rm -f "$snap.tmp.npz" "${snap%.npz}_joint.npz" "${snap%.npz}_joint_state.npz"
+    if grep -q STOPPING "$LOGDIR/asof_$d.log"; then
+      say "$d: STOPPED after $(( ($(date +%s) - t0) / 60 )) min ($(( $(stops "$d") + 1 )) times so far): $(grep -m1 STOPPING "$LOGDIR/asof_$d.log" | sed 's/.*STOPPING -- //' | cut -c1-160) -- solved again once the pipeline's solves are done"
+    else
+      say "$d: $(grep -m1 'not admitted' "$LOGDIR/asof_$d.log" | cut -c1-200) -- trying again later"
+    fi
     waited=0
-    sleep 600
+    sleep 300
   done
   if [ "$rc" -eq 0 ]; then
     say "$d: done in $(( ($(date +%s) - t0) / 60 )) min ($(cat "$LOGDIR/asof_$d.mem" 2>/dev/null | cut -d' ' -f1)): $(grep -m1 -- '--snapshot' "$LOGDIR/asof_$d.log" | cut -c1-160)"

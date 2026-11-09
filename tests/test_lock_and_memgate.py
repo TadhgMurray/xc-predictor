@@ -156,3 +156,64 @@ def test_the_replay_and_the_golive_go_through_the_ledger():
 def test_who_holds_the_lock_reads_proc_locks():
     s = open(os.path.join(ROOT, "scripts", "who_holds_the_lock.sh")).read()
     assert "/proc/locks" in s and ".holder" in s
+
+
+def _child(tmp_path, body):
+    f = tmp_path / "child.py"
+    f.write_text(body)
+    return [sys.executable, str(f)]
+
+
+def test_a_stopped_job_gets_sigterm_first_and_its_cleanup_runs(tmp_path):
+    # a replay over its cap: SIGTERM, its handler runs (a database client
+    # closes its connection there, so its backend ends the transaction)
+    marker = tmp_path / "cleaned"
+    cmd = _child(tmp_path, f"""
+import signal, sys, time
+def bye(*_):
+    open({str(marker)!r}, "w").write("closed")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, bye)
+x = bytearray(200 * 2**20)
+time.sleep(60)
+""")
+    p = _jobrun(tmp_path, "--name", "replay", "--gb", "0.01", "--min-free-gb", "0",
+                "--sacrificial", "--cap-gb", "0.1", "--", *cmd)
+    o, _ = p.communicate(timeout=60)
+    assert p.returncode == 137 and "over its cap" in o
+    assert marker.read_text() == "closed"
+
+
+def test_a_job_that_ignores_sigterm_is_killed_after_the_grace(tmp_path):
+    cmd = _child(tmp_path, """
+import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+x = bytearray(200 * 2**20)
+time.sleep(120)
+""")
+    env = dict(_env(tmp_path), XCP_JOBRUN_GRACE_S="2")
+    t0 = time.time()
+    p = subprocess.Popen([sys.executable, JOBRUN, "--name", "r", "--cap-gb", "0.1", "--", *cmd],
+                         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p.communicate(timeout=60)
+    assert p.returncode == 137 and time.time() - t0 < 30
+    assert not list((tmp_path / "gate").glob("[0-9]*.json"))   # its ledger entry is gone
+
+
+def test_wants_says_when_a_pipeline_solve_is_ahead(tmp_path):
+    holder = subprocess.Popen(["sleep", "30"])
+    try:
+        w = lambda: subprocess.run([sys.executable, JOBRUN, "--wants"], env=_env(tmp_path)).returncode
+        assert w() == 1
+        subprocess.run([sys.executable, JOBRUN, "--want-standing", str(holder.pid)],
+                       env=_env(tmp_path), check=True)
+        assert w() == 0
+        holder.kill(); holder.wait()
+        assert w() == 1                       # a dead pipeline's want is ignored
+    finally:
+        holder.kill()
+
+
+def test_the_replay_waits_out_the_pipeline_and_counts_its_stops():
+    rp = open(os.path.join(ROOT, "deploy", "engine_replay.sh")).read()
+    assert "! pipelineSolving" in rp and "STOPPED after" in rp and ".tmp.npz" in rp

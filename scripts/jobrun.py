@@ -245,7 +245,12 @@ def admit(a, me_file, want_file):
         time.sleep(min(15, max(1, deadline - now)))
 
 
-def _killTree(proc, grace=30):
+def _killTree(proc, grace=None):
+    """SIGTERM first and wait (XCP_JOBRUN_GRACE_S, 30): the job's own
+    handlers and finally blocks run, and a database client closes its
+    connection, so its backend ends the transaction. SIGKILL only after."""
+    if grace is None:
+        grace = float(os.environ.get("XCP_JOBRUN_GRACE_S", "30"))
     try:
         proc.terminate()
         proc.wait(timeout=grace)
@@ -394,9 +399,16 @@ def main(argv=None):
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--want-standing", type=int, default=None, metavar="PID")
     ap.add_argument("--unwant", type=int, default=None, metavar="PID")
+    ap.add_argument("--wants", action="store_true",
+                    help="exit 0 when a pipeline want (standing or urgent) is posted")
     a = ap.parse_args(argv)
     if a.status:
         return status()
+    if a.wants:
+        _, wants = _entries()
+        for w in wants:
+            print(f"{w.get('name')} (pid {w['pid']}, {'urgent' if w.get('urgent') else 'standing'})")
+        return 0 if wants else 1
     if a.want_standing is not None:
         with _GateLock():
             _write(os.path.join(GATE_DIR, f"want.{a.want_standing}.json"),
