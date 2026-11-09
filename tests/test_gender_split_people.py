@@ -56,3 +56,33 @@ def test_a_strong_girl_near_the_front_of_a_boys_race_is_left():
     rows = ([(i, "F", f"2020-09-{10 + i}", 140.0, 1, 60) for i in range(5)]
             + [(100, "M", "2020-10-10", 141.0, 2, 180)])
     assert G.verdict(rows, "F") is None
+
+
+def test_one_boys_race_in_another_season_rated_far_above_is_another_person():
+    """owner, 2026-11-09: Tom Rankin -- a 1986 boys' state race and two
+    1989-90 girls' state races on one page; the boys' race read 145.8 in
+    the girls' pool against her 128."""
+    rows = [(1, "M", "1986-11-08", 145.85), (2, "F", "1989-11-11", 128.03),
+            (3, "F", "1990-11-10", 128.95)]
+    move, rids, why = G.verdict(rows, "F")
+    assert move == "M" and rids == [1] and "never in one season" in why
+    assert G.verdict(rows, None)[0] == "M"          # the smaller side
+
+
+def test_a_lone_boys_race_in_her_own_season_is_left():
+    rows = [(1, "M", "1989-10-01", 145.0), (2, "F", "1989-11-11", 128.0),
+            (3, "F", "1990-11-10", 129.0)]
+    assert G.verdict(rows, "F") is None
+
+
+def test_a_lone_side_at_her_own_level_or_below_is_left():
+    rows = [(1, "M", "1986-11-08", 129.0), (2, "F", "1989-11-11", 128.0),
+            (3, "F", "1990-11-10", 128.5)]
+    assert G.verdict(rows, "F") is None
+    rows = [(1, "M", "1986-11-08", 115.0), (2, "F", "1989-11-11", 128.0),
+            (3, "F", "1990-11-10", 128.5)]
+    assert G.verdict(rows, "F") is None
+
+
+def test_the_season_seam_is_august_15():
+    assert G._seasons([(1, "2020-08-14", 1), (2, "2020-08-15", 1)]) == {2020, 2021}

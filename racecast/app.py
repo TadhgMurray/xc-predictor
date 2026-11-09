@@ -8698,6 +8698,45 @@ _COURSE_TTL = 6 * 3600
 _COURSE_MAX = 64
 
 
+_GOLIVE = {"t": 0.0, "at": None}
+
+
+def _goliveAt(cur):
+    """When the live ratings were written (joint_golive.writeGoliveStamp),
+    or None before the first stamped go-live. Re-read once a minute."""
+    if time.time() - _GOLIVE["t"] < 60:
+        return _GOLIVE["at"]
+    at = None
+    try:
+        cur.execute("SAVEPOINT golive_at")
+        cur.execute("SELECT to_regclass('public.ratings_golive') IS NOT NULL AS ok")
+        row = cur.fetchone()
+        ok = row["ok"] if isinstance(row, dict) else row[0]
+        if ok:
+            cur.execute("SELECT at FROM ratings_golive WHERE id = 1")
+            row = cur.fetchone()
+            if row is not None:
+                at = row["at"] if isinstance(row, dict) else row[0]
+        cur.execute("RELEASE SAVEPOINT golive_at")
+    except psycopg2.Error:
+        cur.execute("ROLLBACK TO SAVEPOINT golive_at")
+        at = None
+    _GOLIVE.update(t=time.time(), at=at)
+    return at
+
+
+def _boardFresh(cur, built_at):
+    """A precomputed page holds the ratings of the run that built it: serve
+    it only when it was built after the live ratings went in.
+
+    ★ WHY (owner, 2026-11-09: Tom Rankin 160.7 on /course/Hereford HS,
+      145.8 on his own page and the race). A --fast run skipped the course
+      pages, so every course kept the last full run's numbers beside pages
+      that read the new ones live. A stale board now renders live instead."""
+    at = _goliveAt(cur)
+    return at is None or built_at is None or built_at >= at
+
+
 def loadCourseBoard(cur, course_name, picked):
     """The PRECOMPUTED render context from course_boards, or None.
 
@@ -8710,13 +8749,13 @@ def loadCourseBoard(cur, course_name, picked):
       yet falls back to live compute."""
     try:
         cur.execute("""
-            SELECT ctx FROM course_boards
+            SELECT ctx, built_at FROM course_boards
             WHERE course_name = %(c)s AND dist = %(d)s
         """, {"c": course_name, "d": picked or 0})
         row = cur.fetchone()
         if row is None and picked:
             cur.execute("""
-                SELECT ctx FROM course_boards
+                SELECT ctx, built_at FROM course_boards
                 WHERE course_name = %(c)s AND dist = 0
             """, {"c": course_name})
             row = cur.fetchone()
@@ -8725,7 +8764,10 @@ def loadCourseBoard(cur, course_name, picked):
         return None
     if row is None:
         return None
-    return row["ctx"] if isinstance(row, dict) else row[0]
+    ctx, built = (row["ctx"], row["built_at"]) if isinstance(row, dict) else row
+    if not _boardFresh(cur, built):
+        return None
+    return ctx
 
 
 def buildCourseCtx(cur, course_name, picked):
@@ -8847,7 +8889,10 @@ def course(course_name):
             if ctx is None:
                 cache_key = (course_name, picked)
                 hit = _COURSE_CACHE.get(cache_key)
-                if hit and time.time() - hit[0] < _COURSE_TTL:
+                # ! and not from before the ratings went live (_boardFresh)
+                _at = _goliveAt(cur)
+                if (hit and time.time() - hit[0] < _COURSE_TTL
+                        and (_at is None or hit[0] >= _at.timestamp())):
                     ctx = hit[1]
                 else:
                     ctx = buildCourseCtx(cur, course_name, picked)
@@ -8971,7 +9016,9 @@ def _courseHistory(cur, course_name, ctx):
             return None
         key = (course_name, int(dist))
         hit = _COURSE_HIST.get(key)
-        if hit and time.time() - hit[0] < _COURSE_TTL:
+        _at = _goliveAt(cur)
+        if (hit and time.time() - hit[0] < _COURSE_TTL
+                and (_at is None or hit[0] >= _at.timestamp())):
             return hit[1]
         import course_history as _ch
         import explain_rating as _ex
@@ -9437,7 +9484,7 @@ def loadVenueTfBoard(cur, location_id, is_indoor):
     try:
         cur.execute("SAVEPOINT venue_board")
         cur.execute("""
-            SELECT fp, ctx FROM venue_tf_boards
+            SELECT fp, ctx, built_at FROM venue_tf_boards
             WHERE  location_id = %(loc)s AND indoor = %(indoor)s
         """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
         row = cur.fetchone()
@@ -9447,8 +9494,11 @@ def loadVenueTfBoard(cur, location_id, is_indoor):
         return None
     if row is None:
         return None
-    fp, ctx = (row["fp"], row["ctx"]) if isinstance(row, dict) else row
+    fp, ctx, built = ((row["fp"], row["ctx"], row["built_at"])
+                      if isinstance(row, dict) else row)
     if fp != venueTfFingerprint(cur, location_id, is_indoor):
+        return None
+    if not _boardFresh(cur, built):
         return None
     return ctx
 

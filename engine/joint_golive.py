@@ -1279,6 +1279,31 @@ _SCALE_DDL = """
 """
 
 
+# ★ WHEN THESE RATINGS WENT LIVE (owner, 2026-11-09: Tom Rankin read 160.7
+#   on /course/Hereford HS and 145.8 on his own page). A precomputed page
+#   (course_boards, venue_tf_boards) holds the ratings of the run that built
+#   it; a --fast run skipped the course pages, so every course kept the last
+#   full run's numbers beside profiles reading the new ones. The site serves
+#   a board only when it was built after this stamp (app._boardFresh).
+GOLIVE_DDL = """
+    CREATE TABLE IF NOT EXISTS ratings_golive (
+        id  smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        at  timestamptz NOT NULL
+    )
+"""
+
+
+def writeGoliveStamp():
+    from database import getConn
+    with getConn() as conn, conn.cursor() as cur:
+        cur.execute(GOLIVE_DDL)
+        cur.execute("INSERT INTO ratings_golive (id, at) VALUES (1, now()) "
+                    "ON CONFLICT (id) DO UPDATE SET at = EXCLUDED.at")
+        conn.commit()
+    print("[joint/live] ratings_golive stamped: precomputed pages built before now "
+          "are not served")
+
+
 def writeEngineScale(rows):
     from datetime import date
     from database import getConn
@@ -1445,6 +1470,7 @@ def writeLive(live):
     for name, arrays in live["per_sport"].items():
         saveResultSpeedRatings(name, arrays)
         print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
+    writeGoliveStamp()
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
     # ★ THE MODE THESE RATINGS WERE BUILT IN, for the site to read them by
