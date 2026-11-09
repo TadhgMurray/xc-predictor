@@ -84,7 +84,11 @@ def _t(s):
 
 
 def main(argv=None):
-    ids = [int(a) for a in (argv if argv is not None else sys.argv[1:])] or SWEEP
+    # ★ A SITE TOKEN WORKS TOO (public_ids.py): the boards now show our own
+    #   ids, so a result or person token from a page or the API is decoded here
+    import public_ids as _pi
+    ids = [(_pi.decode(a) or (None, None))[1] if _pi.decode(a) else int(a)
+           for a in (argv if argv is not None else sys.argv[1:])] or SWEEP
     from database import getConn
     with getConn() as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = 0")
