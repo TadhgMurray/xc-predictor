@@ -38,6 +38,18 @@ DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 cd "$ROOT" || exit 1
 if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+# ★ THE SITE FIRST, HERE TOO (2026-11-09). The unit's Nice=19 reaches this
+#   script and Python, never the Postgres backends doing the table build's
+#   1.5 h of reads -- those ran at full priority with the server's parallel
+#   workers. XCP_DB_QUIET=1 is the pipeline's own cap (scripts/database.py:
+#   capped workers and memory, the backend reniced). And the fit's OpenMP
+#   (sklearn's HistGradientBoosting) took one thread per core by default --
+#   every core, on a box that has thrown machine-check faults under full
+#   load; XCP_THREADS (default 8) caps it, as for the pipeline's fit.
+export XCP_DB_QUIET="${XCP_DB_QUIET:-1}"
+XCP_THREADS="${XCP_THREADS:-8}"
+export OMP_NUM_THREADS="$XCP_THREADS" OPENBLAS_NUM_THREADS="$XCP_THREADS" \
+       MKL_NUM_THREADS="$XCP_THREADS" NUMEXPR_NUM_THREADS="$XCP_THREADS"
 
 DIR="${XCP_PRED_DIR:-/srv/pred}"
 MODEL="${XCP_RACE_MODEL:-$DIR/race_trees.pkl}"
