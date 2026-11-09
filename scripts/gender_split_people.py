@@ -52,6 +52,26 @@ GAP = 0.05
 #   more, it happens" -- placing proves nothing.
 
 
+# ★ A FEW ROWS, NEVER IN ONE SEASON, RATED LIKE THE OTHER SEX (owner,
+#   2026-11-09, Tom Rankin of Glenelg: one 1986 B/C BOYS state race and two
+#   1989-90 2A GIRLS state races on one page -- a senior in 1986 does not
+#   race high school in 1990). The boys' race was rated in the girls' pool
+#   (145.8 against her 128) and topped the Hereford course's all-time list.
+#   One row per side was too few for MIN_SIDE. A small side moves when the
+#   two sides never share a season AND the men's-field side rates GAP or
+#   more ABOVE the women's -- the way a boy's time reads on a girl's page
+#   (and a girl's on a boy's). A strong girl's one boys' race is in a
+#   season she also races girls, so she stays.
+def _seasons(rows):
+    """The cross country seasons (end-named, Aug 15 seam) of (rid, day, r)."""
+    out = set()
+    for _i, d, _r in rows:
+        d = str(d or "")
+        if len(d) >= 10 and d[:4].isdigit():
+            out.add(int(d[:4]) + (1 if d[5:10] >= "08-15" else 0))
+    return out
+
+
 def verdict(rows, gender=None):
     """rows: [(result_id, side 'M'/'F', day, rating[, place, field size])]
     of one person. -> (move side, [result ids], why) or None. Pure."""
@@ -60,17 +80,21 @@ def verdict(rows, gender=None):
         rid, side, day, rating = row[:4]
         if side in ("M", "F"):
             by[side].append((rid, day, rating))
-    shared = {d for _i, d, _r in by["M"]} & {d for _i, d, _r in by["F"]}
-    if not shared and (len(by["M"]) < MIN_SIDE or len(by["F"]) < MIN_SIDE):
-        return None
     if not by["M"] or not by["F"]:
         return None
+    shared = {d for _i, d, _r in by["M"]} & {d for _i, d, _r in by["F"]}
     med = {}
     for g in ("M", "F"):
         rs = [float(r) for _i, _d, r in by[g] if r]
         med[g] = statistics.median(rs) if rs else None
-    days = {d for _i, d, _r in by["M"]} & {d for _i, d, _r in by["F"]}
     gap = (abs(math.log(med["M"] / med["F"])) if med["M"] and med["F"] else 0.0)
+    apart = not (_seasons(by["M"]) & _seasons(by["F"]))
+    lone = (apart and med["M"] and med["F"]
+            and math.log(med["M"] / med["F"]) >= GAP)
+    if (not shared and not lone
+            and (len(by["M"]) < MIN_SIDE or len(by["F"]) < MIN_SIDE)):
+        return None
+    days = shared
     if gap < GAP and not days:
         return None
     g = (gender or "").upper()
@@ -82,7 +106,8 @@ def verdict(rows, gender=None):
         return None                           # nothing says which side is theirs
     why = (f"{len(by['M'])} rows in men's fields, {len(by['F'])} in women's; medians "
            f"{med['M'] or 0:.1f} / {med['F'] or 0:.1f} ({100 * gap:.0f}% apart)"
-           + (f"; both on {len(days)} day(s)" if days else ""))
+           + (f"; both on {len(days)} day(s)" if days else "")
+           + ("; never in one season" if apart else ""))
     return move, sorted(i for i, _d, _r in by[move]), why
 
 

@@ -8,3 +8,5 @@ markupsafe
 numpy
 pillow                   # imported as PIL
 cairosvg                 # crest rasterising
+fitdecode                # racecast/training_log.py: a watch's FIT files
+defusedxml               # racecast/training_log.py: GPX and TCX, read safely

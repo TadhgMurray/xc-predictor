@@ -127,11 +127,11 @@
     const btn = e.target.closest(".seg-btn");
     if (!btn) return;
     e.preventDefault();
-    history.replaceState(null, "", "#race-" + btn.dataset.div);
+    history.replaceState(null, "", "#div-" + btn.dataset.div);
     load(btn);
   });
 
-  const want = (location.hash.match(/^#race-(\d+)$/) || [])[1];
+  const want = (location.hash.match(/^#(?:div|race)-(-?\d+|[amdrv][0-9a-z]{13})$/) || [])[1];
   const first = (want && tabs.querySelector(`[data-div="${want}"]`)) ||
     tabs.querySelector(".seg-btn.is-on") || tabs.querySelector(".seg-btn");
   if (first) load(first);

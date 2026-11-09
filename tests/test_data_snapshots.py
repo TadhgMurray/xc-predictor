@@ -24,7 +24,8 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
     cur = c.cursor()
     try:
         for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course", "school_unit",
-                  "athlete_season", "athletes", "results", "results_tf", "course_difficulties"):
+                  "athlete_season", "athletes", "results", "results_tf", "course_difficulties",
+                  "person_optout"):
             cur.execute(f"DROP TABLE IF EXISTS {t}")
         cur.execute("CREATE TABLE athlete_season (person_id bigint, sport text, pool text, year int, "
                     "mean_rating real, best_rating real, n_races int, state text, school text, grade text)")
@@ -67,6 +68,14 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
         assert len(lines) == 2 and "Josh Runner" in lines[1] and ",141.0," in lines[1]
         courses = client.get(f"/data/{snap}/courses.csv").get_data(as_text=True)
         assert "Lake Park,5000.0,5.1,900" in courses
+        # an athlete who opted out is left out of every download, old snapshots too
+        import person_optout
+        person_optout.setHidden({1})
+        try:
+            assert "Josh Runner" not in client.get(
+                f"/data/{snap}/athletes.csv?state=WI").get_data(as_text=True)
+        finally:
+            person_optout.setHidden(set())
         # schools and a league (owner, 2026-11-06)
         by_school = client.get(f"/data/{snap}/athletes.csv?state=WI&school=horlick,Case").get_data(as_text=True)
         assert "Josh Runner" in by_school and ",Southeast," in by_school
@@ -86,10 +95,17 @@ def test_a_snapshot_is_a_frozen_copy_and_downloads(monkeypatch):
         c.commit()
         cur.execute("SELECT label FROM data_snapshot ORDER BY snap_id")
         assert [r[0] for r in cur.fetchall()] == ["2026 end of season", f"{D.AUTO_PREFIX}Nov 2"]
+        # and never copied into a new one
+        cur.execute("CREATE TABLE person_optout (person_id bigint PRIMARY KEY)")
+        cur.execute("INSERT INTO person_optout VALUES (1)")
+        c.commit()
+        assert D.take(cur, "after an opt-out", "XC", 2026)[1] == 1
+        c.commit()
     finally:
         c.rollback()
         for t in ("data_snapshot", "data_snapshot_athlete", "data_snapshot_course", "school_unit",
-                  "athlete_season", "athletes", "results", "results_tf", "course_difficulties"):
+                  "athlete_season", "athletes", "results", "results_tf", "course_difficulties",
+                  "person_optout"):
             cur.execute(f"DROP TABLE IF EXISTS {t}")
         c.commit()
         c.close()

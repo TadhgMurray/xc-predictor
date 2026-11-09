@@ -46,6 +46,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -53,8 +54,9 @@ for _p in (_ROOT, os.path.join(_ROOT, "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sources import hytek, land, meetpro, meetreport, registry     # noqa: E402
+from sources import datarows, flashresults, hytek, land, meetpro, meetreport, registry     # noqa: E402
 
+_now = time.monotonic       # the budget's clock (tests replace it)
 MAX_AGE = 30 * 86400        # a page fetched within 30 days is read from the store
 MAX_PAGES = 40              # Hy-Tek page files followed per report
 
@@ -86,7 +88,7 @@ def directoryReports(page, url):
 
 def kindOf(url, body=b""):
     u = (url or "").lower()
-    if "tfmeetpro.com" in u or re.search(r"/mp/", u) or b"MeetPro" in (body or b"")[:20000]:
+    if "tfmeetpro.com" in u or re.search(r"/mp/", u) or meetpro.isMeetProPage(body or b""):
         return "meetpro"
     return "hytek"
 
@@ -96,6 +98,25 @@ def _isChallenge(body):
     head = (body or b"")[:6000].lower()
     return (b"cf-chl" in head or b"challenge-platform" in head or b"just a moment..." in head
             or b"attention required! | cloudflare" in head)
+
+
+def folderDate(url, page_date, slack_days=3):
+    """The meet's date: a page's own, unless the folder it is posted in is
+    named for a date more than `slack_days` away (Diablo Timing's
+    results/2026-11-05/ held a page still headed 11/06/2025 -- last year's
+    header left on the template). Pure."""
+    import datetime as _dt
+    m = re.search(r"/(20\d\d-\d\d-\d\d)/", url or "")
+    if not m:
+        return page_date
+    try:
+        folder = _dt.date.fromisoformat(m.group(1))
+        page = _dt.date.fromisoformat(page_date) if page_date else None
+    except ValueError:
+        return page_date
+    if page is None or abs((page - folder).days) > slack_days:
+        return folder.isoformat()
+    return page_date
 
 
 async def fetchMeet(fetcher, slug, url, kind=None):
@@ -110,6 +131,10 @@ async def fetchMeet(fetcher, slug, url, kind=None):
     kind = kind or kindOf(url, got.body)
     if kind == "meetpro":
         page = got.body.decode("utf-8", "replace")
+        if meetpro.isSinglePage(page):              # the whole meet on one page
+            idx, results = meetpro.parseSinglePage(page)
+            idx.date = folderDate(url, idx.date)
+            return land.fromMeetPro(idx, results, slug, url), "meetpro (one page)"
         idx = meetpro.parseMeetIndex(page)
         results = {}
         for e in idx.events:
@@ -119,10 +144,50 @@ async def fetchMeet(fetcher, slug, url, kind=None):
             if r.body:
                 results[e.number] = meetpro.parseRounds(r.body.decode("utf-8", "replace"))
         return land.fromMeetPro(idx, results, slug, url), "meetpro"
+    if got.body[:5] != b"%PDF-" and flashresults.isMeetIndex(got.body.decode("utf-8", "replace")):
+        return await flashMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "flash results"
+    if got.body[:5] != b"%PDF-" and datarows.isDataPage(got.body.decode("utf-8", "replace")):
+        return await dataRowsMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "data rows"
     listing = directoryReports(got.body.decode("utf-8", "replace"), url) if got.body[:5] != b"%PDF-" else []
     if listing:
         return await mergeReports(fetcher, slug, url, listing)
     return await _hytekReport(fetcher, slug, url, got.body), "hytek"
+
+
+async def flashMeet(fetcher, slug, url, page):
+    """A Flash Results meet index and its races' result pages -> LandedMeet."""
+    name, date, place = flashresults.parseIndex(page)
+    meet = hytek.Meet(name=name, date=date, venue=place)
+    xc = bool(re.search(r"/xc/", url, re.I))
+    for k, (rurl, title) in enumerate(flashresults.raceLinks(page, url)[:MAX_PAGES], 1):
+        r = await fetcher.fetch(rurl, MAX_AGE)
+        if not r.body or _isChallenge(r.body):
+            continue
+        e = hytek.Event(number=k, gender=meetpro._gender(title), title=title, meters=hytek.metersOf(title))
+        e.rows = flashresults.parseRace(r.body.decode("utf-8", "replace"))
+        if xc:
+            e.sport = "XC"
+        meet.events.append(e)
+    lm = land.fromHytek(meet, slug, url)
+    lm.place, lm.state = place, land.stateOf(place)
+    return lm
+
+
+async def dataRowsMeet(fetcher, slug, url, page):
+    """A data-rows results page (sources.datarows: EliteFeats) and the pages
+    of its other divisions -> one LandedMeet."""
+    meet = datarows.parsePage(page, url)
+    for k, durl in enumerate(datarows.divisionUrls(page, url)[:MAX_PAGES], 1):
+        r = await fetcher.fetch(durl, MAX_AGE)
+        if not r.body or _isChallenge(r.body):
+            continue
+        other = datarows.parsePage(r.body.decode("utf-8", "replace"), durl)
+        have = {e.title for e in meet.events}
+        for e in other.events:
+            if e.title not in have:
+                e.number = len(meet.events) + 1
+                meet.events.append(e)
+    return land.fromHytek(meet, slug, url)
 
 
 async def mergeReports(fetcher, slug, url, listing):
@@ -166,6 +231,10 @@ async def _hytekReport(fetcher, slug, url, body):
     if not any(e.rows for e in meet.events) and meetreport.isReport(text):
         # not Hy-Tek: MeetPro's desktop report or a two-column results PDF
         meet = meetreport.parseReport(text, url)
+    elif not any(e.rows for e in meet.events) and meetreport.isRunMeet(text):
+        meet = meetreport.parseRunMeet(text, url)
+    elif not any(e.rows for e in meet.events) and meetreport.isTabbed(text):
+        meet = meetreport.parseTabbed(text, url)
     return land.fromHytek(meet, slug, url)
 
 
@@ -303,6 +372,15 @@ def cmdStatus(a):
 
 def cmdAll(a):
     """discover -> fetch -> land -> dedup -> promote, every enabled timer."""
+    if a.dry:
+        return _all(a, None)
+    from database import getConn
+    with getConn() as conn:
+        return _all(a, conn)
+
+
+def _all(a, conn):
+    """cmdAll with its connection (None for a dry run)."""
     import datetime as _dt
     from collections import Counter
     from sources import discover
@@ -312,16 +390,23 @@ def cmdAll(a):
     if a.only:
         srcs = [s for s in srcs if s.slug in set(a.only)]
     known = set()
-    if not a.dry:
-        from database import getConn
-        with getConn() as conn:
-            with conn.cursor() as cur:
-                land.initTables(cur)
-                cur.execute("SELECT url FROM meets_ext")
-                known = {r[0] for r in cur.fetchall()}
-            conn.commit()
+    if conn is not None:
+        with conn.cursor() as cur:
+            land.initTables(cur)
+            cur.execute("SELECT url FROM meets_ext")
+            known = {r[0] for r in cur.fetchall()}
+        conn.commit()
+    # ★ A BUDGET, AND LANDED AS IT GOES (2026-11-09). The nightly kills this
+    #   step at its bound (01_local_timers, 40 minutes); everything used to be
+    #   landed only after the LAST timer finished, so one slow host (a MeetPro
+    #   meet is 20-150 pages, a Crawl-delay of 30 s) cost the whole night's
+    #   meets. Now each timer's meets are landed the moment it is done, and
+    #   past --minutes no new meet is started: what is parsed is kept, the rest
+    #   is found again tomorrow (pages already read come from the store).
+    budget = a.minutes if a.minutes is not None else float(os.environ.get("XCP_TIMERS_MINUTES", "0") or 0)
+    deadline = _now() + budget * 60 if budget else None
     print(f"[all] {len(srcs)} timers, meets from {since} on, up to {a.per_source} new each; "
-          f"{len(known):,} pages already landed")
+          f"{len(known):,} pages already landed" + (f"; {budget:g}-minute budget" if budget else ""))
     fetcher = Fetcher(RawStore())
 
     async def one(src):
@@ -331,6 +416,9 @@ def cmdAll(a):
             return src, [], f"discover failed: {type(exc).__name__}: {exc}"
         got = []
         for u, kind in urls:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(urls) - len(got)} meets wait for the next run"
+                break
             try:
                 if isinstance(kind, tuple):          # ('group', [report files]) -- one meet
                     lm, why = await mergeReports(fetcher, src.slug, u, kind[1])
@@ -341,50 +429,60 @@ def cmdAll(a):
             got.append((u, lm, why))
         return src, got, note
 
-    async def go():
-        return await asyncio.gather(*(one(s) for s in srcs))
-
-    results = asyncio.run(go())
     os.makedirs(os.path.join(_ROOT, "logs"), exist_ok=True)
     out = a.out or os.path.join(_ROOT, "logs", f"timers_{_dt.date.today().isoformat()}.jsonl")
-    meets, tally = [], Counter()
+    meets, tally, what = [], Counter(), Counter()
+
+    def report(src, got, note, f):
+        ok, mine = 0, []
+        for u, lm, why in got:
+            if lm is not None and lm.races and lm.date and lm.date >= _dt.date.today().isoformat():
+                # ★ NOT ON ITS OWN DAY (2026-11-01): promoted is final, so a
+                #   meet still being posted would stay short; it is not
+                #   landed, so tomorrow's run finds it again
+                tally["posted today: waits a day"] += 1
+                print(f"  … {src.slug}: {land.summary(lm)} -- dated today, lands tomorrow")
+                continue
+            if lm is None or not lm.races:
+                tally["not parsed"] += 1
+                print(f"  ✗ {src.slug}: {u} -- {why if lm is None else 'no individual races'}")
+                continue
+            # ! NO DATE, NO MEET: a race is rated on its day; and a meet placed
+            #   in a Canadian province fits no pool we rate
+            if not lm.date or land.stateOf(lm.place, lm.venue) in land.CANADA:
+                tally["no date" if not lm.date else "outside the US"] += 1
+                print(f"  ✗ {src.slug}: {u} -- " + ("no date on the page" if not lm.date
+                                                    else f"outside the US ({lm.place or lm.venue})"))
+                continue
+            f.write(json.dumps(lm.toJson()) + "\n")
+            f.flush()
+            mine.append(lm)
+            ok += 1
+            print(f"  ✓ {src.slug}: {land.summary(lm)}")
+        tally["timers with a new meet"] += int(ok > 0)
+        print(f"[all] {src.slug:<44} {note}; parsed {ok}", flush=True)
+        if conn is not None and mine:
+            with conn.cursor() as cur:
+                for lm in mine:
+                    what[land.landMeet(cur, lm)[1]] += 1
+            conn.commit()
+        meets.extend(mine)
+
+    async def go(f):
+        for fut in asyncio.as_completed([one(s) for s in srcs]):
+            report(*(await fut), f)
+
     with open(out, "w", encoding="utf-8") as f:
-        for src, got, note in results:
-            ok = 0
-            for u, lm, why in got:
-                if lm is not None and lm.races and lm.date and lm.date >= _dt.date.today().isoformat():
-                    # ★ NOT ON ITS OWN DAY (2026-11-01): promoted is final, so a
-                    #   meet still being posted would stay short; it is not
-                    #   landed, so tomorrow's run finds it again
-                    tally["posted today: waits a day"] += 1
-                    print(f"  … {src.slug}: {land.summary(lm)} -- dated today, lands tomorrow")
-                    continue
-                if lm is None or not lm.races:
-                    tally["not parsed"] += 1
-                    print(f"  ✗ {src.slug}: {u} -- {why if lm is None else 'no individual races'}")
-                    continue
-                f.write(json.dumps(lm.toJson()) + "\n")
-                meets.append(lm)
-                ok += 1
-                print(f"  ✓ {src.slug}: {land.summary(lm)}")
-            tally["timers with a new meet"] += int(ok > 0)
-            print(f"[all] {src.slug:<44} {note}; parsed {ok}")
+        asyncio.run(go(f))
     rows = sum(m.rowCount() for m in meets)
     print(f"[all] parsed {len(meets)} meets, {rows:,} rows -> {out}; {dict(tally)}; fetcher {fetcher.stats}")
     if a.dry or not meets:
         print("[all] dry run -- nothing written" if a.dry else "[all] nothing new to land")
         return 0
-    from database import getConn
     from sources import dedup, promote
-    what = Counter()
-    with getConn() as conn:
-        with conn.cursor() as cur:
-            for lm in meets:
-                what[land.landMeet(cur, lm)[1]] += 1
-        conn.commit()
-        print(f"[all] landed: {dict(what)}")
-        dedup.run(conn, write=True, show=a.show)
-        promote.run(conn, apply=True, show=a.show)
+    print(f"[all] landed: {dict(what)}")
+    dedup.run(conn, write=True, show=a.show)
+    promote.run(conn, apply=True, show=a.show)
     print("[all] done. Link them now with: python scripts/link_uploads.py --source timer --apply "
           "(the nightly 04a does it too), then the pipeline rates them")
     return 0
@@ -431,6 +529,7 @@ def main(argv=None):
     al.add_argument("--since-year", type=int)
     al.add_argument("--out")
     al.add_argument("--show", type=int, default=20)
+    al.add_argument("--minutes", type=float, help="start no new meet after this long (XCP_TIMERS_MINUTES)")
     a = ap.parse_args(argv)
     return {"all": cmdAll, "init": cmdInit, "fetch": cmdFetch, "land": cmdLand, "dedup": cmdDedup,
             "promote": cmdPromote, "status": cmdStatus}[a.cmd](a)

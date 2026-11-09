@@ -76,7 +76,7 @@
   <div class="rc-tbar">
     <nav class="seg rc-tabs pv-races" role="tablist" aria-label="Races">
       {% for r in pv.races %}
-      <a class="seg-btn{{ ' is-on' if r.div_id == pv.lead_div }}" href="#race-{{ r.div_id }}" data-div="{{ r.div_id }}"
+      <a class="seg-btn{{ ' is-on' if r.div_id == pv.lead_div }}" href="#div-{{ r.div_id }}" data-div="{{ r.div_id }}"
          data-predict="{{ r.predict_href }}">{% set lw = r.label|lower %}{{ r.label }}{% if r.gender and not ('boy' in lw or 'girl' in lw or 'men' in lw) %} · {{ "Boys" if r.gender == "M" else "Girls" }}{% endif %}<span class="n">{{ r.n_teams }}</span></a>
       {% endfor %}
     </nav>

@@ -319,6 +319,25 @@ html:has(.hm-band) { overflow-x: clip; }
 .hm-photos img.hp-m6 { object-position: 22% 32%; }   /* Bannister, left of frame */
 .hm-photos img.hp-m9 { object-position: 50% 40%; }   /* the shout */
 
+/* ★ THE NXN TILE FOLLOWS ITS OWN SHAPE (owner, 2026-11-09: "his head is too
+     cut off"). The photo is portrait with CHAMPION baked in just above his
+     head, and the tile's shape changes with the screen: one object-position
+     cut his head on a wide screen and showed the lettering on a narrow one.
+     The grid's aspect is 2.5 x a tile's (five columns, two rows), so a
+     container query on it steps the crop to start just under the lettering:
+     y = 0.22 / (1.256 - 1/tile aspect), measured tiles 0.85 (1000 px wide)
+     to 2.2 (2560 px); a tile taller than wide shows the whole photo bottom
+     up. 62% above stays for a browser without container queries. */
+.hm-photos { container-type: size; }
+@container (max-aspect-ratio: 5/2) { .hm-photos img.hp-m1 { object-position: 48% 100%; } }
+@container (min-aspect-ratio: 5/2) and (max-aspect-ratio: 11/4) { .hm-photos img.hp-m1 { object-position: 48% 72%; } }
+@container (min-aspect-ratio: 11/4) and (max-aspect-ratio: 3/1) { .hm-photos img.hp-m1 { object-position: 48% 57%; } }
+@container (min-aspect-ratio: 3/1) and (max-aspect-ratio: 27/8) { .hm-photos img.hp-m1 { object-position: 48% 47%; } }
+@container (min-aspect-ratio: 27/8) and (max-aspect-ratio: 15/4) { .hm-photos img.hp-m1 { object-position: 48% 40%; } }
+@container (min-aspect-ratio: 15/4) and (max-aspect-ratio: 35/8) { .hm-photos img.hp-m1 { object-position: 48% 34%; } }
+@container (min-aspect-ratio: 35/8) and (max-aspect-ratio: 21/4) { .hm-photos img.hp-m1 { object-position: 48% 30%; } }
+@container (min-aspect-ratio: 21/4) { .hm-photos img.hp-m1 { object-position: 48% 27%; } }
+
 /* the four jobs, on white under the band: no boxes, a rule above, one line each */
 .hm-tasks {
     max-width: 1240px; margin: 1.6rem auto 0; box-sizing: border-box; padding: 0 1.5rem;

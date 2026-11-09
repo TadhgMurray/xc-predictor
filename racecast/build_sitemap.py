@@ -47,13 +47,23 @@ def chunk(items, n=MAX_PER_FILE):
     return [items[i:i + n] for i in range(0, len(items), n)] or [[]]
 
 
+def _public(path):
+    """The page's public URL: the site's own ids (public_ids.py), as every
+    page links it -- the sitemap is a file nginx serves, not a response."""
+    try:
+        import public_ids as _pi
+        return _pi.rewritePaths(path) if _pi.enabled() else path
+    except Exception:                                   # noqa: BLE001
+        return path
+
+
 def urlsetXml(entries):
     """entries: iterable of (path, lastmod|None). Paths are site-relative
     and already URL-safe."""
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for path, lastmod in entries:
-        out.append("<url><loc>{ORIGIN}" + escape(path) + "</loc>"
+        out.append("<url><loc>{ORIGIN}" + escape(_public(path)) + "</loc>"
                    + (f"<lastmod>{escape(str(lastmod))}</lastmod>" if lastmod else "")
                    + "</url>")
     out.append("</urlset>")

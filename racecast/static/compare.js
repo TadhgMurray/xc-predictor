@@ -47,7 +47,7 @@
             if (mine !== seq || closed) return;
             sug.innerHTML = "";
             rows.slice(0, 8).forEach(function (r) {
-              var m = /\/athlete\/(\d+)/.exec(r.link || "");
+              var m = /\/athlete\/(-?\d+|[amdrv][0-9a-z]{13})/.exec(r.link || "");
               if (!m) return;
               var d = document.createElement("div");
               d.className = "h2h-sug-row";

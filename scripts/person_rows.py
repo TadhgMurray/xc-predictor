@@ -104,7 +104,8 @@ def main(argv=None):
     if not args:
         print("usage: person_rows.py PERSON_ID [--sport TF]")
         return 2
-    pid = int(args[0])
+    import public_ids as _pi                   # a page's token works too
+    pid = _pi.decode(args[0])[1] if _pi.decode(args[0]) else int(args[0])
     if "--sport" in args and args[args.index("--sport") + 1:][:1] == ["TF"]:
         return mainTF(pid)
     from database import getConn

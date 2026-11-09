@@ -66,6 +66,14 @@ ROBOTS_AGENT = "racecast-results"
 DEFAULT_INTERVAL = float(os.environ.get("XCP_SOURCE_INTERVAL", "10"))  # s per host
 JITTER = 0.3                                                       # +-30%
 TIMEOUT = 30
+# ★ AMAZON S3, NOT A SMALL BUSINESS (2026-11-09). Every MeetPro account's
+#   meets are on ONE host, results.tfmeetpro.com (an S3 website), and their
+#   listings on s3.amazonaws.com; a meet is 20-150 pages. At 10 s a page the
+#   ~50 MeetPro sources queue behind each other on that one host for hours,
+#   past the nightly bound. S3 serves any load; 2 s apart is still gentle.
+#   XCP_S3_INTERVAL overrides; a Crawl-delay a host publishes still wins.
+_S3 = float(os.environ.get("XCP_S3_INTERVAL", "2"))
+HOST_INTERVAL = {"results.tfmeetpro.com": _S3, "s3.amazonaws.com": _S3}
 RAW_DIR = os.environ.get("XCP_RAW_DIR", "/srv/raw")
 
 
@@ -93,7 +101,8 @@ class HostLimiter:
         self.per_host[host] = max(seconds, self.per_host.get(host, 0.0))
 
     def intervalFor(self, host):
-        return max(self.interval, self.per_host.get(host, 0.0))
+        base = HOST_INTERVAL.get(host, self.interval)
+        return max(base, self.per_host.get(host, 0.0))
 
     async def acquire(self, host):
         lock = self._locks.setdefault(host, asyncio.Lock())
@@ -228,14 +237,28 @@ class Robots:
     def get(self, url):
         parts = urllib.parse.urlsplit(url)
         host = parts.netloc.lower()
-        if host not in self._cache:
-            self._cache[host] = self._load(parts.scheme or "https", host)
-        rp, ok = self._cache[host]
+        # ! ONE robots.txt PER SCHEME AND HOST (RFC 9309 2.3): results.tfmeetpro
+        #   .com is an S3 website, plain http only -- its https robots.txt
+        #   never answers, and when that failure was cached by host alone
+        #   every http meet page on it read "robots.txt disallows" for the run
+        key = ((parts.scheme or "https").lower(), host)
+        if key not in self._cache:
+            self._cache[key] = self._load(*key)
+        rp, ok = self._cache[key]
         if rp is None:
             if ok == "error-allowed":
                 return True, 2 * DEFAULT_INTERVAL      # allowed, and gentler
             return ok, None
         return rp.can_fetch(ROBOTS_AGENT, url), rp.crawl_delay(ROBOTS_AGENT)
+
+    def why(self, url):
+        """Why get(url) said no: 'robots.txt disallows' when the site's own
+        rules do, 'robots.txt unreachable' when none could be read (the
+        host is down or refuses us -- not the site's wish, but still not
+        fetched this run)."""
+        parts = urllib.parse.urlsplit(url)
+        rp, _ok = self._cache.get(((parts.scheme or "https").lower(), parts.netloc.lower()), (None, None))
+        return "robots.txt disallows" if rp is not None else "robots.txt unreachable (host down or refusing)"
 
 
 # ------------------------------------------------------------------ #
@@ -337,7 +360,8 @@ class Fetcher:
         allowed, delay = self.robots.get(url)
         if not allowed:
             self.stats["skipped"] += 1
-            return Fetched(url, 0, None, False, "robots.txt disallows")
+            why = self.robots.why(url) if hasattr(self.robots, "why") else "robots.txt disallows"
+            return Fetched(url, 0, None, False, why)
         host = hostOf(url)
         if delay:
             self.limiter.setInterval(host, float(delay))

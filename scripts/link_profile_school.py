@@ -398,8 +398,9 @@ def _hsSeasonSchools(rows):
         d = str(r.date or "")[:10]
         if len(d) < 7 or not d[:4].isdigit():
             continue
-        y = int(d[:4]) + (1 if d[5:7] >= "08" else 0)
-        out[y].add(sch)
+        y = int(d[:4]) + (1 if d[5:10] >= "08-15" else 0)
+        from link_freshmen import _fold          # 'Lake Orion' and 'Lake Orion HS' are one
+        out[y].add(_fold(sch) or sch)
     return out
 
 

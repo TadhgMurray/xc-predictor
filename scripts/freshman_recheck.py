@@ -68,18 +68,22 @@ def _sys(sport):
 
 
 def links(cur):
-    """[(sport, sys, native_id, person A, name, college, n rows)]: every
-    college-feed identity a freshman rule put on a person, still there."""
+    """[(sport, sys, native_id, person A, name, college, n rows, first
+    season end-named)]: every college-feed identity a freshman rule put on a
+    person, still there."""
     out = []
     for sport, table in TABLES:
         cur.execute(f"""
             SELECT {_sys(sport)}, r.native_id, l.to_person,
                    mode() WITHIN GROUP (ORDER BY btrim(r.athlete_name)),
-                   mode() WITHIN GROUP (ORDER BY r.school), count(*)
+                   mode() WITHIN GROUP (ORDER BY r.school), count(*),
+                   min(CASE WHEN substring(r.date, 6, 5) >= '08-15'
+                            THEN substring(r.date, 1, 4)::int + 1
+                            ELSE substring(r.date, 1, 4)::int END)
             FROM   person_link_log l
             JOIN   {table} r ON r.result_id = l.result_id AND r.person_id = l.to_person
             WHERE  l.sport = %s AND l.rule = ANY(%s) AND r.source = 'tfrrs'
-              AND  r.native_id IS NOT NULL
+              AND  r.native_id IS NOT NULL AND r.date ~ '^[0-9]{{4}}-[0-9]{{2}}'
             GROUP  BY 1, 2, 3
         """, (sport, list(RULES)))
         out += [(sport, *row) for row in cur.fetchall()]
@@ -92,8 +96,8 @@ def failing(found, namesakes, hs):
     from link_freshmen import rivalsOf
     out = []
     for lk in found:
-        _sport, _sys_, _nat, a, name, college, _n = lk
-        rivals = rivalsOf(a, name, college, namesakes, hs)
+        _sport, _sys_, _nat, a, name, college, _n, *rest = lk
+        rivals = rivalsOf(a, name, college, namesakes, hs, rest[0] if rest else None)
         if rivals:
             out.append((lk, rivals))
     return out
@@ -189,7 +193,7 @@ def main(argv=None):
               f"fanout copies)")
         by_college = Counter(lk[5] for lk, _r in bad)
         for lk, rivals in sorted(bad, key=lambda b: (b[0][4] or ""))[:a.show]:
-            sport, _s, nat, person, name, college, n = lk
+            sport, _s, nat, person, name, college, n = lk[:7]
             print(f"  {name!r:<26} {str(college)[:28]:<28} {sport} id {nat}: on /athlete/{person},"
                   f" but the main feed has {name} at this college as "
                   + ", ".join(f"/athlete/{p}" for p in rivals) + f"  ({n} rows)")

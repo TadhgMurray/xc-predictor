@@ -60,7 +60,7 @@
         const rows = await res.json();
         if (mine !== seq) return;
         list.innerHTML = rows.slice(0, 8).map((r) => {
-          const m = /\/athlete\/(\d+)/.exec(r.link || "");
+          const m = /\/athlete\/(-?\d+|[amdrv][0-9a-z]{13})/.exec(r.link || "");
           if (!m) return "";
           return `<button type="button" class="r-combo-item" data-id="${m[1]}" data-label="${esc(r.label)}">${esc(r.label)}${r.sublabel ? ` <span class="sr-sub">${esc(r.sublabel)}</span>` : ""}</button>`;
         }).join("");

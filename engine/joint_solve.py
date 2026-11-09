@@ -340,9 +340,13 @@ def _nearZeroSide(flag, centre, ok, cand, m_s, num_s, W_s, race_of, n_race, cap)
 #   made from this race alone (or pulled to the pool's mean by the prior)
 #   is no yardstick, yet counted fully. Each row now weighs on the day by
 #   how many OTHER races back its runner: 0 with none, 1/full with one,
-#   whole from `full` on (XCP_DAY_EVIDENCE, default 2; 0 = every row
-#   whole, the old behaviour). The abilities are fitted as before.
-DAY_EVIDENCE_FULL = int(os.environ.get("XCP_DAY_EVIDENCE", "2") or 0)
+#   whole from `full` on (XCP_DAY_EVIDENCE; 0 = every row whole, the old
+#   behaviour). The abilities are fitted as before.
+# ! OFF BY DEFAULT AGAIN (owner, 2026-11-09: "undo the model changes that
+#   caused these issues"): it shipped with the ability distance mode, and the
+#   run that carried both lifted every level. XCP_DAY_EVIDENCE=2 turns it on
+#   for an experiment.
+DAY_EVIDENCE_FULL = int(os.environ.get("XCP_DAY_EVIDENCE", "0") or 0)
 
 
 def dayEvidenceWeight(athlete, n_ath, full=None):

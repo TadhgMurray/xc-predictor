@@ -130,7 +130,7 @@
       <thead><tr><th>Date</th><th>Meet</th><th>Its teams</th><th>Its runners</th></tr></thead>
       <tbody>{% for m in meets %}<tr{{ ' class="row-hidden"'|safe if loop.index0 >= 15 }}>
         <td>{{ m.day|mdy if m.day else "" }}</td>
-        <td><a href="/race/xc/{{ m.meet_id }}/{{ m.div_id }}">{{ meet_logo(m.meet_name) }}{{ m.meet_name or ("Meet " ~ m.meet_id) }}</a></td>
+        <td><a href="/race/xc/{{ m.meet_id }}/{{ m.div_id }}">{{ meet_logo(m.meet_name) }}{{ m.meet_name or ("Untitled meet") }}</a></td>
         <td>{{ m.n_teams }}</td>
         <td>{{ m.n_runners }}</td>
       </tr>{% endfor %}{{ more_row(meets, 4) }}</tbody>

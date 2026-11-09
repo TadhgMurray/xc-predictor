@@ -83,11 +83,15 @@ done
 #   background jobs whose last output stands in for a run:
 #     evidence holdouts/ladder (XCP_EVIDENCE), backtest, LACCTiC, Kailo,
 #     scoreboard, qualified fields, the raw forecast, social cards, the
-#     rowguard diagnostics, course pages (the previous ones stay up), the
+#     rowguard diagnostics, the course pages (served with live ratings), the
 #     recruit projection, the level graph (the next full run restages it),
 #     the weather fetch (the nightly's provisional weather covers new meets),
 #     and the pro flags (last run's stand: they change when a pro appears).
 #   An env var set by hand still wins over these defaults.
+# ! THE COURSE PAGES STAY UP, WITH TODAY'S RATINGS (owner, 2026-11-09: Tom
+#   Rankin 160.7 on the Hereford course page, 145.8 on his profile). A board
+#   built before the go-live has its ratings re-read when it is served
+#   (app._boardFresh); who is on its lists waits for the next full run.
 FAST_SKIP="01c_level_graph,04e_weather_grid,04e2_weather_recent,03_pro_flag,05c_pro_ability"
 FAST_SKIP="$FAST_SKIP,10f2_projection,12b_course_pages,13j_record_books"
 FAST_SKIP="$FAST_SKIP,15_rowguard_diag_xc,15_rowguard_diag_tf,15_rowguard_triage_xc,15_rowguard_triage_tf"
@@ -290,7 +294,7 @@ summarise() {
 # ★ 04a2b_feed_twins TOO: it moves ids (2026-10-15).
 # ★ 04a3_pins TOO: it keeps the owner's detaches where he put them (2026-10-10).
 # ★ 00_integrity TOO: a damaged page is damaged whichever step reads it first.
-_ALWAYS="00_integrity 00b_run_snapshot 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
+_ALWAYS="00_integrity 00b_run_snapshot 01a_person_probe 02_drop_old 04a_link_tfrrs 04a2_link_teamless 04a2b_feed_twins 04a4_unsplit 04a3_pins 04a3b_merges 04a3c_gender_split 04b_wheelchair 05b_anchor_repair_xc 05b_anchor_repair_tf"
 
 # ⚠ A SKIPPED STEP SAYS WHAT IT COSTS. --skip is explicit, so it is
 #   honoured -- but the one step whose omission is invisible until the
@@ -800,6 +804,13 @@ step 04a3_pins        "$PY" -u scripts/person_pins.py --apply
 #   29k rows that had drifted back onto merged-away ids -- an anet row is seeded
 #   person_id = athlete_id, and nothing re-applied the merges between approvals)
 step 04a3b_merges     "$PY" -u scripts/link_profile_school.py --reapply
+# ★ ONE PAGE, A BOY'S RACES AND A GIRL'S (owner, 2026-11-06 Coogan; 2026-11-09
+#   Tom Rankin, whose 1986 boys' race was rated in the girls' pool and led the
+#   Hereford course's boys' list at 160.7). Was by hand only; now every run,
+#   before the backfill, so the moved rows are rated on their own page.
+#   Detaches go through person_pins (04a3 re-applies them); undo one with
+#   scripts/person_pins.py --undo-detach RESULT_ID.
+step 04a3c_gender_split "$PY" -u scripts/gender_split_people.py --write --show 40
 
 # ★★ THE DISTANCE CHECKS BESIDE THE PEOPLE VERDICTS (2026-11-07, owner-
 #    approved: data_checks ~30 min and wrong_distance 20-60 min used to run
@@ -974,8 +985,8 @@ fi
 # ! THE BACKFILL RUNS AFTER grade_sanity, NOT BEFORE -- it resolves pools from
 #   grade_fix, and a disagreement writes normalized_time on the wrong SCALE
 #   (measured at a 64% rating error, frozen into the row).
-# ★ XCP_DISTANCE_BY=ability (2026-09-29; the full backfill's default since
-#   2026-11-08, see 05 below) normalises every row
+# ★ XCP_DISTANCE_BY=ability (2026-09-29; the full backfill's default from
+#   2026-11-08 to 11-09, pool again now, see 05 below) normalises every row
 #   with the curve by ability (engine/data/distance_ability.pkl, fitted by
 #   engine/fit_distance_ability.py) onto 5000 m, whatever its pool. The
 #   backfill records the mode it wrote (engine/data/distance_applied_*.json)
@@ -1041,7 +1052,13 @@ else
     #   the FULL backfill writes it -- a partial write in a new mode is
     #   refused -- and records it, so every later step, the nightly and the
     #   site follow the record. XCP_DISTANCE_BY=pool on a run reverts.
-    _DBY="${XCP_DISTANCE_BY:-ability}"
+    # ! BACK TO THE POOL CURVES BY DEFAULT (owner, 2026-11-09: "undo the
+    #   model changes that caused these issues so I can do a deep ratings
+    #   dive"). The ability run lifted every level -- middle school +3.95,
+    #   college +1.53 on average, the college women's board reading 14:11
+    #   5Ks -- with the per-pool residual (ms_m -0.096, k ~0.99) as the
+    #   largest piece. XCP_DISTANCE_BY=ability on a run still writes it.
+    _DBY="${XCP_DISTANCE_BY:-pool}"
     steps2 05_backfill_xc "env XCP_DISTANCE_BY=$_DBY $PY -u backfill/backfill_normalize.py --sport XC --apply" \
            05_backfill_tf "env XCP_DISTANCE_BY=$_DBY $PY -u backfill/backfill_normalize.py --sport TF --apply"
   fi

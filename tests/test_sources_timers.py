@@ -150,7 +150,7 @@ def test_the_feed_with_more_of_the_race_wins_and_anet_breaks_a_tie():
 
 def test_dedup_reads_every_feed_on_three_days():
     assert D._days("2026-10-10") == ["2026-10-09", "2026-10-10", "2026-10-11"]
-    assert D._days("") == [] and set(D.FEEDS) == {"anet", "tfrrs", "upload", "timer"}
+    assert D._days("") == [] and set(D.FEEDS) == {"anet", "tfrrs", "upload", "timer", "ext"}
 
 
 # ------------------------------------------------------------ promotion

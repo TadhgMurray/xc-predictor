@@ -446,3 +446,28 @@ def test_ldjson_drops_a_templates_missing_values():
                           "memberOf": ChainableUndefined(name="school"),
                           "list": [ChainableUndefined(), "x"]}))
     assert "memberOf" not in out and '"list":["x"]' in out
+
+
+def test_indexnow_sends_at_most_one_batch_a_run_and_keeps_the_rest_for_later():
+    """owner, 2026-11-09: Bing's 'Avoid IndexNow Batch Mode' after the public
+    ids made every URL new."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "indexnow_submit", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                        "scripts", "indexnow_submit.py"))
+    IN = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(IN)
+    entries = ([("sitemap-pages.xml.gz", "https://r/rankings", "")]
+               + [("sitemap-athletes.xml.gz", f"https://r/athlete/a{i}", "2026-11-0%d" % (1 + i % 9))
+                  for i in range(5)]
+               + [("sitemap-schools.xml.gz", f"https://r/school/S{i}", "") for i in range(10)])
+    seen = {"https://r/school/S0"}
+    out, undated = IN.pick(entries, "2026-11-01", seen, limit=8)
+    assert len(out) == 8 and out[0] == "https://r/rankings"
+    assert out[1] == "https://r/athlete/a4"                 # the newest change first (11-05)
+    sent_new = {u for u in out if "/school/" in u}
+    assert len(sent_new) == 2
+    # remembered: the old one and the two sent; the seven left over go next run
+    assert undated == {"https://r/school/S0"} | sent_new
+    out2, _ = IN.pick(entries, "2026-11-01", undated, limit=100)
+    assert len({u for u in out2 if "/school/" in u}) == 7

@@ -296,6 +296,33 @@ def publicSrcQuery(qs):
 
 
 app.wsgi_app = _PublicSrc(app.wsgi_app)
+
+# ★ OUR OWN IDS ON EVERY PUBLIC PAGE (owner, 2026-11-08, public_ids.py): the
+#   feeds' athlete, meet, race and result numbers leave as keyed tokens and
+#   come back as integers here, so no route changes. The after_request hook
+#   is REGISTERED FIRST SO IT RUNS LAST (Flask runs them in reverse): the
+#   opt-out mask and every other hook still see the integers.
+import public_ids as _public_ids                                 # noqa: E402
+app.wsgi_app = _public_ids.Middleware(app.wsgi_app)
+
+
+@app.after_request
+def _publicIds(resp):
+    return _public_ids.rewriteResponse(resp)
+
+
+@app.before_request
+def _publicIdLegacy():
+    """An old URL with a feed's number in it: 301 to its token URL (search
+    engines and shared links follow), or 404 once XCP_PUBLIC_ID_LEGACY=off."""
+    target = request.environ.get("rc.public_id.legacy")
+    if not target:
+        return None
+    if _public_ids.legacyMode() == "off":
+        abort(404)
+    resp = redirect(target, code=301)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 # ! A CAP ON THE REQUEST BODY (sweep 2026-10-10). Werkzeug parsed a whole
 #   multipart upload before accounts' 8 MB photo check ran; the largest
 #   thing anyone posts is that photo.
@@ -2554,8 +2581,9 @@ def athlete(person_id):
                     continue
                 race["rank_outlier"] = side
                 # thin = another person's row or a wrong distance, like fast;
+                # mixed = a combined men's and women's list, distance unknown;
                 # field / level rows were really run, so their marks stay
-                if side in ("fast", "thin"):
+                if side in ("fast", "thin", "mixed"):
                     for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
                               "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):
@@ -8671,6 +8699,148 @@ _COURSE_TTL = 6 * 3600
 _COURSE_MAX = 64
 
 
+_GOLIVE = {"t": 0.0, "at": None}
+
+
+def _goliveAt(cur):
+    """When the live ratings were written (joint_golive.writeGoliveStamp),
+    or None before the first stamped go-live. Re-read once a minute."""
+    if time.time() - _GOLIVE["t"] < 60:
+        return _GOLIVE["at"]
+    at = None
+    try:
+        cur.execute("SAVEPOINT golive_at")
+        cur.execute("SELECT to_regclass('public.ratings_golive') IS NOT NULL AS ok")
+        row = cur.fetchone()
+        ok = row["ok"] if isinstance(row, dict) else row[0]
+        if ok:
+            cur.execute("SELECT at FROM ratings_golive WHERE id = 1")
+            row = cur.fetchone()
+            if row is not None:
+                at = row["at"] if isinstance(row, dict) else row[0]
+        cur.execute("RELEASE SAVEPOINT golive_at")
+    except psycopg2.Error:
+        cur.execute("ROLLBACK TO SAVEPOINT golive_at")
+        at = None
+    _GOLIVE.update(t=time.time(), at=at)
+    return at
+
+
+def _boardFresh(cur, built_at):
+    """Was this precomputed page built after the live ratings went in?
+
+    ★ WHY (owner, 2026-11-09: Tom Rankin 160.7 on /course/Hereford HS,
+      145.8 on his own page and the race). A --fast run skipped the course
+      pages, so every course kept the last full run's numbers beside pages
+      that read the new ones live. A stale board is not thrown away -- a
+      live build is seconds a page, and a full run leaves hours between the
+      go-live (08) and the new boards (12b) -- its ratings are re-read
+      (_refreshCourseRatings / _refreshVenueRatings): one primary-key read."""
+    at = _goliveAt(cur)
+    return at is None or built_at is None or built_at >= at
+
+
+def _liveRatings(cur, table, rows):
+    """Put each row's current speed_rating and rating_pool on it (by
+    result_id). Rows the table no longer rates keep their old values."""
+    ids = list({r["result_id"] for r in rows if r.get("result_id") is not None})
+    if not ids:
+        return
+    pool_col = _ratingPoolCol(cur, table)
+    try:
+        cur.execute("SAVEPOINT live_ratings")
+        cur.execute(f"""
+            SELECT r.result_id, r.speed_rating,
+                   NULLIF(split_part({pool_col.split(' AS ')[0]}, '|', 1), '') AS pool
+            FROM   {table} r WHERE r.result_id = ANY(%s)
+        """, (ids,))
+        got = {}
+        for rec in cur.fetchall():
+            rid, sr, pl = ((rec["result_id"], rec["speed_rating"], rec["pool"])
+                           if isinstance(rec, dict) else rec)
+            got[rid] = (sr, pl)
+        cur.execute("RELEASE SAVEPOINT live_ratings")
+    except psycopg2.Error:
+        cur.execute("ROLLBACK TO SAVEPOINT live_ratings")
+        return
+    for r in rows:
+        hit = got.get(r.get("result_id"))
+        if hit and hit[0] is not None:
+            r["speed_rating"] = float(hit[0])
+            if "rating_pool" in r or hit[1]:
+                r["rating_pool"] = hit[1] or r.get("rating_pool")
+            r.pop("hs_rating", None)
+
+
+def _refreshCourseRatings(cur, ctx):
+    """A stale course board (_boardFresh) with today's ratings: the rating
+    bests and records re-read and re-stamped, the bests re-ranked on the HS
+    number, each team's top-five average re-read. Who is ON a list stays the
+    board's until the next 12b; every number on it is the live one."""
+    ctx = dict(ctx)
+    for key in ("rating_bests", "records"):
+        by = ctx.get(key) or {}
+        rows = [r for g in ("M", "F") for r in (by.get(g) or [])]
+        if not rows:
+            continue
+        _liveRatings(cur, "results", rows)
+        if key == "rating_bests":
+            stampRowsHs(cur, "XC", rows, distance_key="distance")
+            n = max(len(by.get("M") or []), len(by.get("F") or []))
+            rows = bestByShown(rows, n)
+        else:
+            stampRowsHs(cur, "XC", rows, distance=ctx.get("sel_dist"))
+        ctx[key] = {"M": [r for r in rows if r.get("gender") == "M"],
+                    "F": [r for r in rows if r.get("gender") == "F"]}
+    teams = [t for g in ("M", "F") for t in ((ctx.get("team_rating") or {}).get(g) or [])]
+    if teams:
+        keys = [(t.get("meet_id"), t.get("div_id"), t.get("school")) for t in teams]
+        try:
+            cur.execute("SAVEPOINT live_teams")
+            cur.execute("""
+                SELECT k.meet_id, k.div_id, k.school,
+                       (SELECT avg(x.s) FROM (
+                            SELECT r.speed_rating AS s FROM results r
+                            WHERE  r.meet_id = k.meet_id AND r.div_id = k.div_id
+                              AND  r.school = k.school AND r.speed_rating IS NOT NULL
+                            ORDER  BY r.speed_rating DESC LIMIT 5) x) AS avg5
+                FROM   unnest(%s::bigint[], %s::bigint[], %s::text[])
+                       AS k(meet_id, div_id, school)
+            """, ([k[0] for k in keys], [k[1] for k in keys], [k[2] for k in keys]))
+            got = {}
+            for rec in cur.fetchall():
+                m, d, sc, a = ((rec["meet_id"], rec["div_id"], rec["school"], rec["avg5"])
+                               if isinstance(rec, dict) else rec)
+                got[(m, d, sc)] = a
+            cur.execute("RELEASE SAVEPOINT live_teams")
+        except psycopg2.Error:
+            cur.execute("ROLLBACK TO SAVEPOINT live_teams")
+            got = {}
+        if got:
+            for t in teams:
+                a = got.get((t.get("meet_id"), t.get("div_id"), t.get("school")))
+                if a is not None:
+                    t["avg5"] = float(a)
+                    t.pop("hs_avg5", None)
+            stampBoardRows(teams, rating_keys=("avg5",), sport="XC")
+            n = max(len((ctx["team_rating"] or {}).get(g) or []) for g in ("M", "F"))
+            teams = bestByShown(teams, n, key="avg5", person="school", hs_key="hs_avg5")
+            ctx["team_rating"] = {"M": [t for t in teams if t.get("gender") == "M"],
+                                  "F": [t for t in teams if t.get("gender") == "F"]}
+    return ctx
+
+
+def _refreshVenueRatings(cur, ctx):
+    """A stale track venue board with today's ratings (see _refreshCourseRatings)."""
+    ctx = dict(ctx)
+    bests = list(ctx.get("bests") or [])
+    if bests:
+        _liveRatings(cur, "results_tf", bests)
+        stampRowsHs(cur, "TF", bests, event_key="event_short")
+        ctx["bests"] = rankByHs(bests, len(bests))
+    return ctx
+
+
 def loadCourseBoard(cur, course_name, picked):
     """The PRECOMPUTED render context from course_boards, or None.
 
@@ -8683,13 +8853,13 @@ def loadCourseBoard(cur, course_name, picked):
       yet falls back to live compute."""
     try:
         cur.execute("""
-            SELECT ctx FROM course_boards
+            SELECT ctx, built_at FROM course_boards
             WHERE course_name = %(c)s AND dist = %(d)s
         """, {"c": course_name, "d": picked or 0})
         row = cur.fetchone()
         if row is None and picked:
             cur.execute("""
-                SELECT ctx FROM course_boards
+                SELECT ctx, built_at FROM course_boards
                 WHERE course_name = %(c)s AND dist = 0
             """, {"c": course_name})
             row = cur.fetchone()
@@ -8698,7 +8868,10 @@ def loadCourseBoard(cur, course_name, picked):
         return None
     if row is None:
         return None
-    return row["ctx"] if isinstance(row, dict) else row[0]
+    ctx, built = (row["ctx"], row["built_at"]) if isinstance(row, dict) else row
+    if not _boardFresh(cur, built):
+        return _refreshCourseRatings(cur, ctx)
+    return ctx
 
 
 def buildCourseCtx(cur, course_name, picked):
@@ -8822,6 +8995,11 @@ def course(course_name):
                 hit = _COURSE_CACHE.get(cache_key)
                 if hit and time.time() - hit[0] < _COURSE_TTL:
                     ctx = hit[1]
+                    # ! cached before the ratings went live: re-read them
+                    _at = _goliveAt(cur)
+                    if _at is not None and hit[0] < _at.timestamp():
+                        ctx = _refreshCourseRatings(cur, ctx)
+                        _COURSE_CACHE[cache_key] = (time.time(), ctx)
                 else:
                     ctx = buildCourseCtx(cur, course_name, picked)
                     _COURSE_CACHE[cache_key] = (time.time(), ctx)
@@ -9410,7 +9588,7 @@ def loadVenueTfBoard(cur, location_id, is_indoor):
     try:
         cur.execute("SAVEPOINT venue_board")
         cur.execute("""
-            SELECT fp, ctx FROM venue_tf_boards
+            SELECT fp, ctx, built_at FROM venue_tf_boards
             WHERE  location_id = %(loc)s AND indoor = %(indoor)s
         """, {"loc": location_id, "indoor": 1 if is_indoor else 0})
         row = cur.fetchone()
@@ -9420,9 +9598,12 @@ def loadVenueTfBoard(cur, location_id, is_indoor):
         return None
     if row is None:
         return None
-    fp, ctx = (row["fp"], row["ctx"]) if isinstance(row, dict) else row
+    fp, ctx, built = ((row["fp"], row["ctx"], row["built_at"])
+                      if isinstance(row, dict) else row)
     if fp != venueTfFingerprint(cur, location_id, is_indoor):
         return None
+    if not _boardFresh(cur, built):
+        return _refreshVenueRatings(cur, ctx)
     return ctx
 
 
@@ -11629,6 +11810,11 @@ import uploads as _uploads                                     # noqa: E402
 import fixes as _fixes                                         # noqa: E402
 for _bp in (_uploads.bp, _fixes.bp):
     app.register_blueprint(_bp)
+# ★ A RUNNER'S OWN TRAINING (owner, 2026-11-08): uploaded from their watch's
+#   files, a summary per run, only the runner sees it -- see training_log.py.
+#   Under /account, so private (no-store, not crawled).
+import training_log as _training_log                           # noqa: E402
+app.register_blueprint(_training_log.bp)
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): the owner's page at
 #   /account/admin/social, see social.py; step 13g_social builds them.
 import social as _social                                       # noqa: E402

@@ -32,7 +32,7 @@
     // ?r=<result id>: a results table's row is r<id>, the athlete page's
     // season row is race-<id> (owner, 2026-10-09: "doesn't work on an
     // athlete page"). ! -? : tfrrs result ids are negative.
-    var m = /[?&]r=(-?\d+)/.exec(location.search);
+    var m = /[?&]r=(-?\d+|[amdrv][0-9a-z]{13})/.exec(location.search);
     return m ? rowOf(document.getElementById("r" + m[1]) ||
                      document.getElementById("race-" + m[1])) : null;
   }
@@ -83,7 +83,7 @@
     if (!el || el.classList.contains("rc-flash")) return;
     // ! RESULT ROWS ONLY: a section anchor (#track, #reports) is a place
     //   to scroll to, not a result to point at
-    if (!(el.tagName === "TR" || el.tagName === "LI" || /^(r|race-)-?\d+$/.test(el.id))) return;
+    if (!(el.tagName === "TR" || el.tagName === "LI" || /^(r|race-)(-?\d+|[amdrv][0-9a-z]{13})$/.test(el.id))) return;
     centre(el);
     flash(el);
     var top = el.getBoundingClientRect().top;
@@ -101,7 +101,7 @@
   //   a result row centres it and flashes it; back/forward does the same.
   function isRow(el) {
     return el && (el.tagName === "TR" || el.tagName === "LI" ||
-                  /^(r|race-)-?\d+$/.test(el.id) ||
+                  /^(r|race-)(-?\d+|[amdrv][0-9a-z]{13})$/.test(el.id) ||
                   el.classList.contains("ev-head"));   // a School PRs event
   }
   document.addEventListener("click", function (e) {

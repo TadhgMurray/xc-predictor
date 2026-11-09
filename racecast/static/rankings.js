@@ -1716,7 +1716,7 @@ function renderTeamsCourse(rows) {
       <td class="rating">${fmtRating(rval(r, "top5_mean"))}</td>
       ${fkCell(r, "top5_mean")}
       <td>${r.distance}m</td>
-      <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || ("Meet " + r.meet_id))}</a></td>
+      <td><a href="/race/xc/${r.meet_id}/${r.div_id}">${esc(r.meet_name || "Untitled meet")}</a></td>
       <td>${r.date ? esc(fmtDate(r.date)) : " - "}</td>
     </tr>`).join("");
 
@@ -2968,7 +2968,7 @@ function initFromUrl() {
   // ★ jump=<person_id>: an athlete page's rank link opens on their row
   //   (UX review, 2026-10-24) -- the find box's own path, which pages there
   const jump = params.get("jump");
-  if (jump && /^-?\d+$/.test(jump)) { jumpTo(jump, "This athlete"); return; }
+  if (jump && /^(-?\d+|[amdrv][0-9a-z]{13})$/.test(jump)) { jumpTo(jump, "This athlete"); return; }
   load();
 }
 

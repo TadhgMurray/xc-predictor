@@ -107,7 +107,7 @@
       <div class="ct-pick-row">
         {% for r in results %}<label><input type="radio" name="result" value="{{ r.sport }}:{{ r.result_id }}">
           <span class="ct-muted">{{ (r.date|string)[:10] }}</span>
-          <span>{{ r.meet_name or ("Meet " ~ r.meet_id) }}{% if r.event_short %} · {{ r.event_short }}{% endif %} <span class="ct-muted">{{ r.school or "" }}</span></span>
+          <span>{{ r.meet_name or ("Untitled meet") }}{% if r.event_short %} · {{ r.event_short }}{% endif %} <span class="ct-muted">{{ r.school or "" }}</span></span>
           <span class="t">{{ r.time_seconds|wit_time if r.time_seconds else "" }}</span></label>{% endfor %}
       </div>
       {% else %}<p class="ct-muted">No results on this page.</p>{% endif %}
