@@ -500,7 +500,7 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
         return [], got.note or f"index HTTP {got.status}", 0
     if isReport(got.body):
         # the page on record is itself a report (AllTrax: one TSSAA PDF)
-        return ([] if index in known else [(index, "hytek")]), "results page on record is one report", 1
+        return ([] if index in known else [(index, "hytek")]), "results page on record is one report", 0
     page = got.body.decode("utf-8", "replace")
     if isAliveTenant(page):
         return [], "AthleticLIVE tenant -- read by sources.athleticlive", 0
