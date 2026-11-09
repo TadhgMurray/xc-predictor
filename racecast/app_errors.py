@@ -278,9 +278,87 @@ def serverContext(now=None, log_root=None, fresh_s=120):
     try:
         l1, l5, _l15 = os.getloadavg()
         parts.append(f"load {l1:.1f} (5 min {l5:.1f}) on {os.cpu_count()} cores")
+        if l1 > 0.75 * (os.cpu_count() or 1):
+            busy = busyProcesses(now=now)
+            if busy:
+                parts.append("busy: " + busy)
     except (OSError, AttributeError):
         pass
     return "; ".join(parts)
+
+
+# ★ AND WHO MADE THE LOAD (2026-11-09: a meet page's one-meet count took
+#   42 s at load 39 on 24 cores, no pipeline step running, and the notice
+#   could not say what was). Past three quarters of the cores, the
+#   processes running or waiting on the disk (state R / D) are named,
+#   grouped by what they are -- a script by its file, a Postgres backend by
+#   what its title says it is doing -- busiest first, "(D n)" for the ones
+#   blocked on I/O. /proc only, no database; once per BUSY_EVERY seconds
+#   per worker, so a burst of slow requests reads it once.
+BUSY_EVERY = 30.0
+_BUSY = {"at": -1e9, "text": ""}
+
+
+def _procLabel(cmd, comm):
+    """A short name for one process: the script for an interpreter, the
+    activity for a Postgres backend, else the program."""
+    if cmd.startswith("postgres:"):
+        rest = cmd[len("postgres:"):].strip()
+        if rest.startswith("parallel worker"):
+            return "postgres parallel worker"
+        words = rest.split()
+        # "user db host(port) STATE" for a backend; a helper names itself
+        if len(words) >= 4 and ("(" in words[2] or words[2] == "[local]"):
+            return "postgres " + " ".join(words[3:4])
+        return "postgres " + " ".join(words[:2])
+    args = cmd.split()
+    if not args:
+        return comm or "?"
+    prog = os.path.basename(args[0])
+    if prog.startswith(("python", "bash", "sh", "node", "perl")):
+        script = next((a for a in args[1:] if not a.startswith("-")), None)
+        if script:
+            return f"{prog} {os.path.basename(script)}"
+    if prog.startswith("gunicorn"):
+        return "gunicorn"
+    return prog
+
+
+def busyProcesses(proc="/proc", now=None, top=6):
+    """'postgres SELECT 14 (D 9), python3 race_rows.py 1, ...' -- the R and
+    D state processes by label. Cached BUSY_EVERY seconds. Never raises."""
+    import time as _time
+    now = now if now is not None else _time.time()
+    if proc == "/proc" and now - _BUSY["at"] < BUSY_EVERY:
+        return _BUSY["text"]
+    counts = {}
+    try:
+        names = os.listdir(proc)
+    except OSError:
+        return ""
+    me = os.getpid()
+    for name in names:
+        if not name.isdigit() or int(name) == me:
+            continue
+        try:
+            with open(os.path.join(proc, name, "stat"), "rb") as fh:
+                stat = fh.read().decode("utf-8", "replace")
+            comm = stat[stat.index("(") + 1:stat.rindex(")")]
+            state = stat[stat.rindex(")") + 2:stat.rindex(")") + 3]
+            if state not in ("R", "D"):
+                continue
+            with open(os.path.join(proc, name, "cmdline"), "rb") as fh:
+                cmd = fh.read(512).replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        except (OSError, ValueError):
+            continue
+        label = _procLabel(cmd, comm)[:60]
+        n, d = counts.get(label, (0, 0))
+        counts[label] = (n + 1, d + (state == "D"))
+    text = ", ".join(f"{label} {n}" + (f" (D {d})" if d else "")
+                     for label, (n, d) in sorted(counts.items(), key=lambda kv: (-kv[1][0], kv[0]))[:top])
+    if proc == "/proc":
+        _BUSY.update(at=now, text=text)
+    return text
 
 
 def recordSlow(path, ms, queries=(), threshold=None, buf=None, query=None):
