@@ -51,7 +51,8 @@ import re
 
 from markupsafe import escape
 
-KINDS = ("rankings", "top1", "risers", "breakout", "national", "teams", "alltime")
+KINDS = ("rankings", "top1", "risers", "breakout", "national", "teams", "alltime",
+         "picks", "teampicks", "recap")
 TOP_N = 10
 NATIONAL_N = 25
 RISERS_N = 3
@@ -262,6 +263,31 @@ def caption(post):
                 lines.append(f"{rows[1]['school']} next at {rows[1].get('points')}.")
         lines.append("Points from 1,000 simulated meets → link in bio")
         lines.append(_pick(["Who’s too low?", "Who takes state?"], key))
+    elif k == "picks":
+        rows = post.get("rows") or []
+        if rows:
+            r = rows[0]
+            lines.append(f"{r['name']} is the pick in {where} {post.get('division_label') or ''}, "
+                         f"{round(100 * r['p_win'])}% to win.".replace("  ", " "))
+            if len(rows) > 1:
+                lines.append(f"{rows[1]['name']} next at {round(100 * rows[1]['p_win'])}%.")
+        lines.append("Every runner's odds → link in bio")
+        lines.append(_pick(["Who are you taking?", "Who's the upset pick?"], key))
+    elif k == "teampicks":
+        rows = post.get("rows") or []
+        if rows:
+            lines.append(f"{rows[0]['school']} is the team to beat in {where}, "
+                         f"{round(100 * rows[0]['p_win'])}% to win the title.")
+        lines.append("Simulated from every runner's season → link in bio")
+        lines.append("Who takes it?")
+    elif k == "recap":
+        rows = post.get("rows") or []
+        teams = post.get("teams") or []
+        if rows:
+            lines.append(f"{rows[0]['name']} wins the {post.get('meet_name') or 'race'} in {rows[0].get('time')}.")
+        if teams:
+            lines.append(f"{teams[0]['school']} takes the team title with {teams[0]['points']} points.")
+        lines.append("Every finisher rated → link in bio")
     elif k == "alltime":
         rows = post.get("rows") or []
         if rows:
@@ -681,8 +707,18 @@ def teamsPost(cur, sport, pool, state, year, week):
                     "points": r.get("points"), "top5": r.get("hs_top5_mean") or r.get("top5_mean"),
                     "hs_top5": r.get("hs_top5_mean"),
                     "sub": f'No. 1 {r["best_name"]}' if r.get("best_name") else "", "move": 0})
+    try:
+        cur.execute("SAVEPOINT sp_tw")
+        odds = teamWinOdds(cur, pool, state)
+        cur.execute("RELEASE SAVEPOINT sp_tw")
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT sp_tw")
+        odds = {}
+    for r in out:
+        if r["school"] in odds:
+            r["p_win"] = odds[r["school"]]
     p = _base("teams", sport, pool, state, week)
-    p.update(rows=out)
+    p.update(rows=out, has_odds=bool(odds))
     return p
 
 
@@ -713,6 +749,147 @@ def alltimePost(cur, sport, pool, state, week):
         return None
     p = _base("alltime", sport, pool, state, week)
     p.update(rows=out)
+    return p
+
+
+GENDER_OF = {"hs_m": "boys", "hs_f": "girls"}
+
+
+def _oddsYear(cur):
+    cur.execute("SELECT to_regclass('public.state_odds_meta') AS t")
+    if cur.fetchone()["t"] is None:
+        return None
+    cur.execute("SELECT max(year) AS y FROM state_odds_meta")
+    y = cur.fetchone()["y"]
+    return int(y) if y is not None else None
+
+
+def teamWinOdds(cur, pool, state):
+    """{school: p_win} from the state-meet simulation (build_state_odds.py)
+    for the state's latest season, every division; {} when not built."""
+    g = GENDER_OF.get(pool)
+    y = _oddsYear(cur) if g else None
+    if y is None:
+        return {}
+    cur.execute("""SELECT school, max(p_win) AS p FROM state_odds_team
+                   WHERE year = %s AND state = %s AND gender = %s GROUP BY school""", (y, state, g))
+    return {r["school"]: float(r["p"]) for r in cur.fetchall() if r["p"] is not None}
+
+
+def picksPosts(cur, sport, pool, state, week, division=None):
+    """The state meet, simulated (state_odds, the 'Who wins state?' page):
+    [individual picks, team picks] for one division -- the biggest field
+    unless `division` is given. [] when the odds are not built."""
+    g = GENDER_OF.get(pool)
+    y = _oddsYear(cur) if g else None
+    if y is None:
+        return []
+    cur.execute("""SELECT division, division_label, draws, n_field FROM state_odds_meta
+                   WHERE year = %s AND state = %s AND gender = %s
+                     AND (%s::text IS NULL OR division = %s)
+                   ORDER BY n_field DESC LIMIT 1""", (y, state, g, division, division))
+    meta = cur.fetchone()
+    if not meta:
+        return []
+    import state_odds as SO
+    athletes, teams = SO.divisionOdds(cur, state, meta["division"], g, y)
+    athletes = sorted((a for a in athletes if a.get("p_win") is not None),
+                      key=lambda a: (-float(a["p_win"]), -(a.get("rating") or 0)))[:8]
+    teams = sorted((t for t in teams if t.get("p_win") is not None),
+                   key=lambda t: (-float(t["p_win"]), t.get("score_mean") or 9e9))[:6]
+    out = []
+    label = meta["division_label"] or ""
+    if len(athletes) >= 5:
+        rows = [{"rank": i + 1, "name": a.get("name") or "Unknown", "school": a.get("school"),
+                 "state": a.get("school_state") or state, "rating": a.get("rating"), "hs": a.get("rating"),
+                 "cls": classWord(a.get("grade"), pool), "p_win": float(a["p_win"]),
+                 "place_mean": a.get("place_mean")} for i, a in enumerate(athletes)]
+        for r in rows:
+            r["five_k"], r["five_k_dist"] = _fiveK(r["rating"], pool, sport) if r["rating"] else (None, None)
+        p = _base("picks", sport, pool, state, week)
+        p.update(rows=rows, division=meta["division"], division_label=label, draws=meta["draws"])
+        out.append(p)
+    if len(teams) >= 3:
+        rows = [{"rank": i + 1, "name": None, "school": t["school"], "state": t.get("school_state") or state,
+                 "p_win": float(t["p_win"]), "score": t.get("score_mean")} for i, t in enumerate(teams)]
+        p = _base("teampicks", sport, pool, state, week)
+        p.update(rows=rows, division=meta["division"], division_label=label, draws=meta["draws"])
+        out.append(p)
+    return out
+
+
+def recapRows(cur, source, meet_id, div_id, pool, sport):
+    """(finishers top 8, teams top 5) for one race, ratings HS-equivalent."""
+    import meet_recap as MR
+    fin = MR.actualByDiv(cur, meet_id, source).get(int(div_id)) or []
+    if len(fin) < 10:
+        return [], []
+    cur.execute("""SELECT result_id, person_id, time_seconds, speed_rating,
+                          split_part(COALESCE(rating_pool, ''), '|', 1) AS pool, grade
+                   FROM results WHERE meet_id = %s AND div_id = %s AND source = %s""",
+                (meet_id, div_id, source))
+    by = {}
+    for r in cur.fetchall():
+        by[(r["person_id"], round(float(r["time_seconds"] or 0), 1))] = r
+    import pool_view as PV
+    rows = []
+    for i, f in enumerate(fin[:8], 1):
+        x = by.get((f.get("person_id"), round(float(f["time_seconds"]), 1))) or {}
+        rt = x.get("speed_rating")
+        hs = PV.toHs(float(rt), x.get("pool") or pool, sport) if rt is not None else None
+        rows.append({"rank": i, "name": f.get("name") or "Unknown", "school": f.get("school"),
+                     "time": _clock(f["time_seconds"]), "rating": float(rt) if rt is not None else None,
+                     "hs": float(hs) if hs is not None else None,
+                     "cls": classWord(x.get("grade"), pool)})
+    try:
+        cur.execute("SAVEPOINT sp_rt")
+        teams = MR.actualTeams(cur, fin, None, source)[:5]
+        cur.execute("RELEASE SAVEPOINT sp_rt")
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT sp_rt")
+        teams = []
+    trows = [{"rank": i + 1, "name": None, "school": t["team"], "state": t.get("state"), "points": t["points"]}
+             for i, t in enumerate(teams)]
+    return rows, trows
+
+
+def recapPost(cur, sport, pool, state, week, meet=None):
+    """The state's biggest race of the week for this pool, recapped: a
+    championship ('state' in the meet's name, not a pre-state) before any
+    other. `meet` = (source, meet_id, div_id) picks one race instead."""
+    import datetime as _dt
+    if meet is None:
+        hi = _dt.date.fromisoformat(str(week)[:10]) + _dt.timedelta(days=7)
+        lo = hi - _dt.timedelta(days=10)
+        cur.execute("""
+            SELECT m.meet_id, m.div_id, max(m.meet_name) AS meet_name, count(*) AS n,
+                   count(*) FILTER (WHERE split_part(COALESCE(r.rating_pool, ''), '|', 1) = %(p)s) AS np
+            FROM   meets m JOIN results r ON r.div_id = m.div_id AND r.source = 'anet'
+            WHERE  m.state = %(st)s AND m.meet_date >= %(lo)s AND m.meet_date < %(hi)s
+              AND  r.time_seconds > 0 AND r.time_seconds < 90000
+            GROUP  BY 1, 2 HAVING count(*) >= 40
+            ORDER  BY (lower(max(m.meet_name)) ~ 'state' AND lower(max(m.meet_name)) !~ 'pre[- ]?state') DESC,
+                      count(*) DESC
+            LIMIT 12""", {"p": pool, "st": state, "lo": lo.isoformat(), "hi": hi.isoformat()})
+        cands = [r for r in cur.fetchall() if r["np"] * 2 > r["n"]]
+        if not cands:
+            return None
+        c = cands[0]
+        meet = ("anet", c["meet_id"], c["div_id"])
+    source, meet_id, div_id = meet
+    from app import get_race_header
+    m = dict(get_race_header(cur, meet_id, div_id, source=source) or {})
+    cur.execute("SELECT max(date) AS d FROM results WHERE meet_id = %s AND div_id = %s AND source = %s",
+                (meet_id, div_id, source))
+    m["meet_date"] = (cur.fetchone() or {}).get("d")
+    rows, teams = recapRows(cur, source, meet_id, div_id, pool, sport)
+    if len(rows) < 8:
+        return None
+    label = m.get("division")
+    p = _base("recap", sport, pool, state or m.get("state"), week)
+    p.update(rows=rows, teams=teams, meet_name=m.get("meet_name"), meet_date=m.get("meet_date"),
+             course=m.get("course_name"), distance=m.get("distance"), race_label=label,
+             meet_id=meet_id, div_id=div_id, source=source)
     return p
 
 
@@ -825,7 +1002,11 @@ def admin_social_html(pid):
     r = _one(pid)
     spec = C.cleanSpec(r["data"], r["data"].get("spec") or C.defaultSpec(r["data"]))
     _path, url = _photoOf(spec)
-    return Response(C.pages(r["data"], spec, C.webAssets(url))[0], mimetype="text/html")
+    resp = Response(C.pages(r["data"], spec, C.webAssets(url))[0], mimetype="text/html")
+    # ! FRAMED BY THE POSTS PAGE: the site's DENY (app._headers, setdefault)
+    #   blocked the preview; our own pages may frame it, nobody else
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    return resp
 
 
 @bp.route("/account/admin/social/<int:pid>.png")
@@ -918,6 +1099,11 @@ def admin_social_compose():
     folder, files = photoFiles()
     _path, url = _photoOf(spec)
     n = len(C.pages(data, spec, C.webAssets(url)))
+    with _db() as (conn, cur):
+        try:
+            divisions = oddsDivisions(cur)
+        except Exception:                                # noqa: BLE001
+            divisions = []
     of_kind = [p for p in posts if p["kind"] == kind]
     for p in of_kind:
         p["label"] = f'{"National" if p["scope"] == "US" else (p["scope_name"] or p["scope"])} · {POOL_WORDS.get(p["pool"], p["pool"])}'
@@ -927,7 +1113,8 @@ def admin_social_compose():
         photos=C.PHOTOS, photo_words=C.PHOTO_WORDS, files=files, folder=folder, n_pages=n,
         q=_specQuery(spec), fmt_size=C.FORMATS[spec["fmt"]], csrf=sess["csrf"],
         themes=C.THEME_WORDS, presets=C.COLOR_PRESETS, title_words=C.TITLE_WORDS,
-        saved=bool(data.get("spec")), caption=row.get("caption") or "", week=week)
+        saved=bool(data.get("spec")), caption=row.get("caption") or "", week=week,
+        divisions=divisions, err=request.args.get("err"))
 
 
 @bp.route("/account/admin/social/compose/<int:pid>/<int:page>.html")
@@ -943,7 +1130,12 @@ def admin_social_compose_html(pid, page):
     pages_ = C.pages(data, spec, C.webAssets(url))
     if not 0 <= page < len(pages_):
         abort(404)
-    return Response(pages_[page], mimetype="text/html")
+    resp = Response(pages_[page], mimetype="text/html")
+    # ! THE COMPOSER FRAMES THIS (owner, 2026-11-09: the preview was a broken
+    #   page icon): app._headers sends X-Frame-Options: DENY with setdefault,
+    #   so this wins; SAMEORIGIN lets only the site's own pages frame it
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    return resp
 
 
 @bp.route("/account/admin/social/compose/<int:pid>/<int:page>.png")
@@ -1002,3 +1194,83 @@ def admin_social_compose_save(pid):
                     (_json.dumps(data, default=str), png, pid))
         conn.commit()
     return redirect(f"/account/admin/social/compose?pid={pid}&saved=1")
+
+
+def _savePost(cur, p):
+    """Store a post the composer made (a recap of a race the owner named,
+    picks for another division) as this week's post of its kind and scope."""
+    import json as _json
+    p["caption"] = caption(p)
+    cur.execute("""INSERT INTO social_post (week, sport, pool, scope, kind, data, caption, png_path)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,NULL)
+                   ON CONFLICT (week, sport, pool, scope, kind) DO UPDATE
+                   SET data = EXCLUDED.data, caption = EXCLUDED.caption, png_path = NULL, built_at = now()
+                   RETURNING id""",
+                (p["week"], p["sport"], p["pool"], p["scope"], p["kind"], _json.dumps(p, default=str), p["caption"]))
+    return cur.fetchone()["id"]
+
+
+@bp.route("/account/admin/social/compose/new", methods=["POST"])
+def admin_social_compose_new():
+    """A post the pipeline did not make: a recap of any race (its link), or
+    the state-meet picks for any division."""
+    import re as _re
+    import urllib.parse
+    from flask import redirect
+    import accounts as AC
+    import public_ids as PI
+    from uploads import requireAdmin
+    sess, go = requireAdmin()
+    if go:
+        return go
+    if not AC.csrfOk(sess):
+        abort(400)
+    what = request.form.get("what")
+    with _db() as (conn, cur):
+        cur.execute("SELECT max(week) AS w FROM social_post")
+        week = cur.fetchone()["w"]
+        week = week.isoformat() if week else None
+        made = []
+        if what == "recap":
+            link = urllib.parse.urlparse((request.form.get("link") or "").strip())
+            m = _re.search(r"/race/xc/([^/?#]+)/([^/?#]+)", link.path or "")
+            if not m or not week:
+                return redirect("/account/admin/social/compose?err=" + urllib.parse.quote("Paste a cross country race link (…/race/xc/…/…)."))
+
+            def num(tok):
+                got = PI.decode(tok)
+                return got[1] if got else int(tok) if tok.lstrip("-").isdigit() else None
+            meet_id, div_id = num(m.group(1)), num(m.group(2))
+            src = {"1": "anet", "2": "tfrrs"}.get((urllib.parse.parse_qs(link.query).get("src") or [""])[0], "anet")
+            if meet_id is None or div_id is None:
+                abort(400)
+            cur.execute("""SELECT split_part(COALESCE(rating_pool, ''), '|', 1) AS pool, count(*) AS n
+                           FROM results WHERE meet_id = %s AND div_id = %s AND source = %s
+                           GROUP BY 1 ORDER BY 2 DESC LIMIT 1""", (meet_id, div_id, src))
+            pr = cur.fetchone()
+            pool = (pr or {}).get("pool") or "hs_m"
+            from app import get_race_header
+            hdr = get_race_header(cur, meet_id, div_id, source=src) or {}
+            p = recapPost(cur, "XC", pool, hdr.get("state") or "US", week, meet=(src, meet_id, div_id))
+            if p:
+                made.append(p)
+        elif what == "picks":
+            st, div, g = (request.form.get("state") or "").upper(), request.form.get("division"), request.form.get("gender")
+            pool = {"boys": "hs_m", "girls": "hs_f"}.get(g)
+            if pool and st and week:
+                made = picksPosts(cur, "XC", pool, st, week, division=div)
+        if not made:
+            return redirect("/account/admin/social/compose?err=" + urllib.parse.quote("Nothing to post for that: too few finishers, or no odds built."))
+        ids = [_savePost(cur, p) for p in made]
+        conn.commit()
+    return redirect(f"/account/admin/social/compose?pid={ids[0]}")
+
+
+def oddsDivisions(cur):
+    """[(state, division, label, gender)] the state-meet odds cover, latest season."""
+    y = _oddsYear(cur)
+    if y is None:
+        return []
+    cur.execute("""SELECT state, division, division_label, gender FROM state_odds_meta
+                   WHERE year = %s AND n_field > 0 ORDER BY state, division, gender""", (y,))
+    return [(r["state"], r["division"], r["division_label"] or r["division"], r["gender"]) for r in cur.fetchall()]

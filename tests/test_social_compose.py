@@ -98,3 +98,28 @@ def test_colours_are_a_theme_an_accent_and_a_title():
     # the site's blue lifted on dark; bars follow a chosen accent
     assert "--acc:#8db8ee" in C.pages(p, {"theme": "dark"}, A)[0]
     assert "#7a1f2b" in C.pages(p, {"body": "bars", "color": "#7a1f2b"}, A)[0].split("class=fill")[1][:80]
+
+
+def test_picks_team_odds_and_the_recap_draw():
+    picks = _post("picks", 8, division_label="Division 1", draws=10000)
+    for r, p in zip(picks["rows"], (0.41, 0.22, 0.14, 0.09, 0.07, 0.04, 0.02, 0.004)):
+        r["p_win"] = p
+    h = C.pages(picks, {"body": "odds"}, A)[0]
+    assert "WHO WINS STATE?" in h and "41%" in h and "&lt;1%" in h and "10,000 simulated state meets" in h
+    tp = _post("teampicks", 6, division_label="Division 1")
+    for i, r in enumerate(tp["rows"]):
+        r.update(name=None, p_win=0.4 / (i + 1), score=100 + 20 * i)
+    h = C.pages(tp, {"body": "odds"}, A)[0]
+    assert "THE TEAM TITLE RACE" in h and "average score 100" in h
+    teams = _post("teams")
+    for r in teams["rows"]:
+        r.update(name=None, points=200, top5=130.0, p_win=0.2)
+    assert ">WIN<" in C.pages(teams, {"body": "table"}, A)[0].upper()
+    rc = _post("recap", 8, meet_name="MHSAA LP Finals", race_label="Boys D1", course="MIS", distance=5000,
+               teams=[{"rank": i + 1, "school": f"T{i}", "points": 100 + i} for i in range(5)])
+    for r in rc["rows"]:
+        r["time"] = "14:45.9"
+    for body in C.bodiesFor("recap"):
+        h = C.pages(rc, {"body": body}, A)[0]
+        assert "MHSAA LP FINALS" in h and "14:45.9" in h
+    assert "Points" in C.pages(rc, {"body": "recap"}, A)[0]

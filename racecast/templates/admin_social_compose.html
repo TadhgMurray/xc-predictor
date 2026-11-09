@@ -118,6 +118,30 @@
   <h3 style="margin:22px 0 6px;font-size:14px">Caption</h3>
   <textarea class="cp-cap" id="cpcap">{{ caption }}</textarea>
   <div class="cp-row"><button type="button" id="cpcopy">Copy caption</button></div>
+
+  <h3 style="margin:30px 0 6px;font-size:14px">Make a new post</h3>
+  {% if err %}<p class="cp-note" style="color:#b42318">{{ err }}</p>{% endif %}
+  <form method="post" action="/account/admin/social/compose/new" class="cp-row">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="recap">
+    <input type="url" name="link" placeholder="Paste a race link: https://racecast.co/race/xc/…" style="flex:1;min-width:260px;font:inherit;padding:6px 8px">
+    <button type="submit">Recap this race</button>
+  </form>
+  {% if divisions %}
+  <form method="post" action="/account/admin/social/compose/new" class="cp-row" id="cppicks">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="picks">
+    <input type="hidden" name="state"><input type="hidden" name="division"><input type="hidden" name="gender">
+    <select id="cpdiv" style="flex:1;min-width:260px;font:inherit;padding:6px 8px">
+      {% for st, div, label, g in divisions %}<option value="{{ st }}|{{ div }}|{{ g }}">{{ st }} · {{ label }} · {{ g }}</option>{% endfor %}
+    </select>
+    <button type="submit">Who wins state: this division</button>
+  </form>
+  <script>
+  document.getElementById("cppicks").addEventListener("submit", function () {
+    var v = document.getElementById("cpdiv").value.split("|");
+    this.state.value = v[0]; this.division.value = v[1]; this.gender.value = v[2];
+  });
+  </script>
+  {% endif %}
 </div>
 </div>
 </main>

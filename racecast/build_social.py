@@ -193,14 +193,21 @@ def main():
                     # ★ THE TEAM BOARD AND THE ALL-TIME LIST (owner, 2026-11-09):
                     #   two more post types per state, each in its own savepoint
                     #   so a slow or failed board costs only that post
+                    # ★ AND THE STATE MEET'S ODDS AND THE WEEK'S BIGGEST RACE
+                    #   (owner, 2026-11-09: "predictions, recap and team
+                    #   win-chance posts ... build these rn")
                     for build in (lambda: S.teamsPost(cur, sport, pool, st, year, weeks[0]),
-                                  lambda: S.alltimePost(cur, sport, pool, st, weeks[0])):
+                                  lambda: S.alltimePost(cur, sport, pool, st, weeks[0]),
+                                  lambda: S.picksPosts(cur, sport, pool, st, weeks[0]),
+                                  lambda: S.recapPost(cur, sport, pool, st, weeks[0])):
                         try:
                             cur.execute("SAVEPOINT sp_extra")
                             cur.execute("SET LOCAL statement_timeout = '60s'")
                             got = build()
                             cur.execute("RELEASE SAVEPOINT sp_extra")
-                            if got:
+                            if isinstance(got, list):
+                                posts += got
+                            elif got:
                                 posts.append(got)
                         except Exception as exc:        # noqa: BLE001
                             cur.execute("ROLLBACK TO SAVEPOINT sp_extra")
