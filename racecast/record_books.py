@@ -282,13 +282,66 @@ def loadBook(cur, kind, key):
     return ctx
 
 
+# ★ A ONE-RACE SEASON IS NOT "ON THIS DAY" (2026-11-09: the home page's
+#   card read "On this day in 1991, Amanda White ran 17:25 ... Rated 152.3",
+#   the nation's best Nov 9 race ever by the stored pick, from a season of
+#   one race; her one-race 1990 season rates 157.7 for an 18:43 three-mile,
+#   above her own 17:18 two years later). Maryland's 1986-90s cross country
+#   is state meets only, so every runner there has one race a season and
+#   nothing outside the race anchors it. The card shows only a race from a
+#   season of OTD_MIN_RACES or more rated races -- the all-time season
+#   lists' own floor (build_record_books.boardFilters, min_races 3).
+OTD_MIN_RACES = 3
+
+
+def _otdSeasonsOk(cur, rows):
+    """{(person_id, pool, sport, year)} of the candidate rows whose season
+    has OTD_MIN_RACES+ rated races; None when athlete_season cannot be read
+    (the caller then keeps every row rather than showing nothing)."""
+    keys = {(r.get("person_id"), r.get("pool"), r.get("sport"), r.get("year"))
+            for r in rows or () if r.get("person_id") is not None}
+    if not keys:
+        return set()
+    try:
+        cur.execute("SAVEPOINT otd_floor")
+        cur.execute("""
+            SELECT s.person_id, s.pool, s.sport, s.year
+            FROM   athlete_season s
+            JOIN   unnest(%s::bigint[], %s::text[], %s::text[], %s::int[])
+                       AS k(pid, pool, sport, year)
+                   ON s.person_id = k.pid AND s.pool = k.pool
+                  AND s.sport = k.sport AND s.year = k.year
+            WHERE  s.n_races >= %s""",
+                    ([k[0] for k in keys], [k[1] for k in keys],
+                     [k[2] for k in keys], [int(k[3] or 0) for k in keys],
+                     OTD_MIN_RACES))
+        got = {(r[0], r[1], r[2], r[3]) if not isinstance(r, dict)
+               else (r["person_id"], r["pool"], r["sport"], r["year"])
+               for r in cur.fetchall()}
+        cur.execute("RELEASE SAVEPOINT otd_floor")
+        return got
+    except Exception as exc:                            # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT otd_floor")
+        except Exception:                               # noqa: BLE001
+            pass
+        print(f"otd floor: {type(exc).__name__}: {exc}", flush=True)
+        return None
+
+
 def onThisDay(cur, today, state=None):
     """The card's row for `today` (a date), the state's when one is given
     and has a past-year race that day, else the nation's. None if neither."""
     mmdd = today.strftime("%m-%d")
     for scope in ([state, None] if state else [None]):
         ctx = loadBook(cur, "otd", otdKey(mmdd, scope))
-        pick = otdPick((ctx or {}).get("rows"), today.year)
+        rows = (ctx or {}).get("rows") or []
+        ok = _otdSeasonsOk(cur, rows)
+        if ok is not None:
+            rows = [r for r in rows
+                    if (r.get("person_id"), r.get("pool"), r.get("sport"),
+                        r.get("year")) in ok]
+        pick = otdPick(rows, today.year)
         if pick:
             pick["scope"] = (scope or "US").upper()
             return pick

@@ -330,7 +330,7 @@ def otdSql(f):
     year) and then the top few per (day, state). US scope by the board's
     own clause; the state here is the MEET's -- "on this day in
     California" is a race run there."""
-    params = {"n": RB.OTD_N}
+    params = {"n": RB.OTD_N, "otd_min": RB.OTD_MIN_RACES}
     where = whereFor(f, params, True)
     return f"""
     WITH c AS (
@@ -343,6 +343,14 @@ def otdSql(f):
                                   ORDER BY speed_rating DESC, result_id) AS yn
         FROM   ranking_results
         WHERE  speed_rating IS NOT NULL AND time_seconds > 0 {where}
+          -- ★ a season of RB.OTD_MIN_RACES+ rated races (record_books.
+          --   onThisDay says why); the card re-checks at read time
+          AND  EXISTS (SELECT 1 FROM athlete_season s
+                       WHERE s.person_id = ranking_results.person_id
+                         AND s.pool = ranking_results.pool
+                         AND s.sport = ranking_results.sport
+                         AND s.year = ranking_results.year
+                         AND s.n_races >= %(otd_min)s)
     ),
     t AS (
         SELECT *, row_number() OVER (PARTITION BY md, state

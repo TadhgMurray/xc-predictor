@@ -627,3 +627,60 @@ def chartPoints(series):
             p["vh"] = round(float(r["hs_rating"]), 4)
         pts.append(p)
     return pts
+
+
+# ------------------------------------------------------------------ #
+#  the empty page: real head-to-heads to start from
+# ------------------------------------------------------------------ #
+# ★ /compare WITH NOTHING PICKED WAS TWO EMPTY BOXES (owner, 2026-11-09:
+#   "/compare comes up empty"). It now offers, per level, the pair from the
+#   current season's top SUGGEST_TOP who have raced each other most -- a
+#   page with a record, a chart and meetings, one click away. One query per
+#   level against athlete_season's board index and ranking_results' person
+#   index; cached an hour by the route.
+SUGGEST_TOP = 8
+SUGGEST_POOLS = (("hs_m", "HS boys"), ("hs_f", "HS girls"),
+                 ("college_m", "College men"), ("college_f", "College women"))
+
+
+def suggestions(cur, sport, year):
+    """[{label, a, b, name_a, name_b, n}] -- at most one pair per pool,
+    the pair with the most shared races this season; [] on no data."""
+    out = []
+    for pool, label in SUGGEST_POOLS:
+        cur.execute("""
+            SELECT person_id FROM athlete_season
+            WHERE  pool = %s AND sport = %s AND year = %s AND n_races >= 3
+              AND  mean_rating IS NOT NULL
+            ORDER  BY mean_rating DESC NULLS LAST, person_id
+            LIMIT  %s""", (pool, sport, year, SUGGEST_TOP))
+        ids = [r["person_id"] for r in cur.fetchall()]
+        if len(ids) < 2:
+            continue
+        cur.execute("""
+            WITH mine AS (
+                SELECT DISTINCT person_id, COALESCE(canon_meet_id, meet_id) AS mk,
+                       div_id
+                FROM   ranking_results
+                WHERE  person_id = ANY(%(ids)s) AND sport = %(sp)s
+                  AND  year = %(y)s)
+            SELECT x.person_id AS a, y.person_id AS b, count(*) AS n
+            FROM   mine x JOIN mine y
+                   ON x.mk = y.mk AND x.div_id = y.div_id
+                  AND x.person_id < y.person_id
+            GROUP  BY 1, 2
+            ORDER  BY n DESC, 1, 2
+            LIMIT  1""", {"ids": ids, "sp": sport, "y": year})
+        row = cur.fetchone()
+        a, b, n = (row["a"], row["b"], int(row["n"])) if row else (ids[0], ids[1], 0)
+        # the higher-rated athlete on the left
+        if ids.index(a) > ids.index(b):
+            a, b = b, a
+        out.append({"label": label, "a": a, "b": b, "n": n})
+    if out:
+        from team_tracker import _names
+        names = _names(cur, {p for s in out for p in (s["a"], s["b"])})
+        for s in out:
+            s["name_a"] = names.get(s["a"], "Unknown")
+            s["name_b"] = names.get(s["b"], "Unknown")
+    return out

@@ -56,7 +56,9 @@ class _Cur:
         return {"?column?": 1}                     # rating_pool is present
 
     def fetchall(self):
-        if "ranking_results" in self._last:
+        # the gate's EXISTS (app._COURSE_GATE_SQL, alias rr_g) is part of
+        # the bests query itself; only the stamping lookup comes back empty
+        if "ranking_results" in self._last and "rr_g" not in self._last:
             return []
         return [dict(r) for r in self.rows]
 

@@ -1629,6 +1629,29 @@ def api_meet_units():
 #  HEAD TO HEAD
 # ===================================================================== #
 
+def _compareSuggestions():
+    """compare.suggestions for the current XC season, cached an hour;
+    [] on any failure -- the picker still works without them."""
+    import ttlcache
+    from compare import suggestions
+
+    def compute():
+        try:
+            with getConn() as conn:
+                with conn.cursor(
+                        cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    from predict import _currentSeason
+                    rows = suggestions(cur, "XC", int(_currentSeason(cur, "XC")))
+                    conn.rollback()
+                    return rows
+        except Exception as exc:                          # noqa: BLE001
+            print(f"compare suggestions: {type(exc).__name__}: {exc}", flush=True)
+            return []
+    val, _stamp = ttlcache.get(("compare_suggest",), compute, ttl=3600,
+                               ttl_of=lambda v: 3600 if v else 300)
+    return val
+
+
 @app.route("/compare")
 def compare_page():
     """Two athletes, one page: the record where they actually raced each
@@ -1744,6 +1767,10 @@ def compare_page():
                                # ! the highlight on the default (HS) scale
                                brate_edge=bestRatingEdge(brate),
                                chart=chart, has_hs_view=has_hs)
+
+    # ★ NOTHING PICKED: real pairings to start from (compare.suggestions)
+    if not (ctx["card_a"] and ctx["card_b"]):
+        ctx["suggest"] = _compareSuggestions()
 
     # Short names for the margin and edge labels: the last word carries
     # the identity in almost every real name.
@@ -7340,6 +7367,90 @@ def get_course_header(cur, course_name, dist=None):
     return row if row and row["n_results"] else None
 
 
+# ★ THE COURSE PAGE'S RATING LISTS USE THE BOARDS' GATES (2026-11-09: the
+#   Hereford HS page opened "Boys best: Matt Mullally 168.2" -- an 18:17
+#   three-mile in 1986 -- above the 15:40 that won that same race at 152.4,
+#   and the whole 1986 state meet field read 13:10-14:10 5K equivalents).
+#   These lists read the raw results table; the boards read ranking_results,
+#   which build_ranking_results fills only with rows that pass its gates
+#   (pool ceiling, anchor mismatch, impossible pace, no distance). Every one
+#   of those 1986-88 rows was already off every board. A rating the boards
+#   refuse is not a course best either: a row has to be in ranking_results
+#   (one index probe per candidate, idx_rr_result). Times-as-run records are
+#   not ratings and are not gated.
+_COURSE_GATE_SQL = """AND EXISTS (SELECT 1 FROM ranking_results rr_g
+                          WHERE rr_g.result_id = r.result_id)"""
+
+
+def _gateCourseRatings(cur, ctx):
+    """The same gate on a PRECOMPUTED course page (course_boards, built
+    before the gate existed): drop rating rows the boards refuse, and team
+    rows with fewer than five gated finishers. A copy; never raises."""
+    if not ctx:
+        return ctx
+    try:
+        bests = ctx.get("rating_bests") or {}
+        teams = ctx.get("team_rating") or {}
+        rids = sorted({r["result_id"] for rows in bests.values()
+                       for r in rows or () if r.get("result_id") is not None})
+        tkeys = {(t.get("div_id"), t.get("school")) for rows in teams.values()
+                 for t in rows or () if t.get("div_id") is not None}
+        cur.execute("SAVEPOINT course_gate")
+        ok = set()
+        if rids:
+            cur.execute("SELECT result_id FROM ranking_results "
+                        "WHERE result_id = ANY(%s)", (rids,))
+            ok = {r["result_id"] for r in cur.fetchall()}
+        gated = {}
+        if tkeys:
+            cur.execute("""
+                SELECT r.div_id, r.school,
+                       count(*) FILTER (WHERE EXISTS (
+                           SELECT 1 FROM ranking_results rr_g
+                           WHERE rr_g.result_id = r.result_id)) AS n
+                FROM   results r
+                WHERE  r.div_id = ANY(%s) AND r.school = ANY(%s)
+                  AND  r.speed_rating IS NOT NULL
+                GROUP  BY r.div_id, r.school""",
+                        (sorted({k[0] for k in tkeys}),
+                         sorted({k[1] for k in tkeys if k[1]})))
+            gated = {(r["div_id"], r["school"]): r["n"] for r in cur.fetchall()}
+        cur.execute("RELEASE SAVEPOINT course_gate")
+        out = dict(ctx)
+        # ★ AND A ROW WITH NO HS-EQUIVALENT DOES NOT RANK AMONG ROWS THAT HAVE
+        #   ONE (2026-11-09: Hereford's top 11 boys were Sherwood 1986-88 rows
+        #   in elem_m, which has no HS map; bestByShown sorts them on their
+        #   own-pool 168 above every HS number; Van Cortlandt opened with an
+        #   elem_m 179.6 in a college race). Every rating a page shows is
+        #   HS-equivalent (CLAUDE.md); a list that can show HS numbers drops
+        #   the rows that cannot.
+        def _hsOnly(rows, hs_key):
+            rows = list(rows or ())
+            if any(r.get(hs_key) is not None for r in rows):
+                return [r for r in rows if r.get(hs_key) is not None]
+            return rows
+        bests = {g: _hsOnly(rows, "hs_rating") for g, rows in bests.items()}
+        teams = {g: _hsOnly(rows, "hs_avg5") for g, rows in teams.items()}
+        out["rating_bests"], out["team_rating"] = bests, teams
+        if rids:
+            out["rating_bests"] = {g: [r for r in rows or ()
+                                       if r.get("result_id") in ok]
+                                   for g, rows in bests.items()}
+        if tkeys:
+            out["team_rating"] = {g: [t for t in rows or ()
+                                      if gated.get((t.get("div_id"),
+                                                    t.get("school")), 0) >= 5]
+                                  for g, rows in teams.items()}
+        return out
+    except Exception as exc:                              # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT course_gate")
+        except Exception:                                 # noqa: BLE001
+            cur.connection.rollback()
+        print(f"course gate: {type(exc).__name__}: {exc}", flush=True)
+        return ctx
+
+
 def get_course_rating_bests(cur, course_name, dist=None, limit=60):
     """Best speed ratings on this course: best per athlete, top `limit`
     per gender, RANKED ON THE HS-EQUIVALENT. dist=None is the overview (all
@@ -7404,6 +7515,7 @@ def get_course_rating_bests(cur, course_name, dist=None, limit=60):
               AND r.time_seconds IS NOT NULL
               AND r.time_seconds BETWEEN r.distance * {_REC_PACE_LO}
                                      AND r.distance * {_REC_PACE_HI}
+              {_COURSE_GATE_SQL}
         ),
         ranked AS (
             SELECT *, row_number() OVER (PARTITION BY gender, rating_pool
@@ -7458,6 +7570,7 @@ def get_course_team_rating_bests(cur, course_name, limit=60):
               AND r.time_seconds IS NOT NULL
               AND r.time_seconds BETWEEN r.distance * {_REC_PACE_LO}
                                      AND r.distance * {_REC_PACE_HI}
+              {_COURSE_GATE_SQL}
         ),
         teams AS (
             SELECT meet_id, div_id, school,
@@ -9031,6 +9144,7 @@ def course(course_name):
                         _COURSE_CACHE.pop(oldest, None)
             if ctx is None:
                 abort(404)          # no such course (D10, buildCourseCtx)
+            ctx = _gateCourseRatings(cur, ctx)
             history = _courseHistory(cur, course_name, ctx)
             _stampCourseSchoolStates(cur, ctx)
             # ★ RECORDS BY ERA (2026-10-10): the precomputed progression and
