@@ -2353,6 +2353,18 @@ _CANONICAL_INDEXES = {
          "(pool, sport, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
         ("as_pool_best_idx",
          "(pool, best_rating DESC NULLS LAST, mean_rating DESC, person_id)"),
+        # ★ THE COLUMN SORTS A READER CLICKS (audit 2026-11-09: the all-time
+        #   hs_m ability board sorted by grade took 7.5 s, races 5.7 s, last
+        #   race 4.7 s, each ordering millions of seasons for one page).
+        #   rankings._orderBy writes `<col> <natural dir> NULLS LAST,
+        #   s.mean_rating DESC, s.person_id`; these match it, all-time and one
+        #   season. rankings.sortServed reads which exist (rankings.SORT_INDEXES).
+        ("as_sort_grade_idx", "(pool, sport, grade ASC NULLS LAST, mean_rating DESC, person_id)"),
+        ("as_sort_grade_year_idx", "(pool, sport, year, grade ASC NULLS LAST, mean_rating DESC, person_id)"),
+        ("as_sort_last_idx", "(pool, sport, last_race DESC NULLS LAST, mean_rating DESC, person_id)"),
+        ("as_sort_last_year_idx", "(pool, sport, year, last_race DESC NULLS LAST, mean_rating DESC, person_id)"),
+        ("as_sort_races_idx", "(pool, sport, n_races DESC NULLS LAST, mean_rating DESC, person_id)"),
+        ("as_sort_races_year_idx", "(pool, sport, year, n_races DESC NULLS LAST, mean_rating DESC, person_id)"),
         # ★ AND BY STATE (2026-11-07: the state landing pages, /projections
         #   and every board with one state at 3.8-5.2 s in the slow log).
         #   No athlete_season index carried state, so a state board walked

@@ -50,8 +50,58 @@ _SORTS_ABILITY = {
     "last":    ("s.last_race",      "DESC"),
 }
 
-# the sorts an unnarrowed board may use: its index reads them in order
+# ★ WHICH SORTS AN UNNARROWED ABILITY BOARD CAN SERVE (audit 2026-11-09:
+#   the all-time hs_m board sorted by name answered 503 after 55 s; grade
+#   7.5 s, races 5.7 s, last race 4.7 s). rating and best read their board
+#   indexes. grade, last and races read build_ranking_results' as_sort_*
+#   indexes in their natural direction, once a build has made them. Any
+#   other sort on a board with no state, school, grade or unit filter
+#   orders millions of seasons for one page: getAbilityRankings serves the
+#   rating order instead and says so (sort_note); the board greys those
+#   headers out (rankings.js) so nobody clicks into it.
 _INDEXED_SORTS = ("rating", "best")
+SORT_INDEXES = {"grade": "as_sort_grade", "last": "as_sort_last",
+                "races": "as_sort_races"}
+_IDX_SEEN = {}
+
+
+def _indexExists(cur, name):
+    import time as _t
+    hit = _IDX_SEEN.get(name)
+    if hit and _t.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (name,))
+        row = cur.fetchone()
+        ok = bool(row["ok"] if isinstance(row, dict) else row[0])
+    except Exception:                                   # noqa: BLE001
+        cur.connection.rollback()
+        ok = False
+    _IDX_SEEN[name] = (_t.time(), ok)
+    return ok
+
+
+def boardNarrowed(f):
+    return any(f.get(k) for k in _SEEK_NARROWING)
+
+
+def sortServed(cur, f):
+    """Can the ability board serve f's sort without ordering the whole pool?"""
+    sort = f.get("sort")
+    if sort in _INDEXED_SORTS or boardNarrowed(f):
+        return True
+    if sort not in SORT_INDEXES or f.get("dir") != _SORTS_ABILITY[sort][1]:
+        return False
+    if f.get("pool") == "all" or f.get("sport") == "both" or _scaleActive(f):
+        return False
+    one_year = len(f.get("year") or []) == 1
+    return _indexExists(cur, SORT_INDEXES[sort] + ("_year_idx" if one_year else "_idx"))
+
+
+def servedSorts(cur, f):
+    """The sort keys this board can take right now (the JS greys the rest)."""
+    return [k for k in _SORTS_ABILITY
+            if sortServed(cur, dict(f, sort=k, dir=_SORTS_ABILITY[k][1]))]
 
 _SORTS_PERFORMANCE = {
     "rating":  ("p.speed_rating",   "DESC"),
@@ -715,17 +765,6 @@ def parseFilters(args):
     if board == "ability" and (f["date_from"] or f["date_to"]):
         return None, ("date_from/date_to apply to the performance board only; "
                       "use year for the ability board")
-
-    # ★ A SORT NO INDEX SERVES NEEDS A NARROWER BOARD (audit 2026-11-09: the
-    #   all-time hs_m ability board sorted by name answered 503 after 55 s,
-    #   19 s with a year; grade 7.5 s, races 5.7 s, last 4.7 s). The rating
-    #   sorts read an index in order; every other sort orders the whole
-    #   filtered pool -- millions of seasons -- for one page. Those sorts need
-    #   a state, school, grade, unit, course or date filter first.
-    if (board == "ability" and sort not in _INDEXED_SORTS
-            and not any(f.get(k) for k in _SEEK_NARROWING)):
-        return None, ("Sorting the whole country by this column is too slow. "
-                      "Pick a state, school or conference first, or sort by rating.")
 
     return f, None
 
@@ -2303,6 +2342,12 @@ def getAbilityRankings(cur, f):
     in the order of the board's index, so the OFFSET skips fewer than
     SEEK_EVERY rows.
     """
+    if not sortServed(cur, f):
+        f["sort_note"] = ("Sorting every athlete by this column is too slow, so "
+                          "this board is in rating order. Pick a state, school "
+                          "or conference to sort by it.")
+        f["sort_requested"] = f["sort"]
+        f["sort"], f["dir"] = "rating", "DESC"
     seek = _seekPoint(cur, f)
     if seek is not None and seek[0] == "end":
         return []

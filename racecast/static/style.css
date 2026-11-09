@@ -2150,6 +2150,7 @@ html.js-tips .flag::after, html.js-tips .flag::before { display: none !important
 /* the header's sort control is a real button (keyboard), drawn as the text */
 .rankings-page th.sortable .th-sort { all: unset; cursor: pointer; }
 .rankings-page th.sortable .th-sort:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.rankings-page th.is-unsortable .th-sort { cursor: not-allowed; opacity: .5; }
 .rankings-page th.is-sorted { color: #111; font-weight: 700; }
 
 /* ---- loading --------------------------------------------------------- *

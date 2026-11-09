@@ -11441,6 +11441,11 @@ def api_rankings():
                 rows = {"performance": getPerformanceRankings,
                         "pr": getPrRankings,
                         "ability": getAbilityRankings}[f["board"]](cur, f)
+                # ★ the column sorts this board can serve; rankings.js greys
+                #   out the rest (rankings.sortServed says why)
+                if f["board"] == "ability":
+                    from rankings import servedSorts
+                    f["served_sorts"] = servedSorts(cur, f)
             except psycopg2.errors.UndefinedColumn as exc:
                 # ★ AN HONEST 400 BEATS AN HTML STACK TRACE. Unhandled, Flask
                 #   answers with its debug PAGE, and the frontend reports

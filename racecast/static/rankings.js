@@ -1257,6 +1257,15 @@ function renderHead(board) {
   return "<thead><tr>" + COLUMNS[board].map((c) => {
     if (c.fk) return fkTh(fkHead);
     if (!c.key) return `<th>${c.label}</th>`;
+    /* ★ A SORT THE SERVER CANNOT SERVE ON THIS BOARD IS GREYED, NOT AN
+         ERROR (audit 2026-11-09: name over every season answered 503 after
+         55 s). rankings.sortServed decides; the API lists served_sorts. */
+    if (board === "ability" && state.servedSorts && !state.servedSorts.includes(c.key)) {
+      return `<th class="sortable is-unsortable" data-key="${c.key}">` +
+             `<button type="button" class="th-sort" disabled aria-disabled="true"` +
+             ` title="Pick a state, school or conference to sort by ${c.label.replace(/<[^>]*>/g, "")}">` +
+             `${c.label}</button></th>`;
+    }
     const active = state.sort === c.key;
     const dir = active ? (effectiveDir(board, c.key) === "asc" ? "asc" : "desc") : "";
     const aria = active ? ` aria-sort="${dir === "asc" ? "ascending" : "descending"}"` : "";
@@ -1335,6 +1344,11 @@ function onHeaderClick(key) {
   const f = document.activeElement;
   _refocusSort = f && f.classList && f.classList.contains("th-sort") ? key : null;
   state.sortTouched = true;
+  /* an unnarrowed athletes board serves its indexed sorts one way only
+     (name is never indexed, so its absence means "not narrowed") */
+  const oneWay = state.board === "ability" && state.servedSorts
+                 && !state.servedSorts.includes("name") && key !== "rating";
+  if (state.sort === key && oneWay) return;
   if (state.sort === key) {
     state.dir = effectiveDir(state.board, key) === "asc" ? "desc" : "asc";
   } else {
@@ -2186,6 +2200,17 @@ async function load() {
        board lets the server choose (see buildQuery), and renderHead draws
        the arrow from `state` -- so without this the arrow marks whatever was
        last on screen while the rows are ordered by something else. */
+    /* ★ the ability board's served sorts, and the sort it actually used
+         when the asked one could not be served (rankings.sortServed) */
+    if (state.board === "ability" && data.filters) {
+      state.servedSorts = data.filters.served_sorts || null;
+      if (data.filters.sort_requested) {
+        state.sort = data.filters.sort;
+        state.dir = "";
+      }
+    } else {
+      state.servedSorts = null;
+    }
     if (state.board === "teams" && data.filters) {
       if (!data.course_mode) {
         state.sort = data.filters.sort;

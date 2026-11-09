@@ -98,15 +98,30 @@ def test_a_forecast_finds_the_result_race_its_runners_ran():
     assert got == {1: 102, 2: 101, 7: 7}          # 3 ran nowhere: unmatched
 
 
-def test_a_slow_sort_needs_a_narrower_ability_board():
+def test_an_unservable_sort_falls_back_to_rating_not_an_error():
     from werkzeug.datastructures import MultiDict
     import rankings as R
+
+    class C:
+        def execute(self, sql, params=None):
+            self.last = params
+
+        def fetchone(self):
+            return {"ok": False}             # no as_sort_* index built yet
     f, err = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
                                        "sport": "XC", "sort": "name"}))
-    assert f is None and "state" in err
-    f, err = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
-                                       "sport": "XC", "sort": "name", "state": "CA"}))
-    assert err is None and f["sort"] == "name"
-    f, err = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
-                                       "sport": "XC"}))
     assert err is None
+    assert not R.sortServed(C(), f)
+    assert R.servedSorts(C(), f) == ["rating", "best"]
+    f2, _ = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
+                                      "sport": "XC", "sort": "name", "state": "CA"}))
+    assert R.sortServed(C(), f2)
+
+    class Built(C):
+        def fetchone(self):
+            return {"ok": True}
+    R._IDX_SEEN.clear()
+    f3, _ = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
+                                      "sport": "XC", "sort": "grade"}))
+    assert R.sortServed(Built(), f3)
+    R._IDX_SEEN.clear()
