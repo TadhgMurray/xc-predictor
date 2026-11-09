@@ -83,3 +83,30 @@ def test_on_this_day_skips_a_one_race_season(monkeypatch):
     import datetime
     pick = RB.onThisDay(cur, datetime.date(2026, 11, 9))
     assert pick["person_id"] == 8
+
+
+def test_a_forecast_finds_the_result_race_its_runners_ran():
+    import meet_recap as MR
+    stored = [{"div_id": 1, "runners": [{"person_id": p} for p in range(10)]},
+              {"div_id": 2, "runners": [{"person_id": p} for p in range(10, 20)]},
+              {"div_id": 3, "runners": [{"person_id": p} for p in range(40, 50)]},
+              {"div_id": 7, "runners": [{"person_id": 1}]}]
+    actual = {101: [{"person_id": p} for p in range(12, 30)],
+              102: [{"person_id": p} for p in range(0, 8)],
+              7: [{"person_id": 99}]}
+    got = MR.matchDivisions(stored, actual)
+    assert got == {1: 102, 2: 101, 7: 7}          # 3 ran nowhere: unmatched
+
+
+def test_a_slow_sort_needs_a_narrower_ability_board():
+    from werkzeug.datastructures import MultiDict
+    import rankings as R
+    f, err = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
+                                       "sport": "XC", "sort": "name"}))
+    assert f is None and "state" in err
+    f, err = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
+                                       "sport": "XC", "sort": "name", "state": "CA"}))
+    assert err is None and f["sort"] == "name"
+    f, err = R.parseFilters(MultiDict({"board": "ability", "pool": "hs_m",
+                                       "sport": "XC"}))
+    assert err is None

@@ -50,6 +50,9 @@ _SORTS_ABILITY = {
     "last":    ("s.last_race",      "DESC"),
 }
 
+# the sorts an unnarrowed board may use: its index reads them in order
+_INDEXED_SORTS = ("rating", "best")
+
 _SORTS_PERFORMANCE = {
     "rating":  ("p.speed_rating",   "DESC"),
     "date":    ("p.race_date",      "DESC"),
@@ -712,6 +715,17 @@ def parseFilters(args):
     if board == "ability" and (f["date_from"] or f["date_to"]):
         return None, ("date_from/date_to apply to the performance board only; "
                       "use year for the ability board")
+
+    # ★ A SORT NO INDEX SERVES NEEDS A NARROWER BOARD (audit 2026-11-09: the
+    #   all-time hs_m ability board sorted by name answered 503 after 55 s,
+    #   19 s with a year; grade 7.5 s, races 5.7 s, last 4.7 s). The rating
+    #   sorts read an index in order; every other sort orders the whole
+    #   filtered pool -- millions of seasons -- for one page. Those sorts need
+    #   a state, school, grade, unit, course or date filter first.
+    if (board == "ability" and sort not in _INDEXED_SORTS
+            and not any(f.get(k) for k in _SEEK_NARROWING)):
+        return None, ("Sorting the whole country by this column is too slow. "
+                      "Pick a state, school or conference first, or sort by rating.")
 
     return f, None
 

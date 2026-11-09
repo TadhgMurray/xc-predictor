@@ -21,6 +21,10 @@ fix this track will make next · **PIPELINE** = for the pipeline/data track
 | What it takes: a stray "All" cell (MD: 3 runners, 2021) shown beside real divisions, with a page of its own. | "All" is dropped where a state has divisions. A one-race state needs 20 or more finishers. | cuts.py |
 | /ncaa had no link anywhere. | Added to the Tools menu. | _topbar.html |
 | NCAA conference names printed "Acc", "Mac". | Names are title-cased only when the source was all lower case. | ncaa.html |
+| /recaps: 64 meets said "no results posted" (OSAA State: 980 finishers, 0 of 10 races scored); the forecast's division ids come from the entry list or last edition. | Each forecast race is matched to the result division sharing the most predicted runners (at least 3 and 20%), one to one. The model file name is gone from the page. Stored scores refresh at the next nightly forecast build. | meet_recap.matchDivisions |
+| Every school page linked "Record book →" to "still being compiled". | The link shows only when the book exists. | school.html |
+| All-time athletes board sorted by name: 503 after 55 s; grade/races/last 4-7 s. | A sort no index serves needs a state, school, grade or conference filter; otherwise the board explains this. | rankings.parseFilters |
+| /compare "best race" was a 7th-grade own-pool 153.5; youth seasons with no HS value printed raw and took the edge. | The best race is the best HS value; season cells with no HS value are left out. | compare.athleteCard, stampEdgeHs |
 | Tools menu "Training paces" landed on the XC course table (the Paces tab stays hidden until an athlete is chosen). | `#paces` switches the source to an athlete and focuses the athlete box. | conversions.js |
 
 ## Every page

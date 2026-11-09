@@ -332,12 +332,26 @@ def athleteCard(cur, pid):
         current = max(seasons, key=lambda s: (s.get("last_race") or
                                               datetime.date.min))
         rated = headerSeason(seasons)
-    best = max((float(s["best_rating"]) for s in seasons
-                if s.get("best_rating") is not None), default=None)
-    # ★ AND THE 5K THAT BEST RACE IS WORTH (owner, 2026-10-10), on the pool
-    #   of the season it came from -- the scale that number is on
-    best_season = max((s for s in seasons if s.get("best_rating") is not None),
-                      key=lambda s: float(s["best_rating"]), default=None)
+    # ★ THE BEST RACE IS THE BEST ON THE HS SCALE, FROM A SEASON THAT HAS ONE
+    #   (audit 2026-11-09: Oliver Horton's card read "best race 153.5 ≈ 9:28
+    #   3200m", his 7th-grade own-pool number -- the youth pool has no HS map
+    #   and the old code fell back to the raw value; his page heads at
+    #   146.8). Seasons span pools, so the pick, its 5K and its HS value all
+    #   come from one season. Only when no season has an HS value at all (the
+    #   scale not loaded) does the own-pool best stand in.
+    from pool_view import toHs
+    rated_best = [(s, toHs(s["best_rating"], s.get("pool"), s["sport"]))
+                  for s in seasons if s.get("best_rating") is not None]
+    with_hs = [(s, h) for s, h in rated_best if h is not None]
+    if with_hs:
+        best_season, best_hs = max(with_hs, key=lambda t: float(t[1]))
+    elif rated_best:
+        best_season = max((s for s, _h in rated_best),
+                          key=lambda s: float(s["best_rating"]))
+        best_hs = None
+    else:
+        best_season, best_hs = None, None
+    best = float(best_season["best_rating"]) if best_season is not None else None
     best_5k = None
     if best_season is not None:
         try:
@@ -345,13 +359,6 @@ def athleteCard(cur, pid):
             best_5k = fiveK(best, best_season.get("pool"), best_season["sport"])
         except Exception:                               # noqa: BLE001
             best_5k = None
-    # ★ THE HS BEST IS ITS OWN MAX (owner, 2026-10-09): seasons span pools,
-    #   so the best race on the HS scale need not be the own-pool best.
-    from pool_view import toHs
-    best_hs = max(((toHs(s["best_rating"], s.get("pool"), s["sport"])
-                    or float(s["best_rating"]))
-                   for s in seasons if s.get("best_rating") is not None),
-                  default=None)
 
     school = (current or {}).get("school")
     grade = (current or {}).get("grade")
@@ -528,6 +535,20 @@ def stampEdgeHs(rows):
       scale, and the own view shows that same margin rather than a
       negative "+X" under the leader's name.
     """
+    # ★ A SEASON WITH NO HS VALUE IS NOT SHOWN BESIDE ONES THAT HAVE ONE
+    #   (audit 2026-11-09: "2019 XC 150.5 ≈ 17:15", a youth-pool season with
+    #   no HS map, printed raw and given the edge by +11.7). Its cell goes;
+    #   the row keeps the other side.
+    any_hs = any((r.get(sd) or {}).get("hs_rating") is not None
+                 for r in rows for sd in ("a", "b"))
+    if any_hs:
+        for r in rows:
+            for sd in ("a", "b"):
+                if r.get(sd) and r[sd].get("hs_rating") is None:
+                    del r[sd]
+                    r.pop("edge", None)
+                    r.pop("edge_by", None)
+        rows[:] = [r for r in rows if r.get("a") or r.get("b")]
     for r in rows:
         r["hs_edge_by"] = None
         ha = (r.get("a") or {}).get("hs_rating")

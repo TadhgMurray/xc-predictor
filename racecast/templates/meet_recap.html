@@ -172,7 +172,7 @@
     miss; finishers we did not predict are listed, not hidden.</p>
   <h2 class="pv-side-h">The forecast</h2>
   <p class="rc-tip">Saved {{ rc.made_on|mdy }}, before the meet's day, and never changed after.
-    {% set r0 = rc.races[0] %}{% if r0.model_basis %}Times on the "{{ r0.model_basis }}" basis{% if r0.model_version %}, model {{ r0.model_version }}{% endif %}.{% endif %}
+    {% set r0 = rc.races[0] %}{% if r0.model_basis %}Times on the "{{ r0.model_basis }}" basis.{% endif %}
     Team scores use five scorers and two displacers, as the meet scores them.</p>
   <a class="rc-more" href="/recaps?week={{ rc.week }}{% if rc.state %}&state={{ rc.state }}{% endif %}">Every recap that week{% if rc.state %} in {{ rc.state }}{% endif %} →</a>
 </aside>
