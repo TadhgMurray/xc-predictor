@@ -120,6 +120,19 @@ bare list of states. The plan:
 6. **/school/<college>/season and /recruit/<id> for non-HS athletes**: 404.
    They show HS words and empty states for colleges and pros.
 
+## Notes for the chats that follow
+
+- **Editing racecast/cuts.py puts What it takes on the slow path.** Each
+  stored state row (wit_marks) carries a hash of cuts.py (`cuts.CODE`); any
+  edit to the file makes every row unservable, so every state page computes
+  live (the slow path the table exists to avoid) and the /what-it-takes
+  index shows dashes until the rows are rebuilt. After a deploy that touches
+  cuts.py, have the owner rebuild at once rather than wait for the nightly
+  run (a few minutes, four states at a time):
+
+      cd /srv/xc-predictor && set -a && . /etc/xc-predictor.env && set +a && /srv/venv/bin/python -u racecast/build_wit_marks.py
+
+
 ## For the pipeline / data track
 
 - Step 10 now builds six more athlete_season indexes (as_sort_grade, as_sort_last and as_sort_races, each all-time and per season; build_ranking_results' index list). They add build time and disk to step 10. They serve the athletes board's grade, last-race and races sorts (rankings.sortServed).
