@@ -83,18 +83,17 @@ done
 #   background jobs whose last output stands in for a run:
 #     evidence holdouts/ladder (XCP_EVIDENCE), backtest, LACCTiC, Kailo,
 #     scoreboard, qualified fields, the raw forecast, social cards, the
-#     rowguard diagnostics, the
+#     rowguard diagnostics, the course pages (served with live ratings), the
 #     recruit projection, the level graph (the next full run restages it),
 #     the weather fetch (the nightly's provisional weather covers new meets),
 #     and the pro flags (last run's stand: they change when a pro appears).
 #   An env var set by hand still wins over these defaults.
-# ! NOT THE COURSE PAGES (owner, 2026-11-09: Tom Rankin 160.7 on the
-#   Hereford course page, 145.8 on his profile). They were skipped "the
-#   previous ones stay up" -- and the previous ones carry the previous
-#   ratings. A fast run's go-live changes every rating, so 12b rebuilds; the
-#   site also refuses any board built before the go-live (app._boardFresh).
+# ! THE COURSE PAGES STAY UP, WITH TODAY'S RATINGS (owner, 2026-11-09: Tom
+#   Rankin 160.7 on the Hereford course page, 145.8 on his profile). A board
+#   built before the go-live has its ratings re-read when it is served
+#   (app._boardFresh); who is on its lists waits for the next full run.
 FAST_SKIP="01c_level_graph,04e_weather_grid,04e2_weather_recent,03_pro_flag,05c_pro_ability"
-FAST_SKIP="$FAST_SKIP,10f2_projection,13j_record_books"
+FAST_SKIP="$FAST_SKIP,10f2_projection,12b_course_pages,13j_record_books"
 FAST_SKIP="$FAST_SKIP,15_rowguard_diag_xc,15_rowguard_diag_tf,15_rowguard_triage_xc,15_rowguard_triage_tf"
 if [ "$FAST" -eq 1 ]; then
   SKIP="${SKIP:-,}${FAST_SKIP},"
