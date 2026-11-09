@@ -411,12 +411,57 @@ def actualTeams(cur, finishers, meet_state, source):
             for t in teams]
 
 
+# ★ A FORECAST RACE IS MATCHED TO THE RESULT RACE ITS RUNNERS RAN (audit
+#   2026-11-09: /recaps said "no results are posted" for 64 meets that had
+#   them -- OSAA State, 980 finishers, 0 of 10 races scored). A forecast made
+#   from the entry list or the last edition carries THAT list's division
+#   ids, and the posted results come under new ones; the recap matched on
+#   div_id only. Now: the same div_id when it has finishers, else the result
+#   division sharing the most predicted runners (at least MATCH_MIN, and
+#   MATCH_SHARE of the forecast's runners), each result division used once.
+#   Labels are not trusted: the stored OSAA forecast reads "2A/1A · Boys"
+#   twice and has no girls 3A or 2A/1A.
+MATCH_MIN = 3
+MATCH_SHARE = 0.2
+
+
+def matchDivisions(stored, actual):
+    """{forecast div_id: result div_id} -- pure, the tests drive it."""
+    out, used = {}, set()
+    for fc in stored:
+        d = int(fc["div_id"])
+        if actual.get(d):
+            out[d] = d
+            used.add(d)
+    for fc in stored:
+        d = int(fc["div_id"])
+        if d in out:
+            continue
+        pred = {r.get("person_id") for r in fc.get("runners") or ()
+                if r.get("person_id") is not None}
+        if not pred:
+            continue
+        best, best_n = None, 0
+        for ad, fin in actual.items():
+            if ad in used:
+                continue
+            n = len(pred & {f.get("person_id") for f in fin})
+            if n > best_n:
+                best, best_n = ad, n
+        if best is not None and best_n >= max(MATCH_MIN, MATCH_SHARE * len(pred)):
+            out[d] = best
+            used.add(best)
+    return out
+
+
 def scoreMeet(cur, source, meet_id, stored):
-    """{div_id: (recap, compact score)} for the stored races with results."""
+    """{div_id: (recap, compact score)} for the stored races with results,
+    keyed by the FORECAST's div_id (matchDivisions)."""
     actual = actualByDiv(cur, meet_id, source)
+    match = matchDivisions(stored, actual)
     out = {}
     for fc in stored:
-        fin = actual.get(int(fc["div_id"]))
+        fin = actual.get(match.get(int(fc["div_id"]), -1))
         if not fin:
             continue
         try:

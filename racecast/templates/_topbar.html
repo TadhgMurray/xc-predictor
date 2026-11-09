@@ -37,11 +37,14 @@
        Report an issue (reference, not sections) sit under its divider, muted.
        A <details>, so it opens with no script; topbar-search.js only shuts
        it on a click elsewhere or Escape. #}
+    {# ★ /ncaa HAD NO WAY IN (audit 2026-11-09): nothing linked it; it is
+       in the Tools list now #}
     {% set conv_here = here.startswith('/conversions') %}
     {% set tools = [
         (url_for('compare_page'), 'Compare two athletes', '/compare'),
         (url_for('cuts.wit_index'), 'What it takes to make state', '/what-it-takes'),
         (url_for('pages2.projections_index'), 'Who wins state', '/projections'),
+        ('/ncaa', 'NCAA nationals projection', '/ncaa'),
         (url_for('pages2.breakouts_page'), 'Breakouts', '/breakouts'),
         (url_for('schools_directory'), 'Schools by state', '/schools'),
         (url_for('conversions_page') ~ '#paces', 'Training paces', none),

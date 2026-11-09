@@ -89,6 +89,19 @@
     </div>
 
 
+{% if suggest and not (card_a and card_b) %}
+    {# ★ the empty page's starting points (compare.suggestions) #}
+    <h2>Try a head to head</h2>
+    <p class="meta">This season's top runners who have raced each other most.</p>
+    <ul class="h2h-suggest">
+    {% for s in suggest %}
+        <li><span class="meta">{{ s.label }}:</span>
+            <a href="/compare?a={{ s.a }}&b={{ s.b }}">{{ s.name_a }} vs {{ s.name_b }}</a>
+            {%- if s.n %} <span class="meta">({{ s.n }} race{{ "" if s.n == 1 else "s" }} together)</span>{% endif %}</li>
+    {% endfor %}
+    </ul>
+{% endif %}
+
 {% if same %}
     <p class="meta">That is the same athlete twice. Pick two different people.</p>
 {% endif %}

@@ -68,6 +68,7 @@ def test_the_tools_menu_links(A):
         ("/compare", "Compare two athletes"),
         ("/what-it-takes", "What it takes to make state"),
         ("/projections", "Who wins state"),
+        ("/ncaa", "NCAA nationals projection"),
         ("/breakouts", "Breakouts"),
         ("/schools", "Schools by state"),
         ("/conversions#paces", "Training paces"),
