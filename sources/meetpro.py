@@ -62,8 +62,15 @@ def _gender(title):
 
 
 def _isoDate(text):
-    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text)
-    return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else ""
+    """'5/20/2022' -> '2022-05-20'. ! ALSO IN THE TIMER'S LOCALE (2026-11-09):
+    '4/17/26' (Butler Track) and '2026-10-31' (a Canadian timer) both read
+    as no date, and an undated meet cannot be rated."""
+    m = re.search(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})(?![\d/])", text)
+    if m:
+        y = m.group(3) if len(m.group(3)) == 4 else f"20{m.group(3)}"
+        return f"{y}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    m = re.search(r"(?<!\d)(20\d\d)-(\d{2})-(\d{2})(?!\d)", text)
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
 
 
 def parseMeetIndex(page):

@@ -447,6 +447,13 @@ def _all(a, conn):
                 tally["not parsed"] += 1
                 print(f"  ✗ {src.slug}: {u} -- {why if lm is None else 'no individual races'}")
                 continue
+            # ! NO DATE, NO MEET: a race is rated on its day; and a meet placed
+            #   in a Canadian province fits no pool we rate
+            if not lm.date or land.stateOf(lm.place, lm.venue) in land.CANADA:
+                tally["no date" if not lm.date else "outside the US"] += 1
+                print(f"  ✗ {src.slug}: {u} -- " + ("no date on the page" if not lm.date
+                                                    else f"outside the US ({lm.place or lm.venue})"))
+                continue
             f.write(json.dumps(lm.toJson()) + "\n")
             f.flush()
             mine.append(lm)

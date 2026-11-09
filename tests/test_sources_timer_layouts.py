@@ -404,3 +404,12 @@ def test_a_split_is_not_a_race_and_a_real_time_file_is_dated_by_its_name():
             '<a href="261017F001C.htm">#1 Women 6k Run CC Score</a>')
     got = [u for u, _k in discover.candidates(page, "https://t.example/events/meet26/evtindex.htm", 2026)]
     assert got == ["https://t.example/events/meet26/261017F001.htm"]
+
+
+def test_meetpro_dates_in_the_timers_locale_and_club_categories():
+    assert meetpro._isoDate("4/17/26") == "2026-04-17"
+    assert meetpro._isoDate("2026-10-31") == "2026-10-31"
+    assert meetpro._isoDate("11/02/2026 - 11/03/2026") == "2026-11-02"
+    for t in ("Women 6.5 Km U18 (U18)", "Girls 2.3 Km JD 9 (JD9 2017)", "Men 6.5 Km Masters"):
+        assert land.isAgeGroup(t), t
+    assert land.stateOf("Lakeport, BC") in land.CANADA and land.stateOf("Lakeport, NC") not in land.CANADA

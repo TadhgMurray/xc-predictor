@@ -203,7 +203,12 @@ _STATE = re.compile(r",\s*([A-Z]{2})\b")
 #   Old 3K"). No grade, a club for a team: they fit no pool we rate, and a
 #   linker would only find namesakes. Left out and counted as skipped.
 _AGE_GROUP = re.compile(r"\b\d{1,2}\s*(?:&|and)\s*(?:under|younger)\b|\b\d{1,2}\s*-\s*\d{1,2}\s*(?:year|yr)s?[\s-]*old\b"
-                        r"|\b(?:sub[\s-]*)?bantam\b|\bmidget\b|\b\d{1,2}U\b|\bage[\s-]*group\b", re.I)
+                        r"|\b(?:sub[\s-]*)?bantam\b|\bmidget\b|\b\d{1,2}U\b|\bage[\s-]*group\b"
+                        # club categories (Athletics Canada, USATF): U18, JD 9, Masters
+                        r"|\bU\s?\d{2}\b|\bJD\s?\d{1,2}\b|\bmasters?\b", re.I)
+# ★ OUTSIDE THE US (2026-11-09, a MeetPro account's "Trick or Trails",
+#   Richmond, BC): every pool we rate is a US one
+CANADA = {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"}
 
 
 # ★ A SPLIT IS NOT A RACE (2026-11-09, Hy-Tek real time at Live Running
