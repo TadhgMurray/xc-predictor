@@ -413,3 +413,10 @@ def test_meetpro_dates_in_the_timers_locale_and_club_categories():
     for t in ("Women 6.5 Km U18 (U18)", "Girls 2.3 Km JD 9 (JD9 2017)", "Men 6.5 Km Masters"):
         assert land.isAgeGroup(t), t
     assert land.stateOf("Lakeport, BC") in land.CANADA and land.stateOf("Lakeport, NC") not in land.CANADA
+
+
+def test_a_page_that_mentions_meetpro_is_not_a_meetpro_page():
+    home = b'<html><title>Timer</title><a href="https://www.tfmeetpro.com/">MeetPro</a></html>'
+    assert not meetpro.isMeetProPage(home) and not discover.isReport(home)
+    assert meetpro.isMeetProPage(b"<!--DO NOT ERASE! VERSION:&MeetProTemplate_v1.6-->")
+    assert meetpro.isMeetProPage(b"<title>Meet | MeetPro by DirectAthletics</title>")

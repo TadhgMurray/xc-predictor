@@ -31,6 +31,8 @@ import html as _html
 import re
 import urllib.parse
 
+from sources import meetpro
+
 MAX_DEPTH = 3                 # directory levels walked under a listing
 MAX_LINKS = 400               # links read off one index page
 MAX_SUBPAGES = 8              # pages (not files) a timer's index sends us to, per run
@@ -408,9 +410,9 @@ def isReport(body):
     # ! CRYSTAL REPORTS HTML (Hy-Tek's web export: YenTiming, Ticker Timing)
     #   places every word in its own <div>, so the Hy-Tek line never reads
     #   whole in the raw page
-    from sources import datarows, flashresults
+    from sources import datarows, flashresults, meetpro
     text = body[:400000].decode("utf-8", "replace")
-    return (bool(hytek._HEADER.search(head.decode("utf-8", "replace"))) or b"MeetPro" in head[:20000]
+    return (bool(hytek._HEADER.search(head.decode("utf-8", "replace"))) or meetpro.isMeetProPage(head)
             or b"Crystal Reports" in head[:2000] or datarows.isDataPage(text)
             or flashresults.isMeetIndex(text))
 
@@ -562,7 +564,7 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
                 #   it is read first, like any page, and kept as MeetPro only
                 #   when it is one
                 got = await fetcher.fetch(u, MEET_MAX_AGE)
-                if got.body and b"MeetPro" in got.body[:20000]:
+                if got.body and meetpro.isMeetProPage(got.body):
                     found.append((u, "meetpro"))
                 elif isReport(got.body):
                     found.append((u, "hytek"))

@@ -88,7 +88,7 @@ def directoryReports(page, url):
 
 def kindOf(url, body=b""):
     u = (url or "").lower()
-    if "tfmeetpro.com" in u or re.search(r"/mp/", u) or b"MeetPro" in (body or b"")[:20000]:
+    if "tfmeetpro.com" in u or re.search(r"/mp/", u) or meetpro.isMeetProPage(body or b""):
         return "meetpro"
     return "hytek"
 

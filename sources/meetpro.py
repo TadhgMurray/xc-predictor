@@ -116,6 +116,19 @@ def parseMeetIndex(page):
     return out
 
 
+# ! A MEETPRO PAGE SAYS SO IN ITS TEMPLATE, NOT IN ITS TEXT (2026-11-09: CAG's
+#   Timing's homepage links to "MeetPro" and read as an empty MeetPro meet,
+#   so the meets it links were never followed)
+_MARK_PAGE = re.compile(rb"MeetProTemplate|\|\s*MeetPro by DirectAthletics|<!-- MeetPro \d")
+
+
+def isMeetProPage(body):
+    """True for a page MeetPro wrote (any template version)."""
+    if isinstance(body, str):
+        body = body.encode("utf-8", "replace")
+    return bool(body and _MARK_PAGE.search(body[:20000]))
+
+
 def _splitName(name):
     """'Daniel LITTLE' -> ('Little', 'Daniel'); 'Little, Daniel' -> ('Little', 'Daniel')."""
     name = re.sub(r"\s+", " ", name).strip()
