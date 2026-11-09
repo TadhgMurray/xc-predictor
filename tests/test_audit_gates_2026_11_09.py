@@ -125,3 +125,25 @@ def test_an_unservable_sort_falls_back_to_rating_not_an_error():
                                       "sport": "XC", "sort": "grade"}))
     assert R.sortServed(Built(), f3)
     R._IDX_SEEN.clear()
+
+
+def test_the_what_it_takes_index_shows_each_states_marks(monkeypatch):
+    import contextlib
+    import cuts
+    rows = [{"state": "CA", "name": "California",
+             "boys": [{"short": "D1", "slug": "1", "mark": 135.2, "thin": False, "year": 2025},
+                      {"short": "D5", "slug": "5", "mark": 118.4, "thin": False, "year": 2025}],
+             "girls": []}]
+    monkeypatch.setattr(cuts, "indexRows", lambda cur, states: rows)
+
+    class Conn:
+        def cursor(self, **kw):
+            return contextlib.nullcontext(None)
+
+        def rollback(self):
+            pass
+    monkeypatch.setattr(cuts, "_cursor",
+                        lambda: (lambda: contextlib.nullcontext(Conn()), None))
+    html = A.app.test_client().get("/what-it-takes").get_data(as_text=True)
+    assert "/what-it-takes/ca/1" in html and "135.2" in html
+    assert "easiest D5" in html

@@ -99,12 +99,30 @@
 
   <div class="rc-grid rc-grid-one">
   <div class="rc-mainc">
-    <h2 class="p2-h2 wit-h2">States</h2>
-    <ul class="p2-states">
-      {% for code, name in states %}
-      <li><a href="/what-it-takes/{{ code|lower }}">{{ name }}</a></li>
+    <h2 class="p2-h2 wit-h2">The season rating it took to make state</h2>
+    {# ★ EVERY STATE AT A GLANCE (audit 2026-11-09): the hardest and the
+       easiest division to qualify from, newest season, from the stored
+       marks (cuts.indexRows). Marks are hs_m / hs_f season ratings. #}
+    {% macro span_of(ds, wpool, st) -%}
+      {%- if ds -%}
+        {%- set hi = ds|first -%}{%- set lo = ds|last -%}
+        <a href="/what-it-takes/{{ st|lower }}/{{ hi.slug }}{{ '?g=girls' if wpool == 'hs_f' }}">{{ rv(hi.mark, hi.mark) }}</a>{{ fk_inline(five_k(hi.mark, wpool, "XC")) }}
+        <span class="p2-row-sub">{{ hi.short }}{% if ds|length > 1 %} &middot; easiest {{ lo.short }} {{ rv(lo.mark, lo.mark) }}{% endif %}</span>
+      {%- else -%}<span class="p2-muted">&ndash;</span>{%- endif -%}
+    {%- endmacro %}
+    <table class="p2-tbl wit-state-tbl">
+      <thead><tr><th>State</th><th class="num">Boys, hardest division</th><th class="num">Girls, hardest division</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><a href="/what-it-takes/{{ r.state|lower }}">{{ r.name }}</a></td>
+          <td class="num">{{ span_of(r.boys, "hs_m", r.state) }}</td>
+          <td class="num">{{ span_of(r.girls, "hs_f", r.state) }}</td>
+        </tr>
       {% endfor %}
-    </ul>
+      </tbody>
+    </table>
+    <p class="meta">The newest season's mark to make the state meet in each state's hardest division, and its easiest. A dash is a state whose marks are being rebuilt; its page has them. Open a state for every division, the section round, top 25 and top 8.</p>
   </div>
   </div>
 

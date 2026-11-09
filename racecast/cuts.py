@@ -1492,6 +1492,34 @@ def _cursor():
     return getConn, psycopg2.extras.RealDictCursor
 
 
+def indexRows(cur, states):
+    """★ THE INDEX SAYS SOMETHING (audit 2026-11-09: /what-it-takes was a
+    bare list of 51 states). Per state, from the STORED marks only (never a
+    live compute: 51 of those on one page view would be the whole nightly
+    build), each gender's divisions as (short, mark, year), hardest first.
+    A state with no stored row is listed with no marks. Cached an hour."""
+    def compute():
+        out = []
+        for code, name in states:
+            hit = storedMarks(cur, code)
+            row = {"state": code, "name": name, "boys": [], "girls": []}
+            if hit:
+                payload = hit[0]
+                for g in ("boys", "girls"):
+                    for c in ((payload.get("genders") or {}).get(g) or {}).get("divisions", []):
+                        ln = ((c.get("latest") or {}).get("lines") or {}).get("qualify")
+                        if ln and ln.get("mark") is not None:
+                            row[g].append({"short": c.get("short"), "slug": c.get("slug"),
+                                           "mark": ln["mark"], "thin": c.get("thin"),
+                                           "year": (c.get("latest") or {}).get("year")})
+                    row[g].sort(key=lambda d: -d["mark"])
+            out.append(row)
+        return out
+    val, _at = ttlcache.get(("wit-index",), compute, ttl=3600.0,
+                            ttl_of=lambda v: 3600.0 if any(r["boys"] for r in v) else 300.0)
+    return val
+
+
 @bp.route("/what-it-takes")
 def wit_index():
     st = (request.args.get("state") or "").strip().upper()
@@ -1499,8 +1527,17 @@ def wit_index():
     if st in names:
         # the state picker's no-script submit
         return redirect(f"/what-it-takes/{st.lower()}", code=302)
+    getConn, factory = _cursor()
+    try:
+        with getConn() as conn:
+            with conn.cursor(cursor_factory=factory) as cur:
+                rows = indexRows(cur, states)
+                conn.rollback()
+    except Exception as exc:                            # noqa: BLE001
+        print(f"wit index: {type(exc).__name__}: {exc}", flush=True)
+        rows = [{"state": c, "name": n, "boys": [], "girls": []} for c, n in states]
     return render_template("what_it_takes.html", mode="index", states=states,
-                           gender=_gender())
+                           rows=rows, gender=_gender())
 
 
 @bp.route("/what-it-takes/<state>")

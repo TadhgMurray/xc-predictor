@@ -141,8 +141,28 @@ def _boards():
 
 @bp.route("/ncaa")
 def ncaa_index():
+    # ★ EACH CARD SAYS SOMETHING (audit 2026-11-09: six cards with a team
+    #   count each): the favourites by win chance, the last team in and the
+    #   first out, from the same stored weekly projection the board reads
+    #   (_fetch, cached). A board not computed yet keeps the bare card.
+    summary = {}
+    for dv, _dl, g, _gw in _boards():
+        try:
+            got = _fetch(dv, g)
+            vm = viewModel(got[0][2], None) if got else None
+        except Exception as exc:                        # noqa: BLE001
+            print(f"ncaa index {dv}/{g}: {type(exc).__name__}: {exc}", flush=True)
+            vm = None
+        if not vm:
+            continue
+        bubble = sorted((t for t in vm["teams"] if t.get("bubble")),
+                        key=lambda t: -(t.get("p_qual") or 0))
+        last_in = vm["at_large"][-1] if vm["at_large"] else None
+        summary[(dv, g)] = {"top": vm["field"][:3], "last_in": last_in,
+                            "first_out": bubble[0] if bubble else None}
     return render_template("ncaa.html", d=None, boards=_boards(), division=None,
-                           gender=None, rules=NR.RULES, labels=NR.LABEL)
+                           gender=None, rules=NR.RULES, labels=NR.LABEL,
+                           summary=summary)
 
 
 def _fetch(division, gender):

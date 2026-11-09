@@ -30,6 +30,8 @@ fix this track will make next · **PIPELINE** = for the pipeline/data track
 | Recruiting school page: "↑ faster" beside a slower best race. | The cell names the two season numbers it compares. | recruiting_school.html |
 | Track courses CSV named 27k venues "loc:100003:out". | Venue names in bulk, "(indoor)" for the indoor side. | data_snapshots._trackVenueNames |
 | Sitemap left out the tool pages. | Added the tools and the per-state what-it-takes and projections pages. | build_sitemap |
+| /what-it-takes index was 51 bare links. | A table: each state's hardest division mark to make state (and its easiest), boys and girls, from the stored marks only (never a live compute). | cuts.indexRows |
+| /ncaa index cards said only "32 teams · 9 regions". | Each card names the favourites by win chance, the last team in and the first out, from the stored weekly projection. | ncaa_pages.ncaa_index |
 | Tools menu "Training paces" landed on the XC course table (the Paces tab stays hidden until an athlete is chosen). | `#paces` switches the source to an athlete and focuses the athlete box. | conversions.js |
 
 ## Every page
@@ -103,7 +105,7 @@ bare list of states. The plan:
 - /what-it-takes: TODO a national table, each state's make-state mark for
   its biggest division.
 - /ncaa: TODO the bubble (last in / first out) on each card.
-- /records: TODO each state's top XC and track record inline.
+- /records: held. Each state's top record is exactly the kind of row the solver fix will move (MD girls #1 is Amanda White's one-race 1990 season), so the index features record rows only after that fix.
 
 ## Proposed cuts (nothing deleted until the owner says yes)
 

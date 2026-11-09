@@ -85,6 +85,12 @@
     {% for dv, dl, g, gw in boards %}
     <div class="p2-div"><span class="p2-div-name">{{ dl }} {{ gw }}</span>
       <span class="p2-div-n">{{ rules[dv].teams_total }} teams · {{ rules[dv].regions|length }} regions</span>
+      {% set sm = (summary or {}).get((dv, g)) %}
+      {% if sm %}<span class="p2-div-n">
+        {% if sm.top %}Favourites: {% for t in sm.top %}<a href="{{ t.href }}">{{ t.school }}</a>{% if t.p_win is not none %} {{ pct(t.p_win) }}{% endif %}{{ ", " if not loop.last }}{% endfor %}.{% endif %}
+        {% if sm.last_in %} Last in: <a href="{{ sm.last_in.href }}">{{ sm.last_in.school }}</a>.{% endif %}
+        {% if sm.first_out %} First out: <a href="{{ sm.first_out.href }}">{{ sm.first_out.school }}</a>.{% endif %}
+      </span>{% endif %}
       <span class="p2-div-go"><a href="/ncaa/{{ dv }}/{{ g }}">Open</a></span></div>
     {% endfor %}
   </div>
