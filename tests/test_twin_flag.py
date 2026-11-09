@@ -46,7 +46,7 @@ def test_rules_key_on_the_right_things():
                                         "dup_same_day", "dup_adjacent_day",
                                         "dup_converted", "xc_placeholder",
                                         "xc_track_copy", "xc_split_copy",
-                                        "dup_cross_gender",
+                                        "dup_cross_gender", "dup_cross_div",
                                         "level_conflict"], \
         "cross-feed reasons file first; the primary key keeps the first"
 
@@ -123,6 +123,8 @@ _EXPECTED = {
     ("TF", "xc_split_copy"): [],
     ("XC", "dup_cross_gender"): [],     # tests/test_twin_cross_gender.py holds its case
     ("TF", "dup_cross_gender"): [],
+    ("XC", "dup_cross_div"): [],        # its own case below (test_dup_cross_div)
+    ("TF", "dup_cross_div"): [],
     # the NESCAC review (2026-09-29): 9005 the review's Middlesex League row,
     # 9014 a college row on a high schooler; 7102's April.
     # ! 9021/9022, a tie, were flagged here until the first server run showed
@@ -358,3 +360,34 @@ def test_a_finals_listing_that_repeats_the_prelims_keeps_the_final():
         assert not any(100 < rid <= 139 for rid in got), rounds        # the original prelims stay
     conn.rollback()
     conn.close()
+
+
+def test_dup_cross_div():
+    """owner's audit, 2026-11-09: Lucas Bourgoyne, one 16:40.0 at the 2013
+    Big Dipper Dash listed in two divisions, twice on the board."""
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres")
+    import importlib
+    for name in [n for n in sys.modules if n == "psycopg2" or n.startswith("psycopg2.")]:
+        if not hasattr(sys.modules[name], "__file__"):
+            del sys.modules[name]
+    psycopg2 = importlib.import_module("psycopg2")
+    conn = psycopg2.connect(dsn)
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TEMP TABLE results (result_id bigint, person_id bigint, source text,
+                                       meet_id bigint, div_id bigint, date text, time_seconds real);
+            INSERT INTO results VALUES
+              (1, 7, 'anet', 1, 10, '2013-09-07', 1000.0),   -- the Open list
+              (2, 7, 'anet', 1, 11, '2013-09-07', 1000.0),   -- the age group: the copy
+              (3, 8, 'anet', 1, 10, '2013-09-07', 1000.0),   -- another runner, same time
+              (4, 7, 'anet', 2, 20, '2013-09-14', 1000.0);   -- another meet
+        """)
+        cur.execute(f"SELECT result_id FROM ({TF.dupCrossDivSql('results', 'XC')}) s ORDER BY 1")
+        assert [r[0] for r in cur.fetchall()] == [2]
+    finally:
+        conn.rollback()
+        conn.close()

@@ -895,6 +895,46 @@ def copyRows(cur):
             for rid, pid, yr, s, tw in cur.fetchall() if copySide(s, tw)]
 
 
+# ★ A WINNER A QUARTER CLEAR OF THE FIELD (owner's audit, 2026-11-09:
+#   Morgan Thompson, Connell Invite 2018 middle school girls, 7:38.2 for
+#   2574 m -- second place ran 10:15.1 -- #1 on the middle school girls'
+#   board at 158.8). Nobody wins a race of LEAD_MIN or more by LEAD_GAP
+#   (log, about 22%): the time is mistyped, or the runner ran a shorter
+#   course. The leader is flagged 'fast'; the field keeps its ratings.
+LEAD_MIN = 5
+LEAD_GAP = 0.20
+LEAD_SQL = """
+    WITH r AS (
+        SELECT result_id, person_id, source, meet_id, div_id, date, speed_rating,
+               time_seconds,
+               row_number() OVER w AS rn, count(*) OVER (PARTITION BY source, meet_id, div_id) AS n,
+               lead(time_seconds) OVER w AS t2
+        FROM   results
+        WHERE  speed_rating > 0 AND time_seconds > 0 AND person_id IS NOT NULL
+          AND  meet_id IS NOT NULL AND div_id IS NOT NULL
+          AND  date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+        WINDOW w AS (PARTITION BY source, meet_id, div_id ORDER BY time_seconds))
+    SELECT result_id, person_id, left(date, 4)::int, speed_rating, time_seconds, t2
+    FROM   r
+    WHERE  rn = 1 AND n >= %(n)s AND t2 > 0 AND ln(t2 / time_seconds) > %(gap)s
+"""
+
+
+def leadSide(t1, t2, gap=LEAD_GAP):
+    """'fast' when the winner's time is more than `gap` (log) ahead of
+    second place. Pure."""
+    if not t1 or not t2:
+        return None
+    return "fast" if math.log(float(t2) / float(t1)) > gap else None
+
+
+def leadRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, None, 'fast')]."""
+    cur.execute(LEAD_SQL, {"n": LEAD_MIN, "gap": LEAD_GAP})
+    return [(rid, "XC", pid, yr, float(s), None, "fast")
+            for rid, pid, yr, s, t1, t2 in cur.fetchall() if leadSide(t1, t2)]
+
+
 def writeExtra(cur, rows):
     cur.executemany("""
         INSERT INTO rating_outlier (result_id, sport, person_id, season, rating, med, side)
@@ -1145,6 +1185,7 @@ def main():
                                 connect=getConn, streams=args.streams)
                 extra = extraRows(cur)
                 extra += copyRows(cur)
+                extra += leadRows(cur)
                 printExtra(extra, args.show)
                 if args.write:
                     if args.since:

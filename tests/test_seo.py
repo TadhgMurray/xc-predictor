@@ -471,3 +471,16 @@ def test_indexnow_sends_at_most_one_batch_a_run_and_keeps_the_rest_for_later():
     assert undated == {"https://r/school/S0"} | sent_new
     out2, _ = IN.pick(entries, "2026-11-01", undated, limit=100)
     assert len({u for u in out2 if "/school/" in u}) == 7
+
+
+def test_a_feeds_retired_team_is_no_school():
+    """owner's audit, 2026-11-09: 'DON'T USE' on the middle school board."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "racecast"))
+    os.environ.setdefault("XCP_DB_PASSWORD", "unused")
+    import meet_compile as M
+    import school_logo as S
+    assert not M.isTeam("DON'T USE") and not M.isTeam("Do Not Use") and M.isTeam("Usher")
+    rows = [{"school": "DON'T USE", "state": "TN"}]
+    S.stampCrests(rows)
+    assert rows[0]["school"] is None
