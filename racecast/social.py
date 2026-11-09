@@ -863,7 +863,7 @@ def admin_social_photo(name):
 def _specFrom(args, data):
     import social_compose as C
     saved = dict(data.get("spec") or C.defaultSpec(data))
-    for k in ("body", "photo", "file", "fmt"):
+    for k in ("body", "photo", "file", "fmt", "color", "theme", "title"):
         v = args.get(k)
         if v is not None:
             saved[k] = v or None
@@ -882,7 +882,8 @@ def _photoOf(spec):
 
 def _specQuery(spec):
     import urllib.parse
-    return urllib.parse.urlencode({k: (spec.get(k) or "") for k in ("body", "photo", "file", "fmt")})
+    return urllib.parse.urlencode({k: (spec.get(k) or "") for k in
+                                   ("body", "photo", "file", "fmt", "color", "theme", "title")})
 
 
 @bp.route("/account/admin/social/compose")
@@ -925,6 +926,7 @@ def admin_social_compose():
         of_kind=of_kind, spec=spec, bodies=C.bodiesFor(kind), body_words=C.BODY_WORDS,
         photos=C.PHOTOS, photo_words=C.PHOTO_WORDS, files=files, folder=folder, n_pages=n,
         q=_specQuery(spec), fmt_size=C.FORMATS[spec["fmt"]], csrf=sess["csrf"],
+        themes=C.THEME_WORDS, presets=C.COLOR_PRESETS, title_words=C.TITLE_WORDS,
         saved=bool(data.get("spec")), caption=row.get("caption") or "", week=week)
 
 

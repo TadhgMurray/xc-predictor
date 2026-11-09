@@ -75,6 +75,22 @@
       <option value="feed"{% if spec.fmt == 'feed' %} selected{% endif %}>Feed post (1080 × 1350)</option>
       <option value="story"{% if spec.fmt == 'story' %} selected{% endif %}>Story (1080 × 1920)</option>
     </select></label>
+  <div class="cp-step">5 · Colours</div>
+  <label>Page
+    <select name="theme" onchange="this.form.submit()">
+      {% for t, w in themes.items() %}<option value="{{ t }}"{% if t == spec.theme %} selected{% endif %}>{{ w }}</option>{% endfor %}
+    </select></label>
+  <label>Accent
+    <span style="display:flex;gap:8px;align-items:center">
+      <input type="color" name="color" value="{{ spec.color }}" onchange="this.form.submit()" style="width:48px;height:32px;padding:0;border:1px solid var(--line,#ddd)">
+      <select onchange="if(this.value){this.form.color.value=this.value;this.form.submit()}">
+        <option value="">Presets…</option>
+        {% for w, c in presets %}<option value="{{ c }}"{% if c == spec.color %} selected{% endif %}>{{ w }}</option>{% endfor %}
+      </select></span></label>
+  <label>Title
+    <select name="title" onchange="this.form.submit()">
+      {% for t, w in title_words.items() %}<option value="{{ t }}"{% if t == spec.title %} selected{% endif %}>{{ w }}</option>{% endfor %}
+    </select></label>
   <noscript><button type="submit">Preview</button></noscript>
 </form>
 
@@ -95,7 +111,7 @@
   </div>
   <form method="post" action="/account/admin/social/compose/{{ pid }}" class="cp-row" style="margin-top:18px">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    {% for k in ('body', 'photo', 'file', 'fmt') %}<input type="hidden" name="{{ k }}" value="{{ spec[k] or '' }}">{% endfor %}
+    {% for k in ('body', 'photo', 'file', 'fmt', 'color', 'theme', 'title') %}<input type="hidden" name="{{ k }}" value="{{ spec[k] or '' }}">{% endfor %}
     <button type="submit">Use this design for this post</button>
     <span class="cp-note">{% if saved %}This post has a saved design; saving replaces it.{% else %}Not saved: the posts page shows the pipeline’s pick.{% endif %}</span>
   </form>

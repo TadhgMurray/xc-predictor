@@ -62,6 +62,37 @@ BAR_SHADES = ("#86360d", "#9a3f10", "#b04a14", "#bf5518", "#d2621f", "#da6d2e", 
               "#e88c56", "#eb9862", "#eda06f")
 
 
+# ★ COLOURS (owner, 2026-11-09: "add colour customization"): a page theme,
+#   an accent (names, the tag, carousel dots, and the bars when it is not the
+#   site's blue) and whether the title takes the accent.
+THEMES = {
+    "white": dict(bg="#ffffff", fg="#111418", mut="#6b7280", line="#d5d9df", line2="#e1e4e8",
+                  panel="#f4f5f7", zebra="#f8f9fb", faint="#f3ead2"),
+    "paper": dict(bg="#f6f2ea", fg="#1b1915", mut="#6f685c", line="#d8cfbe", line2="#e4dccd",
+                  panel="#ece5d7", zebra="#f1ebe0", faint="#e9dcbc"),
+    "dark": dict(bg="#111418", fg="#f3f4f6", mut="#9aa3ad", line="#2f353d", line2="#262b32",
+                 panel="#1b1f25", zebra="#161a1f", faint="#2a2416"),
+}
+THEME_WORDS = {"white": "White", "paper": "Paper", "dark": "Dark"}
+SITE_BLUE = "#14477d"
+COLOR_PRESETS = (("Site blue", SITE_BLUE), ("Navy", "#1d3557"), ("Maroon", "#7a1f2b"),
+                 ("Forest", "#2f5d3a"), ("Orange", "#c8561c"), ("Purple", "#5b2a86"),
+                 ("Gold", "#a97a12"), ("Black", "#111418"))
+TITLE_WORDS = {"ink": "Title in black (white on dark)", "accent": "Title in the accent colour"}
+
+
+def _hex(v):
+    v = (v or "").strip()
+    return v.lower() if len(v) == 7 and v[0] == "#" and all(c in "0123456789abcdefABCDEF" for c in v[1:]) else None
+
+
+def _mix(a, b, t):
+    """Hex a mixed toward hex b by t (0..1)."""
+    pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(pa, pb))
+
+
 def bodiesFor(kind):
     return KIND_BODIES.get(kind, ("table",))
 
@@ -79,7 +110,8 @@ def defaultSpec(post):
     body = bodies[0]
     if kind in ("rankings", "national", "alltime", "teams") and len(bodies) > 1:
         body = bodies[_h(post.get("scope"), post.get("pool"), post.get("week"), kind) % len(bodies)]
-    return {"body": body, "photo": "none", "file": None, "fmt": "feed"}
+    return {"body": body, "photo": "none", "file": None, "fmt": "feed",
+            "color": SITE_BLUE, "theme": "white", "title": "ink"}
 
 
 def cleanSpec(post, spec):
@@ -89,7 +121,21 @@ def cleanSpec(post, spec):
     body = spec.get("body") if spec.get("body") in bodiesFor(post.get("kind")) else d["body"]
     photo = spec.get("photo") if spec.get("photo") in PHOTOS else "none"
     fmt = spec.get("fmt") if spec.get("fmt") in FORMATS else "feed"
-    return {"body": body, "photo": photo, "file": spec.get("file") or None, "fmt": fmt}
+    return {"body": body, "photo": photo, "file": spec.get("file") or None, "fmt": fmt,
+            "color": _hex(spec.get("color")) or SITE_BLUE,
+            "theme": spec.get("theme") if spec.get("theme") in THEMES else "white",
+            "title": spec.get("title") if spec.get("title") in TITLE_WORDS else "ink"}
+
+
+def _vars(spec):
+    """The page's CSS variables for the spec's colours."""
+    t = dict(THEMES[spec["theme"]])
+    acc = spec["color"]
+    if spec["theme"] == "dark" and acc == SITE_BLUE:
+        acc = "#8db8ee"                       # the site's blue, lifted to read on dark
+    t["acc"] = acc
+    t["ttl"] = acc if spec["title"] == "accent" else t["fg"]
+    return ":root{" + "".join(f"--{k}:{v};" for k, v in t.items()) + "}"
 
 
 # ------------------------------------------------------------------ #
@@ -212,95 +258,95 @@ CSS = """
 @font-face{font-family:IN;font-weight:100 900;src:url('__FONT__')}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:__W__px;height:__H__px}
-body{overflow:hidden;position:relative;background:#fff;color:#111418;font-family:IN;
+body{overflow:hidden;position:relative;background:var(--bg);color:var(--fg);font-family:IN;
      -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
 .hdr{position:absolute;left:56px;right:56px;top:0}
 .hdr img.lg{position:absolute;left:0;top:56px;height:46px}
 .hdr .tag{position:absolute;right:0;top:62px;display:inline-flex;align-items:center;gap:8px;font:650 20px IN;
-          color:#2f7a4a;background:#ecf5ef;padding:6px 14px;border-radius:999px}
+          color:var(--acc);background:var(--panel);padding:6px 14px;border-radius:999px}
 .hdr h1{position:absolute;left:0;right:0;top:__H1__px;font:900 72px/1 IN;letter-spacing:-.01em;
-        text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hdr p{position:absolute;left:0;right:0;top:__P__px;font:400 27px/1.3 IN;color:#6b7280;white-space:nowrap;
+        text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ttl)}
+.hdr p{position:absolute;left:0;right:0;top:__P__px;font:400 27px/1.3 IN;color:var(--mut);white-space:nowrap;
        overflow:hidden;text-overflow:ellipsis}
-.hdr p b{color:#111418;font-weight:650}
+.hdr p b{color:var(--fg);font-weight:650}
 .foot{position:absolute;left:56px;right:56px;bottom:46px;display:flex;justify-content:space-between;
-      font:500 20px IN;color:#6b7280}
-.foot b{color:#111418}
+      font:500 20px IN;color:var(--mut)}
+.foot b{color:var(--fg)}
 .area{position:absolute;overflow:hidden}
 .photo{position:absolute;background-size:cover;background-position:50% 40%;border-radius:12px;background-color:#e5e7eb}
 .photo.empty{border:2px dashed #cbd0d6;background:#f8f9fa;display:flex;align-items:center;justify-content:center;
              font:500 24px IN;color:#9aa3ad}
 /* the outlined table (the athlete page's) */
-.box{border:2px solid #d5d9df;background:#fff}
-.bh{display:flex;align-items:center;height:60px;background:#f4f5f7;border-bottom:2px solid #d5d9df;padding:0 20px;
-    font:600 17px IN;letter-spacing:.08em;text-transform:uppercase;color:#6b7280}
-.br{display:flex;align-items:flex-start;padding:0 20px;border-bottom:1.5px solid #e1e4e8;position:relative}
-.br:nth-child(odd){background:#f8f9fb}.br:last-child{border-bottom:none}
+.box{border:2px solid var(--line);background:var(--bg)}
+.bh{display:flex;align-items:center;height:60px;background:var(--panel);border-bottom:2px solid var(--line);padding:0 20px;
+    font:600 17px IN;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.br{display:flex;align-items:flex-start;padding:0 20px;border-bottom:1.5px solid var(--line2);position:relative}
+.br:nth-child(odd){background:var(--zebra)}.br:last-child{border-bottom:none}
 .br .stripe{position:absolute;left:0;top:0;bottom:0;width:6px}
 .c{flex:none}.nmc{flex:1;min-width:0}
 .nmc .w{display:flex;align-items:center;min-width:0}
-.nmc b{display:block;font:500 27px IN;color:#14477d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nmc s{display:block;text-decoration:none;font:400 20px IN;color:#6b7280;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nmc b{display:block;font:500 27px IN;color:var(--acc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nmc s{display:block;text-decoration:none;font:400 20px IN;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nmc s:empty{display:none}
 .box:not(.ln) .br .c{padding-top:3px}
 .crx{flex:none;width:46px;height:46px;margin-right:18px;display:flex;align-items:center;justify-content:center}
 .crx img{max-width:46px;max-height:46px}
 .num{font:400 26px IN}
 .rtg{font:700 29px IN;border-bottom:2px dotted #9aa3ad;padding-bottom:1px}
-.sec{font:400 23px IN;color:#4b5563}
+.sec{font:400 23px IN;color:var(--mut)}
 .chip{display:inline-block;font:700 17px IN;color:#fff;padding:5px 10px;border-radius:5px}
 .chip.up{background:#4b7a34}.chip.dn{background:#b42318}.chip.nw{background:#8a6508}.chip.fl{background:none;color:#9aa3ad}
 .medal{display:inline-flex;width:42px;height:42px;border-radius:50%;align-items:center;justify-content:center;font:700 21px IN;color:#fff}
 .plain{display:inline-flex;width:42px;height:42px;align-items:center;font:600 22px IN}
 /* lines */
-.ln .bh{background:none;border-bottom:2px solid #111418;padding:0;height:46px;font-size:16px;color:#374151}
-.ln{border:none}.ln .br{padding:0;border-bottom:1px solid #b8bec6}.ln .br:nth-child(odd){background:none}
-.ln .br:nth-child(even){background:#f3f5f7}
+.ln .bh{background:none;border-bottom:2px solid var(--fg);padding:0;height:46px;font-size:16px;color:var(--mut)}
+.ln{border:none}.ln .br{padding:0;border-bottom:1px solid var(--line)}.ln .br:nth-child(odd){background:none}
+.ln .br:nth-child(even){background:var(--zebra)}
 /* podium */
 .steps{display:flex;align-items:flex-end;gap:14px}
 .stp{flex:1;text-align:center;min-width:0}
 .stp img{width:88px;height:88px;object-fit:contain}
-.stp b{display:block;font:650 24px/1.15 IN;color:#14477d;margin-top:8px;overflow:hidden;text-overflow:ellipsis}
-.stp s{display:block;text-decoration:none;font:400 18px IN;color:#6b7280;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stp b{display:block;font:650 24px/1.15 IN;color:var(--acc);margin-top:8px;overflow:hidden;text-overflow:ellipsis}
+.stp s{display:block;text-decoration:none;font:400 18px IN;color:var(--mut);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stp .rv{display:block;font:800 32px IN;margin-top:6px}
 .stp .blk{margin-top:12px;color:#fff;font:900 54px IN;display:flex;justify-content:center;padding-top:10px}
 /* leader */
-.lead{position:relative;border:2px solid #d5d9df;overflow:hidden;background:#fff}
-.lead .big1{position:absolute;right:-20px;top:-80px;font:900 330px/1 IN;color:#f3ead2}
+.lead{position:relative;border:2px solid var(--line);overflow:hidden;background:var(--bg)}
+.lead .big1{position:absolute;right:-20px;top:-80px;font:900 330px/1 IN;color:var(--faint)}
 .lead .in{position:relative;padding:22px 30px;display:flex;align-items:center;gap:26px}
 .lead img{width:110px;height:110px;object-fit:contain}
 .lead .k{font:700 18px IN;letter-spacing:.1em;color:#a97a12;text-transform:uppercase}
-.lead b.n{display:block;font:800 48px/1.05 IN;color:#14477d;margin-top:6px}
-.lead s{display:block;text-decoration:none;font:400 23px IN;color:#6b7280;margin-top:6px}
+.lead b.n{display:block;font:800 48px/1.05 IN;color:var(--acc);margin-top:6px}
+.lead s{display:block;text-decoration:none;font:400 23px IN;color:var(--mut);margin-top:6px}
 .lead .st3{display:flex;gap:40px;margin-top:16px}
-.lead .st3 div{font:400 18px IN;color:#6b7280}.lead .st3 em{display:block;font:800 34px IN;color:#111418;font-style:normal}
+.lead .st3 div{font:400 18px IN;color:var(--mut)}.lead .st3 em{display:block;font:800 34px IN;color:var(--fg);font-style:normal}
 /* bars */
-.bl{display:flex;align-items:center;border-bottom:1.5px solid #e1e4e8}
+.bl{display:flex;align-items:center;border-bottom:1.5px solid var(--line2)}
 .bl .no{width:52px;font:700 25px IN}
 .bl .track{flex:1;position:relative;height:72%}
 .bl .fill{position:absolute;left:0;top:0;bottom:0;display:flex;align-items:center;padding:0 14px;gap:12px;color:#fff;border-radius:4px;overflow:hidden}
 .bl .fill img{width:36px;height:36px;object-fit:contain;background:#fff;border-radius:50%;padding:3px;flex:none}
 .bl .fill b{font:650 23px IN;white-space:nowrap}.bl .fill s{font:400 17px IN;text-decoration:none;opacity:.85;white-space:nowrap}
 .bl .val{position:absolute;top:0;bottom:0;display:flex;align-items:center;padding-left:12px;font:800 27px IN;white-space:nowrap}
-.bl .val i{font:400 19px IN;color:#6b7280;font-style:normal;margin-left:8px}
+.bl .val i{font:400 19px IN;color:var(--mut);font-style:normal;margin-left:8px}
 /* timeline */
-.tl .line{position:absolute;left:0;right:0;height:4px;background:#111418}
+.tl .line{position:absolute;left:0;right:0;height:4px;background:var(--fg)}
 .tl .tick{position:absolute;width:2px;height:18px;background:#9aa3ad}
 .tl .tt{position:absolute;font:500 17px IN;color:#9aa3ad;transform:translateX(-50%)}
-.tl .dot{position:absolute;width:30px;height:30px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 2px #111418;
+.tl .dot{position:absolute;width:30px;height:30px;border-radius:50%;border:3px solid var(--bg);box-shadow:0 0 0 2px var(--fg);
          transform:translate(-50%,-50%);display:flex;align-items:center;justify-content:center;font:800 14px IN;color:#fff}
-.tl .lab{position:absolute;transform:translateX(-50%);text-align:center;width:170px;background:#fff}
-.tl .lab b{display:block;font:650 19px/1.15 IN;color:#14477d}.tl .lab s{display:block;text-decoration:none;font:400 15px IN;color:#6b7280}
+.tl .lab{position:absolute;transform:translateX(-50%);text-align:center;width:170px;background:var(--bg)}
+.tl .lab b{display:block;font:650 19px/1.15 IN;color:var(--acc)}.tl .lab s{display:block;text-decoration:none;font:400 15px IN;color:var(--mut)}
 .tl .stem{position:absolute;width:1.5px;background:#cbd0d6}
 /* cards */
-.card{border:2px solid #d5d9df;border-radius:14px;padding:34px 38px;background:#fff}
-.card .big{font:800 60px/1.05 IN;letter-spacing:-.02em;color:#14477d}
-.card .sub2{font:400 26px IN;color:#6b7280;margin-top:6px}
-.stats{display:flex;margin-top:28px;border-top:1.5px solid #d5d9df}
-.stats div{flex:1;padding-top:22px}.stats b{display:block;font:800 58px IN;letter-spacing:-.02em}.stats span{font:500 19px IN;color:#6b7280}
-.note{font:400 22px/1.5 IN;color:#374151;margin-top:24px}
+.card{border:2px solid var(--line);border-radius:14px;padding:34px 38px;background:var(--bg)}
+.card .big{font:800 60px/1.05 IN;letter-spacing:-.02em;color:var(--acc)}
+.card .sub2{font:400 26px IN;color:var(--mut);margin-top:6px}
+.stats{display:flex;margin-top:28px;border-top:1.5px solid var(--line)}
+.stats div{flex:1;padding-top:22px}.stats b{display:block;font:800 58px IN;letter-spacing:-.02em}.stats span{font:500 19px IN;color:var(--mut)}
+.note{font:400 22px/1.5 IN;color:var(--mut);margin-top:24px}
 .dots{position:absolute;bottom:100px;left:0;right:0;display:flex;justify-content:center;gap:10px}
-.dots i{width:11px;height:11px;border-radius:50%;background:#cbd0d6}.dots i.on{background:#14477d}
+.dots i{width:11px;height:11px;border-radius:50%;background:#cbd0d6}.dots i.on{background:var(--acc)}
 """
 
 
@@ -470,7 +516,7 @@ def bBars(post, rows, area, start=0):
         w = 50 + (28 if not area["narrow"] else 18) * ((v - lo) / (hi - lo) if hi > lo else 1)
         tail = r.get("five_k") or (f'{r.get("points")} pts' if key == "top5" else "")
         out += (f'<div class=bl style="height:{rh}px"><span class=no>{r.get("rank") or start + j + 1}</span><span class=track>'
-                f'<span class=fill style="width:{w:.1f}%;background:{BAR_SHADES[min(start + j, 9)]}">'
+                f'<span class=fill style="width:{w:.1f}%;background:{_barShade(start + j)}">'
                 f'{_crestImg(ASSETS, r.get("school"), r.get("state") or st, pool)}'
                 f'<span><b>{E(r.get("name") or r.get("school") or "")}</b><br><s>{E(r.get("school") or "") if r.get("name") else ""}</s></span></span>'
                 f'<span class=val style="left:{w:.1f}%">{v:.1f}<i>{E(tail)}</i></span></span></div>')
@@ -486,7 +532,7 @@ def bTimeline(post, rows, area, start=0):
     x = lambda t: (t - t0) / (t1 - t0) * W
     mid = int(area["h"] * 0.48)
     out = (f'<div class=tl style="position:relative;height:{area["h"]}px">'
-           f'<div style="position:absolute;left:0;top:0;font:700 18px IN;letter-spacing:.1em;color:#6b7280">← FASTER · · · SLOWER →</div>'
+           f'<div style="position:absolute;left:0;top:0;font:700 18px IN;letter-spacing:.1em;color:var(--mut)">← FASTER · · · SLOWER →</div>'
            f'<div class=line style="top:{mid - 2}px"></div>')
     for s in range(int(t0) + 1, int(t1) + 1):
         if s % 5 == 0:
@@ -554,8 +600,8 @@ def bSpotlight(post, rows, area, start=0):
     return (f'<div style="position:relative;height:{area["h"]}px">'
             f'<div style="position:absolute;right:0;top:0;opacity:.95">{_crestImg(ASSETS, r.get("school"), r.get("state") or st, pool, 220)}</div>'
             f'<div style="font:900 200px/0.85 IN;color:#c99a2e;letter-spacing:-.04em">1</div>'
-            f'<div style="font:800 92px/1 IN;color:#14477d;margin-top:26px;text-transform:uppercase">{E(first)}<br>{E(last)}</div>'
-            f'<div style="font:400 30px IN;color:#6b7280;margin-top:16px">{E(r.get("school") or "")}{" · " + _cls(r) if _cls(r) else ""}</div>'
+            f'<div style="font:800 92px/1 IN;color:var(--acc);margin-top:26px;text-transform:uppercase">{E(first)}<br>{E(last)}</div>'
+            f'<div style="font:400 30px IN;color:var(--mut);margin-top:16px">{E(r.get("school") or "")}{" · " + _cls(r) if _cls(r) else ""}</div>'
             f'<div class=stats style="position:absolute;left:0;right:0;bottom:0">'
             + (f'<div><b>{v:.1f}</b><span>Rating</span></div>' if v is not None else "")
             + (f'<div><b>{E(r.get("five_k") or "")}</b><span>5K on a track</span></div>' if r.get("five_k") else "")
@@ -577,7 +623,7 @@ def bClimbs(post, rows, area, start=0):
                 f'<span class=nmc><b style="font-size:30px">{E(r.get("name") or "")}</b><s>{E(r.get("school") or "")}{" · " + _cls(r) if _cls(r) else ""}</s></span>'
                 f'<span style="width:300px;text-align:right"><b style="display:block;font:700 28px IN;white-space:nowrap">'
                 f'No. {r.get("prev")} → No. {r.get("now")}</b>'
-                f'<s style="display:block;text-decoration:none;font:400 21px IN;color:#6b7280">'
+                f'<s style="display:block;text-decoration:none;font:400 21px IN;color:var(--mut)">'
                 + (f'{v:.1f}' if v is not None else "") + (f' · {E(r.get("five_k") or "")}' if r.get("five_k") else "")
                 + '</s></span></div>')
     return out + '</div>'
@@ -600,11 +646,19 @@ def bBreakout(post, rows, area, start=0):
     return card.replace("<span>Rating</span>", "<span>This race</span>")
 
 
+def _barShade(i):
+    acc = SPEC.get("color") or SITE_BLUE
+    if acc == SITE_BLUE:
+        return BAR_SHADES[min(i, 9)]
+    return _mix(acc, "#ffffff", min(i, 9) * 0.055)
+
+
 BODIES = {"table": bTable, "lines": bLines, "podium": bPodium, "leader": bLeader, "bars": bBars,
           "timeline": bTimeline, "card": bCard, "spotlight": bSpotlight, "climbs": bClimbs,
           "breakout": bBreakout}
 
 ASSETS = {}
+SPEC = {}
 
 
 def _chunks(post, body):
@@ -625,9 +679,10 @@ def _h1Size(t, W):
 
 def pages(post, spec, assets):
     """The post as one page or a carousel: [html, ...]."""
-    global ASSETS
+    global ASSETS, SPEC
     ASSETS = assets
     spec = cleanSpec(post, spec)
+    SPEC = spec
     W, H = FORMATS[spec["fmt"]]
     story = spec["fmt"] == "story"
     head_h = 330 if story else 270
@@ -671,7 +726,7 @@ def pages(post, spec, assets):
         css = (CSS.replace("__FONT__", assets.get("font", "")).replace("__W__", str(W)).replace("__H__", str(H))
                .replace("__H1__", str(h1top)).replace("__P__", str(ptop)))
         out.append(
-            "<!doctype html><html><head><meta charset=utf-8><style>" + css + "</style></head><body>"
+            "<!doctype html><html><head><meta charset=utf-8><style>" + _vars(spec) + css + "</style></head><body>"
             f'<div class=hdr><img class=lg src="{E(assets.get("logo", ""))}"><span class=tag>{E(tag)}</span>'
             f'<h1 style="font-size:{_h1Size(t, W)}px">{E(t)}</h1><p>{subtitle(post, spec["body"])}</p></div>'
             + photo

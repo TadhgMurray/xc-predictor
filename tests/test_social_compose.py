@@ -68,7 +68,8 @@ def test_states_get_different_bodies_and_the_pick_turns_over_by_week():
 def test_a_spec_is_cleaned_to_what_the_post_can_take():
     p = _post("top1", 1, row=_rows(1)[0])
     s = C.cleanSpec(p, {"body": "bars", "photo": "sideways", "fmt": "poster"})
-    assert s == {"body": "card", "photo": "none", "file": None, "fmt": "feed"}
+    assert s == {"body": "card", "photo": "none", "file": None, "fmt": "feed",
+                 "color": C.SITE_BLUE, "theme": "white", "title": "ink"}
 
 
 def test_a_side_photo_drops_the_5k_column_and_no_photo_file_draws_an_empty_box():
@@ -84,3 +85,16 @@ def test_ratings_are_drawn_hs_equivalent():
     p["rows"][0]["rating"] = 99.0
     h = C.pages(p, {"body": "table"}, A)[0]
     assert "133.3" in h and ">99.0<" not in h
+
+
+def test_colours_are_a_theme_an_accent_and_a_title():
+    p = _post("rankings")
+    s = C.cleanSpec(p, {"color": "#7A1F2B", "theme": "dark", "title": "accent"})
+    assert (s["color"], s["theme"], s["title"]) == ("#7a1f2b", "dark", "accent")
+    h = C.pages(p, s, A)[0]
+    assert "--acc:#7a1f2b" in h and "--ttl:#7a1f2b" in h and "--bg:#111418" in h
+    bad = C.cleanSpec(p, {"color": "red; }", "theme": "neon", "title": "x"})
+    assert (bad["color"], bad["theme"], bad["title"]) == (C.SITE_BLUE, "white", "ink")
+    # the site's blue lifted on dark; bars follow a chosen accent
+    assert "--acc:#8db8ee" in C.pages(p, {"theme": "dark"}, A)[0]
+    assert "#7a1f2b" in C.pages(p, {"body": "bars", "color": "#7a1f2b"}, A)[0].split("class=fill")[1][:80]
