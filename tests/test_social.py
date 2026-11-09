@@ -320,3 +320,23 @@ def test_a_predicted_race_makes_a_runners_post_and_a_teams_post(monkeypatch):
     assert t["rows"][0]["school"] == "S0" and t["rows"][0]["p_win"] == max(r["p_win"] for r in t["rows"])
     assert "NCAA DI XC Championship" in S.caption(p) and "#ncaaxc" in S.caption(p)
     assert "team to beat" in S.caption(t)
+
+
+def test_any_type_any_level_any_place(monkeypatch):
+    """The composer makes any post (owner, 2026-11-09: "why can I only make
+    hs ones?"): the national list for a state-less ask, the type asked for."""
+    import social as S
+    import predict as P
+    monkeypatch.setattr(P, "_currentSeason", lambda cur, sport: 2026)
+    monkeypatch.setattr(S, "latestWeeks", lambda cur, sport, pool, year: [datetime.date(2026, 11, 6)])
+    monkeypatch.setattr(S, "nationalPost", lambda cur, sport, pool, year, weeks: S._base("national", sport, pool, None, weeks[0]))
+    monkeypatch.setattr(S, "buildPosts", lambda cur, sport, pool, st, year, weeks: [
+        S._base(k, sport, pool, st, weeks[0]) for k in ("rankings", "top1")])
+    monkeypatch.setattr(S, "teamsPost", lambda cur, sport, pool, st, year, wk: S._base("teams", sport, pool, st, wk))
+    got = S.makePost(None, "rankings", "college_m", "US", "2026-11-07")
+    assert [(p["kind"], p["pool"], p["scope"], p["week"]) for p in got] == [("national", "college_m", "US", "2026-11-07")]
+    assert [p["kind"] for p in S.makePost(None, "top1", "ms_f", "MI", "2026-11-07")] == ["top1"]
+    assert S.makePost(None, "top1", "ms_f", "US", "2026-11-07") == []
+    assert S.makePost(None, "teams", "college_f", None, "2026-11-07")[0]["scope"] == "US"
+    import social_compose as C
+    assert C.title(S._base("teams", "XC", "college_m", None, "2026-11-07")) == "NATIONAL TOP 10 TEAMS"

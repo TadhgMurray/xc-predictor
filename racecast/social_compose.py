@@ -186,10 +186,11 @@ def title(post):
         return "MOVING UP"
     if k == "breakout":
         return "BREAKOUT OF THE WEEK"
+    national = _st(post) is None
     if k == "teams":
-        return f"{_poss(name)} TOP {n or 10} TEAMS"
+        return f"NATIONAL TOP {n or 10} TEAMS" if national else f"{_poss(name)} TOP {n or 10} TEAMS"
     if k == "alltime":
-        return f"{_poss(name)} BEST EVER"
+        return "THE BEST EVER, NATIONWIDE" if national else f"{_poss(name)} BEST EVER"
     if k == "picks":
         return "WHO WINS STATE?"
     if k == "teampicks":

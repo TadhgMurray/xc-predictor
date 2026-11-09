@@ -721,8 +721,8 @@ def teamsPost(cur, sport, pool, state, year, week):
     from werkzeug.datastructures import MultiDict
     import teams as T
     from pool_view import stampBoardRows
-    f, err = T.parseFilters(MultiDict({"sport": sport, "pool": pool, "state": state,
-                                       "year": str(year), "limit": "10"}))
+    f, err = T.parseFilters(MultiDict({k: v for k, v in {"sport": sport, "pool": pool, "state": state,
+                                                         "year": str(year), "limit": "10"}.items() if v}))
     if err:
         return None
     rows = [dict(r) for r in T.getTeamRankings(cur, f)]
@@ -757,8 +757,8 @@ def alltimePost(cur, sport, pool, state, week):
     from werkzeug.datastructures import MultiDict
     import rankings as RK
     from pool_view import stampBoardRows
-    f, err = RK.parseFilters(MultiDict({"board": "performance", "sport": sport, "pool": pool,
-                                        "state": state, "limit": "80"}))
+    f, err = RK.parseFilters(MultiDict({k: v for k, v in {"board": "performance", "sport": sport, "pool": pool,
+                                                          "state": state, "limit": "80"}.items() if v}))
     if err:
         return None
     rows = [dict(r) for r in RK.getPerformanceRankings(cur, f)]
@@ -769,7 +769,7 @@ def alltimePost(cur, sport, pool, state, week):
             continue
         seen.add(r.get("person_id"))
         out.append({"rank": len(out) + 1, "name": r.get("name") or "Unknown", "school": r.get("school"),
-                    "state": state, "rating": r.get("rating"), "hs": r.get("hs_rating"),
+                    "state": state or r.get("state"), "rating": r.get("rating"), "hs": r.get("hs_rating"),
                     "year": str(r.get("race_date") or "")[:4], "time": _clock(r.get("time_seconds")),
                     "person_id": r.get("person_id")})
         if len(out) == TOP_N:
@@ -1360,7 +1360,9 @@ def admin_social_compose():
         q=_specQuery(spec), fmt_size=C.FORMATS[spec["fmt"]], csrf=sess["csrf"],
         themes=C.THEME_WORDS, presets=C.COLOR_PRESETS, title_words=C.TITLE_WORDS,
         saved=bool(data.get("spec")), caption=row.get("caption") or "", week=week,
-        divisions=divisions, champs=champs, err=request.args.get("err"))
+        divisions=divisions, champs=champs, err=request.args.get("err"),
+        make_kinds=[(k, C.KIND_WORDS[k]) for k in MAKE_KINDS], pool_words=POOL_WORDS,
+        state_words=_stateChoices())
 
 
 @bp.route("/account/admin/social/compose/<int:pid>/<int:page>.html")
@@ -1548,6 +1550,28 @@ def admin_social_compose_new():
                     print(f"[compose] preview {src} {meet_id}/{r['div_id']}: {type(exc).__name__}: {exc}", flush=True)
             conn.rollback()
             cur.execute("RESET statement_timeout")     # a pooled connection: as it came
+        elif what == "any":
+            from landing import STATE_NAMES
+            kind, pool = request.form.get("kind"), request.form.get("pool")
+            st = (request.form.get("state") or "US").upper()
+            if kind not in MAKE_KINDS or pool not in POOL_WORDS or (st != "US" and st not in STATE_NAMES):
+                abort(400)
+            try:
+                cur.execute("SET statement_timeout = '120s'")
+                made = makePost(cur, kind, pool, st, week)
+            except Exception as exc:                     # noqa: BLE001
+                conn.rollback()
+                print(f"[compose] {kind} {pool} {st}: {type(exc).__name__}: {exc}", flush=True)
+                made = []
+            conn.rollback()
+            cur.execute("RESET statement_timeout")
+            if not made:
+                why = {"top1": "a state", "risers": "a state", "breakout": "a state", "picks": "a state",
+                       "teampicks": "a state", "recap": "a state"}.get(kind)
+                return redirect("/account/admin/social/compose?err=" + urllib.parse.quote(
+                    f"Nothing to post for {KIND_WORDS_OF(kind)} · {POOL_WORDS[pool]} · {st}: "
+                    + (f"this type needs {why}, or " if why and st == "US" else "")
+                    + "the board has too few rows (or no odds / no big race this week)."))
         elif what == "picks":
             st, div, g = (request.form.get("state") or "").upper(), request.form.get("division"), request.form.get("gender")
             pool = {"boys": "hs_m", "girls": "hs_f"}.get(g)
@@ -1583,3 +1607,70 @@ def upcomingChoices():
         # the feed as "1" / "2", as every link names it (CLAUDE.md: no feed names)
         out.append((f'{"2" if m["source"] == "tfrrs" else "1"}|{tok}|{m["date"]}', f'{m["date"]} · {title}'))
     return out
+
+
+# ★ ANY POST, ANY LEVEL, ANY PLACE (owner, 2026-11-09: "why can I only make
+#   hs ones? I should be able to compose anything"): the composer builds a
+#   post of any type for any pool -- high school, college, middle school --
+#   and any state or the whole country, on the spot, from the same builders
+#   the pipeline uses.
+MAKE_KINDS = ("rankings", "national", "top1", "risers", "breakout", "teams", "alltime",
+              "picks", "teampicks", "recap")
+
+
+def latestWeeks(cur, sport, pool, year):
+    cur.execute("""SELECT DISTINCT week FROM season_rank_weekly
+                   WHERE sport = %s AND pool = %s AND year = %s
+                   ORDER BY week DESC LIMIT 2""", (sport, pool, year))
+    return [r["week"] for r in cur.fetchall()]
+
+
+def makePost(cur, kind, pool, state, week, sport="XC"):
+    """[posts] of one type for one pool and one state (None: the country),
+    or [] with nothing to show. Each is filed under `week` (the composer's
+    and the run's week), whatever its own board's latest week is."""
+    out = _makePost(cur, kind, pool, state, week, sport)
+    wk = week.isoformat() if hasattr(week, "isoformat") else (str(week) if week else None)
+    for p in out:
+        if wk:
+            p["week"] = wk
+    return out
+
+
+def _makePost(cur, kind, pool, state, week, sport):
+    from predict import _currentSeason
+    year = int(_currentSeason(cur, sport))
+    weeks = latestWeeks(cur, sport, pool, year)
+    wk = weeks[0] if weeks else week
+    state = (state or "").upper() or None
+    if state == "US":
+        state = None
+    if kind in ("national",) or (kind == "rankings" and state is None):
+        p = nationalPost(cur, sport, pool, year, weeks) if weeks else None
+        return [p] if p else []
+    if kind in ("rankings", "top1", "risers", "breakout"):
+        if not weeks or state is None:
+            return []
+        return [p for p in buildPosts(cur, sport, pool, state, year, weeks) if p["kind"] == kind]
+    if kind == "teams":
+        p = teamsPost(cur, sport, pool, state, year, wk)
+        return [p] if p else []
+    if kind == "alltime":
+        p = alltimePost(cur, sport, pool, state, wk)
+        return [p] if p else []
+    if kind in ("picks", "teampicks"):
+        return [p for p in picksPosts(cur, sport, pool, state, wk) if p["kind"] == kind] if state else []
+    if kind == "recap":
+        p = recapPost(cur, sport, pool, state, wk) if state else None
+        return [p] if p else []
+    return []
+
+
+def KIND_WORDS_OF(kind):
+    import social_compose as C
+    return C.KIND_WORDS.get(kind, kind)
+
+
+def _stateChoices():
+    from landing import STATE_NAMES
+    return sorted(((k, v) for k, v in STATE_NAMES.items() if len(k) == 2), key=lambda kv: kv[1])

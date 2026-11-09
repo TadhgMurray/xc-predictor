@@ -122,6 +122,20 @@
   <h3 style="margin:30px 0 6px;font-size:14px">Make a new post</h3>
   {% if err %}<p class="cp-note" style="color:#b42318">{{ err }}</p>{% endif %}
   <form method="post" action="/account/admin/social/compose/new" class="cp-row">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="any">
+    <select name="kind" style="font:inherit;padding:6px 8px">
+      {% for k, w in make_kinds %}<option value="{{ k }}">{{ w }}</option>{% endfor %}
+    </select>
+    <select name="pool" style="font:inherit;padding:6px 8px">
+      {% for p, w in pool_words.items() %}<option value="{{ p }}">{{ w }}</option>{% endfor %}
+    </select>
+    <select name="state" style="flex:1;min-width:160px;font:inherit;padding:6px 8px">
+      <option value="US">The whole country</option>
+      {% for st, nm in state_words %}<option value="{{ st }}">{{ nm }}</option>{% endfor %}
+    </select>
+    <button type="submit">Make this post</button>
+  </form>
+  <form method="post" action="/account/admin/social/compose/new" class="cp-row">
     <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="recap">
     <input type="url" name="link" placeholder="Paste a race link: https://racecast.co/race/xc/…" style="flex:1;min-width:260px;font:inherit;padding:6px 8px">
     <button type="submit">Recap this race</button>

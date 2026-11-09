@@ -166,6 +166,7 @@ def main():
             year = int(_currentSeason(cur, sport))
             posts = []
             week0 = None
+            extra_pools = []
             for pool in pools:
                 cur.execute("""SELECT DISTINCT week FROM season_rank_weekly
                                WHERE sport = %s AND pool = %s AND year = %s
@@ -215,6 +216,29 @@ def main():
                             print(f"[social] {st} {pool} extra: {type(exc).__name__}: {str(exc)[:160]}")
                 print(f"[social] {sport} {pool} week of {weeks[0]}: {len(states)} states")
                 week0 = max(week0, weeks[0]) if week0 else weeks[0]
+            # ★ COLLEGE TOO (owner, 2026-11-09: "why can I only make hs
+            #   ones?"): the national posts of the pools with no state
+            #   boards worth a post -- the top 25, the team board, the
+            #   all-time list. XCP_SOCIAL_NATIONAL_POOLS ("" for none).
+            for pool in [x.strip() for x in (os.environ.get("XCP_SOCIAL_NATIONAL_POOLS")
+                                             if os.environ.get("XCP_SOCIAL_NATIONAL_POOLS") is not None
+                                             else "college_m,college_f").split(",") if x.strip()]:
+                if pool in pools or a.state:
+                    continue
+                for kind in ("national", "teams", "alltime"):
+                    try:
+                        conn.rollback()
+                        cur.execute("SET statement_timeout = '120s'")
+                        got = S.makePost(cur, kind, pool, None, week0, sport)
+                        posts += got
+                        print(f"[social] {pool} national {kind}: {'made' if got else 'nothing to post'}")
+                    except Exception as exc:            # noqa: BLE001
+                        conn.rollback()
+                        print(f"[social] {pool} national {kind}: {type(exc).__name__}: {str(exc)[:160]}")
+                if pool not in extra_pools:
+                    extra_pools.append(pool)
+                conn.rollback()
+                cur.execute("RESET statement_timeout")
             # ★ ANY PREDICTED RACE (owner, 2026-11-09: "What about other
             #   predicted races like NCAAs?"): the championships of the next
             #   week (NCAA, NXN, NAIA, state finals) and each state's biggest
@@ -331,7 +355,7 @@ def main():
             else:
                 cur.execute("""DELETE FROM social_post WHERE week = %s AND sport = ANY(%s)
                                  AND (pool = ANY(%s) OR kind IN ('preview', 'teampreview'))""",
-                            (week, sports, pools))
+                            (week, sports, pools + extra_pools))
             for p in posts:
                 cur.execute("""INSERT INTO social_post (week, sport, pool, scope, kind, data, caption, png_path)
                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
