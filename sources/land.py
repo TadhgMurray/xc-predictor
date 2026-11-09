@@ -268,12 +268,29 @@ def withoutReprints(races):
     return out
 
 
-def sportOf(title, meet_name="", meters=None):
+# ! not relays: cross country has relay festivals ('4x2 Mile XC Relay')
+_TRACK_ONLY = re.compile(r"hurdle|steeple|dash|\b(?:55|60|100|110|200|300|400)\s*(?:m\b|meters?)", re.I)
+
+
+def isTrackMeet(titles):
+    """A meet holding a sprint, hurdles, a steeplechase or a field event is a
+    track meet, whatever its longest race. Pure."""
+    return any(_TRACK_ONLY.search(t or "") or _FIELD.search(t or "") for t in titles)
+
+
+def sportOf(title, meet_name="", meters=None, track_meet=False):
     """'XC' for a cross country race, else 'TF'. The race title first ('5k
     Run CC Varsity'), then the meet's name ('... XC Invitational'); a track
     meet has no 5k-plus race on the infield, so a distance past 5,000 m with
-    no track word in the meet's name reads cross country too."""
-    if _XC_WORDS.search(title or "") or _XC_WORDS.search(meet_name or ""):
+    no track word in the meet's name reads cross country too.
+    ! UNLESS THE MEET IS A TRACK MEET (2026-11-09, Trojan Timing's Scots
+      Invitational: its "Men's 10000 Meters" read XC beside the steeplechase
+      and the 1500): track_meet (isTrackMeet) keeps it TF."""
+    if _XC_WORDS.search(title or ""):
+        return "XC"
+    if track_meet:
+        return "TF"
+    if _XC_WORDS.search(meet_name or ""):
         return "XC"
     if meters and meters > 5000 and not re.search(r"track|t\s*&\s*f|relays", meet_name or "", re.I):
         return "XC"
@@ -312,6 +329,7 @@ def fromHytek(meet, slug, url):
     field events are left out: the engine rates individual running races."""
     lm = LandedMeet(slug=slug, url=url, name=meet.name, date=meet.date, venue=meet.venue,
                     place="", state=stateOf(meet.venue), licensee=meet.licensee)
+    track = isTrackMeet([e.title for e in meet.events])
     for e in meet.events:
         lm.skipped += e.skipped
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
@@ -319,7 +337,7 @@ def fromHytek(meet, slug, url):
         if isAgeGroup(e.title) or isCommunity(e.rows) or isElementary(e.rows):
             lm.skipped += len(e.rows)
             continue
-        sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters)
+        sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters, track)
         lm.races.append(LandedRace(n=e.number, title=e.title, gender=e.gender,
                                    sport=sportByTimes(sport, e.meters, e.rows),
                                    meters=e.meters, rows=_landedRows(e.rows)))
@@ -340,6 +358,7 @@ def fromMeetPro(index, results, slug, url):
     lm = LandedMeet(slug=slug, url=url, name=index.name, date=index.date, venue="",
                     place=index.place, state=stateOf(index.place))
     lm.venue = index.place
+    track = isTrackMeet([e.title for e in index.events])
     for e in index.events:
         got = results.get(e.number) or []
         if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title):
@@ -355,7 +374,7 @@ def fromMeetPro(index, results, slug, url):
             lm.races.append(LandedRace(n=e.number + (PRELIM_OFFSET if prelim else 0),
                                        title=e.title + (" Prelims" if prelim else ""), gender=e.gender,
                                        sport=("XC" if getattr(e, "xc", False)
-                                              else sportByTimes(sportOf(e.title, index.name, e.meters),
+                                              else sportByTimes(sportOf(e.title, index.name, e.meters, track),
                                                                 e.meters, rows)),
                                        meters=e.meters, rows=_landedRows(rows)))
     return lm

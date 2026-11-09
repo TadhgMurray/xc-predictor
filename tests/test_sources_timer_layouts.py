@@ -306,3 +306,56 @@ def test_data_rows_pages_read_their_division_and_point_at_the_others():
     assert [(r.place, r.first, r.last, r.grade, r.school, r.seconds) for r in e.rows] == [
         (1, "Adam", "Alpha", "FR", "North (Del.)", 1566.8), (2, "Ben", "Bravo", "SO", "South", 1568.1),
         (None, "Cal", "Charlie", "JR", "South", None)]
+
+
+# ------------------------------------------------------------- split tables inside a row
+SPLITS = """<h4 class="round-results-hdr">Finals</h4>
+<table class="results-table table"><thead><tr><th class="place">PL</th><th class="athlete">Athlete</th>
+<th class="team">Team</th><th class="time">Time</th><th class="splits">Splits</th></tr></thead><tbody>
+<tr><td class="place">1</td><td class="athlete">Adam ALPHA</td><td class="team">North</td><td class="time">10:08.31</td>
+<td class="splits"><table class="splits-table"><tbody><tr><td>68.2</td></tr></tbody></table></td></tr>
+<tr><td class="place">2</td><td class="athlete">Ben BRAVO</td><td class="team">South</td><td class="time">10:17.76</td>
+<td class="splits"><table class="splits-table"><tbody><tr><td>69.0</td></tr></tbody></table></td></tr>
+</tbody></table>"""
+
+
+def test_split_tables_inside_rows_do_not_cut_the_results_short():
+    rounds = meetpro.parseRounds(SPLITS)
+    assert [(t, [(r.place, r.last, r.seconds) for r in rows]) for t, rows in rounds] == [
+        ("Finals", [(1, "Alpha", 608.31), (2, "Bravo", 617.76)])]
+
+
+def test_a_track_meets_ten_thousand_is_track_and_an_xc_meets_six_k_is_not():
+    assert land.isTrackMeet(["Men's 3000m Steeple", "Women's 1500 Meters", "Men's 10000 Meters"])
+    assert not land.isTrackMeet(["Boys 5K Run CC", "4x2 Mile XC Relay", "Girls 6000 Meters"])
+    assert land.sportOf("Men's 10000 Meters", "Spring Invitational", 10000.0, track_meet=True) == "TF"
+    assert land.sportOf("Boys 6000 Meters", "Fall Classic", 6000.0) == "XC"
+    assert land.sportOf("Boys 8k Run CC", "Track Meet", 8000.0, track_meet=True) == "XC"
+
+
+HYTEK_BIB = """  Timer - Contractor License                     Hy-Tek's MEET MANAGER 4:30 PM 11/3/2023 Page 1
+                                2023 State Cross Country Championship
+                                   Riverside Park - Lakeport,TN
+                                  Riverside Park - 11/2/2023 to 11/3/2023
+                                                  Rankings
+  Event 4       Girls 5k Run CC A-AA
+=======================================================================
+    Name                    Year School                  Finals Points
+=======================================================================
+  1 #251 Alpha, Anna          11 North High            18:26.54    1
+  2 #399 Bravo, Beth          10 South High            18:39.49    2
+"""
+
+
+def test_a_hytek_report_dated_on_its_venue_line_with_bibs_before_names():
+    meet = hytek.parseReport(HYTEK_BIB)
+    assert (meet.name, meet.date) == ("2023 State Cross Country Championship", "2023-11-02")
+    assert [(r.last, r.first, r.grade) for r in meet.events[0].rows] == [("Alpha", "Anna", "11"), ("Bravo", "Beth", "10")]
+
+
+def test_a_results_page_on_record_that_is_itself_a_report_is_one_meet():
+    url = "https://timer.example/file.cfm?id=1&type=results"
+    fetcher = Pages({url: "<pre>" + HYTEK_BIB + "</pre>"})
+    src = type("S", (), {"results_url": url, "website": "", "slug": "t"})()
+    urls, note = asyncio.run(discover.discover(fetcher, src, 2026, 5))
+    assert urls == [(url, "hytek")] and "one report" in note

@@ -136,10 +136,27 @@ _ROUND = re.compile(r'<h4[^>]*round-results-hdr[^>]*>(.*?)</h4>', re.S | re.I)
 _TABLE = re.compile(r"<table[^>]*results-table[^>]*>(.*?)</table>", re.S | re.I)
 
 
+# ! A TABLE INSIDE A ROW (2026-11-09, Trojan Timing's Scots Invitational,
+#   template v1.3: each runner's splits are a <table class="splits-table"> in
+#   the row). The results table's pattern stopped at the first inner
+#   </table>, and every race read one runner. Inner tables go first.
+_INNER_TABLE = re.compile(r"<table(?![^>]*results-table)[^>]*>(?:(?!<table\b).)*?</table>", re.S | re.I)
+
+
+def withoutInnerTables(page):
+    """A page less every table that holds no other table and is not a
+    results table: split and relay-leg tables nested in a row. Pure."""
+    prev = None
+    while prev != page:
+        prev, page = page, _INNER_TABLE.sub(" ", page)
+    return page
+
+
 def parseRounds(page):
     """A MeetPro results page -> [(round title, [Row])] in page order, the
     overall table of each round (heats skipped). One untitled round ('')
     when the page names none."""
+    page = withoutInnerTables(page)
     marks = [(m.start(), _text(m.group(1))) for m in _ROUND.finditer(page)]
     out = []
     for t in _TABLE.finditer(page):

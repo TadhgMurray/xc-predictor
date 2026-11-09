@@ -211,7 +211,8 @@ def _columns(header):
 
 
 def _splitName(name):
-    name = re.sub(r"\s+", " ", name).strip()
+    # ! A BIB BEFORE THE NAME ("#251 Tackett, Sydney": TSSAA's state reports)
+    name = re.sub(r"^#\d+\s+", "", re.sub(r"\s+", " ", name).strip())
     if "," in name:
         last, first = name.split(",", 1)
         return last.strip(), first.strip()
@@ -313,6 +314,14 @@ def parseReport(text):
                 if len(nxt) > 1 and not _EVENT.match(nxt[1]) and nxt[1].lower() not in (
                         "results", "rankings", "team rankings"):
                     meet.venue = nxt[1]
+                # ★ THE DAY ON THE VENUE'S LINE (TSSAA, 2026-11-09: "Sanders
+                #   Ferry Park - 11/2/2023 to 11/3/2023" under the title)
+                for ln in nxt[1:] if not meet.date else []:
+                    t = _TITLE_DATE.match(ln)
+                    if t:
+                        yr = t.group(4) if len(t.group(4)) == 4 else f"20{t.group(4)}"
+                        meet.date = f"{yr}-{int(t.group(2)):02d}-{int(t.group(3)):02d}"
+                        break
             continue
         ev = _EVENT.match(line)
         anyev = gw = None
