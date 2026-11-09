@@ -39,7 +39,7 @@ re-reads the hidden list on its own; the edge forgets a page within
 XCP_PAGE_S_MAXAGE, 15 minutes; tonight's nightly rebuilds the search index
 and the sitemap and purges the CDN). To make it immediate instead:
   1. restart the site:
-       sudo systemctl restart xc-predictor
+       sudo systemctl reload xc-predictor
   2. rebuild the search index and the sitemap now:
        cd /srv/xc-predictor
        /srv/venv/bin/python -u racecast/search_index.py

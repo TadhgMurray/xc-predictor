@@ -34,3 +34,19 @@
   site" / "the college feed". Code comments and internal keys are fine.
   tests/test_no_feed_names.py enforces it on every template, script and
   response.
+- **Deploy the site with `systemctl reload`, never `restart`** (owner,
+  2026-11-09: "make this a really important standing rule"). Every deploy
+  command given to the owner is:
+  `cd /srv/xc-predictor && git pull && systemctl reload xc-predictor`.
+  A reload hands off to a new gunicorn master with the new code while the
+  old workers keep serving (deploy/site_reload.sh, deploy/gunicorn.conf.py's
+  `_handoff` / `pre_exec`); a restart stops every worker and queues every
+  visitor behind the new master's preload (16-20 of 24 workers "busy" at
+  13 req/s on 2026-11-09). Check a reload took with
+  `systemctl show -p MainPID --value xc-predictor` (the pid changes).
+  `restart` ONLY when the reload cannot carry the change: an edit to
+  /etc/xc-predictor.env or to the unit and its drop-ins (a reload re-execs
+  with the environment systemd started it with) -- then
+  `systemctl daemon-reload && systemctl restart xc-predictor`, and say why.
+  tests/test_reload_handoff.py covers the handoff, plain and under socket
+  activation.
