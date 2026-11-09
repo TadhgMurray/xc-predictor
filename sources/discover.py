@@ -57,11 +57,20 @@ _FILE_DATE = re.compile(r"^(\d{1,2}[-_.]\d{1,2}(?:[-_.]\d{2,4})?)\b")
 _REPORT_FILE = re.compile(r"\.(html?|pdf)$", re.I)
 _RESULTS_WORDS = re.compile(r"result|res\b|xc|cc\b|cross|invit|champ|classic|relays|meet|"
                             r"conference|sectional|regional|state|district|open|track|indoor|"
-                            r"outdoor|\d{1,2}[-_.]\d{1,2}", re.I)
+                            r"outdoor|\d{1,2}[-_.]\d{1,2}|"
+                            # ★ A RACE'S FILE NAMED BY ITS RUNNERS AND DISTANCE (Finished
+                            #   Results: '.../men-8k.pdf' linked as "Men")
+                            r"(?<![a-z])(?:men|women|boys|girls|varsity|jv)(?![a-z])|"
+                            r"(?<![a-z\d])\d{1,2}(?:\.\d)?\s*-?\s*(?:k|km|mi|mile)(?![a-z])|"
+                            r"(?<![a-z\d])\d{3,5}\s*-?\s*m(?:eters?)?(?![a-z])", re.I)
 _NAV_WORDS = re.compile(r"(?<![a-z])(?:contact|about|privacy|terms|login|sign[-_ ]?up|register|entry|entries|"
                         r"schedule|calendar|staff|services|pricing|quote|faq|blog|news|"
                         r"photo|gallery|cart|shop|store|sponsor|heat[-_ ]?sheet|psych|"
-                        r"start[-_ ]?list|info|map|directions|course[-_ ]?map)(?![a-z])", re.I)
+                        r"start[-_ ]?list|info|map|directions|course[-_ ]?map|"
+                        # ★ PAPERS BEFORE THE MEET (2026-11-09: Finished Results' "Meet
+                        #   Program", CFPI's "Participant Manual", "Declared ... Entries")
+                        r"programs?|programme|manual|packet|declared|psych[-_ ]?sheet|seed(?:ing)?s?|"
+                        r"bus[-_ ]?schedule|parking|waiver|flyer|timeline)(?![a-z])", re.I)
 
 
 def isAliveTenant(page):
@@ -83,8 +92,14 @@ def _site(host):
     return ".".join(parts[-2:]) if len(parts) >= 2 else host
 
 
+# ★ A SHORT YEAR IN A DATE (2026-11-09, Snake River Timing's archive: "Weiser
+#   Invite XC 9-8-16"): link text names its meet's day as M-D-YY
+_SHORT_DATE = re.compile(r"(?<![\d/.-])\d{1,2}[-/.]\d{1,2}(?:[-/]\d{1,2})?[-/.](\d{2})(?![\d/.-])")
+
+
 def _years(text):
-    return [int(y) for y in _YEAR.findall(text or "")]
+    return [int(y) for y in _YEAR.findall(text or "")] + \
+        [2000 + int(y) for y in _SHORT_DATE.findall(text or "")]
 
 
 def tooOld(url, text, since_year):
@@ -184,6 +199,39 @@ async def listMeetproAccount(fetcher, account, since_year, max_age):
     meets = accountMeets(entries, account, since_year)
     return meets, (f"bucket listing: {len(entries):,} files in {pages} pages"
                    + (" (cut short)" if marker else ""))
+
+
+# ★ A FRAMESET IS ITS FRAMES (2026-11-09, TRXC Timing: a meet's index.htm is
+#   three iframes -- header.htm, menu.htm with the race links, main.htm).
+#   Their pages are read as part of the page, a few at most, own site only.
+_FRAME = re.compile(r"<i?frame\b[^>]*?\bsrc\s*=\s*[\"']?([^\"'\s>]+)", re.I)
+MAX_FRAMES = 4
+
+
+def frameUrls(page, base):
+    """The timer's own frame / iframe pages a page is built from. Pure."""
+    own, out = _site(_host(base)), []
+    for src in _FRAME.findall(page or ""):
+        u = urllib.parse.urljoin(base, _html.unescape(src.strip()))
+        if u.startswith("http") and _site(_host(u)) == own and u not in out and u != base:
+            out.append(u)
+    return out[:MAX_FRAMES]
+
+
+async def frameBodies(fetcher, page, base):
+    out = []
+    for u in frameUrls(page, base):
+        got = await fetcher.fetch(u, MEET_MAX_AGE)
+        if got.body:
+            out.append((u, got.body.decode("utf-8", "replace")))
+    return out
+
+
+def _rebase(page, url):
+    """A frame's links made absolute, so they read right inside its parent."""
+    return _A.sub(lambda m: m.group(0).replace(m.group(1) or m.group(2),
+                                               urllib.parse.urljoin(url, m.group(1) or m.group(2)), 1)
+                  if (m.group(1) or m.group(2)) else m.group(0), page)
 
 
 def links(page, base):
@@ -399,7 +447,7 @@ async def discover(fetcher, source, since_year=None, per_source=10, known=frozen
                 need = per_source + 1 - len(freshMeets())
                 for meet in await walkListing(fetcher, u, since_year, index_max_age, need, 1):
                     found.append((meet, "hytek"))
-            elif kind == "meetpro" or u in known:
+            elif u in known or (kind == "meetpro" and _host(u).endswith("tfmeetpro.com")):
                 found.append((u, kind))
             else:
                 if kind == "page":
@@ -409,12 +457,21 @@ async def discover(fetcher, source, since_year=None, per_source=10, known=frozen
                 # ★ A SUB-INDEX ("2026-results.html", "cross-country-timing.html"):
                 #   a page on the timer's site that lists reports rather than
                 #   being one -- its own links are read, one level down
+                # ! AN "index.htm" ON THE TIMER'S OWN SITE IS NOT ALWAYS MEETPRO
+                #   (TRXC Timing's /MSHSAA_XC/index.htm is a Hy-Tek frameset):
+                #   it is read first, like any page, and kept as MeetPro only
+                #   when it is one
                 got = await fetcher.fetch(u, MEET_MAX_AGE)
-                if isReport(got.body):
+                if got.body and b"MeetPro" in got.body[:20000]:
+                    found.append((u, "meetpro"))
+                elif isReport(got.body):
                     found.append((u, "hytek"))
-                elif got.body and depth == 0:
+                elif got.body and (depth == 0 or kind == "meetpro"):
                     subindexes += 1
-                    await take(ordered(candidates(got.body.decode("utf-8", "replace"), u, since_year)), 1)
+                    body = got.body.decode("utf-8", "replace")
+                    for fu, fbody in await frameBodies(fetcher, body, u):
+                        body += "\n" + _rebase(fbody, fu)
+                    await take(ordered(candidates(body, u, since_year)), 1)
     await take(ordered(candidates(page, index, since_year)), 0)
     new = freshMeets()[:per_source]
     return new, (f"{len(found)} meet pages" + (f" (via {subindexes} sub-index pages)" if subindexes else "")

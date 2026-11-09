@@ -198,10 +198,24 @@ def _tableRows(table):
 #   on it, so every such meet read as "no individual races".
 _SECTION = re.compile(r'<section[^>]*id="event(\d+)"[^>]*>(.*?)</section>', re.S | re.I)
 _ONE_TABLE = re.compile(r'<table[^>]*class="[^"]*\bresult-table\b[^"]*"[^>]*>(.*?)</table>', re.S | re.I)
+# ★ TEMPLATE v1.0 (2026-11-09, Snake River Timing's meets on results.tfmeetpro
+#   .com): the same sections, but the individual table is a plain "table"
+#   whose cells are ath-place / ath-name / ath-team / ath-score
+_ANY_TABLE = re.compile(r"<table[^>]*>(.*?)</table>", re.S | re.I)
+
+
+def _individualTable(body):
+    m = _ONE_TABLE.search(body)
+    if m:
+        return m.group(1)
+    for t in _ANY_TABLE.finditer(body):
+        if re.search(r'class=["\']ath-name', t.group(1)):
+            return t.group(1)
+    return ""
 
 
 def isSinglePage(page):
-    return bool(_SECTION.search(page) and _ONE_TABLE.search(page))
+    return bool(_SECTION.search(page) and (_ONE_TABLE.search(page) or re.search(r'class=["\']ath-name', page)))
 
 
 def parseSinglePage(page):
@@ -228,10 +242,13 @@ def parseSinglePage(page):
         xc = bool(re.search(r'class="(?:spread|scoring-order)"', body))
         idx.events.append(MeetEvent(n, name, _gender(name), metersOf(name), f"#event{n}",
                                     bool(re.search(r"\d\s*x\s*\d|relay|medley", name, re.I)), xc))
-        table = _ONE_TABLE.search(body)
         rows = []
-        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", table.group(1) if table else "", re.S | re.I):
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", _individualTable(body), re.S | re.I):
             c = _cells(tr)
+            for short in ("name", "place", "score", "year", "grade", "yr"):
+                if f"ath-{short}" in c and short not in c:
+                    c[short] = c[f"ath-{short}"]
+            c.setdefault("athlete", c.get("name", ""))
             if not c.get("athlete"):
                 continue
             mark = (c.get("time") or c.get("mark") or "").split(" ")[0]
@@ -241,7 +258,7 @@ def parseSinglePage(page):
             rows.append(Row(
                 place=int(place) if place.isdigit() else None,
                 last=last, first=first,
-                grade=(c.get("year") or c.get("grade") or "").upper(),
+                grade=(c.get("year") or c.get("grade") or c.get("yr") or "").upper(),
                 school=c.get("ath-team") or c.get("team", ""),
                 seconds=secondsOf(mark), mark=mark or place,
                 points=int(c["score"]) if c.get("score", "").isdigit() else None))

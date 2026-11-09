@@ -125,7 +125,10 @@ _EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*
 #   "Event 1  2000 Meter Run CC 8 & Under Division Girls"): the first pattern
 #   read no events at all on those pages
 _EVENT_ANY = re.compile(r"^\s*Event\s+(\d+)\s+(\S.*?)\s*$", re.I)
-_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b", re.I)
+# ★ OR A LETTER IN PARENTHESES (2026-11-09, TRXC Timing's GLVC and MSHSAA
+#   reports: "Event 1  (M) 8k Run CC"): no event at all was read on them
+_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b|\(([MFWBG])\)", re.I)
+_GENDER_LETTER = {"m": "men", "b": "boys", "f": "women", "w": "women", "g": "girls"}
 # ★ A "RANKINGS" REPORT HAS NO EVENT LINE (2026-10-25, YenTiming's Wayne
 #   Invitational modified races): the race's title stands alone --
 #   "Boys 2400 Meter Run CC Modified" -- above a header with a Comp# column
@@ -334,7 +337,11 @@ def parseReport(text):
                 gender = _GENDER.get(ev.group(2).lower(), "")
             else:
                 num, title = int(anyev.group(1)), anyev.group(2).strip()
-                gender = _GENDER.get(gw.group(1).lower(), "")
+                word = gw.group(1) or _GENDER_LETTER[gw.group(2).lower()]
+                gender = _GENDER.get(word.lower(), "")
+                if gw.group(2):                 # '(M) 8k Run CC' -> 'Men 8k Run CC'
+                    title = (word.title() + " " + title.replace(gw.group(0), "", 1)).strip()
+                    title = re.sub(r"\s+", " ", title)
             # a report page break repeats the event header: keep adding to it
             if not (event and event.number == num):
                 event = Event(number=num, gender=gender, title=title, meters=metersOf(title))

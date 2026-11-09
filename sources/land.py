@@ -198,6 +198,51 @@ _RELAY = re.compile(r"\brelay\b|\d\s*x\s*\d|medley|\bdmr\b|\bsmr\b", re.I)
 _FIELD = re.compile(r"jump|vault|throw|shot\s*put|discus|javelin|hammer|weight|pentathlon|"
                     r"heptathlon|decathlon", re.I)
 _STATE = re.compile(r",\s*([A-Z]{2})\b")
+# ★ AGE-GROUP RACES ARE A CLUB'S, NOT A SCHOOL'S (2026-11-09, Big River Race
+#   Management's youth invitational: "Boys 8 and Under 2K", "Girls 9-10 Year
+#   Old 3K"). No grade, a club for a team: they fit no pool we rate, and a
+#   linker would only find namesakes. Left out and counted as skipped.
+_AGE_GROUP = re.compile(r"\b\d{1,2}\s*(?:&|and)\s*(?:under|younger)\b|\b\d{1,2}\s*-\s*\d{1,2}\s*(?:year|yr)s?[\s-]*old\b"
+                        r"|\b(?:sub[\s-]*)?bantam\b|\bmidget\b|\b\d{1,2}U\b|\bage[\s-]*group\b", re.I)
+
+
+def isAgeGroup(title):
+    return bool(_AGE_GROUP.search(title or ""))
+
+
+# ★ A COMMUNITY RACE, NOT A SCHOOL RACE (2026-11-09, Finished Results'
+#   "Santiago Sharks 5k": Place Name Age Hometown Time -- runners aged 9 to
+#   57, "Corona, CA" where a school would be). The column read as the team is
+#   hometowns: most rows "City, ST". Nothing in it fits a pool we rate.
+_HOMETOWN = re.compile(r"^[A-Za-z][A-Za-z .'-]*,\s*[A-Z]{2}$")
+
+
+def isCommunity(rows):
+    """True when most of a race's teams are hometowns ('Corona, CA'). Pure."""
+    teams = [(r.school or "").strip() for r in rows]
+    teams = [t for t in teams if t]
+    return len(teams) >= 3 and sum(bool(_HOMETOWN.match(t)) for t in teams) >= 0.6 * len(teams)
+
+
+def withoutReprints(races):
+    """Races, less any that only re-prints others of the same meet: a
+    combined 'Boys and Girls 2K' whose every runner (name and time) is in
+    the meet's gendered races, but in no single one of them -- the same run
+    scored twice. A race printed twice keeps its first copy. Pure."""
+    def key(r):
+        return {(x.name.lower(), x.seconds) for x in r.rows if x.seconds is not None}
+    keys = [key(r) for r in races]
+    out = []
+    for i, r in enumerate(races):
+        mine = keys[i]
+        others = [k for j, k in enumerate(keys) if j != i and k]
+        if len(mine) >= 2 and others:
+            single = any(mine <= k for k in others)
+            twin = [j for j, k in enumerate(keys) if j != i and k == mine]
+            if (not single and mine <= set().union(*others)) or (twin and twin[0] < i):
+                continue
+        out.append(r)
+    return out
 
 
 def sportOf(title, meet_name="", meters=None):
@@ -248,9 +293,15 @@ def fromHytek(meet, slug, url):
         lm.skipped += e.skipped
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
             continue
+        if isAgeGroup(e.title) or isCommunity(e.rows):
+            lm.skipped += len(e.rows)
+            continue
         lm.races.append(LandedRace(n=e.number, title=e.title, gender=e.gender,
                                    sport=getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters),
                                    meters=e.meters, rows=_landedRows(e.rows)))
+    kept = withoutReprints(lm.races)
+    lm.skipped += sum(len(r.rows) for r in lm.races if r not in kept)
+    lm.races = kept
     return lm
 
 
@@ -267,10 +318,13 @@ def fromMeetPro(index, results, slug, url):
     lm.venue = index.place
     for e in index.events:
         got = results.get(e.number) or []
-        if not got or e.relay or _FIELD.search(e.title):
+        if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title):
             continue
         rounds = got if isinstance(got[0], tuple) else [("", got)]
         for rnd, rows in rounds:
+            if isCommunity(rows):
+                lm.skipped += len(rows)
+                continue
             prelim = bool(re.search(r"prelim|semi|heat|quarter", rnd or "", re.I))
             if not rows:
                 continue

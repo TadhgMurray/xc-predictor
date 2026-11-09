@@ -191,6 +191,10 @@ async def _hytekReport(fetcher, slug, url, body):
     if not any(e.rows for e in meet.events) and meetreport.isReport(text):
         # not Hy-Tek: MeetPro's desktop report or a two-column results PDF
         meet = meetreport.parseReport(text, url)
+    elif not any(e.rows for e in meet.events) and meetreport.isRunMeet(text):
+        meet = meetreport.parseRunMeet(text, url)
+    elif not any(e.rows for e in meet.events) and meetreport.isTabbed(text):
+        meet = meetreport.parseTabbed(text, url)
     return land.fromHytek(meet, slug, url)
 
 
