@@ -119,13 +119,20 @@ class Meet:
 
 # ★ TEAM MANAGER TOO (parser review, 2026-11-02): only "Meet Manager" was a
 #   header, so a Team Manager report had no meet name, date or venue
-_HEADER = re.compile(r"hy-tek'?s\s+(?:meet|team)\s+manager", re.I)
+# ★ AND A REAL-TIME PAGE'S LICENCE LINE (2026-11-09, Live Running Results:
+#   Hy-Tek's real-time event pages open "<Timer> LLC - Contractor License",
+#   then the meet's name and day -- no "Meet Manager" line at all, so none
+#   was read as a report)
+_HEADER = re.compile(r"hy-tek'?s\s+(?:meet|team)\s+manager|^[^\n]{3,90}\s-\s+Contractor License\s*$", re.I | re.M)
 _EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*(.*)$", re.I)
 # ★ THE GENDER CAN COME LAST (2026-10-23, LiveTrackResults' youth meets:
 #   "Event 1  2000 Meter Run CC 8 & Under Division Girls"): the first pattern
 #   read no events at all on those pages
 _EVENT_ANY = re.compile(r"^\s*Event\s+(\d+)\s+(\S.*?)\s*$", re.I)
-_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b", re.I)
+# ★ OR A LETTER IN PARENTHESES (2026-11-09, TRXC Timing's GLVC and MSHSAA
+#   reports: "Event 1  (M) 8k Run CC"): no event at all was read on them
+_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b|\(([MFWBG])\)", re.I)
+_GENDER_LETTER = {"m": "men", "b": "boys", "f": "women", "w": "women", "g": "girls"}
 # ★ A "RANKINGS" REPORT HAS NO EVENT LINE (2026-10-25, YenTiming's Wayne
 #   Invitational modified races): the race's title stands alone --
 #   "Boys 2400 Meter Run CC Modified" -- above a header with a Comp# column
@@ -208,7 +215,8 @@ def _columns(header):
 
 
 def _splitName(name):
-    name = re.sub(r"\s+", " ", name).strip()
+    # ! A BIB BEFORE THE NAME ("#251 Tackett, Sydney": TSSAA's state reports)
+    name = re.sub(r"^#\d+\s+", "", re.sub(r"\s+", " ", name).strip())
     if "," in name:
         last, first = name.split(",", 1)
         return last.strip(), first.strip()
@@ -310,6 +318,14 @@ def parseReport(text):
                 if len(nxt) > 1 and not _EVENT.match(nxt[1]) and nxt[1].lower() not in (
                         "results", "rankings", "team rankings"):
                     meet.venue = nxt[1]
+                # ★ THE DAY ON THE VENUE'S LINE (TSSAA, 2026-11-09: "Sanders
+                #   Ferry Park - 11/2/2023 to 11/3/2023" under the title)
+                for ln in nxt[1:] if not meet.date else []:
+                    t = _TITLE_DATE.match(ln)
+                    if t:
+                        yr = t.group(4) if len(t.group(4)) == 4 else f"20{t.group(4)}"
+                        meet.date = f"{yr}-{int(t.group(2)):02d}-{int(t.group(3)):02d}"
+                        break
             continue
         ev = _EVENT.match(line)
         anyev = gw = None
@@ -334,7 +350,11 @@ def parseReport(text):
                 gender = _GENDER.get(ev.group(2).lower(), "")
             else:
                 num, title = int(anyev.group(1)), anyev.group(2).strip()
-                gender = _GENDER.get(gw.group(1).lower(), "")
+                word = gw.group(1) or _GENDER_LETTER[gw.group(2).lower()]
+                gender = _GENDER.get(word.lower(), "")
+                if gw.group(2):                 # '(M) 8k Run CC' -> 'Men 8k Run CC'
+                    title = (word.title() + " " + title.replace(gw.group(0), "", 1)).strip()
+                    title = re.sub(r"\s+", " ", title)
             # a report page break repeats the event header: keep adding to it
             if not (event and event.number == num):
                 event = Event(number=num, gender=gender, title=title, meters=metersOf(title))

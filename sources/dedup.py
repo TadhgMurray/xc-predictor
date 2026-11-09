@@ -53,7 +53,7 @@ for _p in (os.path.join(_ROOT, "scripts"), os.path.join(_ROOT, "engine")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-FEEDS = ("anet", "tfrrs", "upload", "timer")
+FEEDS = ("anet", "tfrrs", "upload", "timer", "ext")   # ext: other landed copies (stageFeed)
 STRONG_MIN = 3          # name-and-time pairs that make a race a twin outright
 MIN_MATCH = 3           # ... or this many pairs of any kind
 SHARE = 0.3             # ... that are at least this share of the race's finishers
@@ -186,13 +186,32 @@ def stageFeed(cur, days, sport):
         WHERE  r.source IN ({feeds})
           AND  substr(r.date, 1, 10) = ANY(%s)
           AND  r.time_seconds > 0 AND r.time_seconds < 100000 {keep}""", (sorted(days),))
+    # ★ A TIMER'S SECOND COPY (2026-11-09: CFPI posts one race as a PDF and
+    #   as HTML; two pages, two landed meets). The feeds above hold a timer
+    #   meet only once it is promoted, so two copies landed in one run were
+    #   both "new" and both promoted. Landed copies not yet promoted are a
+    #   feed too ('ext', meet_id = ext_meet_id): the EARLIER one wins
+    #   (_feedFor), the later is its twin.
+    cur.execute(f"""
+        INSERT INTO dd_feed
+        SELECT 'ext', x.ext_meet_id, x.race_n, substr(m.meet_date, 1, 10), x.time_seconds, x.school,
+               x.athlete_name{", NULL::bigint" if sport == "TF" else ", NULL::bigint"}
+        FROM   results_ext x
+        JOIN   meets_ext m ON m.ext_meet_id = x.ext_meet_id
+        JOIN   races_ext r ON r.ext_meet_id = x.ext_meet_id AND r.race_n = x.race_n
+        WHERE  m.status IN ('landed', 'new', 'partial') AND r.sport = %s AND r.twin_source IS NULL
+          AND  substr(m.meet_date, 1, 10) = ANY(%s)
+          AND  x.time_seconds > 0 AND x.time_seconds < 100000""", (sport, sorted(days)))
     cur.execute("CREATE INDEX ON dd_feed (d)")
 
 
-def _feedFor(cur, days, self_meet):
+def _feedFor(cur, days, self_meet, ext=None):
+    """The feed rows a landed meet is judged against: never its own, and of
+    the other landed copies ('ext') only those landed before it."""
     cur.execute("""SELECT source, meet_id, div_id, name, ts, school FROM dd_feed
-                   WHERE d = ANY(%s) AND NOT (source = 'timer' AND meet_id IS NOT DISTINCT FROM %s)""",
-                (days, self_meet))
+                   WHERE d = ANY(%s) AND NOT (source = 'timer' AND meet_id IS NOT DISTINCT FROM %s)
+                     AND NOT (source = 'ext' AND meet_id >= %s)""",
+                (days, self_meet, ext if ext is not None else -1))
     return [FRow(*r) for r in cur.fetchall()]
 
 
@@ -249,7 +268,7 @@ def run(conn, write=False, limit=None, show=20, ext_ids=None):
             stageFeed(cur, {d for m in mine for d in _days(m[1])}, sport)
             for ext, date, _name, _src in mine:
                 landed = [r for r in _landedFor(cur, ext) if race_sport.get((ext, r.race_n)) == sport]
-                for race_n, v in judge(landed, _feedFor(cur, _days(date), None), sport).items():
+                for race_n, v in judge(landed, _feedFor(cur, _days(date), None, ext), sport).items():
                     verdicts[ext][race_n] = v
                     meters = _feedMeters(cur, v.source, v.meet_id, v.div_id, sport) if v.twin else None
                     race_rows.append((ext, race_n, v.source if v.twin else None,

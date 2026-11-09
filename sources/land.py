@@ -198,14 +198,138 @@ _RELAY = re.compile(r"\brelay\b|\d\s*x\s*\d|medley|\bdmr\b|\bsmr\b", re.I)
 _FIELD = re.compile(r"jump|vault|throw|shot\s*put|discus|javelin|hammer|weight|pentathlon|"
                     r"heptathlon|decathlon", re.I)
 _STATE = re.compile(r",\s*([A-Z]{2})\b")
+# ★ AGE-GROUP RACES ARE A CLUB'S, NOT A SCHOOL'S (2026-11-09, Big River Race
+#   Management's youth invitational: "Boys 8 and Under 2K", "Girls 9-10 Year
+#   Old 3K"). No grade, a club for a team: they fit no pool we rate, and a
+#   linker would only find namesakes. Left out and counted as skipped.
+_AGE_GROUP = re.compile(r"\b\d{1,2}\s*(?:&|and)\s*(?:under|younger)\b|\b\d{1,2}\s*-\s*\d{1,2}\s*(?:year|yr)s?[\s-]*old\b"
+                        r"|\b(?:sub[\s-]*)?bantam\b|\bmidget\b|\b\d{1,2}U\b|\bage[\s-]*group\b"
+                        # club categories (Athletics Canada, USATF): U18, JD 9, Masters
+                        r"|\bU\s?\d{2}\b|\bJD\s?\d{1,2}\b|\bmasters?\b", re.I)
+# ★ OUTSIDE THE US (2026-11-09, a MeetPro account's "Trick or Trails",
+#   Richmond, BC): every pool we rate is a US one
+CANADA = {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"}
 
 
-def sportOf(title, meet_name="", meters=None):
+# ★ A SPLIT IS NOT A RACE (2026-11-09, Hy-Tek real time at Live Running
+#   Results: "#2 Women 1.93 Mile Run CC Split #1" is its own event, the
+#   runners' times at the first split). Landed, it would rate a partial
+#   distance as a finished race.
+#   Nor is a timing system's test event (Mancos' "Zero Test").
+_SPLIT = re.compile(r"\bsplits?\b(?!\s*(?:squad|team))|\btest\b", re.I)
+
+
+def isSplit(title):
+    return bool(_SPLIT.search(title or ""))
+
+
+# an AAU or Junior Olympics meet is age groups throughout (Snake River's
+# "AAU Region 21B": "Boys 2000m Steeple (15-16)", "Girls 3000 Meters (11)")
+_AGE_MEET = re.compile(r"\bAAU\b|junior\s+olympic|\bJ\.?O\.?\s+(?:champ|qualif)", re.I)
+_AGE_PAREN = re.compile(r"\((\d{1,2})(?:\s*-\s*(\d{1,2}))?\)\s*$")
+
+
+def isAgeGroup(title, meet_name=""):
+    """An age-group race: by its title ('8 and Under', 'U18', '(15-16)': an
+    age past any grade), or any race of an AAU / Junior Olympics meet."""
+    if _AGE_GROUP.search(title or "") or _AGE_MEET.search(meet_name or ""):
+        return True
+    m = _AGE_PAREN.search(title or "")
+    return bool(m and int(m.group(2) or m.group(1)) >= 13)
+
+
+# ★ A COMMUNITY RACE, NOT A SCHOOL RACE (2026-11-09, Finished Results'
+#   "Santiago Sharks 5k": Place Name Age Hometown Time -- runners aged 9 to
+#   57, "Corona, CA" where a school would be). The column read as the team is
+#   hometowns: most rows "City, ST". Nothing in it fits a pool we rate.
+_HOMETOWN = re.compile(r"^[A-Za-z][A-Za-z .'-]*,\s*[A-Z]{2}$")
+
+
+def isCommunity(rows):
+    """True when most of a race's teams are hometowns ('Corona, CA'). Pure."""
+    teams = [(r.school or "").strip() for r in rows]
+    teams = [t for t in teams if t]
+    return len(teams) >= 3 and sum(bool(_HOMETOWN.match(t)) for t in teams) >= 0.6 * len(teams)
+
+
+# ★ AN ELEMENTARY RACE (2026-11-09, Finish Line Results' "St. Matthew's
+#   Elementary Mini Meet": grades K to 5, a 0.8 km race). No pool we rate
+#   starts below grade 6; when most graded runners are in K-5 the race is
+#   left out. A middle school race with a few fifth graders stays.
+_ELEMENTARY = re.compile(r"^(K|[1-5])$", re.I)
+
+
+def isElementary(rows):
+    grades = [(r.grade or "").strip() for r in rows]
+    grades = [g for g in grades if g]
+    return len(grades) >= 3 and sum(bool(_ELEMENTARY.match(g)) for g in grades) > 0.5 * len(grades)
+
+
+def sportByTimes(sport, meters, rows):
+    """A race that states no distance and was run in cross country times
+    (median past ten minutes) is cross country: a track race always names
+    its distance (Rapid Results' 'Mens Open' on an XC championship day). Pure."""
+    if sport != "TF" or meters:
+        return sport
+    secs = sorted(r.seconds for r in rows if r.seconds)
+    return "XC" if secs and secs[len(secs) // 2] >= 600 else sport
+
+
+def oneSport(races, track_meet):
+    """A meet that is not a track meet and has a cross country race is a
+    cross country meet: all its races are XC. (2026-11-09, Jacksonville AC's
+    Parker Valby Invitational: the varsity races carried the team score that
+    says XC, the "BOYS (MS) • 3 Kilometers" race scored no teams and read TF.)"""
+    if not track_meet and any(r.sport == "XC" for r in races):
+        for r in races:
+            r.sport = "XC"
+    return races
+
+
+def withoutReprints(races):
+    """Races, less any that only re-prints others of the same meet: a
+    combined 'Boys and Girls 2K' whose every runner (name and time) is in
+    the meet's gendered races, but in no single one of them -- the same run
+    scored twice. A race printed twice keeps its first copy. Pure."""
+    def key(r):
+        return {(x.name.lower(), x.seconds) for x in r.rows if x.seconds is not None}
+    keys = [key(r) for r in races]
+    out = []
+    for i, r in enumerate(races):
+        mine = keys[i]
+        others = [k for j, k in enumerate(keys) if j != i and k]
+        if len(mine) >= 2 and others:
+            single = any(mine <= k for k in others)
+            twin = [j for j, k in enumerate(keys) if j != i and k == mine]
+            if (not single and mine <= set().union(*others)) or (twin and twin[0] < i):
+                continue
+        out.append(r)
+    return out
+
+
+# ! not relays: cross country has relay festivals ('4x2 Mile XC Relay')
+_TRACK_ONLY = re.compile(r"hurdle|steeple|dash|\b(?:55|60|100|110|200|300|400)\s*(?:m\b|meters?)", re.I)
+
+
+def isTrackMeet(titles):
+    """A meet holding a sprint, hurdles, a steeplechase or a field event is a
+    track meet, whatever its longest race. Pure."""
+    return any(_TRACK_ONLY.search(t or "") or _FIELD.search(t or "") for t in titles)
+
+
+def sportOf(title, meet_name="", meters=None, track_meet=False):
     """'XC' for a cross country race, else 'TF'. The race title first ('5k
     Run CC Varsity'), then the meet's name ('... XC Invitational'); a track
     meet has no 5k-plus race on the infield, so a distance past 5,000 m with
-    no track word in the meet's name reads cross country too."""
-    if _XC_WORDS.search(title or "") or _XC_WORDS.search(meet_name or ""):
+    no track word in the meet's name reads cross country too.
+    ! UNLESS THE MEET IS A TRACK MEET (2026-11-09, Trojan Timing's Scots
+      Invitational: its "Men's 10000 Meters" read XC beside the steeplechase
+      and the 1500): track_meet (isTrackMeet) keeps it TF."""
+    if _XC_WORDS.search(title or ""):
+        return "XC"
+    if track_meet:
+        return "TF"
+    if _XC_WORDS.search(meet_name or ""):
         return "XC"
     if meters and meters > 5000 and not re.search(r"track|t\s*&\s*f|relays", meet_name or "", re.I):
         return "XC"
@@ -244,13 +368,21 @@ def fromHytek(meet, slug, url):
     field events are left out: the engine rates individual running races."""
     lm = LandedMeet(slug=slug, url=url, name=meet.name, date=meet.date, venue=meet.venue,
                     place="", state=stateOf(meet.venue), licensee=meet.licensee)
+    track = isTrackMeet([e.title for e in meet.events])
     for e in meet.events:
         lm.skipped += e.skipped
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
             continue
+        if isAgeGroup(e.title, meet.name) or isCommunity(e.rows) or isElementary(e.rows) or isSplit(e.title):
+            lm.skipped += len(e.rows)
+            continue
+        sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters, track)
         lm.races.append(LandedRace(n=e.number, title=e.title, gender=e.gender,
-                                   sport=getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters),
+                                   sport=sportByTimes(sport, e.meters, e.rows),
                                    meters=e.meters, rows=_landedRows(e.rows)))
+    kept = withoutReprints(lm.races)
+    lm.skipped += sum(len(r.rows) for r in lm.races if r not in kept)
+    lm.races = oneSport(kept, track)
     return lm
 
 
@@ -265,20 +397,26 @@ def fromMeetPro(index, results, slug, url):
     lm = LandedMeet(slug=slug, url=url, name=index.name, date=index.date, venue="",
                     place=index.place, state=stateOf(index.place))
     lm.venue = index.place
+    track = isTrackMeet([e.title for e in index.events])
     for e in index.events:
         got = results.get(e.number) or []
-        if not got or e.relay or _FIELD.search(e.title):
+        if not got or e.relay or _FIELD.search(e.title) or isAgeGroup(e.title, index.name) or isSplit(e.title):
             continue
         rounds = got if isinstance(got[0], tuple) else [("", got)]
         for rnd, rows in rounds:
+            if isCommunity(rows) or isElementary(rows):
+                lm.skipped += len(rows)
+                continue
             prelim = bool(re.search(r"prelim|semi|heat|quarter", rnd or "", re.I))
             if not rows:
                 continue
             lm.races.append(LandedRace(n=e.number + (PRELIM_OFFSET if prelim else 0),
                                        title=e.title + (" Prelims" if prelim else ""), gender=e.gender,
                                        sport=("XC" if getattr(e, "xc", False)
-                                              else sportOf(e.title, index.name, e.meters)),
+                                              else sportByTimes(sportOf(e.title, index.name, e.meters, track),
+                                                                e.meters, rows)),
                                        meters=e.meters, rows=_landedRows(rows)))
+    lm.races = oneSport(lm.races, track)
     return lm
 
 

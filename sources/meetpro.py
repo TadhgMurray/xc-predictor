@@ -52,17 +52,25 @@ def _text(fragment):
 
 
 def _gender(title):
-    t = title.lower()
-    if re.search(r"\b(girls|women|female)\b", t):
-        return "F"
-    if re.search(r"\b(boys|men|male)\b", t):
-        return "M"
-    return ""
+    """'Girls 1600 Meters' -> 'F'. A title naming both ('MEN & WOMEN (High
+    School) • 5 Kilometers Women's': a combined race scored by gender) is
+    the gender it names LAST."""
+    words = re.findall(r"\b(girls?|women'?s?|female|boys?|men'?s?|male)\b", title.lower())
+    if not words:
+        return ""
+    return "F" if words[-1].startswith(("girl", "women", "female")) else "M"
 
 
 def _isoDate(text):
-    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", text)
-    return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}" if m else ""
+    """'5/20/2022' -> '2022-05-20'. ! ALSO IN THE TIMER'S LOCALE (2026-11-09):
+    '4/17/26' (Butler Track) and '2026-10-31' (a Canadian timer) both read
+    as no date, and an undated meet cannot be rated."""
+    m = re.search(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})(?![\d/])", text)
+    if m:
+        y = m.group(3) if len(m.group(3)) == 4 else f"20{m.group(3)}"
+        return f"{y}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    m = re.search(r"(?<!\d)(20\d\d)-(\d{2})-(\d{2})(?!\d)", text)
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
 
 
 def parseMeetIndex(page):
@@ -80,17 +88,45 @@ def parseMeetIndex(page):
             out.place = t
     if not out.date:
         out.date = _isoDate(_text(page[:4000]))
+    seen = set()
     for row in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S | re.I):
         num = re.search(r'class="event-num"[^>]*>(.*?)</td>', row, re.S)
         ev = re.search(r'class="event"[^>]*>(.*?)</td>', row, re.S)
-        if not (num and ev and _text(num.group(1)).isdigit()):
-            continue
         res = re.search(r'class="results"[^>]*>.*?href=[\'"]([^\'"]+)[\'"]', row, re.S)
+        if not ev:
+            continue
+        # ★ NO NUMBER CELL (MeetProTemplate_v1.3 / v1.6, 2026-11-09: Tiffin
+        #   Timing, Goddard Schools): the event's number is the one in its
+        #   page names, results_35.html / start_list_35.html -- and each
+        #   round is its own row pointing at the same page (#round_1, _2),
+        #   which parseRounds already splits, so a number is read once
+        n = _text(num.group(1)) if num else ""
+        if not n.isdigit():
+            byHref = re.search(r"(?:results|start_list)_(\d+)\.html?", row, re.I)
+            if num or not byHref:
+                continue
+            n = byHref.group(1)
+        if int(n) in seen:
+            continue
+        seen.add(int(n))
         name = _text(ev.group(1))
-        out.events.append(MeetEvent(int(_text(num.group(1))), name, _gender(name),
-                                    metersOf(name), res.group(1) if res else "",
+        href = res.group(1).split("#")[0] if res else ""
+        out.events.append(MeetEvent(int(n), name, _gender(name), metersOf(name), href,
                                     bool(re.search(r"\d\s*x\s*\d|relay|medley", name, re.I))))
     return out
+
+
+# ! A MEETPRO PAGE SAYS SO IN ITS TEMPLATE, NOT IN ITS TEXT (2026-11-09: CAG's
+#   Timing's homepage links to "MeetPro" and read as an empty MeetPro meet,
+#   so the meets it links were never followed)
+_MARK_PAGE = re.compile(rb"MeetProTemplate|\|\s*MeetPro by DirectAthletics|<!-- MeetPro \d")
+
+
+def isMeetProPage(body):
+    """True for a page MeetPro wrote (any template version)."""
+    if isinstance(body, str):
+        body = body.encode("utf-8", "replace")
+    return bool(body and _MARK_PAGE.search(body[:20000]))
 
 
 def _splitName(name):
@@ -120,10 +156,27 @@ _ROUND = re.compile(r'<h4[^>]*round-results-hdr[^>]*>(.*?)</h4>', re.S | re.I)
 _TABLE = re.compile(r"<table[^>]*results-table[^>]*>(.*?)</table>", re.S | re.I)
 
 
+# ! A TABLE INSIDE A ROW (2026-11-09, Trojan Timing's Scots Invitational,
+#   template v1.3: each runner's splits are a <table class="splits-table"> in
+#   the row). The results table's pattern stopped at the first inner
+#   </table>, and every race read one runner. Inner tables go first.
+_INNER_TABLE = re.compile(r"<table(?![^>]*results-table)[^>]*>(?:(?!<table\b).)*?</table>", re.S | re.I)
+
+
+def withoutInnerTables(page):
+    """A page less every table that holds no other table and is not a
+    results table: split and relay-leg tables nested in a row. Pure."""
+    prev = None
+    while prev != page:
+        prev, page = page, _INNER_TABLE.sub(" ", page)
+    return page
+
+
 def parseRounds(page):
     """A MeetPro results page -> [(round title, [Row])] in page order, the
     overall table of each round (heats skipped). One untitled round ('')
     when the page names none."""
+    page = withoutInnerTables(page)
     marks = [(m.start(), _text(m.group(1))) for m in _ROUND.finditer(page)]
     out = []
     for t in _TABLE.finditer(page):
@@ -183,10 +236,24 @@ def _tableRows(table):
 #   on it, so every such meet read as "no individual races".
 _SECTION = re.compile(r'<section[^>]*id="event(\d+)"[^>]*>(.*?)</section>', re.S | re.I)
 _ONE_TABLE = re.compile(r'<table[^>]*class="[^"]*\bresult-table\b[^"]*"[^>]*>(.*?)</table>', re.S | re.I)
+# ★ TEMPLATE v1.0 (2026-11-09, Snake River Timing's meets on results.tfmeetpro
+#   .com): the same sections, but the individual table is a plain "table"
+#   whose cells are ath-place / ath-name / ath-team / ath-score
+_ANY_TABLE = re.compile(r"<table[^>]*>(.*?)</table>", re.S | re.I)
+
+
+def _individualTable(body):
+    m = _ONE_TABLE.search(body)
+    if m:
+        return m.group(1)
+    for t in _ANY_TABLE.finditer(body):
+        if re.search(r'class=["\']ath-name', t.group(1)):
+            return t.group(1)
+    return ""
 
 
 def isSinglePage(page):
-    return bool(_SECTION.search(page) and _ONE_TABLE.search(page))
+    return bool(_SECTION.search(page) and (_ONE_TABLE.search(page) or re.search(r'class=["\']ath-name', page)))
 
 
 def parseSinglePage(page):
@@ -202,21 +269,32 @@ def parseSinglePage(page):
         elif t and not idx.place and re.search(r",\s*[A-Z]{2}\b", t):
             idx.place = t
     results = {}
+    # ! TWO SECTIONS CAN SHARE AN ID (Finish Line Results, 2026-11-09: a
+    #   "MEN & WOMEN" race scored by gender is <section id="event5"> twice,
+    #   boys then girls). Keyed by the id alone, the girls' rows replaced the
+    #   boys' and landed under both titles: a repeat id gets its own number.
+    used = set()
     for num, body in _SECTION.findall(page):
         cells = [_text(x) for x in re.findall(r'class="bold-cell"[^>]*>(.*?)</p>', body, re.S | re.I)]
         name = next((c for c in reversed(cells) if c and not re.match(r"race\s*#", c, re.I)), "")
         if not name:
             continue
         n = int(num)
+        while n in used:
+            n += 1000
+        used.add(n)
         # a cross country team score: five scorers, displacers in brackets, a
         # 1-5 spread -- no track meet scores a race like that
         xc = bool(re.search(r'class="(?:spread|scoring-order)"', body))
         idx.events.append(MeetEvent(n, name, _gender(name), metersOf(name), f"#event{n}",
                                     bool(re.search(r"\d\s*x\s*\d|relay|medley", name, re.I)), xc))
-        table = _ONE_TABLE.search(body)
         rows = []
-        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", table.group(1) if table else "", re.S | re.I):
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", _individualTable(body), re.S | re.I):
             c = _cells(tr)
+            for short in ("name", "place", "score", "year", "grade", "yr"):
+                if f"ath-{short}" in c and short not in c:
+                    c[short] = c[f"ath-{short}"]
+            c.setdefault("athlete", c.get("name", ""))
             if not c.get("athlete"):
                 continue
             mark = (c.get("time") or c.get("mark") or "").split(" ")[0]
@@ -226,7 +304,7 @@ def parseSinglePage(page):
             rows.append(Row(
                 place=int(place) if place.isdigit() else None,
                 last=last, first=first,
-                grade=(c.get("year") or c.get("grade") or "").upper(),
+                grade=(c.get("year") or c.get("grade") or c.get("yr") or "").upper(),
                 school=c.get("ath-team") or c.get("team", ""),
                 seconds=secondsOf(mark), mark=mark or place,
                 points=int(c["score"]) if c.get("score", "").isdigit() else None))
