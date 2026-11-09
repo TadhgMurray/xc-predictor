@@ -5489,6 +5489,16 @@ def _finishedSqlFor(cur):
     return "r.time_seconds < 999999"
 
 
+# ★ ONCE PER MEET FOR THE BOX (2026-11-09: the slow log's second costliest
+#   statement, 836 runs over 250 ms in 48 h). The meet page, each of its
+#   ?school= / ?r= links and every race page of the meet ask the same
+#   question, and it reads every result's profile for the gender. Shared by
+#   every worker for MEET_DIVISIONS_TTL, keyed by the meet, the feed and
+#   results' oid (a go-live rebuilds results as a new table); an empty
+#   answer is not kept, so a meet still arriving is read again.
+MEET_DIVISIONS_TTL = 1800.0
+
+
 def get_meet_divisions(cur, meet_id, source=None):
     """Every division in this meet, with how many results each has.
 
@@ -5496,6 +5506,18 @@ def get_meet_divisions(cur, meet_id, source=None):
       DISTANCE come from the jsonb blob when `meets` has nothing, which is what
       turns a row of blanks into a usable link.
     """
+    import sharedcache
+    oid = sharedcache.tableOid(cur, "results")
+    if oid is None:
+        return _meetDivisionsRows(cur, meet_id, source)
+    rows, _at = sharedcache.get(
+        f"meetdiv-{oid}-{int(meet_id)}-{source or ''}",
+        lambda: [dict(r) for r in _meetDivisionsRows(cur, meet_id, source)],
+        ttl=MEET_DIVISIONS_TTL, keep=bool)
+    return [dict(r) for r in rows]
+
+
+def _meetDivisionsRows(cur, meet_id, source=None):
     cur.execute(f"""
         SELECT r.div_id                              AS div_id,
                COALESCE(m.division,
