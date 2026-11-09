@@ -7570,7 +7570,7 @@ def school_page(school_name):
     """
     from school import (schoolHeader, schoolYears, schoolRoster, schoolMeets,
                         schoolBest, schoolTopAthletes, currentSeason,
-                        seasonLabel, storedYear)
+                        seasonLabel, storedYear, sharedSchool)
     from school_identity import stateChips
     from panels import isTeamName
 
@@ -7617,7 +7617,7 @@ def school_page(school_name):
                 state = primary_state
             # ! AFTER THE CHIP, so the span is this school's and not every
             #   namesake's (sweep 2026-10-10)
-            header = schoolHeader(cur, school_name, state, primary_state)
+            header = sharedSchool(cur, schoolHeader, school_name, state, primary_state)
             if header is None:
                 abort(404)
             # long form here: this line is not shared with a grade and a
@@ -7682,7 +7682,7 @@ def school_page(school_name):
                     units = unitsFor(cur, school_name, state or primary_state,
                                      sport, long=True, level=_main)
 
-            years = schoolYears(cur, school_name, state, primary_state)
+            years = sharedSchool(cur, schoolYears, school_name, state, primary_state)
 
             # ★ THE SCHOOL NAME LANDS ON THE HISTORY, NOT ON A YEAR. With no
             #   ?year the page is the whole programme, with the CURRENT roster
@@ -7698,8 +7698,8 @@ def school_page(school_name):
             picked = int(raw) if raw and raw.isdigit() else None
             picked_stored = storedYear(sport, picked)
 
-            year   = picked_stored or currentSeason(cur, school_name, sport,
-                                                 state, primary_state)
+            year   = picked_stored or sharedSchool(cur, currentSeason, school_name, sport,
+                                                        state, primary_state)
             roster = (schoolRoster(cur, school_name, year, sport,
                                    state=state, primary=primary_state)
                       if year else [])
@@ -7708,10 +7708,10 @@ def school_page(school_name):
                                  level=level)
             # deeper than the old 25: the tables reveal in place now, and
             # the cap is what "show more" runs out against
-            best   = schoolBest(cur, school_name, sport, limit=100,
-                                state=state, primary=primary_state)
-            top    = schoolTopAthletes(cur, school_name, sport, limit=100,
-                                       state=state, primary=primary_state)
+            best   = sharedSchool(cur, schoolBest, school_name, sport, limit=100,
+                                  state=state, primary=primary_state)
+            top    = sharedSchool(cur, schoolTopAthletes, school_name, sport, limit=100,
+                                  state=state, primary=primary_state)
             # ★ THE RECORD BOOK TAB (2026-10-10): one primary-key read of
             #   the precomputed book (build_record_books.py); None until built
             import record_books as _RB

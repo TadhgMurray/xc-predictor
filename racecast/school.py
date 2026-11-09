@@ -715,3 +715,55 @@ def schoolTopAthletes(cur, school, sport, limit=12,
     rows = fetchCappedPerPool(cur, limit)
     _fillRowNames(cur, rows)               # as schoolBest (sweep 2026-10-10)
     return rows
+
+# ★ THE SCHOOL'S HISTORY ONCE, NOT ONCE PER LINK (2026-11-09: /school/:name
+#   was the slow log's costliest page kind, 3,229 statements over 250 ms in
+#   48 h). The header, the year bar, the current season, the all-time best
+#   and the top athletes are the same for every ?year= of a school, and a
+#   crawler walks every year. They are shared by every worker
+#   (sharedcache) for SCHOOL_SHARED_TTL, keyed by the call, the boards
+#   tables' oids (a swapped-in build is a new copy) and the day; the roster
+#   and the meet list change with the year and are read per request.
+# ! A DEGRADED ANSWER IS NOT SHARED: a header whose count ran out of budget
+#   (athletes None) or a missing school (None) is computed again next time.
+SCHOOL_SHARED_TTL = 1800.0
+
+
+def _plain(v):
+    """Rows as plain dicts (RealDictRow does not pickle reliably), lists
+    keeping their own type and attributes (capped.Capped's truncated)."""
+    if isinstance(v, dict):
+        return {k: _plain(x) for k, x in v.items()}
+    if isinstance(v, list):
+        items = [_plain(x) for x in v]
+        if type(v) is list:
+            return items
+        out = type(v)(items)
+        out.__dict__.update(getattr(v, "__dict__", {}))
+        return out
+    if isinstance(v, tuple):
+        return tuple(_plain(x) for x in v)
+    return v
+
+
+def _keepShared(v):
+    if v is None:
+        return False
+    return not (isinstance(v, dict) and "athletes" in v and v["athletes"] is None)
+
+
+def sharedSchool(cur, fn, *args, **kw):
+    """fn(cur, *args, **kw), shared across the box's workers."""
+    import datetime
+    import hashlib
+    import sharedcache
+    oids = (sharedcache.tableOid(cur, "athlete_season"),
+            sharedcache.tableOid(cur, "ranking_results"))
+    if None in oids:
+        return fn(cur, *args, **kw)
+    key = repr((fn.__name__, args, sorted(kw.items()), oids,
+                datetime.date.today().isoformat()))
+    name = "school-" + hashlib.sha1(key.encode("utf-8")).hexdigest()
+    value, _at = sharedcache.get(name, lambda: _plain(fn(cur, *args, **kw)),
+                                 ttl=SCHOOL_SHARED_TTL, keep=_keepShared)
+    return value
