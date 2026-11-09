@@ -359,3 +359,38 @@ def test_a_results_page_on_record_that_is_itself_a_report_is_one_meet():
     src = type("S", (), {"results_url": url, "website": "", "slug": "t"})()
     urls, note = asyncio.run(discover.discover(fetcher, src, 2026, 5))
     assert urls == [(url, "hytek")] and "one report" in note
+
+
+# ------------------------------------------------------------- Flash Results
+FLASH_INDEX = """<html><body><a class='navbar-brand' href='index.htm'></a>
+<p class='navbar-text text'>Valley Conference Championships<br><small>Lakeport, VA | October 30, 2026</small></p>
+<table><tr><td class = 'fixed-column'><a href=002-1_compiled.htm><b>Men 8k</b></a></td><td><a href=002-1_compiled.htm><b>Result</b></a></td></tr>
+<tr><td class = 'fixed-column'><a href=201-1_compiled.htm><i>Men 1.4k Split</i></a></td><td><a href=201-1_compiled.htm><i>Split</i></a></td></tr>
+<tr><td class = 'fixed-column'><a href=001-1_compiled.htm><b>Women 6k</b></a></td><td><a href=001-1_compiled.htm><b>Result</b></a></td></tr>
+</table><p>Flash Results Inc.</p></body></html>"""
+
+FLASH_RACE = """<table class='table' id='xc_indiv'><caption>Men 8k</caption>
+<thead class='thead-dark'><tr><th>Pl</th><th></th><th>Athlete</th><th>Time</th><th>Pace</th><th>Pts</th></tr></thead><tbody>
+<tr><td>1</td><td class='center'><image src=logos/N.png></td><td><b>Adam ALPHA</b><br> <small>North State [SO]</small></td><td>22:03.5<br></td></small><td>4:26</td><td>1</td></tr>
+<tr><td>2</td><td class='center'><image src=logos/S.png></td><td><b>Ben VAN BRAVO</b><br> <small>South State [SR]</small></td><td>22:10.0<br><small>+6</td></small><td>4:27</td><td>2</td></tr>
+</tbody></table>"""
+
+
+def test_flash_results_index_names_its_races_and_skips_their_splits():
+    from sources import flashresults as F
+    url = "https://timer.example/2027_Meets/xc/VALLEY/index.htm"
+    assert F.isMeetIndex(FLASH_INDEX) and discover.isReport(FLASH_INDEX.encode())
+    assert F.parseIndex(FLASH_INDEX) == ("Valley Conference Championships", "2026-10-30", "Lakeport, VA")
+    assert F.raceLinks(FLASH_INDEX, url) == [("https://timer.example/2027_Meets/xc/VALLEY/002-1_compiled.htm", "Men 8k"),
+                                             ("https://timer.example/2027_Meets/xc/VALLEY/001-1_compiled.htm", "Women 6k")]
+    rows = F.parseRace(FLASH_RACE)
+    assert [(r.place, r.first, r.last, r.grade, r.school, r.seconds) for r in rows] == [
+        (1, "Adam", "Alpha", "SO", "North State", 1323.5), (2, "Ben", "Van Bravo", "SR", "South State", 1330.0)]
+
+
+def test_hytek_real_time_files_of_one_day_are_one_meet():
+    got = discover.grouped([("http://t.example/e/260730F001.htm", "hytek"), ("http://t.example/e/260730P002.htm", "hytek"),
+                            ("http://t.example/e/260730F003.htm", "hytek")])
+    assert got == [("http://t.example/e/", ("group", ["http://t.example/e/260730F001.htm",
+                                                      "http://t.example/e/260730P002.htm",
+                                                      "http://t.example/e/260730F003.htm"]))]

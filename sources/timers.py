@@ -54,7 +54,7 @@ for _p in (_ROOT, os.path.join(_ROOT, "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sources import datarows, hytek, land, meetpro, meetreport, registry     # noqa: E402
+from sources import datarows, flashresults, hytek, land, meetpro, meetreport, registry     # noqa: E402
 
 _now = time.monotonic       # the budget's clock (tests replace it)
 MAX_AGE = 30 * 86400        # a page fetched within 30 days is read from the store
@@ -144,12 +144,33 @@ async def fetchMeet(fetcher, slug, url, kind=None):
             if r.body:
                 results[e.number] = meetpro.parseRounds(r.body.decode("utf-8", "replace"))
         return land.fromMeetPro(idx, results, slug, url), "meetpro"
+    if got.body[:5] != b"%PDF-" and flashresults.isMeetIndex(got.body.decode("utf-8", "replace")):
+        return await flashMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "flash results"
     if got.body[:5] != b"%PDF-" and datarows.isDataPage(got.body.decode("utf-8", "replace")):
         return await dataRowsMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "data rows"
     listing = directoryReports(got.body.decode("utf-8", "replace"), url) if got.body[:5] != b"%PDF-" else []
     if listing:
         return await mergeReports(fetcher, slug, url, listing)
     return await _hytekReport(fetcher, slug, url, got.body), "hytek"
+
+
+async def flashMeet(fetcher, slug, url, page):
+    """A Flash Results meet index and its races' result pages -> LandedMeet."""
+    name, date, place = flashresults.parseIndex(page)
+    meet = hytek.Meet(name=name, date=date, venue=place)
+    xc = bool(re.search(r"/xc/", url, re.I))
+    for k, (rurl, title) in enumerate(flashresults.raceLinks(page, url)[:MAX_PAGES], 1):
+        r = await fetcher.fetch(rurl, MAX_AGE)
+        if not r.body or _isChallenge(r.body):
+            continue
+        e = hytek.Event(number=k, gender=meetpro._gender(title), title=title, meters=hytek.metersOf(title))
+        e.rows = flashresults.parseRace(r.body.decode("utf-8", "replace"))
+        if xc:
+            e.sport = "XC"
+        meet.events.append(e)
+    lm = land.fromHytek(meet, slug, url)
+    lm.place, lm.state = place, land.stateOf(place)
+    return lm
 
 
 async def dataRowsMeet(fetcher, slug, url, page):

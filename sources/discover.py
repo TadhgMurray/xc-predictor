@@ -343,7 +343,14 @@ def grouped(found):
     groups, order = {}, []
     for u, k in found:
         m = _NUMBERED.match(u) if k == "hytek" else None
-        key = (m.group("dir"), m.group("stem").lower()) if m else (u, None)
+        stem = m.group("stem").lower() if m else None
+        # ! HY-TEK'S REAL-TIME FILES ARE ONE MEET (Live Running Results:
+        #   260730F036.htm finals beside 260730P074.htm prelims): grouped by
+        #   their day, not by the round letter -- two groups would both land
+        #   under the folder's url, the second over the first
+        if stem and re.fullmatch(r"\d{6}[a-z]", stem):
+            stem = stem[:6]
+        key = (m.group("dir"), stem) if m else (u, None)
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -387,10 +394,11 @@ def isReport(body):
     # ! CRYSTAL REPORTS HTML (Hy-Tek's web export: YenTiming, Ticker Timing)
     #   places every word in its own <div>, so the Hy-Tek line never reads
     #   whole in the raw page
-    from sources import datarows
+    from sources import datarows, flashresults
     text = body[:400000].decode("utf-8", "replace")
     return (bool(hytek._HEADER.search(head.decode("utf-8", "replace"))) or b"MeetPro" in head[:20000]
-            or b"Crystal Reports" in head[:2000] or datarows.isDataPage(text))
+            or b"Crystal Reports" in head[:2000] or datarows.isDataPage(text)
+            or flashresults.isMeetIndex(text))
 
 
 async def walkListing(fetcher, url, since_year, max_age, need, depth=0):
