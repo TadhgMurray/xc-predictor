@@ -28,6 +28,12 @@
 #   XCP_REPLAY_MIN_GB available (default 70), and not in XCP_REPLAY_QUIET
 #   (default 03:30-07:00 UTC, the Postgres restart). A pipeline that is only
 #   running its other steps does not hold it up.
+# ★ SEVERAL AT ONCE (owner, 2026-11-09: 65 min a cutoff, 31 h for all). Start
+#   the script in two or three tmux sessions: each CLAIMS a cutoff before
+#   solving it ($OUT/.claim_<date>, holding its pid; a dead holder's claim is
+#   taken over), so no two solve the same one. Other REPLAYS do not count as
+#   busy; the memory floor still guards every start, so a second solve only
+#   starts when XCP_REPLAY_MIN_GB is free with the first one running.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -57,8 +63,22 @@ inQuiet() {
   [ "$now" -ge "$lo" ] && [ "$now" -lt "$hi" ]
 }
 busy() {
-  pgrep -f "engine/run_joint.py|model/race_rows.py|model/race_trees.py|model/race_blend.py" >/dev/null
+  # another solve that is not a replay (the go-live, a holdout), or a model fit
+  pgrep -af "engine/run_joint.py" | grep -v -- "--asof" | grep -q . && return 0
+  pgrep -f "model/race_rows.py|model/race_trees.py|model/race_blend.py" >/dev/null
 }
+# one cutoff, one session: mkdir is atomic; the claim holds the solver's pid
+claim() {
+  local c="$OUT/.claim_$1"
+  # a solve of it already running (a session from before claims existed)
+  pgrep -f -- "--asof $1 " >/dev/null && return 1
+  if mkdir "$c" 2>/dev/null; then echo $$ > "$c/pid"; return 0; fi
+  local pid; pid="$(cat "$c/pid" 2>/dev/null)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 1; fi
+  echo $$ > "$c/pid"                      # its holder is gone: take it over
+  return 0
+}
+unclaim() { rm -rf "$OUT/.claim_$1"; }
 availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
 ready() { ! inQuiet && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
 say() { echo "[replay] $(date -u '+%F %H:%M') UTC  $*" | tee -a "$LOGDIR/summary.log"; }
@@ -75,14 +95,16 @@ mkdir -p "$OUT" "$LOGDIR"
 
 for d in $DATES; do
   snap="$OUT/asof_$d.npz"
-  if [ -f "$snap" ]; then say "$d already done"; continue; fi
+  if [ -f "$snap" ]; then continue; fi
   waited=0
   until ready; do
     [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
     waited=1
     sleep 300
   done
-  say "$d: solving on the rows before it: tail -f $LOGDIR/asof_$d.log"
+  # memory is free: claim it, unless another session has (or has finished it)
+  if [ -f "$snap" ] || ! claim "$d"; then continue; fi
+  say "$d: solving on the rows before it (session $$): tail -f $LOGDIR/asof_$d.log"
   t0=$(date +%s)
   if nice -n 10 "$PY" -u engine/run_joint.py --asof "$d" --snapshot "$snap" \
        "${JOINT_FLAGS[@]}" > "$LOGDIR/asof_$d.log" 2>&1; then
@@ -92,5 +114,7 @@ for d in $DATES; do
   fi
   # the solve's own npz and state are large and read by nothing: the snapshot is the output
   rm -f "${snap%.npz}_joint.npz" "${snap%.npz}_joint_state.npz"
+  unclaim "$d"
+  sleep 120                               # let the next session's memory check see this one's
 done
 say "all cutoffs tried: $(ls "$OUT"/asof_*.npz 2>/dev/null | wc -l) snapshots in $OUT"
