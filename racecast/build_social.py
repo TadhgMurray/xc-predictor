@@ -165,6 +165,7 @@ def main():
             from predict import _currentSeason
             year = int(_currentSeason(cur, sport))
             posts = []
+            week0 = None
             for pool in pools:
                 cur.execute("""SELECT DISTINCT week FROM season_rank_weekly
                                WHERE sport = %s AND pool = %s AND year = %s
@@ -213,13 +214,48 @@ def main():
                             cur.execute("ROLLBACK TO SAVEPOINT sp_extra")
                             print(f"[social] {st} {pool} extra: {type(exc).__name__}: {str(exc)[:160]}")
                 print(f"[social] {sport} {pool} week of {weeks[0]}: {len(states)} states")
+                week0 = max(week0, weeks[0]) if week0 else weeks[0]
+            # ★ ANY PREDICTED RACE (owner, 2026-11-09: "What about other
+            #   predicted races like NCAAs?"): the championships of the next
+            #   week (NCAA, NXN, NAIA, state finals) and each state's biggest
+            #   stored forecast, as "who wins" posts (social.previewPosts).
+            #   A championship with no stored forecast runs the model once
+            #   per race, so there is a cap and a time budget.
+            if (sport == "XC" and week0 and not a.state
+                    and os.environ.get("XCP_SOCIAL_PREVIEWS", "1") != "0"):
+                t2 = time.time()
+                cap = int(os.environ.get("XCP_SOCIAL_PREVIEW_MAX") or 40)
+                budget = 60 * float(os.environ.get("XCP_SOCIAL_PREVIEW_MINUTES") or 15)
+                try:
+                    targets = S.previewTargets(cur)
+                except Exception as exc:                # noqa: BLE001
+                    conn.rollback()
+                    print(f"[social] preview races: {type(exc).__name__}: {str(exc)[:160]}")
+                    targets = []
+                n_prev = 0
+                for t in targets[:cap]:
+                    if time.time() - t2 > budget:
+                        print(f"[social] previews: out of time after {n_prev} race(s)")
+                        break
+                    try:
+                        cur.execute("SAVEPOINT sp_prev")
+                        cur.execute("SET LOCAL statement_timeout = '180s'")
+                        got = S.previewPosts(cur, sport, week0, *t)
+                        cur.execute("RELEASE SAVEPOINT sp_prev")
+                        posts += got
+                        n_prev += bool(got)
+                    except Exception as exc:            # noqa: BLE001
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_prev")
+                        print(f"[social] preview {t}: {type(exc).__name__}: {str(exc)[:160]}")
+                print(f"[social] previews: {n_prev} of {len(targets)} race(s) "
+                      f"[{time.time() - t2:.0f}s]")
             conn.rollback()
     if not posts:
         print("[social] no posts this run")
         return
 
     for p in posts:
-        p["photo"] = S.pickPhoto(photos, S.postKey(p), None if p["scope"] == "US" else p["scope"])
+        p["photo"] = S.pickPhoto(photos, S.postKey(p), S.scopeState(p))
         p["caption"] = S.caption(p)
 
     # ★ THE COMPOSER DRAWS THEM (racecast/social_compose.py, owner-approved
@@ -248,7 +284,7 @@ def main():
         p["png_path"] = None
         p["spec"] = C.defaultSpec(p)
         htmls = C.pages(p, p["spec"], C.fileAssets(None))
-        name = f'{p["week"]}_{p["sport"]}_{p["pool"]}_{p["scope"]}_{p["kind"]}'
+        name = f'{p["week"]}_{p["sport"]}_{p["pool"]}_{p["scope"].replace("~", "_")}_{p["kind"]}'
         if a.html_dir:
             os.makedirs(a.html_dir, exist_ok=True)
             for i, html in enumerate(htmls):
@@ -282,7 +318,8 @@ def main():
                 cur.execute("""DELETE FROM social_post WHERE week = %s AND scope = %s AND pool = ANY(%s)""",
                             (week, a.state.upper(), pools))
             else:
-                cur.execute("DELETE FROM social_post WHERE week = %s AND sport = ANY(%s) AND pool = ANY(%s)",
+                cur.execute("""DELETE FROM social_post WHERE week = %s AND sport = ANY(%s)
+                                 AND (pool = ANY(%s) OR kind IN ('preview', 'teampreview'))""",
                             (week, sports, pools))
             for p in posts:
                 cur.execute("""INSERT INTO social_post (week, sport, pool, scope, kind, data, caption, png_path)

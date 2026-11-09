@@ -123,3 +123,38 @@ def test_picks_team_odds_and_the_recap_draw():
         h = C.pages(rc, {"body": body}, A)[0]
         assert "MHSAA LP FINALS" in h and "14:45.9" in h
     assert "Points" in C.pages(rc, {"body": "recap"}, A)[0]
+
+
+def _preview(kind="preview", **kw):
+    p = _post(kind, 8, scope="US~anet501~7", scope_name="NCAA DI XC Championship", state=None,
+              pool="college_m", meet_name="NCAA Division I Cross Country Championships 2025",
+              meet_short="NCAA DI XC Championship", race_label="Men's 10K", meet_date="2026-11-21",
+              distance=10000, teams=[{"rank": i + 1, "school": f"T{i}", "score": 80 + 30 * i,
+                                      "p_win": 0.5 / (i + 1)} for i in range(5)])
+    for i, r in enumerate(p["rows"]):
+        r.update(time=f"28:{10 + i:02d}.0", p_win=0.3 / (i + 1))
+        if kind == "teampreview":
+            r.update(name=None, score=80 + 30 * i)
+    p.update(kw)
+    return p
+
+
+def test_a_predicted_race_draws_every_body_with_the_meet_in_the_title():
+    """Any predicted race (owner, 2026-11-09: "What about other predicted
+    races like NCAAs?"): the picks, their times and win chances, the teams."""
+    for kind in ("preview", "teampreview"):
+        p = _preview(kind)
+        for body in C.bodiesFor(kind):
+            for photo in C.PHOTOS:
+                for fmt in C.FORMATS:
+                    pages = C.pages(p, {"body": body, "photo": photo, "fmt": fmt}, A)
+                    assert pages and "NCAA DI XC CHAMPIONSHIP" in pages[0], (kind, body, photo, fmt)
+    h = C.pages(_preview(), {"body": "both"}, A)[0]
+    assert "WHO WINS NCAA DI XC CHAMPIONSHIP?" in h and "28:10.0" in h and "30%" in h
+    assert "Men&#x27;s 10K · Nov 21 · <b>" in h and ">Score<" in h
+    assert "NCAA DI XC CHAMPIONSHIP: THE TEAM RACE" not in h
+    h = C.pages(_preview("teampreview"), {"body": "odds"}, A)[0]
+    assert "predicted score 80" in h
+    # a national race has no state for its crests; a state final keeps its own
+    assert C._st(_preview()) is None
+    assert C._st(_preview(state="MI", scope="MI~anet9~1")) == "MI"

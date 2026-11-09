@@ -276,3 +276,47 @@ def test_board_query(monkeypatch):
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_a_race_preview_names_its_meet_short_and_its_state():
+    import social as S
+    assert S.shortMeetName("NCAA Division I Cross Country Championships 2025") == "NCAA DI XC Championship"
+    assert S.shortMeetName("2025 Nike Cross Nationals") == "Nike Cross Nationals"
+    assert S.shortMeetName("NCAA Division III Cross Country Champs (67th Men & 44th Women)") == "NCAA DIII XC Championship"
+    assert S.scopeState({"scope": "US~anet5~2"}) is None
+    assert S.scopeState({"scope": "MI~anet5~2"}) == "MI"
+    assert S.scopeState({"scope": "MI"}) == "MI" and S.scopeState({"scope": "US"}) is None
+    assert S.hashtags({"sport": "XC", "pool": "college_m", "scope": "US~anet5~2"}) == "#ncaaxc #crosscountry"
+
+
+def test_win_chances_follow_the_predicted_times():
+    import social as S
+    runners = [{"person_id": i, "school": f"S{i % 4}", "seconds": 900 + 3 * i, "sigma_pct": 2.0}
+               for i in range(28)]
+    ind, teams = S.winChances(runners, draws=2000)
+    assert abs(sum(ind.values()) - 1) < 1e-9
+    assert ind[0] > ind[5] > ind[20]
+    assert teams and max(teams, key=teams.get) == "S0"
+
+
+def test_a_predicted_race_makes_a_runners_post_and_a_teams_post(monkeypatch):
+    import social as S
+    import pool_view as PV
+    runners = [{"person_id": i, "name": f"R{i}", "school": f"S{i % 5}", "school_state": "OR",
+                "grade": None, "pool": "college_m", "rating": 150.0 - i, "place": i + 1,
+                "seconds": 1700 + 4 * i, "sigma_pct": 2.0} for i in range(40)]
+    teams = [{"team": f"S{k}", "state": "OR", "score": 60 + 20 * k} for k in range(5)]
+    monkeypatch.setattr(S, "racePredictionFor", lambda *a, **k: (
+        {"available": True, "runners": runners, "teams": teams},
+        {"meet_name": "NCAA Division I Cross Country Championships 2025", "meet_date": "2026-11-21",
+         "state": "MO", "venue": None, "race_label": "Men 10K", "distance": 10000}))
+    monkeypatch.setattr(PV, "toHs", lambda v, pool, sport: v - 10)
+    got = S.previewPosts(None, "XC", datetime.date(2026, 11, 9), "anet", 501, 7, day="2026-11-21")
+    assert [p["kind"] for p in got] == ["preview", "teampreview"]
+    p, t = got
+    assert p["scope"] == "US~anet501~7" and p["state"] is None and p["pool"] == "college_m"
+    assert len(p["rows"]) == S.PREVIEW_RUNNERS and p["rows"][0]["hs"] == 140.0
+    assert p["rows"][0]["time"] and p["rows"][0]["p_win"] > p["rows"][5]["p_win"]
+    assert t["rows"][0]["school"] == "S0" and t["rows"][0]["p_win"] == max(r["p_win"] for r in t["rows"])
+    assert "NCAA DI XC Championship" in S.caption(p) and "#ncaaxc" in S.caption(p)
+    assert "team to beat" in S.caption(t)

@@ -126,6 +126,20 @@
     <input type="url" name="link" placeholder="Paste a race link: https://racecast.co/race/xc/…" style="flex:1;min-width:260px;font:inherit;padding:6px 8px">
     <button type="submit">Recap this race</button>
   </form>
+  <form method="post" action="/account/admin/social/compose/new" class="cp-row">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="preview">
+    <input type="url" name="link" placeholder="Paste a predictions, meet preview or race link (a race not yet run)" style="flex:1;min-width:260px;font:inherit;padding:6px 8px">
+    <button type="submit">Who wins this race</button>
+  </form>
+  {% if champs %}
+  <form method="post" action="/account/admin/social/compose/new" class="cp-row">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="preview">
+    <select name="champ" style="flex:1;min-width:260px;font:inherit;padding:6px 8px">
+      {% for v, label in champs %}<option value="{{ v }}">{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Who wins: this championship</button>
+  </form>
+  {% endif %}
   {% if divisions %}
   <form method="post" action="/account/admin/social/compose/new" class="cp-row" id="cppicks">
     <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="what" value="picks">

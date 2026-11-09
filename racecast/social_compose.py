@@ -40,7 +40,7 @@ PHOTO_WORDS = {"none": "No photo", "top": "Photo across the top", "right": "Phot
 BODY_WORDS = {"table": "Table", "lines": "Lines", "podium": "Podium", "leader": "Leader card",
               "bars": "Bars", "timeline": "Timeline", "card": "Athlete card",
               "spotlight": "Spotlight", "climbs": "Climbs", "breakout": "Breakout card",
-              "odds": "Win chances", "recap": "Results and teams"}
+              "odds": "Win chances", "recap": "Results and teams", "both": "Runners and teams"}
 KIND_BODIES = {
     "rankings": ("table", "lines", "podium", "leader", "bars", "timeline"),
     "national": ("table", "lines", "podium", "leader", "bars"),
@@ -52,11 +52,13 @@ KIND_BODIES = {
     "picks": ("odds", "table"),
     "teampicks": ("odds", "table"),
     "recap": ("recap", "table", "podium"),
+    "preview": ("both", "odds", "table", "podium"),
+    "teampreview": ("odds", "table"),
 }
 KIND_WORDS = {"rankings": "State top 10", "national": "National top 25", "alltime": "All-time",
               "teams": "Team rankings", "top1": "No. 1", "risers": "Moving up",
               "breakout": "Breakout", "picks": "Who wins state", "teampicks": "Team title odds",
-              "recap": "Meet recap"}
+              "recap": "Meet recap", "preview": "Who wins (any race)", "teampreview": "Team race (any race)"}
 WHO = {"hs_m": "Boys", "hs_f": "Girls", "college_m": "Men’s", "college_f": "Women’s",
        "ms_m": "Middle school boys", "ms_f": "Middle school girls"}
 CLS = {"9": "FR", "10": "SO", "11": "JR", "12": "SR"}
@@ -96,6 +98,15 @@ def _mix(a, b, t):
     pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
     pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
     return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(pa, pb))
+
+
+def _st(post):
+    """The post's state for crests: a two-letter scope, or the state a race
+    preview carries; None for a national post."""
+    if post.get("state"):
+        return post["state"]
+    sc = (post.get("scope") or "").split("~")[0]
+    return sc if sc and sc != "US" else None
 
 
 def bodiesFor(kind):
@@ -185,6 +196,11 @@ def title(post):
         return "THE TEAM TITLE RACE"
     if k == "recap":
         return (post.get("meet_name") or "RESULTS").upper()
+    if k in ("preview", "teampreview"):
+        m = (post.get("meet_short") or post.get("meet_name") or "the race").upper()
+        if k == "teampreview":
+            return f"{m}: TEAMS" if len(m) <= 24 else m
+        return f"WHO WINS {m}?" if len(m) <= 24 else m
     return (k or "").upper()
 
 
@@ -209,6 +225,14 @@ def subtitle(post, body=None):
         sims = f'{int(post["draws"]):,} simulated state meets' if post.get("draws") else "simulated state meets"
         what = "our picks" if k == "picks" else "lowest score wins"
         return f'{E(post.get("scope_name") or "")} {E(div)} {g} · {sims} · <b>{what}</b>'.replace("  ", " ")
+    if k in ("preview", "teampreview"):
+        bits = [post.get("race_label") or who, weekWords(post.get("meet_date") or post.get("week")),
+                post.get("course")]
+        d = _distWords(post.get("distance"))
+        if d and d.lower() not in (post.get("race_label") or "").lower():
+            bits.append(d)
+        what = "our picks" if k == "preview" else "lowest score wins"
+        return " · ".join(E(str(b)) for b in bits if b) + f" · <b>{what}</b>"
     if k == "recap":
         bits = [post.get("race_label") or who, weekWords(post.get("meet_date") or post.get("week")),
                 post.get("course")]
@@ -221,12 +245,15 @@ def subtitle(post, body=None):
 def foot(post, body=None):
     k = post.get("kind")
     left = {"teams": "racecast.co/teams", "risers": "racecast.co/movers", "picks": "racecast.co/projections",
-            "teampicks": "racecast.co/projections"}.get(k, "racecast.co")
+            "teampicks": "racecast.co/projections", "preview": "racecast.co/predictions",
+            "teampreview": "racecast.co/predictions"}.get(k, "racecast.co")
     right = {"rankings": "Wk: places moved since last week", "national": "Wk: places moved since last week",
              "teams": "Fewer points is better, as at a meet", "risers": "Places gained since last week",
              "top1": "Every state’s top 50, link in bio", "breakout": "Full race, link in bio",
              "alltime": "All-time lists for every state", "picks": "Win chance at the state meet",
-             "teampicks": "Win chance and average score", "recap": "Every finisher rated, link in bio"}.get(k, "")
+             "teampicks": "Win chance and average score", "recap": "Every finisher rated, link in bio",
+             "preview": "Win chance: the race run 4,000 times",
+             "teampreview": "Predicted score; win chance from 2,000 simulated races"}.get(k, "")
     return (f'<div class=foot><span><b>{E(left)}</b></span><span>{E(right)}</span></div>')
 
 
@@ -401,7 +428,7 @@ def _cols(post, narrow):
     rows. The name column is None (it takes the rest)."""
     pool, sport = post.get("pool"), post.get("sport") or "XC"
     k = post.get("kind")
-    st = post.get("scope") if post.get("scope") not in (None, "US") else None
+    st = _st(post)
     national = k == "national"
 
     def rank(r, i):
@@ -411,10 +438,13 @@ def _cols(post, narrow):
         sub = r.get("sub")
         if sub is None:
             sub = " · ".join(x for x in (
-                r.get("school") or "",
+                # a team row's name is its school: not twice
+                (r.get("school") or "") if r.get("name") else "",
                 (f'({r.get("state")})' if national and r.get("state") else ""),
                 str(r.get("year") or "") if k == "alltime" else _cls(r)) if x)
             sub = sub.replace(" · (", " (")
+        if not sub:                          # one line: level with the row's numbers
+            return _teamName(post, dict(r, state=r.get("state") or st), r.get("name") or r.get("school"))
         return (f'<span class=w><span class=crx>{_crestImg(ASSETS, r.get("school"), r.get("state") or st, pool)}</span>'
                 f'<span style="min-width:0"><b>{E(r.get("name") or r.get("school") or "")}</b>'
                 f'<s>{E(sub)}</s></span></span>')
@@ -438,6 +468,17 @@ def _cols(post, narrow):
     if k == "picks":
         cols = [("Pick", 80, "left", rank), ("Athlete", None, "left", who), ("Rating", 120, "right", rating)]
         return cols + [("Win", 110, "right", win)]
+    if k == "preview":
+        cols = [("Pick", 80, "left", rank), ("Athlete", None, "left", who),
+                ("Time", 130, "right", lambda r, i: f'<span class=rtg style="border:none">{E(r.get("time") or "")}</span>')]
+        if not narrow:
+            cols.append(("Rating", 110, "right", lambda r, i: (f'<span class=sec>{hsOf(r, pool, sport):.1f}</span>'
+                                                              if hsOf(r, pool, sport) is not None else "")))
+        return cols + [("Win", 110, "right", win)]
+    if k == "teampreview":
+        return [("Pick", 80, "left", rank), ("Team", None, "left", who),
+                ("Score", 120, "right", lambda r, i: f'<span class=sec>{round(r["score"]) if r.get("score") else "–"}</span>'),
+                ("Win", 110, "right", win)]
     if k == "teampicks":
         return [("Pick", 80, "left", rank), ("Team", None, "left", who),
                 ("Avg score", 140, "right", lambda r, i: f'<span class=sec>{round(r["score"]) if r.get("score") else "–"}</span>'),
@@ -515,16 +556,22 @@ def bPodium(post, rows, area, start=0):
     if len(rows) < 3:
         return bTable(post, rows, area, start)
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
+    st = _st(post)
     top = min(400, int(area["h"] * 0.42))
     steps = ""
     for i, hgt in ((1, 0.27), (0, 0.40), (2, 0.20)):
         r = rows[i]
         rk = r.get("rank") or i + 1
         v = hsOf(r, pool, sport, "top5" if post.get("kind") == "teams" else "rating")
+        if post.get("kind") == "preview":
+            # a pick: the predicted time, and the chance it wins
+            val = (f'<span class=rv>{E(r.get("time") or "")}</span>'
+                   + (f'<s>{_pct(r["p_win"])} to win</s>' if r.get("p_win") is not None else ""))
+        else:
+            val = f'<span class=rv>{v:.1f}</span>' if v is not None else ""
         steps += (f'<div class=stp>{_crestImg(ASSETS, r.get("school"), r.get("state") or st, pool, 88) or "<div style=height:88px></div>"}'
                   f'<b>{E(r.get("name") or r.get("school") or "")}</b><s>{E(r.get("school") or "") if r.get("name") else ""}</s>'
-                  f'<span class=rv>{v:.1f}</span>'
+                  f'{val}'
                   f'<div class=blk style="height:{int(top * hgt)}px;background:{MEDAL[rk] if rk in MEDAL else "#9aa3ad"}">{rk}</div></div>')
     sub = dict(area, h=area["h"] - top - 20)
     return (f'<div class=steps style="height:{top}px">{steps}</div>'
@@ -535,7 +582,7 @@ def bLeader(post, rows, area, start=0):
     if not rows:
         return ""
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
+    st = _st(post)
     r = rows[0]
     v = hsOf(r, pool, sport)
     v2 = hsOf(rows[1], pool, sport) if len(rows) > 1 else None
@@ -554,7 +601,7 @@ def bLeader(post, rows, area, start=0):
 
 def bBars(post, rows, area, start=0):
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
+    st = _st(post)
     key = "top5" if post.get("kind") == "teams" else "rating"
     vals = [hsOf(r, pool, sport, key) or 0 for r in rows]
     if not vals:
@@ -611,7 +658,7 @@ def bTimeline(post, rows, area, start=0):
 
 def _statCard(post, r, lead_words=None, extra_stats=(), note=None, name_size=60):
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
+    st = _st(post)
     v = hsOf(r, pool, sport)
     stats = ""
     if v is not None:
@@ -644,7 +691,7 @@ def bCard(post, rows, area, start=0):
 def bSpotlight(post, rows, area, start=0):
     r = post.get("row") or (rows[0] if rows else {})
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
+    st = _st(post)
     v = hsOf(r, pool, sport)
     first, _, last = (r.get("name") or "").partition(" ")
     return (f'<div style="position:relative;height:{area["h"]}px">'
@@ -661,7 +708,7 @@ def bSpotlight(post, rows, area, start=0):
 
 def bClimbs(post, rows, area, start=0):
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
+    st = _st(post)
     rh = int(min(230, area["h"] / max(len(rows), 1)))
     out = '<div class="box ln">'
     for r in rows:
@@ -706,8 +753,8 @@ def _barShade(i):
 def bOdds(post, rows, area, start=0):
     """Win chances as bars (the state meet, simulated)."""
     pool, sport = post.get("pool"), post.get("sport") or "XC"
-    st = post.get("scope") if post.get("scope") != "US" else None
-    team = post.get("kind") == "teampicks"
+    st = _st(post)
+    team = post.get("kind") in ("teampicks", "teampreview")
     rh = int(min(150, (area["h"] - 50) / max(len(rows), 1)))
     top = max((r.get("p_win") or 0) for r in rows) or 1
     out = ('<div class="box ln"><div class=bh><span class=c style="width:80px">Pick</span>'
@@ -716,7 +763,8 @@ def bOdds(post, rows, area, start=0):
     for j, r in enumerate(rows):
         p = r.get("p_win") or 0
         if team:
-            sub = f'average score {round(r["score"])}' if r.get("score") else ""
+            sub = (f'{"predicted" if post.get("kind") == "teampreview" else "average"} score {round(r["score"])}'
+                   if r.get("score") else "")
         else:
             v = hsOf(r, pool, sport)
             sub = " · ".join(x for x in (r.get("school"), _cls(r), f"{v:.1f}" if v is not None else "") if x)
@@ -741,15 +789,49 @@ def bRecap(post, rows, area, start=0):
         return ind
     tp = dict(post, kind="teamscore")
     cols = [("Pl", 70, "left", lambda r, i: f'<span class=num>{r.get("rank")}</span>'),
-            ("Team", None, "left", lambda r, i: (f'<span class=w><span class=crx>{_crestImg(ASSETS, r.get("school"), r.get("state") or post.get("scope"), post.get("pool"))}</span>'
-                                                  f'<span style="min-width:0"><b>{E(r.get("school") or "")}</b></span></span>')),
+            ("Team", None, "left", lambda r, i: _teamName(post, r)),
             ("Points", 130, "right", lambda r, i: f'<span class=rtg style="border:none">{r.get("points")}</span>')]
     return ind + f'<div style="margin-top:24px">{_table(tp, teams, dict(area, h=60 + 62 * len(teams) + 4), cols=cols)}</div>'
 
 
+def _distWords(dist):
+    """10000 -> "10K", 4800 -> "4,800 m"; "" for none. Pure."""
+    try:
+        d = int(round(float(dist)))
+    except (TypeError, ValueError):
+        return ""
+    if d <= 0:
+        return ""
+    return f"{d // 1000}K" if d % 1000 == 0 else f"{d:,} m"
+
+
+def _teamName(post, r, label=None):
+    """A crest and one line (a team's name), the line level with the row's
+    numbers (it has no second line to centre against)."""
+    return (f'<span class=w style="align-items:flex-start"><span class=crx>{_crestImg(ASSETS, r.get("school"), r.get("state") or _st(post), post.get("pool"))}</span>'
+            f'<span style="min-width:0"><b>{E(label or r.get("school") or "")}</b></span></span>')
+
+
+def bBoth(post, rows, area, start=0):
+    """A predicted race: the picks with their win chances, then the teams'
+    predicted scores and theirs."""
+    teams = (post.get("teams") or [])[:4]
+    th = (60 + 58 * len(teams) + 24) if teams else 0
+    ind = _table(post, rows, dict(area, h=area["h"] - th), start=start, stripe=True)
+    if not teams:
+        return ind
+    tp = dict(post, kind="teampreview")
+    cols = [("Pick", 80, "left", lambda r, i: f'<span class=num>{r.get("rank")}</span>'),
+            ("Team", None, "left", lambda r, i: _teamName(post, r)),
+            ("Score", 120, "right", lambda r, i: f'<span class=sec>{round(r["score"]) if r.get("score") else "–"}</span>'),
+            ("Win", 110, "right", lambda r, i: (f'<span class=rtg style="color:var(--acc);border:none">{_pct(r["p_win"])}</span>'
+                                                if r.get("p_win") is not None else '<span class=sec>–</span>'))]
+    return ind + f'<div style="margin-top:24px">{_table(tp, teams, dict(area, h=60 + 58 * len(teams) + 4), cols=cols)}</div>'
+
+
 BODIES = {"table": bTable, "lines": bLines, "podium": bPodium, "leader": bLeader, "bars": bBars,
           "timeline": bTimeline, "card": bCard, "spotlight": bSpotlight, "climbs": bClimbs,
-          "breakout": bBreakout, "odds": bOdds, "recap": bRecap}
+          "breakout": bBreakout, "odds": bOdds, "recap": bRecap, "both": bBoth}
 
 ASSETS = {}
 SPEC = {}

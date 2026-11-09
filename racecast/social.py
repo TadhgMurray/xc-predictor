@@ -52,7 +52,7 @@ import re
 from markupsafe import escape
 
 KINDS = ("rankings", "top1", "risers", "breakout", "national", "teams", "alltime",
-         "picks", "teampicks", "recap")
+         "picks", "teampicks", "recap", "preview", "teampreview")
 TOP_N = 10
 NATIONAL_N = 25
 RISERS_N = 3
@@ -163,8 +163,12 @@ def hashtags(post):
     level = "#hsxc" if sport == "XC" else "#hstrack"
     if not (post.get("pool") or "").startswith("hs"):
         level = "#ncaaxc" if sport == "XC" else "#ncaatrack"
-    if post["scope"] == "US":
+    if scopeState(post) is None:
         return f"{level} {generic}"
+    if "~" in (post.get("scope") or ""):
+        from landing import STATE_NAMES
+        st = re.sub(r"[^a-z]", "", STATE_NAMES.get(scopeState(post), "").lower())
+        return f"#{st}{tail} {level} {generic}" if st else f"{level} {generic}"
     st = re.sub(r"[^a-z]", "", (post.get("scope_name") or "").lower())
     return f"#{st}{tail} {level} {generic}"
 
@@ -288,6 +292,31 @@ def caption(post):
         if teams:
             lines.append(f"{teams[0]['school']} takes the team title with {teams[0]['points']} points.")
         lines.append("Every finisher rated → link in bio")
+    elif k in ("preview", "teampreview"):
+        rows = post.get("rows") or []
+        meet = post.get("meet_short") or post.get("meet_name") or "the race"
+        lab = post.get("race_label")
+        r0 = rows[0] if rows else None
+        if k == "preview" and r0:
+            s = f"Our pick for {meet}" + (f" ({lab})" if lab else "") + f": {r0['name']}"
+            if r0.get("p_win") is not None:
+                s += f", {round(100 * r0['p_win'])}% to win"
+            lines.append(s + ".")
+            if len(rows) > 1 and rows[1].get("p_win") is not None:
+                lines.append(f"{rows[1]['name']} next at {round(100 * rows[1]['p_win'])}%.")
+            t = (post.get("teams") or [None])[0]
+            if t:
+                lines.append(f"Team favourite: {t['school']}" +
+                             (f", {round(100 * t['p_win'])}%." if t.get("p_win") is not None else "."))
+        elif r0:
+            s = f"{r0['school']} is the team to beat at {meet}"
+            if r0.get("p_win") is not None:
+                s += f", {round(100 * r0['p_win'])}% to win"
+            lines.append(s + ".")
+            if len(rows) > 1 and rows[1].get("p_win") is not None:
+                lines.append(f"{rows[1]['school']} next at {round(100 * rows[1]['p_win'])}%.")
+        lines.append("The whole field predicted → link in bio")
+        lines.append(_pick(["Who are you taking?", "Who's the upset pick?", "Too high? Too low?"], key))
     elif k == "alltime":
         rows = post.get("rows") or []
         if rows:
@@ -893,6 +922,218 @@ def recapPost(cur, sport, pool, state, week, meet=None):
     return p
 
 
+# ★ ANY PREDICTED RACE (owner, 2026-11-09: "What about other predicted
+#   races like NCAAs?"): a championship (NCAA, NXN, NAIA, a state final) or
+#   any posted meet the site predicts, as a "who wins" post -- the runners
+#   and the teams, with the win chances drawn from the model's own spread
+#   (race_sim, the predictions page's simulation). The prediction is the
+#   site's own: the stored forecast first (meet_forecast, what the recap
+#   will score), else a championship's stored qualifier field run through
+#   the model on its day (the predictions page's "this year"), else the
+#   posted meet's live prediction.
+PREVIEW_DAYS = 8
+PREVIEW_RUNNERS = 8
+PREVIEW_TEAMS = 6
+PREVIEW_MIN_FIELD = 25
+
+
+def scopeState(post):
+    """The post's state (a two-letter code), or None for a national one. A
+    race preview's scope is "<state or US>~<meet>~<race>" (one post per race)."""
+    st = post.get("state")
+    if st:
+        return st
+    sc = (post.get("scope") or "").split("~")[0]
+    return sc if sc and sc != "US" else None
+
+
+def shortMeetName(name):
+    """A meet's name for a title: no year, the long words shortened. Pure."""
+    n = re.sub(r"\b(19|20)\d{2}(-\d{2,4})?\b", " ", name or "")
+    for a, b in ((r"\bcross[- ]country\b", "XC"), (r"\bchampionships\b", "Championship"),
+                 (r"\bchamps\b", "Championship"), (r"\bdivision iii\b", "DIII"),
+                 (r"\bdivision ii\b", "DII"), (r"\bdivision i\b", "DI"),
+                 (r"\binvitational\b", "Invite"), (r"\bhigh school\b", "HS")):
+        n = re.sub(a, b, n, flags=re.I)
+    n = re.sub(r"\(.*?\)", " ", n)
+    return re.sub(r"\s+", " ", n).strip(" -–·,")
+
+
+def winChances(runners, draws=4000):
+    """({person_id: P(wins the race)}, {school: P(team title)}) from each
+    runner's predicted time and spread (race_sim.sigmaFromPred: the model's
+    own sigma). Empty dicts when nothing can be drawn."""
+    import numpy as np
+    import race_sim as RS
+    rows = [r for r in runners if r.get("seconds") and RS.sigmaFromPred(r) is not None]
+    ind, teams = {}, {}
+    if len(rows) >= 2:
+        mu = np.log(np.array([float(r["seconds"]) for r in rows]))
+        sig = np.array([RS.sigmaFromPred(r) for r in rows])
+        rng = np.random.default_rng(0)
+        won = np.zeros(len(rows))
+        left = draws
+        while left > 0:                     # in slices, so a 400-runner field stays small
+            n = min(left, 1000)
+            t = mu + sig * rng.standard_normal((n, len(rows)))
+            won += np.bincount(t.argmin(axis=1), minlength=len(rows))
+            left -= n
+        ind = {rows[i].get("person_id"): float(won[i] / draws) for i in range(len(rows))}
+    try:
+        field = [{"school": r.get("school"), "person_id": r.get("person_id")} for r in runners]
+        res = RS.simulate(field, runners, draws=2000) if runners else None
+        teams = {n: float(v["p_win"]) for n, v in ((res or {}).get("teams") or {}).items()}
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[social] team chances: {type(exc).__name__}: {exc}", flush=True)
+    return ind, teams
+
+
+def _poolOf(runners):
+    import collections
+    c = collections.Counter((r.get("pool") or "").split("|")[0] for r in runners if r.get("pool"))
+    return c.most_common(1)[0][0] if c else None
+
+
+def racePredictionFor(cur, source, meet_id, div_id, day=None):
+    """(prediction, meta) for one race not yet run, or (None, None). meta:
+    meet_name, meet_date, state, venue, race_label, distance."""
+    import meet_forecast as MF
+    import upcoming_preview as U
+    pred = MF.loadRace(cur, meet_id, div_id, source)
+    meta = {}
+    if pred:
+        row = next((r for r in MF.loadMeet(cur, meet_id, source) if int(r["div_id"]) == int(div_id)), {})
+        meta = {k: row.get(k) for k in ("meet_name", "meet_date", "state", "venue", "race_label", "distance")}
+        return pred, meta
+    plan = U.pastPlan(cur, meet_id, source, day) if day else None
+    if plan:
+        # a championship a year on: its qualifiers (the nightly's stored
+        # field), raced on the day by the model, as the predictions page does
+        race = next((r for r in plan["races"] if int(r["div_id"]) == int(div_id)), None)
+        field, _info = U.qualifiedFieldInfo(cur, plan, div_id)
+        if race is None or not field:
+            return None, None
+        from app import _withSource
+        import predict as P
+        target = _withSource(cur, U._target(meet_id, div_id, source, on=day))
+        target["field_ids"] = field
+        with P.raceDate(day):
+            out = P.predictTeam(cur, [], target)
+        if not out.get("available"):
+            return None, None
+        state = None
+        if source != "tfrrs":
+            cur.execute("SELECT max(state) AS s FROM meets WHERE meet_id = %s", (int(meet_id),))
+            state = (cur.fetchone() or {}).get("s")
+        return U._trim(out, target), {"meet_name": plan.get("name"), "meet_date": str(day)[:10],
+                                      "state": state, "venue": None, "race_label": race.get("label"),
+                                      "distance": race.get("distance")}
+    plan = U.meetPlan(cur, meet_id, source)
+    race = next((r for r in (plan or {}).get("races") or [] if int(r["div_id"]) == int(div_id)), None)
+    if race is None:
+        return None, None
+    pred = U.racePrediction(cur, meet_id, div_id, source)
+    if not pred or not pred.get("available"):
+        return None, None
+    return pred, {"meet_name": plan.get("name"), "meet_date": str(plan.get("date") or "")[:10] or None,
+                  "state": plan.get("state"), "venue": plan.get("venue"), "race_label": race.get("label"),
+                  "distance": race.get("distance")}
+
+
+def previewPosts(cur, sport, week, source, meet_id, div_id, day=None, national=None):
+    """[the runners' post, the teams' post] for one predicted race ("who
+    wins"), or []. `day`: a championship from last year, raced on that day.
+    `national`: scope the post to the country (None: when the meet has no
+    state or is a national meet by name)."""
+    pred, meta = racePredictionFor(cur, source, meet_id, div_id, day)
+    if not pred:
+        return []
+    runners = sorted((r for r in pred.get("runners") or [] if r.get("seconds")),
+                     key=lambda r: (r.get("place") or 10 ** 6))
+    if len(runners) < PREVIEW_MIN_FIELD:
+        return []
+    pool = _poolOf(runners) or "hs_m"
+    import pool_view as PV
+    ind, tw = winChances(runners)
+    name = meta.get("meet_name") or "the meet"
+    state = (meta.get("state") or "").upper() or None
+    if national is None:
+        national = state is None or bool(re.search(r"\bnational|\bncaa\b|\bnaia\b|\bnjcaa\b|\bnxn\b|nike cross",
+                                                   name, re.I))
+    if national:
+        state = None
+    rows = []
+    for i, r in enumerate(runners[:PREVIEW_RUNNERS]):
+        rt = r.get("rating")
+        hs = PV.toHs(float(rt), (r.get("pool") or pool).split("|")[0], sport) if rt is not None else None
+        rows.append({"rank": i + 1, "name": r.get("name") or "Unknown", "school": r.get("school"),
+                     "state": r.get("school_state") or state, "cls": classWord(r.get("grade"), r.get("pool") or pool),
+                     "rating": float(rt) if rt is not None else None, "hs": float(hs) if hs is not None else None,
+                     "time": _clock(r["seconds"]), "p_win": ind.get(r.get("person_id"))})
+    teams = [t for t in pred.get("teams") or [] if t.get("score") is not None]
+    teams.sort(key=lambda t: t["score"])
+    trows = [{"rank": i + 1, "name": None, "school": t.get("team"), "state": t.get("state") or state,
+              "score": t["score"], "p_win": tw.get(t.get("team"))} for i, t in enumerate(teams[:PREVIEW_TEAMS])]
+    base = _base("preview", sport, pool, state, week)
+    base.update(scope=f"{state or 'US'}~{source}{int(meet_id)}~{int(div_id)}", state=state,
+                scope_name=shortMeetName(name), meet_name=name, meet_short=shortMeetName(name),
+                meet_date=meta.get("meet_date"), course=meta.get("venue"), distance=meta.get("distance"),
+                race_label=meta.get("race_label"), meet_id=int(meet_id), div_id=int(div_id), source=source,
+                day=day, n_field=len(runners), frozen=bool(pred.get("frozen")))
+    out = []
+    p = dict(base, rows=rows, teams=trows[:5])
+    out.append(p)
+    if len(trows) >= 3 and any(t.get("p_win") is not None for t in trows):
+        out.append(dict(base, kind="teampreview", rows=trows, teams=[]))
+    return out
+
+
+def previewTargets(cur, today=None, days=PREVIEW_DAYS):
+    """[(source, meet_id, div_id, day or None)] of the races worth a "who
+    wins" post in the next `days` days: every championship on the
+    predictions page (NCAA, NXN, NAIA, state finals), each race, and the
+    biggest stored forecast in each state."""
+    import upcoming_preview as U
+    import meet_forecast as MF
+    today = today or datetime.date.today()
+    hi = (today + datetime.timedelta(days=days)).isoformat()
+    out, seen = [], set()
+    champs = U.storedChampionships(today)
+    if champs is None:
+        try:
+            cur.execute("SAVEPOINT sp_champs")
+            champs = U.upcomingChampionships(cur, today)
+            cur.execute("RELEASE SAVEPOINT sp_champs")
+        except Exception as exc:                        # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT sp_champs")
+            print(f"[social] championships: {type(exc).__name__}: {exc}", flush=True)
+            champs = []
+    for m in champs:
+        if not (today.isoformat() <= (m.get("date") or "") <= hi):
+            continue
+        plan = U.pastPlan(cur, m["meet_id"], m["source"], m["date"])
+        for r in (plan or {}).get("races") or []:
+            if r.get("gender") in ("M", "F") and (m["source"], m["meet_id"], r["div_id"]) not in seen:
+                seen.add((m["source"], m["meet_id"], r["div_id"]))
+                out.append((m["source"], int(m["meet_id"]), int(r["div_id"]), m["date"]))
+    best = {}
+    for r in MF.weekRows(cur, today.isoformat(), hi):
+        if (r.get("n_field") or 0) < PREVIEW_MIN_FIELD:
+            continue
+        champ = bool(re.search(r"state|champ|national|region|section|nxn|ncaa|naia",
+                               r.get("meet_name") or "", re.I)) and not re.search(
+            r"pre[- ]?(state|national)", r.get("meet_name") or "", re.I)
+        key = (r.get("state") or "US", r.get("gender"))
+        rank = (champ, r.get("n_field") or 0)
+        if key not in best or rank > best[key][0]:
+            best[key] = (rank, (r["source"], int(r["meet_id"]), int(r["div_id"]), None))
+    for _rank, t in best.values():
+        if (t[0], t[1], t[2]) not in seen:
+            seen.add((t[0], t[1], t[2]))
+            out.append(t)
+    return out
+
+
 def photoFiles(folder=None):
     folder = folder or os.environ.get("XCP_SOCIAL_PHOTOS") or ""
     if not folder or not os.path.isdir(folder):
@@ -968,13 +1209,14 @@ def admin_social():
         cur.execute("SELECT DISTINCT week FROM social_post ORDER BY week DESC LIMIT 8")
         weeks = [r["week"].isoformat() for r in cur.fetchall()]
         week = request.args.get("week") or (weeks[0] if weeks else None)
-        cur.execute("""SELECT DISTINCT scope FROM social_post WHERE week = %s ORDER BY scope""",
-                    (week,))
+        # a race preview's scope is "<state>~<meet>~<race>": listed by its state
+        cur.execute("""SELECT DISTINCT split_part(scope, '~', 1) AS scope FROM social_post
+                       WHERE week = %s ORDER BY 1""", (week,))
         scopes = [r["scope"] for r in cur.fetchall()]
         cur.execute("""SELECT id, week, sport, pool, scope, kind, caption, png_path, data
                        FROM social_post
                        WHERE week = %(w)s AND (%(p)s::text IS NULL OR pool = %(p)s)
-                         AND (%(s)s::text IS NULL OR scope = %(s)s)
+                         AND (%(s)s::text IS NULL OR split_part(scope, '~', 1) = %(s)s)
                          AND (%(k)s::text IS NULL OR kind = %(k)s)
                        ORDER BY (scope = 'US') DESC, scope, pool,
                                 array_position(%(order)s::text[], kind)
@@ -1019,7 +1261,7 @@ def admin_social_png(pid):
     path = r.get("png_path")
     if not path or not os.path.exists(path):
         abort(404)
-    name = f'racecast_{r["scope"]}_{r["pool"]}_{r["kind"]}_{r["week"]}.png'
+    name = f'racecast_{r["scope"].replace("~", "_")}_{r["pool"]}_{r["kind"]}_{r["week"]}.png'
     return send_file(path, mimetype="image/png", download_name=name,
                      as_attachment=bool(request.args.get("dl")))
 
@@ -1080,7 +1322,8 @@ def admin_social_compose():
             abort(404)
         cur.execute("SELECT max(week) AS w FROM social_post")
         week = cur.fetchone()["w"]
-        cur.execute("""SELECT id, kind, scope, pool, data->>'scope_name' AS scope_name
+        cur.execute("""SELECT id, kind, scope, pool, data->>'scope_name' AS scope_name,
+                              data->>'race_label' AS race_label
                        FROM social_post WHERE week = %s
                        ORDER BY (scope = 'US') DESC, scope, pool, kind""", (week,))
         posts = [dict(r) for r in cur.fetchall()]
@@ -1104,9 +1347,12 @@ def admin_social_compose():
             divisions = oddsDivisions(cur)
         except Exception:                                # noqa: BLE001
             divisions = []
+    champs = upcomingChoices()
     of_kind = [p for p in posts if p["kind"] == kind]
     for p in of_kind:
         p["label"] = f'{"National" if p["scope"] == "US" else (p["scope_name"] or p["scope"])} · {POOL_WORDS.get(p["pool"], p["pool"])}'
+        if p.get("race_label"):
+            p["label"] += f' · {p["race_label"]}'
     return render_template(
         "admin_social_compose.html", pid=pid, kind=kind, kinds=kinds, kind_words=C.KIND_WORDS,
         of_kind=of_kind, spec=spec, bodies=C.bodiesFor(kind), body_words=C.BODY_WORDS,
@@ -1114,7 +1360,7 @@ def admin_social_compose():
         q=_specQuery(spec), fmt_size=C.FORMATS[spec["fmt"]], csrf=sess["csrf"],
         themes=C.THEME_WORDS, presets=C.COLOR_PRESETS, title_words=C.TITLE_WORDS,
         saved=bool(data.get("spec")), caption=row.get("caption") or "", week=week,
-        divisions=divisions, err=request.args.get("err"))
+        divisions=divisions, champs=champs, err=request.args.get("err"))
 
 
 @bp.route("/account/admin/social/compose/<int:pid>/<int:page>.html")
@@ -1157,7 +1403,7 @@ def admin_social_compose_png(pid, page):
     if not C.renderPng(pages_[page], out, spec["fmt"]):
         return Response("The image could not be rendered on the server (no browser?). "
                         "Open the preview and screenshot it instead.", status=503, mimetype="text/plain")
-    name = (f'racecast_{row["scope"]}_{row["pool"]}_{row["kind"]}_{spec["body"]}'
+    name = (f'racecast_{row["scope"].replace("~", "_")}_{row["pool"]}_{row["kind"]}_{spec["body"]}'
             f'{"_story" if spec["fmt"] == "story" else ""}{"_" + str(page + 1) if len(pages_) > 1 else ""}.png')
     return send_file(out, mimetype="image/png", download_name=name, as_attachment=True)
 
@@ -1184,7 +1430,7 @@ def admin_social_compose_save(pid):
     png = row.get("png_path")
     try:
         os.makedirs(outDir(), exist_ok=True)
-        target = png or os.path.join(outDir(), f'{row["week"]}_{row["sport"]}_{row["pool"]}_{row["scope"]}_{row["kind"]}.png')
+        target = png or os.path.join(outDir(), f'{row["week"]}_{row["sport"]}_{row["pool"]}_{row["scope"].replace("~", "_")}_{row["kind"]}.png')
         if C.renderPng(C.pages(data, spec, C.fileAssets(path))[0], target, spec["fmt"]):
             png = target
     except Exception as exc:                             # noqa: BLE001
@@ -1254,13 +1500,59 @@ def admin_social_compose_new():
             p = recapPost(cur, "XC", pool, hdr.get("state") or "US", week, meet=(src, meet_id, div_id))
             if p:
                 made.append(p)
+        elif what == "preview":
+            # a predictions link (?meet_id=&div_id=&date=), a meet preview
+            # (/meet/preview/xc/<meet>) or a race (/race/xc/<meet>/<race>),
+            # or one of the upcoming championships ("champ": src|meet|day)
+            def num(tok):
+                tok = (tok or "").strip()
+                got = PI.decode(tok)
+                return got[1] if got else int(tok) if tok.lstrip("-").isdigit() else None
+            src, meet_id, div_id, day = "anet", None, None, None
+            champ = (request.form.get("champ") or "").split("|")
+            if len(champ) == 3:
+                src, meet_id, day = ("tfrrs" if champ[0] == "2" else "anet"), num(champ[1]), champ[2]
+            else:
+                link = urllib.parse.urlparse((request.form.get("link") or "").strip())
+                q = urllib.parse.parse_qs(link.query)
+                src = {"1": "anet", "2": "tfrrs", "tfrrs": "tfrrs"}.get((q.get("src") or [""])[0], "anet")
+                m = (_re.search(r"/race/xc/([^/?#]+)/([^/?#]+)", link.path or "")
+                     or _re.search(r"/meet/(?:preview/)?xc/([^/?#]+)", link.path or ""))
+                if m:
+                    meet_id = num(m.group(1))
+                    div_id = num(m.group(2)) if m.lastindex and m.lastindex >= 2 else None
+                elif q.get("meet_id"):
+                    meet_id = num(q["meet_id"][0])
+                    div_id = num((q.get("div_id") or [""])[0])
+                    day = (q.get("date") or [None])[0]
+            if meet_id is None or not week:
+                return redirect("/account/admin/social/compose?err=" + urllib.parse.quote(
+                    "Paste a predictions, meet preview or race link, or pick a championship."))
+            import upcoming_preview as U
+            if day and not _re.match(r"^\d{4}-\d{2}-\d{2}$", day):
+                day = None
+            plan = (U.pastPlan(cur, meet_id, src, day) if day else None) or U.meetPlan(cur, meet_id, src)
+            races = [r for r in (plan or {}).get("races") or []
+                     if div_id is None or int(r["div_id"]) == int(div_id)]
+            if div_id is not None and not races:
+                races = [{"div_id": div_id}]
+            for r in races[:6]:
+                try:
+                    cur.execute("SAVEPOINT sp_cprev")
+                    cur.execute("SET LOCAL statement_timeout = '180s'")
+                    made += previewPosts(cur, "XC", week, src, meet_id, r["div_id"], day=day)
+                    cur.execute("RELEASE SAVEPOINT sp_cprev")
+                except Exception as exc:                 # noqa: BLE001
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_cprev")
+                    print(f"[compose] preview {src} {meet_id}/{r['div_id']}: {type(exc).__name__}: {exc}", flush=True)
         elif what == "picks":
             st, div, g = (request.form.get("state") or "").upper(), request.form.get("division"), request.form.get("gender")
             pool = {"boys": "hs_m", "girls": "hs_f"}.get(g)
             if pool and st and week:
                 made = picksPosts(cur, "XC", pool, st, week, division=div)
         if not made:
-            return redirect("/account/admin/social/compose?err=" + urllib.parse.quote("Nothing to post for that: too few finishers, or no odds built."))
+            return redirect("/account/admin/social/compose?err=" + urllib.parse.quote(
+                "Nothing to post for that: too few runners, no prediction yet, or no odds built."))
         ids = [_savePost(cur, p) for p in made]
         conn.commit()
     return redirect(f"/account/admin/social/compose?pid={ids[0]}")
@@ -1274,3 +1566,17 @@ def oddsDivisions(cur):
     cur.execute("""SELECT state, division, division_label, gender FROM state_odds_meta
                    WHERE year = %s AND n_field > 0 ORDER BY state, division, gender""", (y,))
     return [(r["state"], r["division"], r["division_label"] or r["division"], r["gender"]) for r in cur.fetchall()]
+
+
+def upcomingChoices():
+    """[(value, label)] of the upcoming championships the predictions page
+    lists (the nightly's stored list), for the composer's preview form."""
+    import public_ids as PI
+    import upcoming_preview as U
+    out = []
+    for m in U.storedChampionships() or []:
+        tok = PI.encode("m", int(m["meet_id"])) if PI._key() is not None else str(m["meet_id"])
+        title = re.sub(r"\s+", " ", re.sub(r"\b(19|20)\d{2}(-\d{2,4})?\b", " ", m.get("name") or "")).strip(" -")
+        # the feed as "1" / "2", as every link names it (CLAUDE.md: no feed names)
+        out.append((f'{"2" if m["source"] == "tfrrs" else "1"}|{tok}|{m["date"]}', f'{m["date"]} · {title}'))
+    return out
