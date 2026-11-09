@@ -10507,15 +10507,28 @@ def _default_xc_courses(cur, n=10, pool=None):
     lv = (_cv._bare(pool) or "").split("_", 1)[0]
     km = _cv.readerDistance(pool, "XC") if pool and lv != "hs" else None
     where = "AND round(cd.distance_m / 1000.0) = round(%(m)s / 1000.0)" if km else ""
-    cur.execute(_XC_COURSE_SQL.format(where=where, name_where=""), {"n": n, "m": km})
-    # `or 0.0` would swallow a course genuinely fitted at 0.0 AND turn a NULL
-    # (no fitted cell) into a claim of averageness. Pass NULL through as None
-    # so the conversion layer can tell "unrated" from "average".
-    return [{"course_name": r["name"],
-             "canonical_id": r["canonical_id"],
-             "difficulty": r["difficulty"],
-             "distance":   r["distance"] or 5000.0}
-            for r in cur.fetchall()]
+
+    def compute():
+        cur.execute(_XC_COURSE_SQL.format(where=where, name_where=""), {"n": n, "m": km})
+        # `or 0.0` would swallow a course genuinely fitted at 0.0 AND turn a
+        # NULL (no fitted cell) into a claim of averageness. Pass NULL through
+        # as None so the conversion layer can tell "unrated" from "average".
+        return [{"course_name": r["name"],
+                 "canonical_id": r["canonical_id"],
+                 "difficulty": r["difficulty"],
+                 "distance":   r["distance"] or 5000.0}
+                for r in cur.fetchall()]
+    # ★ ONCE PER FIVE MINUTES FOR THE BOX, NOT ONCE PER VIEW (2026-11-09: the
+    #   latency report, /conversions 51,327 views at a flat 35-70 ms -- this
+    #   DISTINCT ON over every course cell, the same ten rows for every
+    #   visitor of a level). course_difficulties is rewritten in place by the
+    #   solve, hours before a go-live, so a copy at most COURSES_TTL old.
+    import sharedcache
+    rows, _at = sharedcache.get(f"xc-courses-{n}-{km}", compute, ttl=_XC_COURSES_TTL)
+    return [dict(r) for r in rows]
+
+
+_XC_COURSES_TTL = 300.0
 
 
 @app.route("/conversions")
