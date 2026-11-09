@@ -1584,13 +1584,27 @@ def filteredBoardCardData(cur, args):
         bits.append(f["course"])
     if f.get("date_from") or f.get("date_to"):
         bits.append(f"{f.get('date_from') or ''} to {f.get('date_to') or ''}".strip())
+    # ★ HS-EQUIVALENT, AS THE BOARD SHOWS IT (audit 2026-11-09: the query
+    #   card printed Cole Hoff's own-pool 163.1 on an ms_m board where the
+    #   page reads 139.7). Rows carry pool and sport; stamp hs_rating.
+    rows = [dict(r) for r in rows[:10]]
+    try:
+        from pool_view import stampBoardRows
+        for r in rows:
+            if r.get("rating") is None and r.get("speed_rating") is not None:
+                r["rating"] = r["speed_rating"]
+            r.setdefault("pool", f["pool"])
+            r.setdefault("sport", f["sport"])
+        stampBoardRows(rows, rating_keys=("rating",))
+    except Exception:                                   # noqa: BLE001
+        pass
     out = []
     for r in rows[:10]:
         if board == "pr":
             val = (str(r.get("mark") or "-") if r.get("mark") is not None
                    else (format_time(r["time_seconds"]) if r.get("time_seconds") is not None else "-"))
         else:
-            v = r.get("rating") if r.get("rating") is not None else r.get("speed_rating")
+            v = r.get("hs_rating") if r.get("hs_rating") is not None else r.get("rating")
             val = f"{float(v):.1f}" if v is not None else "-"
         out.append({"name": (r.get("name") or "Unknown").strip(),
                     "school": schoolLabelFor(r["school"], r.get("pool") or f["pool"], r.get("state")) if r.get("school") else "",

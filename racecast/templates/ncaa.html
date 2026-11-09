@@ -37,7 +37,7 @@
 <body>
 {% include "_topbar.html" %}
 {% macro team(t, sub=true) -%}
-<a href="{{ t.href }}">{{ t.school }}</a>{% if sub %}<span class="p2-row-sub">{{ t.region or "region unknown" }}{% if t.conference %} · {{ t.conference|title }}{% endif %}</span>{% endif %}
+<a href="{{ t.href }}">{{ t.school }}</a>{% if sub %}<span class="p2-row-sub">{{ t.region or "region unknown" }}{% if t.conference %} · {{ t.conference|title if t.conference == t.conference|lower else t.conference }}{% endif %}</span>{% endif %}
 {%- endmacro %}
 {% macro status(t) -%}
 {% if t.proj == "auto" %}<span class="nc-st nc-st--auto">In · auto</span>
@@ -136,7 +136,7 @@
     <table class="p2-tbl nc-tbl">
       <thead><tr><th class="num">#</th><th>Team</th><th class="num p2-wide">Avg place</th><th class="num">Auto</th><th class="num">Qualify</th><th>Projected</th><th class="num p2-wide">Wk</th></tr></thead>
       <tbody>{% for t in live %}<tr class="{{ 'nc-cut' if t.proj_place == R.auto_per_region }}">
-        <td class="num">{{ t.proj_place }}</td><td class="p2-team">{{ team(t, false) }}<span class="p2-row-sub">{{ t.conference|title if t.conference else "" }}<span class="p2-narrow"> · avg place {{ t.reg_place }}</span></span></td>
+        <td class="num">{{ t.proj_place }}</td><td class="p2-team">{{ team(t, false) }}<span class="p2-row-sub">{{ (t.conference|title if t.conference == t.conference|lower else t.conference) if t.conference else "" }}<span class="p2-narrow"> · avg place {{ t.reg_place }}</span></span></td>
         <td class="num p2-wide">{{ t.reg_place }}</td><td class="num">{{ pct(t.p_auto) }}</td><td class="num"><strong>{{ pct(t.p_qual) }}</strong></td>
         <td>{{ status(t) }}</td><td class="num p2-wide">{{ delta(t.d_qual) }}</td>
       </tr>{% endfor %}</tbody>

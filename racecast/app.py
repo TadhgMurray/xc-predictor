@@ -9423,6 +9423,12 @@ def rankByHs(rows, limit=None, key="speed_rating", hs_key="hs_rating"):
         if v is None:
             v = r.get(key)
         return float(v) if v is not None else float("-inf")
+    # ★ A ROW WITH NO HS VALUE DOES NOT RANK AMONG ROWS THAT HAVE ONE (audit
+    #   2026-11-09; _gateCourseRatings says why): its own-pool number is on
+    #   another scale. Rows without a rating (a field mark) are kept.
+    if any(r.get(hs_key) is not None for r in rows):
+        rows = [r for r in rows
+                if r.get(hs_key) is not None or r.get(key) is None]
     out = sorted(rows, key=val, reverse=True)
     return out[:limit] if limit else out
 
@@ -9745,12 +9751,24 @@ def loadVenueTfBoard(cur, location_id, is_indoor):
 
 @app.route("/venue/tf/<int:location_id>/<indoor>")
 def venue_tf(location_id, indoor):
+    # ★ ONLY TWO SIDES (audit 2026-11-09): /venue/tf/<v>/xyz answered 200 as
+    #   a copy of /out, and the side a venue never used rendered an empty
+    #   page titled "Venue <internal id>". Anything else is a 404; an empty
+    #   side goes to the other one when that has meets, else 404.
+    if indoor not in ("in", "out"):
+        abort(404)
     is_indoor = (indoor == "in")
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             ctx = loadVenueTfBoard(cur, location_id, is_indoor)
             if ctx is None:
                 ctx = buildVenueTfCtx(cur, location_id, is_indoor)
+            if not (ctx.get("venue_meets") or ctx.get("bests")):
+                other = get_tf_venue_meets(cur, location_id, not is_indoor)
+                if other:
+                    return redirect(url_for("venue_tf", location_id=location_id,
+                                            indoor="out" if is_indoor else "in"))
+                abort(404)
     return render_template("venue_tf.html", location_id=location_id,
                            is_indoor=is_indoor, **ctx)
 

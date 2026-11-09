@@ -85,6 +85,8 @@ _FETCH_SEASONS = SEASONS_SHOWN + 3
 #   weakest claim that names one division; anything less is a plurality of a
 #   mixed field, and the race is left unplaced rather than guessed.
 _MAJORITY = 0.5
+# the fewest finishers a one-race state's "all" cell needs to be shown
+ALL_MIN_FINISHERS = 20
 
 # The kinds of round before state whose advancers are measured. A district
 # (TX: district -> region -> state) is two rounds out, so its finishers who
@@ -305,7 +307,12 @@ def computeMarks(state, races, rows, ratings):
             cells.setdefault(k, []).append(r)
         state_cells, ran_state = {}, {}
         for (year, slug), rs in cells.items():
-            rs.sort(key=lambda r: -len(r["rows"]))
+            # ★ THE RACE ITS SCHOOLS AGREE WITH, THEN THE BIGGEST (audit
+            #   2026-11-09: Texas 5A read 96.0 ≈ 20:29 because the private
+            #   schools' TAPPS 5A final had a bigger field than the UIL 5A
+            #   final filed under the same division).
+            rs.sort(key=lambda r: (-(1 if (r.get("agree") or 0) > _MAJORITY else 0),
+                                   -len(r["rows"])))
             race, extra = rs[0], len(rs) - 1
             for r in rs:                        # everyone who ran state counts
                 for x in r["rows"]:
@@ -322,6 +329,17 @@ def computeMarks(state, races, rows, ratings):
             cell["short"] = (cell["label"].replace(state + " ", "")
                              if slug != "all" else "All")
             divisions.append(cell)
+        # ★ NO "ALL" BESIDE REAL DIVISIONS, AND NONE FROM A HANDFUL OF
+        #   RUNNERS (audit 2026-11-09: MD listed "All: 78.0 ≈ 24:59, 2021 · 3
+        #   runners" next to its four classes, with a page of its own). The
+        #   "all" cell is a one-race state's; in a state with divisions it
+        #   is a stray race nobody's school names.
+        if any(c["slug"] != "all" for c in divisions):
+            divisions = [c for c in divisions if c["slug"] != "all"]
+        else:
+            divisions = [c for c in divisions
+                         if max((x.get("n_finishers") or 0 for x in c["seasons"]),
+                                default=0) >= ALL_MIN_FINISHERS]
         divisions.sort(key=lambda c: P.divisionSortKey(c["value"]))
 
         sections = _sectionCells(state, placed, gender, pool, ratings,

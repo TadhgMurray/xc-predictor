@@ -574,6 +574,19 @@
         document.getElementById('norm-display').textContent = msg;
     }
 
+    // ★ ARRIVING ON #paces WITH NO ATHLETE (audit 2026-11-09: the Tools
+    //   menu's "Training paces" landed on the XC course table, because the
+    //   Paces tab stays hidden until an athlete is chosen). Paces are read
+    //   off an athlete, so switch the source to one and put the cursor in
+    //   the athlete box; the tab opens once they pick someone.
+    (function pacesFromMenu() {
+        if (location.hash !== '#paces') return;
+        if (document.querySelector('.conv[data-prefill-athlete]')) return;
+        if (typeSel) { typeSel.value = 'athlete'; paintFields(); }
+        var inp = document.getElementById('in-athlete');
+        if (inp) { inp.focus(); inp.placeholder = 'Name an athlete to see their training paces'; }
+    })();
+
     // ★ ARRIVING FROM AN ATHLETE PAGE. The link carries a person_id; select
     //   the athlete source, name them, and convert -- so the reader lands on
     //   the answer rather than on an empty form.
