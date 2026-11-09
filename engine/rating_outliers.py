@@ -735,8 +735,13 @@ EXTRA_SQL = r"""
                count(*) FILTER (WHERE pool LIKE 'college%%') AS n_college,
                count(*) FILTER (WHERE pool LIKE 'college%%' OR pool LIKE 'hs%%') AS n_older
         FROM   x GROUP BY 1, 2, 3),
+    -- ! UP TO SIX RACES, NOT THREE (owner's audit, 2026-11-09: Amy Soliz,
+    --   Whiteface (TX), 163.6 against three other races at a median of 91,
+    --   unflagged: four rows was past this rule and short of the
+    --   neighbourhood's). The thin test below still asks for one or two
+    --   other races within THIN_DAYS of this one.
     few AS (
-        SELECT person_id FROM x GROUP BY 1 HAVING count(*) BETWEEN 2 AND 3),
+        SELECT person_id FROM x GROUP BY 1 HAVING count(*) BETWEEN 2 AND 6),
     dist AS (
         SELECT div_id,
                CASE WHEN distance < 50 THEN distance * 1609.34 ELSE distance END AS m
@@ -749,10 +754,17 @@ EXTRA_SQL = r"""
         WHERE  f.n < %(field_min)s
            OR  x.person_id IN (SELECT person_id FROM few)
            OR  (x.pool IN ('ms_m', 'ms_f', 'elem_m', 'elem_f')
-                AND (dm.m >= %(level_m)s OR f.n_college * 2 > f.n
-                     OR (NOT x.graded AND f.n_older * 4 >= f.n))))
+                AND (dm.m >= %(level_m)s OR f.n_college * 2 > f.n OR NOT x.graded)))
     SELECT c.result_id, c.person_id, extract(year FROM c.d)::int, c.s,
-           o.k, o.best, o.med, c.n, c.pool, c.m, c.n_college, c.graded, c.n_older
+           o.k, o.best, o.med, c.n, c.pool, c.m, c.n_college, c.graded, c.n_older,
+           -- an ungraded youth row on a profile with high school or college
+           -- races before it (David Bowdoin, 2009: a track mile, ms_m, on a
+           -- profile that ran high school in 1994)
+           (NOT c.graded AND c.pool IN ('ms_m', 'ms_f', 'elem_m', 'elem_f') AND EXISTS (
+                SELECT 1 FROM results z
+                WHERE  z.person_id = c.person_id AND z.result_id <> c.result_id
+                  AND  z.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(z.date, 10)::date < c.d
+                  AND  split_part(COALESCE(z.rating_pool, ''), '|', 1) ~ '^(hs|college)_')) AS older_before
     FROM   cand c
     CROSS  JOIN LATERAL (
         -- ! THE TABLE, NOT x: x is materialised (read three times), and a
@@ -766,12 +778,22 @@ EXTRA_SQL = r"""
 """
 
 
-def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=0):
+def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=0,
+              older_before=False):
     """The side for one candidate row of EXTRA_SQL, or None. Pure."""
     s = float(s)
+    # ! AND AN UNGRADED YOUTH ROW NOTHING VOUCHES FOR (owner's audit,
+    #   2026-11-09: the Bowerman 5K at Nike, 14:06 by 'Bowerman Track' and
+    #   'ARC' with no grade and no other race, ranked as middle schoolers;
+    #   a 2009 track mile, no grade, on a profile with 1994 high school
+    #   races). No grade and no other race within THIN_DAYS in a race older
+    #   runners ran too, or high school or college races before it, is no
+    #   evidence of the youth level. (A one-race ungraded kid in a middle
+    #   school race of middle schoolers stays.)
     if pool in ("ms_m", "ms_f", "elem_m", "elem_f") and (
             (metres and float(metres) >= LEVEL_MIN_M) or (n and n_college * 2 > n)
-            or (not graded and n and n_older * 4 >= n)):
+            or (not graded and ((n and n_older * 4 >= n) or (not k and n and n_older * 10 >= n)
+                                or older_before))):
         return "level"
     if k and 1 <= k <= 2 and best and math.log(s / float(best)) > THIN_GAP:
         return "thin"
@@ -787,11 +809,57 @@ def extraRows(cur):
     cur.execute(EXTRA_SQL, {"field_min": FIELD_MIN, "level_m": LEVEL_MIN_M,
                             "days": THIN_DAYS})
     out = []
-    for rid, pid, yr, s, k, best, med, n, pool, metres, n_col, graded, n_old in cur.fetchall():
-        side = extraSide(s, k, best, med, n, pool, metres, n_col, graded, n_old)
+    for rid, pid, yr, s, k, best, med, n, pool, metres, n_col, graded, n_old, older in cur.fetchall():
+        side = extraSide(s, k, best, med, n, pool, metres, n_col, graded, n_old, bool(older))
         if side:
             out.append((rid, "XC", pid, yr, float(s), med and float(med), side))
     return out
+
+
+# ★ THE SAME TIME, RATED FAR APART (owner's audit, 2026-11-09: two Pacific
+#   Coast Shock Waves girls at 177.8 and 177.6 -- 15:19 for '4699 m' in a
+#   field whose median ran 24:27 -- while the same girl's 15:21 two weeks
+#   earlier rated 141). One runner, the same time to the second within a
+#   month (within COPY_TOL), cannot be a quarter better in one race than the other: one of the
+#   two races has the wrong distance, and the high one is the board's. The
+#   high row is flagged 'fast' when EVERY same-time race nearby rated more
+#   than COPY_GAP below it. Only rows rated COPY_MIN or more are looked at:
+#   the boards' end, where a wrong distance does its damage.
+COPY_GAP = 0.18          # log: about 20% above its same-time twin
+COPY_TOL = 0.003         # "the same time": within 0.3% (15:19.2 and 15:21.3)
+COPY_MIN = 125.0
+COPY_SQL = """
+    WITH a AS (
+        SELECT result_id, person_id, left(date, 10)::date AS d, speed_rating AS s,
+               time_seconds AS t
+        FROM   results
+        WHERE  speed_rating >= %(min_s)s AND person_id IS NOT NULL AND time_seconds > 0
+          AND  date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}')
+    SELECT a.result_id, a.person_id, extract(year FROM a.d)::int, a.s, max(b.speed_rating)
+    FROM   a
+    JOIN   results b ON b.person_id = a.person_id AND b.result_id <> a.result_id
+                    AND b.speed_rating > 0 AND b.time_seconds > 0
+                    AND abs(b.time_seconds - a.t) < %(tol)s * a.t
+                    AND b.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                    AND abs(left(b.date, 10)::date - a.d) <= 31
+    GROUP  BY 1, 2, 3, 4
+    HAVING ln(a.s / max(b.speed_rating)) > %(gap)s
+"""
+
+
+def copySide(s, twin_best, gap=COPY_GAP):
+    """'fast' when a row rates more than `gap` (log) above the best of its
+    same-time races nearby. Pure."""
+    if not s or not twin_best:
+        return None
+    return "fast" if math.log(float(s) / float(twin_best)) > gap else None
+
+
+def copyRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, twin, 'fast')]."""
+    cur.execute(COPY_SQL, {"min_s": COPY_MIN, "gap": COPY_GAP, "tol": COPY_TOL})
+    return [(rid, "XC", pid, yr, float(s), float(tw), "fast")
+            for rid, pid, yr, s, tw in cur.fetchall() if copySide(s, tw)]
 
 
 def writeExtra(cur, rows):
@@ -1043,6 +1111,7 @@ def main():
                                 show=args.show, shards=args.shards,
                                 connect=getConn, streams=args.streams)
                 extra = extraRows(cur)
+                extra += copyRows(cur)
                 printExtra(extra, args.show)
                 if args.write:
                     if args.since:
@@ -1050,7 +1119,7 @@ def main():
                               "the table is replaced with that part")
                     print(f"  wrote {write(cur, rows, cal):,} rows to "
                           f"rating_outlier")
-                    print(f"  wrote {writeExtra(cur, extra):,} more (thin, field, level)")
+                    print(f"  wrote {writeExtra(cur, extra):,} more (thin, field, level, same-time copies)")
                     dropStage(cur)
                     conn.commit()
                     print("  committed. The boards (step 10) and the season "

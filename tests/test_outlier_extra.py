@@ -79,3 +79,39 @@ def test_the_sql_finds_them():
     assert got.get(1) == "thin"
     assert got.get(201) == "level"
     assert 2 not in got and 202 not in got
+
+
+def test_the_2026_11_09_audit_rows():
+    # Amy Soliz: 163.6 against one race nearby at about 100 (thin)
+    assert RO.extraSide(163.6, 1, 100.0, 100.0, 72, "hs_f", 5021, 0) == "thin"
+    # the Bowerman 5K: no grade and no other race, filed middle school
+    assert RO.extraSide(167.3, 0, None, None, 47, "ms_m", 5000, 2, False, 5) == "level"
+    # a 2009 track mile, no grade, on a profile with high school races before
+    assert RO.extraSide(164.8, 1, 161.9, 161.9, 5, "ms_m", 1609, 0, False, 0, True) == "level"
+    # an ungraded middle schooler with races nearby and nothing older stays
+    assert RO.extraSide(120.0, 3, 125.0, 118.0, 40, "ms_m", 3200, 0, False, 2, False) is None
+    # the same time two weeks apart, 177.8 against 141.1: the high one
+    assert RO.copySide(177.8, 141.1) == "fast"
+    assert RO.copySide(150.0, 140.0) is None          # a hard course and an easy one
+
+
+@pytest.mark.skipif(not DSN, reason="needs XCP_TWIN_TEST_DSN")
+def test_the_same_time_sql_finds_the_high_copy():
+    import psycopg2
+    c = psycopg2.connect(DSN)
+    cur = c.cursor()
+    cur.execute("""
+        DROP SCHEMA IF EXISTS oc CASCADE; CREATE SCHEMA oc; SET search_path = oc;
+        CREATE TABLE results (result_id bigint, person_id bigint, date text,
+                              speed_rating real, time_seconds real);
+        INSERT INTO results VALUES
+          (1, 7, '2021-10-03', 177.8, 919.2),   -- the wrong-distance race
+          (2, 7, '2021-09-18', 141.1, 921.3),   -- the same time two weeks before
+          (3, 8, '2021-10-03', 150.0, 900.0),   -- a hard course and an easy one
+          (4, 8, '2021-10-10', 140.0, 900.4);
+    """)
+    got = {r[0]: r[6] for r in RO.copyRows(cur)}
+    cur.execute("DROP SCHEMA oc CASCADE")
+    c.commit()
+    c.close()
+    assert got == {1: "fast"}
