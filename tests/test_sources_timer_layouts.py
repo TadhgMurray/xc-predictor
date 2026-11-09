@@ -443,3 +443,24 @@ def test_one_xc_race_makes_a_non_track_meet_xc():
     assert [r.sport for r in land.oneSport([xc, ms], False)] == ["XC", "XC"]
     ms.sport = "TF"
     assert [r.sport for r in land.oneSport([xc, ms], True)] == ["XC", "TF"]
+
+
+REALTIME = """<pre>
+ Valley Timing LLC - Contractor License 
+   2026 Valley Invitational - 10/17/2026   
+               Riverside Park                
+ 
+Event 1  Girls 5k Run CC Varsity
+=======================================================================
+    Name                    Year School                  Finals  Points
+=======================================================================
+  1 Alpha, Anna               11 North High            18:26.54    1
+  2 Bravo, Beth               10 South High            18:39.49    2
+</pre>"""
+
+
+def test_a_hytek_real_time_page_is_a_report_without_a_meet_manager_line():
+    assert discover.isReport(REALTIME.encode())
+    meet = hytek.parseReport(REALTIME)
+    assert (meet.name, meet.date, meet.venue) == ("2026 Valley Invitational", "2026-10-17", "Riverside Park")
+    assert [(e.gender, len(e.rows)) for e in meet.events] == [("F", 2)]

@@ -119,7 +119,11 @@ class Meet:
 
 # ★ TEAM MANAGER TOO (parser review, 2026-11-02): only "Meet Manager" was a
 #   header, so a Team Manager report had no meet name, date or venue
-_HEADER = re.compile(r"hy-tek'?s\s+(?:meet|team)\s+manager", re.I)
+# ★ AND A REAL-TIME PAGE'S LICENCE LINE (2026-11-09, Live Running Results:
+#   Hy-Tek's real-time event pages open "<Timer> LLC - Contractor License",
+#   then the meet's name and day -- no "Meet Manager" line at all, so none
+#   was read as a report)
+_HEADER = re.compile(r"hy-tek'?s\s+(?:meet|team)\s+manager|^[^\n]{3,90}\s-\s+Contractor License\s*$", re.I | re.M)
 _EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*(.*)$", re.I)
 # ★ THE GENDER CAN COME LAST (2026-10-23, LiveTrackResults' youth meets:
 #   "Event 1  2000 Meter Run CC 8 & Under Division Girls"): the first pattern
