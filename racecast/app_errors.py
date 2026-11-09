@@ -337,6 +337,12 @@ def _procLabel(cmd, comm):
     activity for a Postgres backend, else the program."""
     if cmd.startswith("postgres:"):
         rest = cmd[len("postgres:"):].strip()
+        # ! a cluster name first on Postgres 16+ ("postgres: 18/main: postgres
+        #   xc_predictor ... SELECT", 2026-11-09's notice read "postgres
+        #   18/main: postgres 3")
+        first = rest.split(" ", 1)
+        if len(first) == 2 and first[0].endswith(":"):
+            rest = first[1].strip()
         if rest.startswith("parallel worker"):
             return "postgres parallel worker"
         words = rest.split()

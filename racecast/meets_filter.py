@@ -549,8 +549,29 @@ def filteredMeets(cur, f):
                              year_clause=year_clause,
                              unit_clause=unit_clause,
                              unit_cols=unit_cols.replace("m.meet_id", "p.meet_id"))
-    cur.execute(sql, params)
-    return cur.fetchall()
+
+    def compute():
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+    # ★ A BROWSE VIEW ONCE FOR THE BOX (2026-11-09: /meets?sport=TF&level=
+    #   college took 55 s during a pipeline step -- 3,200 candidate meets,
+    #   each counting all its results; 2.3 s on a quiet box). The view is the
+    #   same for every visitor of the same filters, so it is shared by every
+    #   worker for MEETS_SHARED_TTL, keyed by the statement, its parameters and
+    #   the result and meet tables' oids (a go-live rebuild is a new copy). An
+    #   empty answer is not kept.
+    import hashlib
+    import sharedcache
+    oids = (sharedcache.tableOid(cur, table), sharedcache.tableOid(cur, meets_table))
+    if None in oids:
+        return compute()
+    key = "meets-" + hashlib.sha1(repr((sql, sorted(params.items()), oids))
+                                  .encode("utf-8")).hexdigest()
+    rows, _at = sharedcache.get(key, compute, ttl=MEETS_SHARED_TTL, keep=bool)
+    return [dict(r) for r in rows]
+
+
+MEETS_SHARED_TTL = 1800.0
 
 
 # groupByYear

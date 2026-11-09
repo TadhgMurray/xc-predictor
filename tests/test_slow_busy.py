@@ -25,12 +25,15 @@ def test_busy_groups_running_and_disk_waiting_processes(tmp_path):
         101: ("R", "postgres: postgres xc_predictor 127.0.0.1(4411) SELECT"),
         102: ("D", "postgres: postgres xc_predictor 127.0.0.1(4412) SELECT"),
         103: ("D", "postgres: parallel worker for PID 101"),
+        107: ("R", "postgres: 18/main: postgres xc_predictor 127.0.0.1(4413) SELECT"),
+        108: ("R", "postgres: 18/main: autovacuum worker xc_predictor"),
         104: ("R", "/srv/venv/bin/python -u model/race_rows.py --out x"),
         105: ("S", "/srv/venv/bin/gunicorn -w 24 app:app"),
         106: ("R", "/srv/venv/bin/gunicorn -w 24 app:app"),
     })
     out = E.busyProcesses(proc=root, now=0)
-    assert out.startswith("postgres SELECT 2 (D 1)")
+    assert out.startswith("postgres SELECT 3 (D 1)")
+    assert "postgres autovacuum worker 1" in out
     assert "postgres parallel worker 1 (D 1)" in out
     assert "python race_rows.py 1" in out and "gunicorn 1" in out
 
