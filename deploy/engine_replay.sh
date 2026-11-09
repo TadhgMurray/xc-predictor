@@ -79,8 +79,17 @@ claim() {
   return 0
 }
 unclaim() { rm -rf "$OUT/.claim_$1"; }
+# ★ THE PACK MUST BE THERE AND SETTLED (owner, 2026-11-09: "no pack at
+#   engine/data/packed_XC_TF.npz"). A pipeline run deletes it (06_clear_cache)
+#   and writes it again (07_pack); a solve started in between failed at once,
+#   one cutoff after another. Now that is a wait: the file exists and has
+#   not changed for 10 minutes.
+PACK="$ROOT/engine/data/packed_XC_TF.npz"
+packReady() {
+  [ -f "$PACK" ] && [ $(( $(date +%s) - $(stat -c %Y "$PACK") )) -ge 600 ]
+}
 availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
-ready() { ! inQuiet && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
+ready() { ! inQuiet && packReady && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
 say() { echo "[replay] $(date -u '+%F %H:%M') UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 
 if [ "${1:-}" = "--list" ]; then
@@ -93,12 +102,20 @@ fi
 DATES="${*:-$(cutoffs)}"
 mkdir -p "$OUT" "$LOGDIR"
 
+# ★ FAILED CUTOFFS ARE TRIED AGAIN (owner, 2026-11-09: a run of failures
+#   "after 0 min" from 09:43 UTC, beside the nightly). A solve that dies in
+#   its first minutes failed at start-up, not in the solve: the session
+#   backs off XCP_REPLAY_BACKOFF_MIN (15) before the next, and the whole list
+#   is gone through again, up to XCP_REPLAY_PASSES (3) times, for the
+#   cutoffs still without a snapshot.
+for pass in $(seq 1 "${XCP_REPLAY_PASSES:-3}"); do
+todo=0
 for d in $DATES; do
   snap="$OUT/asof_$d.npz"
   if [ -f "$snap" ]; then continue; fi
   waited=0
   until ready; do
-    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
+    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, the pack being rebuilt, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
     waited=1
     sleep 300
   done
@@ -110,11 +127,21 @@ for d in $DATES; do
        "${JOINT_FLAGS[@]}" > "$LOGDIR/asof_$d.log" 2>&1; then
     say "$d: done in $(( ($(date +%s) - t0) / 60 )) min: $(grep -m1 -- '--snapshot' "$LOGDIR/asof_$d.log" | cut -c1-160)"
   else
-    say "$d: FAILED after $(( ($(date +%s) - t0) / 60 )) min: $LOGDIR/asof_$d.log"
+    say "$d: FAILED after $(( ($(date +%s) - t0) / 60 )) min (pass $pass): $(tail -1 "$LOGDIR/asof_$d.log" | cut -c1-200)"
+    cp -f "$LOGDIR/asof_$d.log" "$LOGDIR/asof_$d.failed$pass.log" 2>/dev/null
+    todo=1
+    if [ $(( $(date +%s) - t0 )) -lt 300 ]; then
+      unclaim "$d"
+      sleep $(( ${XCP_REPLAY_BACKOFF_MIN:-15} * 60 ))
+      continue
+    fi
   fi
   # the solve's own npz and state are large and read by nothing: the snapshot is the output
   rm -f "${snap%.npz}_joint.npz" "${snap%.npz}_joint_state.npz"
   unclaim "$d"
   sleep 120                               # let the next session's memory check see this one's
+done
+[ "$todo" -eq 0 ] && break
+say "pass $pass over: trying the failed cutoffs again"
 done
 say "all cutoffs tried: $(ls "$OUT"/asof_*.npz 2>/dev/null | wc -l) snapshots in $OUT"
