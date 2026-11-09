@@ -146,3 +146,4 @@ def test_an_ungraded_youth_row_in_an_open_race():
     assert RO.extraSide(130.0, 0, None, None, 107, "ms_m", 5000, 5, True, 10) is None
     # ungraded, a middle school race with two older runners: stays
     assert RO.extraSide(120.0, 0, None, None, 107, "ms_m", 3200, 0, False, 2) is None
+

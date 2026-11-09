@@ -79,6 +79,7 @@ _NOT_A_TEAM = re.compile(r"""
     | ^independent$
     | \bunattached\b
     | \bunaffiliated\b
+    | \bdo(n'?t|\s+not)\s+use\b     # a feed's retired team ("DON'T USE")
 
     # ★ A NATIONAL TEAM IS NOT A SCHOOL TEAM. At an international meet the
     #   school column holds the country, and five athletes wearing USA are a

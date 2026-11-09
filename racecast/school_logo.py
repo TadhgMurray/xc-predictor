@@ -421,6 +421,13 @@ def stampCrests(rows, school_key="school", state_key="state", px=64, pool_key="p
       pool still wins."""
     from school_identity import levelOf
     for r in rows or []:
+        # ! A FEED'S RETIRED TEAM IS NO SCHOOL (owner's audit, 2026-11-09:
+        #   "DON'T USE" on the middle school board): the browser boards print
+        #   the string as given, so it goes here, where every one passes
+        sc = r.get(school_key)
+        if sc and re.search(r"\bdo(n'?t|\s+not)\s+use\b", str(sc), re.I):
+            r[school_key] = None
+            continue
         rp = r.get(pool_key) or r.get("rating_pool") or pool
         url = crestUrl(r.get(school_key), r.get(state_key), px,
                        level=levelOf(rp) if rp else None)

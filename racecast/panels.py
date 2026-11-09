@@ -215,7 +215,10 @@ _NOT_A_TEAM_EXACT = frozenset({"unat", "none", "n/a", "na", "no team",
                                "no school", "independent", "individual",
                                "individuals", "club", "open", "unknown"})
 _NOT_A_TEAM_FRAGMENTS = ("unattached", "individual", "independent",
-                         "no team", "no school")
+                         "no team", "no school",
+                         # a feed's retired team, left on its rows (owner's
+                         # audit, 2026-11-09: Roman Wenceslao, "DON'T USE")
+                         "don't use", "dont use", "do not use")
 
 # * MATCHED ON THE WORD, NOT THE WHOLE SPELLING (owner, 2026-09-17:
 #   "Unattatched still getting team page"). The fragment list above only

@@ -1072,6 +1072,19 @@ def run(cur, since=None, k=None, floor=None, fast_sigma=None,
     return rows, cal
 
 
+def _personArg(v):
+    """A person id, or the token a page shows for one (public_ids)."""
+    try:
+        return int(v)
+    except ValueError:
+        sys.path.insert(0, os.path.join(_ROOT, "racecast"))
+        import public_ids as _pi
+        got = _pi.decode(v)
+        if not got:
+            raise argparse.ArgumentTypeError(f"not a person id or token: {v}")
+        return got[1]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1081,7 +1094,7 @@ def main():
                     help="judge only races from this year on (their "
                          f"neighbours may be up to {SINCE_MARGIN_YEARS} "
                          "years older). The pipeline judges everything.")
-    ap.add_argument("--person", type=int, default=None,
+    ap.add_argument("--person", type=_personArg, default=None,
                     help="explain one athlete: every race, its neighbours, "
                          "their median, the spread and z. Uses the last "
                          "--write's K, floor and cuts unless given.")

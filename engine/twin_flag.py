@@ -47,6 +47,8 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
     dup_same_feed the later result_id of two rows in ONE feed that agree on
                   person, meet, division (and event, on track), date and
                   time to the tenth. Two rows, one run.
+    dup_cross_div one cross country run listed in two divisions of one meet
+                  (same feed, person, date, time to the tenth; 2026-11-09).
     dup_same_day  one run under two meet entries on one day whose names
                   differ (2026-09-28; see dupSameDaySql).
     dup_adjacent_day one cross country run under two meet entries a day
@@ -1033,6 +1035,38 @@ def xcSplitCopySql(table, sport):
     """
 
 
+def dupCrossDivSql(table, sport):
+    """The later result_id of one person's run listed in two divisions of
+    one meet: same feed, person, meet and date, the time to the tenth.
+
+    ★ WHY (owner's audit, 2026-11-09: Lucas Bourgoyne twice on the middle
+      school boys' board, 16:40.0 at the 2013 Big Dipper Dash 5K, once in
+      its 'Open' list and once in an age group). dup_same_feed keys on the
+      division and so let both through. Cross country only: on the track a
+      prelim and a final of one meet are two runs."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH keys AS (
+            SELECT person_id, source, meet_id, date,
+                   round(time_seconds::numeric, 1) AS rt,
+                   min(result_id) AS keep
+            FROM   {table}
+            WHERE  person_id IS NOT NULL AND meet_id IS NOT NULL
+              AND  time_seconds IS NOT NULL AND time_seconds < 100000
+            GROUP  BY person_id, source, meet_id, date, round(time_seconds::numeric, 1)
+            HAVING count(DISTINCT div_id) > 1)
+        SELECT r.result_id
+        FROM   {table} r
+        JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
+                     AND k.meet_id = r.meet_id
+                     AND k.date IS NOT DISTINCT FROM r.date
+                     AND k.rt = round(r.time_seconds::numeric, 1)
+        WHERE  r.result_id <> k.keep
+          AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000
+    """
+
+
 RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("twin_same_day", twinSameDaySql),
          ("twin_race_rest", twinRaceRestSql),
@@ -1048,6 +1082,7 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("xc_track_copy", xcTrackCopySql),
          ("xc_split_copy", xcSplitCopySql),
          ("dup_cross_gender", dupCrossGenderSql),
+         ("dup_cross_div", dupCrossDivSql),
          (LC.REASON, LC.ruleSql))
 
 
