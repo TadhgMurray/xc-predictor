@@ -51,8 +51,10 @@ done
 cd "$ROOT" || exit 1
 
 if [ "$DRY" -eq 0 ]; then
-  exec 9>"$ROOT/.pipeline.lock"
-  if ! flock -n 9; then
+  # deploy/lockctl.sh: a pipeline holding it skips the night; a queued job
+  # (backup, race model) is waited for, up to an hour
+  . "$ROOT/deploy/lockctl.sh"
+  if ! lock_take nightly exclusive 3600 "nightly_update.sh (logs/nightly_*)"; then
     echo "[nightly] the pipeline holds $ROOT/.pipeline.lock -- skipping tonight"
     exit 0
   fi

@@ -29,8 +29,8 @@
 #   lock past that. So this takes the pipeline's own lock file first: it
 #   waits up to XCP_BACKUP_WAIT_H hours (default 6) for a running pipeline
 #   to finish, and skips the day otherwise. While it runs, a pipeline
-#   started by hand stops at once with "another pipeline holds
-#   .pipeline.lock" -- start it again when the backup is done.
+#   started by hand waits for it (deploy/lockctl.sh), and no backup starts
+#   while a run is waiting.
 # ! /etc/xc-predictor.env IS NOT COPIED OFF THE SERVER: it holds the
 #   passwords and keys. Keep your own copy of it somewhere safe.
 set -euo pipefail
@@ -53,8 +53,10 @@ if [ "${1:-}" = "--verify" ]; then
   exit 0
 fi
 
-exec 9>"$ROOT/.pipeline.lock"
-if ! flock -w $((WAIT_H * 3600)) 9; then
+# deploy/lockctl.sh, QUEUED: it takes the lock only when no run holds it AND
+# no run is waiting for it -- an interactive run started meanwhile goes first
+. "$ROOT/deploy/lockctl.sh"
+if ! lock_take backup queued $((WAIT_H * 3600)) "pg_dump to $DEST (about an hour; journalctl -u xcp-backup)"; then
   echo "backup: a pipeline held .pipeline.lock for ${WAIT_H}h -- skipped today" >&2
   exit 1
 fi
@@ -88,7 +90,7 @@ trap - ERR                                  # complete: keep it
 # the newest $KEEP stay on this disk
 ls -1d "$DEST"/2* | head -n -"$KEEP" | xargs -r rm -rf
 
-flock -u 9                                  # the pipeline may start now
+lock_release                                # the pipeline may start now
 
 if [ -n "${XCP_BACKUP_REMOTE:-}" ]; then
   if command -v rclone >/dev/null; then

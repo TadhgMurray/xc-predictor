@@ -26,14 +26,17 @@
 #   (owner, 2026-11-07: run beside a race_trees fit, the box ran out): no
 #   other engine solve, race_rows, race_trees or race_blend running (busy),
 #   XCP_REPLAY_MIN_GB available (default 70), and not in XCP_REPLAY_QUIET
-#   (default 03:30-07:00 UTC, the Postgres restart). A pipeline that is only
-#   running its other steps does not hold it up.
+#   (default 03:30-07:00 UTC, the Postgres restart). A pipeline that has a
+#   solve ahead of it (08_golive, the evidence chain) DOES hold it up, and
+#   stops a running one when its go-live needs the memory (scripts/jobrun.py;
+#   docs/PIPELINE-ORDER.md).
 # ★ SEVERAL AT ONCE (owner, 2026-11-09: 65 min a cutoff, 31 h for all). Start
 #   the script in two or three tmux sessions: each CLAIMS a cutoff before
 #   solving it ($OUT/.claim_<date>, holding its pid; a dead holder's claim is
 #   taken over), so no two solve the same one. Other REPLAYS do not count as
-#   busy; the memory floor still guards every start, so a second solve only
-#   starts when XCP_REPLAY_MIN_GB is free with the first one running.
+#   busy; the memory ledger guards every start, so a second solve only
+#   starts when XCP_REPLAY_MIN_GB is free AFTER the first one's reservation
+#   (XCP_REPLAY_GB) -- on the 125 GB box, in practice one at a time.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -89,7 +92,17 @@ packReady() {
   [ -f "$PACK" ] && [ $(( $(date +%s) - $(stat -c %Y "$PACK") )) -ge 600 ]
 }
 availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
-ready() { ! inQuiet && packReady && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
+# ★ MEMORY IS A RESERVATION NOW, NOT A LOOK (2026-11-09). Two sessions that
+#   both read "70 GB free" in the same minute both started a ~60 GB solve:
+#   1.5 GB left beside the site and the pipeline. The solve runs under
+#   scripts/jobrun.py, which admits it under one flock against a ledger of
+#   what running jobs reserved (XCP_REPLAY_GB, 60 each), stops it if it
+#   passes XCP_REPLAY_CAP_GB (85) or the box falls under XCP_MEM_FLOOR_GB
+#   (8), and stops it the moment a pipeline go-live needs the memory -- the
+#   cutoff is unclaimed and done again later. While a pipeline has a solve
+#   ahead (its standing want), no cutoff starts. docs/PIPELINE-ORDER.md.
+ready() { ! inQuiet && packReady && ! busy; }
+JOBRUN=("$PY" -u "$ROOT/scripts/jobrun.py")
 say() { echo "[replay] $(date -u '+%F %H:%M') UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 
 if [ "${1:-}" = "--list" ]; then
@@ -114,18 +127,32 @@ for d in $DATES; do
   snap="$OUT/asof_$d.npz"
   if [ -f "$snap" ]; then continue; fi
   waited=0
-  until ready; do
-    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, the pack being rebuilt, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
-    waited=1
-    sleep 300
+  while :; do
+    until ready; do
+      [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, the pack being rebuilt, or another solve or model fit)"
+      waited=1
+      sleep 300
+    done
+    # claim it, unless another session has (or has finished it)
+    if [ -f "$snap" ] || ! claim "$d"; then continue 2; fi
+    say "$d: asking for memory and solving on the rows before it (session $$): tail -f $LOGDIR/asof_$d.log"
+    t0=$(date +%s)
+    nice -n 10 "${JOBRUN[@]}" --name "replay $d" --gb "${XCP_REPLAY_GB:-60}" \
+        --min-free-gb "${XCP_REPLAY_MIN_GB:-70}" --cap-gb "${XCP_REPLAY_CAP_GB:-85}" \
+        --sacrificial --wait-min 30 --peak-out "$LOGDIR/asof_$d.mem" -- \
+        "$PY" -u engine/run_joint.py --asof "$d" --snapshot "$snap" \
+        "${JOINT_FLAGS[@]}" > "$LOGDIR/asof_$d.log" 2>&1
+    rc=$?
+    [ "$rc" -ne 75 ] && break
+    # not admitted in 30 min, or stopped for a pipeline solve: not a failure
+    unclaim "$d"
+    rm -f "$snap" "${snap%.npz}_joint.npz" "${snap%.npz}_joint_state.npz"
+    say "$d: $(grep -m1 -E 'not admitted|STOPPING' "$LOGDIR/asof_$d.log" | cut -c1-200) -- trying again later"
+    waited=0
+    sleep 600
   done
-  # memory is free: claim it, unless another session has (or has finished it)
-  if [ -f "$snap" ] || ! claim "$d"; then continue; fi
-  say "$d: solving on the rows before it (session $$): tail -f $LOGDIR/asof_$d.log"
-  t0=$(date +%s)
-  if nice -n 10 "$PY" -u engine/run_joint.py --asof "$d" --snapshot "$snap" \
-       "${JOINT_FLAGS[@]}" > "$LOGDIR/asof_$d.log" 2>&1; then
-    say "$d: done in $(( ($(date +%s) - t0) / 60 )) min: $(grep -m1 -- '--snapshot' "$LOGDIR/asof_$d.log" | cut -c1-160)"
+  if [ "$rc" -eq 0 ]; then
+    say "$d: done in $(( ($(date +%s) - t0) / 60 )) min ($(cat "$LOGDIR/asof_$d.mem" 2>/dev/null | cut -d' ' -f1)): $(grep -m1 -- '--snapshot' "$LOGDIR/asof_$d.log" | cut -c1-160)"
   else
     say "$d: FAILED after $(( ($(date +%s) - t0) / 60 )) min (pass $pass): $(tail -1 "$LOGDIR/asof_$d.log" | cut -c1-200)"
     cp -f "$LOGDIR/asof_$d.log" "$LOGDIR/asof_$d.failed$pass.log" 2>/dev/null

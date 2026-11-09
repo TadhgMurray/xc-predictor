@@ -57,6 +57,7 @@ XCP_STREAMS="${XCP_STREAMS:-4}"
 XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-6}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
+_ORIG_ARGS="$*"
 FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""; FAST=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -117,11 +118,17 @@ cd "$ROOT" || exit 1
 #   of 40 min, one go-live dropped the other's staging table, and every
 #   board after was a mixture. The lock is on a file, held by this shell
 #   for the whole run, released by the kernel however the run ends.
+# ★ AND A QUEUED JOB DOES NOT TURN A RUN AWAY (2026-11-09, deploy/lockctl.sh):
+#   when the backup or the race-model build holds the lock, the run says so
+#   and waits for it (XCP_LOCK_WAIT_MIN, default 120) with a want posted, so
+#   the next queued job cannot slip in first. A pipeline or the nightly
+#   holding it is still a FATAL. The holder is written to
+#   .pipeline.lock.holder; scripts/who_holds_the_lock.sh reads it.
 if [ "$DRY" -eq 0 ]; then
-  exec 9>"$ROOT/.pipeline.lock"
-  if ! flock -n 9; then
-    echo "FATAL: another pipeline holds $ROOT/.pipeline.lock -- tmux ls, then" >&2
-    echo "       attach to it or kill it; never run two at once." >&2
+  . "$ROOT/deploy/lockctl.sh"
+  if ! lock_take pipeline exclusive $(( ${XCP_LOCK_WAIT_MIN:-120} * 60 )) \
+       "run_pipeline.sh ${_ORIG_ARGS:-} (tmux: tmux ls; logs: newest logs/2*)"; then
+    echo "       tmux ls, then attach to it or stop it; never run two at once." >&2
     exit 1
   fi
 fi
@@ -205,6 +212,19 @@ trap _cleanup INT TERM
 SUMMARY="$LOGDIR/summary.log"
 echo "  logs -> $LOGDIR"
 
+# ★ A SOLVE IS AHEAD: NO ENGINE REPLAY STARTS UNTIL IT IS DONE (2026-11-09;
+#   docs/PIPELINE-ORDER.md). A replay is a ~60 GB solve; one started during
+#   steps 00-07 was still running at 08_golive, and two of them beside the
+#   go-live left 1.5 GB on the box. This posts a standing want in
+#   scripts/jobrun.py's ledger from now until the evidence chain is
+#   collected: engine_replay.sh will not start a cutoff meanwhile, and one
+#   already running is stopped (and retried later) the moment the go-live
+#   asks for memory it cannot have. It dies with this shell.
+if [ "$DRY" -eq 0 ] && [ "$FROM" -le 8 ]; then
+  "$PY" "$ROOT/scripts/jobrun.py" --want-standing $$ --gb "${XCP_GOLIVE_GB:-60}" \
+        --name "pipeline $(basename "$LOGDIR") (a solve is ahead)" 2>/dev/null || true
+fi
+
 FAILED=""
 T_START=$(date +%s)
 
@@ -222,6 +242,40 @@ _stampTo() {
     printf '%s\n' "$line"
     printf '%(%H:%M:%S)T %s\n' -1 "$line" >> "$1"
   done
+}
+
+# ★ EVERY STEP'S MEMORY, BESIDE ITS TIME (2026-11-09, the back-end track:
+#   "wall-clock time and peak memory per step"). Each step's command runs
+#   under scripts/jobrun.py, which follows its whole process tree and writes
+#   the peak RSS and the lowest MemAvailable seen while it ran to
+#   $LOGDIR/.mem/<name>; the summary line carries both, and
+#   scripts/pipeline_profile.py tabulates a run (or two side by side).
+#   STEP_MEM="--gb N --priority ..." in front of a step admits it through
+#   jobrun's memory ledger (the go-live; see docs/PIPELINE-ORDER.md).
+#   XCP_JOBRUN=0 runs the commands bare.
+_jr() {   # _jr <name> -- the wrapper's argv, or nothing
+  if [ "${XCP_JOBRUN:-1}" != "0" ] && [ "$DRY" -eq 0 ]; then
+    echo "$PY -u $ROOT/scripts/jobrun.py --name $1 --peak-out $LOGDIR/.mem/$1 ${STEP_MEM:-} --"
+  fi
+}
+_peak() { # _peak <name...> -- ", peak 4.2 GB, box down to 31 GB" (shards: summed)
+  "$PY" - "$LOGDIR/.mem" "$@" <<'PYEOF' 2>/dev/null
+import os, re, sys
+d, names = sys.argv[1], sys.argv[2:]
+pk, lo = 0.0, None
+for n in names:
+    try:
+        t = open(os.path.join(d, n)).read()
+    except OSError:
+        continue
+    m = re.search(r"peak_gb=([0-9.]+) min_avail_gb=([0-9.inf]+)", t)
+    if m:
+        pk += float(m.group(1))
+        a = float(m.group(2))
+        lo = a if lo is None else min(lo, a)
+if lo is not None:
+    print(f", peak {pk:.1f} GB, box down to {lo:.0f} GB free", end="")
+PYEOF
 }
 
 # step <name> <command...>
@@ -248,7 +302,7 @@ summarise() {
   fi
   echo ""
   echo "======================================================================"
-  echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m"
+  echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m" | tee -a "$SUMMARY"
   if [ -n "$FAILED" ]; then
     echo "  FAILED STEPS:$FAILED"
     echo "  logs: $LOGDIR"
@@ -345,13 +399,13 @@ step() {
   # ! -u SO PYTHON DOES NOT BUFFER. Without it a four-hour step shows nothing
   #   until it finishes, and you cannot tell a slow step from a hung one.
   : > "$LOGDIR/$name.log"
-  if $NICE "$@" 2>&1 | _stampTo "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
+  if $NICE $(_jr "$name") "$@" 2>&1 | _stampTo "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
   el=$(( $(date +%s) - t0 ))
   if [ "$rc" -ne 0 ]; then
-    echo "  $name FAILED after ${el}s" | tee -a "$SUMMARY"
+    echo "  $name FAILED after ${el}s$(_peak "$name")" | tee -a "$SUMMARY"
     FAILED="$FAILED $name"
   else
-    echo "  $name ok (${el}s)" | tee -a "$SUMMARY"
+    echo "  $name ok (${el}s$(_peak "$name"))" | tee -a "$SUMMARY"
   fi
 }
 
@@ -368,9 +422,9 @@ _live() (
   nm="$1"; log="$2"; shift 2
   : > "$log"
   if [ "${XCP_LIVE:-1}" = "0" ]; then
-    "$@" 2>&1 | _stampTo "$log" > /dev/null
+    $(_jr "$nm") "$@" 2>&1 | _stampTo "$log" > /dev/null
   else
-    "$@" 2>&1 | _stampTo "$log" | sed -u "s/^/  [$nm] /"
+    $(_jr "$nm") "$@" 2>&1 | _stampTo "$log" | sed -u "s/^/  [$nm] /"
   fi
 )
 
@@ -409,10 +463,10 @@ steps2() {
   for pair in "$nameA:$ra" "$nameB:$rb"; do
     nm="${pair%%:*}"; rc="${pair##*:}"
     if [ "$rc" -ne 0 ]; then
-      echo "  $nm FAILED after ${el}s" | tee -a "$SUMMARY"
+      echo "  $nm FAILED after ${el}s$(_peak "$nm")" | tee -a "$SUMMARY"
       FAILED="$FAILED $nm"
     else
-      echo "  $nm ok (${el}s, in parallel)" | tee -a "$SUMMARY"
+      echo "  $nm ok (${el}s, in parallel$(_peak "$nm"))" | tee -a "$SUMMARY"
     fi
   done
 }
@@ -464,10 +518,10 @@ stepsN() {
     nm="$1"; shift
     tail -n 2 "$LOGDIR/$nm.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  $nm FAILED after ${el}s" | tee -a "$SUMMARY"
+      echo "  $nm FAILED after ${el}s$(_peak "$nm")" | tee -a "$SUMMARY"
       FAILED="$FAILED $nm"
     else
-      echo "  $nm ok (${el}s, in parallel)" | tee -a "$SUMMARY"
+      echo "  $nm ok (${el}s, in parallel$(_peak "$nm"))" | tee -a "$SUMMARY"
     fi
   done
 }
@@ -507,11 +561,12 @@ shards() {
   done
   tail -n 2 "$LOGDIR/${name}"_shard*.log
   el=$(( $(date +%s) - t0 ))
+  _sh=(); k=0; while [ "$k" -lt "$n" ]; do _sh+=("${name}_shard$k"); k=$((k + 1)); done
   if [ "$rc" -ne 0 ]; then
-    echo "  $name FAILED after ${el}s" | tee -a "$SUMMARY"
+    echo "  $name FAILED after ${el}s$(_peak "${_sh[@]}")" | tee -a "$SUMMARY"
     FAILED="$FAILED $name"
   else
-    echo "  $name ok (${el}s)" | tee -a "$SUMMARY"
+    echo "  $name ok (${el}s$(_peak "${_sh[@]}"))" | tee -a "$SUMMARY"
   fi
 }
 
@@ -557,10 +612,10 @@ bgjoin() {
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
     tail -n 2 "$LOGDIR/$1.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  $1 FAILED after ${el}s (background)" | tee -a "$SUMMARY"
+      echo "  $1 FAILED after ${el}s (background$(_peak "$1"))" | tee -a "$SUMMARY"
       FAILED="$FAILED $1"
     else
-      echo "  $1 ok (${el}s, background)" | tee -a "$SUMMARY"
+      echo "  $1 ok (${el}s, background$(_peak "$1"))" | tee -a "$SUMMARY"
     fi
     BG_PIDS[$i]=""
   done
@@ -574,10 +629,10 @@ bgwait() {
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
     tail -n 2 "$LOGDIR/${BG_NAMES[$i]}.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background)" | tee -a "$SUMMARY"
+      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
       FAILED="$FAILED ${BG_NAMES[$i]}"
     else
-      echo "  ${BG_NAMES[$i]} ok (${el}s, background)" | tee -a "$SUMMARY"
+      echo "  ${BG_NAMES[$i]} ok (${el}s, background$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
     fi
   done
   BG_PIDS=(); BG_NAMES=(); BG_T0=()
@@ -1424,6 +1479,13 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   # the flags: deploy/joint_flags.sh (one definition with the replays)
   . "$ROOT/deploy/joint_flags.sh"
   jointFlags
+  # ★ ADMITTED THROUGH THE MEMORY LEDGER (scripts/jobrun.py, 2026-11-09):
+  #   the go-live reserves XCP_GOLIVE_GB (60) and waits until that and
+  #   XCP_MEM_RESERVE_GB (16) for the site are free after everyone else's
+  #   reservations. A running engine replay in its way stops itself at once
+  #   (it is retried later); anything else is waited for, up to
+  #   XCP_GOLIVE_MEM_WAIT_MIN (90), and then the go-live runs anyway.
+  STEP_MEM="--gb ${XCP_GOLIVE_GB:-60} --priority --wait-min ${XCP_GOLIVE_MEM_WAIT_MIN:-90}" \
   step 08_golive        "$PY" -u engine/run_joint.py --golive "${JOINT_FLAGS[@]}"
   # ★★ THE EVIDENCE STEPS RUN BESIDE THE BOARDS, NOT BEFORE THEM (owner,
   #    2026-10-07: "make it faster"). 08a_holdout, 08a_sport_holdout,
@@ -2132,6 +2194,8 @@ if [ -n "${EVID_PID:-}" ]; then
   _ef=$(tr -s ' \n' ' ' < "$EVID_FAILED_FILE" 2>/dev/null | sed 's/^ *//; s/ *$//')
   [ -n "$_ef" ] && FAILED="$FAILED $_ef"
 fi
+# the last solve of the run is done: engine replays may start again
+[ "$DRY" -eq 0 ] && "$PY" "$ROOT/scripts/jobrun.py" --unwant $$ 2>/dev/null
 step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
 # ★ THE DATA WATCHDOG (owner, 2026-10-10): after the boards swap and every
 #   step that writes what readers see, before the vacuum. Report only; its
@@ -2188,7 +2252,9 @@ if [ "${XCP_STATIC_PAGES:-0}" = "1" ]; then
 fi
 step 19_edge_purge "$PY" -u scripts/edge_purge.py || true
 if [ "$DRY" -ne 1 ]; then
-  nohup "$PY" -u scripts/edge_purge.py --delay 960 >> "$LOGDIR/19_edge_purge_again.log" 2>&1 &
+  # ! 9>&- : it outlives the run by 16 minutes and must not hold the lock
+  #   that long (2026-11-09: "still locked" with the run long finished)
+  nohup "$PY" -u scripts/edge_purge.py --delay 960 >> "$LOGDIR/19_edge_purge_again.log" 2>&1 9>&- &
 fi
 
 # ---- summary -------------------------------------------------------- #

@@ -1,56 +1,112 @@
 #!/bin/bash
 # Project: xc-predictor / scripts
 # File:    who_holds_the_lock.sh
-# Purpose: which PROCESS holds .pipeline.lock, using nothing that has to be
-#          installed.
+# Purpose: who HOLDS .pipeline.lock, who is WAITING for it, and what each is
+#          doing -- using nothing that has to be installed.
 #
-# ⚠ fuser AND lsof ARE NOT ON THIS SERVER (owner, 2026-09-20). The chain's
-#   error message named fuser, which is useless advice on the machine it is
-#   printed on. /proc is always there.
+#   bash scripts/who_holds_the_lock.sh
 #
-# ! flock IS A KERNEL LOCK. A held lock means a process IS ALIVE and holding
-#   it; deleting the file does not release anything and lets two pipelines run
-#   at once, which is the exact accident the lock exists to prevent (run9:
-#   both solves took 5.5h instead of 40min and every board after was a
-#   mixture).
+# ⚠ fuser AND lsof ARE NOT ON THIS SERVER (owner, 2026-09-20). /proc is.
+# ★ HOLDER AND WAITERS APART (2026-11-09: the owner kept finding the lock
+#   "still held" with nothing visibly running). The old version listed every
+#   process with the FILE open, so a backup or race-model timer WAITING for
+#   the lock looked exactly like a holder. /proc/locks says which is which:
+#   the holder's line, then one "->" line per waiter. The job that took it
+#   wrote .pipeline.lock.holder (deploy/lockctl.sh): its name, pid, since
+#   when, and what it is doing.
+# ★ AND THE systemd UNIT. The backup (xcp-backup), the race model
+#   (xcp-race-model) and the nightly (xcp-nightly) run under timers, not in
+#   tmux -- so "nothing is running" on screen while a unit holds the lock.
+#
+# ! flock IS A KERNEL LOCK. Deleting the file releases nothing and lets two
+#   pipelines run at once (run9: both solves 5.5 h instead of 40 min).
 set -u
 cd "$(dirname "$0")/.." || exit 1
 LOCK="$(pwd)/.pipeline.lock"
 
 if [ ! -e "$LOCK" ]; then
-    echo "no lock file at $LOCK — nothing holds it"
+    echo "no lock file at $LOCK -- nothing holds it"
     exit 0
 fi
 
 ino=$(stat -c %i "$LOCK" 2>/dev/null)
+dev=$(stat -c %D "$LOCK" 2>/dev/null)   # hex major:minor packed
 echo "lock file : $LOCK  (inode $ino)"
-echo ""
 
-found=0
-for d in /proc/[0-9]*; do
-    pid=${d#/proc/}
-    for fd in "$d"/fd/*; do
-        [ -e "$fd" ] || continue
-        tgt=$(readlink "$fd" 2>/dev/null) || continue
-        case "$tgt" in
-            *.pipeline.lock)
-                cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null | cut -c1-100)
-                started=$(stat -c %y "$d" 2>/dev/null | cut -c1-19)
-                echo "  HELD BY pid $pid  (since $started)"
-                echo "      $cmd"
-                found=1
-                ;;
-        esac
-    done
-done
+_unit() {
+    # the systemd unit a pid runs in, from its cgroup
+    sed -n 's|.*/\([^/]*\.\(service\|scope\)\)$|\1|p' "/proc/$1/cgroup" 2>/dev/null | head -1
+}
+_cmd() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | cut -c1-110; }
+_since() { stat -c %y "/proc/$1" 2>/dev/null | cut -c1-19; }
 
-if [ "$found" -eq 0 ]; then
-    echo "  nothing has it open — the lock is FREE."
-    echo "  (a leftover file is harmless; flock holds nothing once the"
-    echo "   process is gone)"
+# /proc/locks: "N: FLOCK  ADVISORY  WRITE PID MAJ:MIN:INODE 0 EOF" for the
+# holder, "N: -> FLOCK  ADVISORY  WRITE PID MAJ:MIN:INODE 0 EOF" per waiter
+holders=$(awk -v ino="$ino" '$2=="FLOCK" { split($6,a,":"); if (a[3]==ino) print $5 }' /proc/locks)
+waiters=$(awk -v ino="$ino" '$2=="->" && $3=="FLOCK" { split($7,a,":"); if (a[3]==ino) print $6 }' /proc/locks)
+
+# ! THE PID IN /proc/locks IS flock(1)'s, which took the lock on the job's
+#   descriptor and exited -- so it is only "held or free". The job is the
+#   pid in .pipeline.lock.holder; under it, everything with the file open
+#   that is not waiting.
+wparents=""
+for w in $waiters; do wparents="$wparents $(awk '{print $4}' "/proc/$w/stat" 2>/dev/null)"; done
+hpid=$(sed -n 's/^pid=//p' "$LOCK.holder" 2>/dev/null | head -1)
+if [ -z "$holders" ]; then
+    echo ""
+    echo "  FREE -- nothing holds the lock."
 else
     echo ""
-    echo "  Stop it cleanly:  kill <pid>      then re-check with this script."
-    echo "  Do NOT rm the lock file: that releases nothing and allows a"
-    echo "  second pipeline to start on top of the first."
+    if [ -n "$hpid" ] && [ -d "/proc/$hpid" ]; then
+        echo "  HELD BY $(sed -n 's/^job=//p' "$LOCK.holder" | head -1): pid $hpid" \
+             "(since $(sed -n 's/^since=//p' "$LOCK.holder" | head -1))  unit: $(_unit "$hpid")"
+        echo "      what: $(sed -n 's/^what=//p' "$LOCK.holder" | head -1)"
+        echo "      $(_cmd "$hpid")"
+    else
+        echo "  HELD -- and the job that took it (${hpid:-unknown pid}) is GONE: what is"
+        echo "  left of it still has the lock open:"
+    fi
+    for d in /proc/[0-9]*; do
+        p=${d#/proc/}
+        [ "$p" = "$hpid" ] && continue
+        case " $waiters $wparents " in *" $p "*) continue ;; esac
+        for fd in "$d"/fd/*; do
+            tgt=$(readlink "$fd" 2>/dev/null) || continue
+            if [ "$tgt" = "$LOCK" ]; then
+                echo "      under it: pid $p  unit: $(_unit "$p")  $(_cmd "$p")"
+                break
+            fi
+        done
+    done
 fi
+
+if [ -n "$waiters" ]; then
+    echo ""
+    echo "  WAITING for it (in flock's queue):"
+    for pid in $waiters; do
+        pp=$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)
+        echo "      pid ${pp:-$pid}  unit: $(_unit "${pp:-$pid}")  $(_cmd "${pp:-$pid}")"
+    done
+fi
+# queued jobs poll instead of sitting in flock's queue (deploy/lockctl.sh)
+pol=$(pgrep -af 'backup_db.sh|race_model_weekly.sh|nightly_update.sh|run_pipeline.sh' 2>/dev/null \
+      | grep -v -e "^$$ " -e who_holds | grep -v -e "^${hpid:-x} " || true)
+if [ -n "$pol" ]; then
+    echo ""
+    echo "  also running (holding, waiting, or done with the lock):"
+    echo "$pol" | cut -c1-120 | sed 's/^/      /'
+fi
+if [ -s "$LOCK.want" ] && ! ( exec 7>>"$LOCK.want"; flock -n 7 ) 2>/dev/null; then
+    echo ""
+    echo "  A RUN IS WAITING FOR IT: $(cat "$LOCK.want") -- no queued job starts first."
+fi
+if [ -n "$holders" ]; then
+    echo ""
+    echo "  Stop it cleanly: kill <pid> (a timer's job: systemctl stop <unit>)."
+    echo "  Do NOT rm the lock file: that releases nothing and lets a second"
+    echo "  pipeline start on top of the first."
+fi
+echo ""
+echo "  memory-heavy jobs (scripts/jobrun.py --status):"
+_py="${XCP_PYTHON:-/srv/venv/bin/python}"; [ -x "$_py" ] || _py=python3
+"$_py" scripts/jobrun.py --status 2>&1 | sed 's/^/      /'
