@@ -237,3 +237,72 @@ def test_an_own_site_index_htm_that_is_a_frameset_is_read_through_its_frames():
     src = type("S", (), {"results_url": "https://timer.example/results/", "website": "", "slug": "t"})()
     urls, _note = asyncio.run(discover.discover(fetcher, src, 2026, 5))
     assert urls == [(base + "2026/Valley/Results/c2_boys.htm", "hytek")]
+
+
+# ------------------------------------------------------------- one-page MeetPro, a race scored by gender
+def _section(num, title, names):
+    rows = "".join(f'<tr><td class="place">{i}</td><td class="athlete">{n}</td><td class="year">7</td>'
+                   f'<td class="ath-team">North</td><td class="time">12:0{i}.0</td></tr>'
+                   for i, n in enumerate(names, 1))
+    return (f'<section id="event{num}" class="event"><p class="bold-cell">Race #1</p>'
+            f'<p class="bold-cell">{title}</p><table class="result-table"><thead><tr>'
+            f'<th class="athlete-hdr">Athlete</th></tr></thead><tbody>{rows}</tbody></table></section>')
+
+
+def test_two_sections_with_one_id_are_two_races_each_its_own_gender():
+    page = ('<div class="nav-title"><h4>Valley All-Comers</h4></div>'
+            + _section(5, "MEN &amp; WOMEN (Middle School 3K) • 3 Kilometers Boys", ["ALPHA, Al", "BRAVO, Bo"])
+            + _section(5, "MEN &amp; WOMEN (Middle School 3K) • 3 Kilometers Girls", ["DELTA, Di"]))
+    idx, res = meetpro.parseSinglePage(page)
+    lm = land.fromMeetPro(idx, res, "t", "u")
+    assert [(r.gender, [x.last for x in r.rows]) for r in lm.races] == [("M", ["ALPHA", "BRAVO"]), ("F", ["DELTA"])]
+
+
+def test_a_title_naming_both_genders_is_the_last_one():
+    assert meetpro._gender("MEN & WOMEN (High School) • 5 Kilometers Women's") == "F"
+    assert meetreport._gender("Boys and Girls 2K Boys") == "M"
+    assert meetpro._gender("Girls 3200 Meters") == "F" and meetpro._gender("Open 5K") == ""
+
+
+def test_an_elementary_race_is_left_out_and_a_middle_school_race_is_not():
+    def rows(grades):
+        return [hytek.Row(place=i, last="x", first="y", grade=g, school="North", seconds=600.0 + i, mark="")
+                for i, g in enumerate(grades, 1)]
+    assert land.isElementary(rows(["3", "2", "K", "4", "7"]))
+    assert not land.isElementary(rows(["6", "7", "8", "5", "8"]))
+    assert not land.isElementary(rows(["FR", "SO", "", ""]))
+
+
+def test_a_race_with_no_distance_run_in_cross_country_times_is_cross_country():
+    def rows(secs):
+        return [hytek.Row(place=i, last="x", first="y", grade="", school="", seconds=s, mark="")
+                for i, s in enumerate(secs, 1)]
+    assert land.sportByTimes("TF", None, rows([1500.0, 1520.0, 1600.0])) == "XC"
+    assert land.sportByTimes("TF", None, rows([12.1, 12.4])) == "TF"
+    assert land.sportByTimes("TF", 5000.0, rows([1000.0, 1010.0])) == "TF"
+
+
+# ------------------------------------------------------------- data-attribute rows (EliteFeats)
+DATA_PAGE = """<html><head><title>Valley XC Championships elitefeats results 11/8/26</title></head><body>
+<div>Cross Country &middot; 11/8/26 &middot; Lakeport, NJ</div>
+<select id="xrDivSelect"><option value="./?ID=7&amp;Div=Men+8K" selected="selected">Men 8K</option>
+<option value="./?ID=7&amp;Div=Women+5K">Women 5K</option></select>
+<table><tbody>
+<tr data-bib="1" data-name="Adam Alpha" data-team="North (Del.)" data-grade="FR" data-div="Men 8K" data-sec="1566.8" data-place="1"><td>1</td></tr>
+<tr data-bib="2" data-name="Ben Bravo" data-team="South" data-grade="SO" data-div="Men 8K" data-sec="1568.1" data-place="2"><td>2</td></tr>
+<tr data-bib="3" data-name="Cal Charlie" data-team="South" data-grade="JR" data-div="Men 8K" data-sec="" data-place=""><td></td></tr>
+</tbody></table></body></html>"""
+
+
+def test_data_rows_pages_read_their_division_and_point_at_the_others():
+    from sources import datarows
+    url = "https://timer.example/xc-results?ID=7"
+    assert datarows.isDataPage(DATA_PAGE) and discover.isReport(DATA_PAGE.encode())
+    assert datarows.divisionUrls(DATA_PAGE, url) == ["https://timer.example/xc-results?ID=7&div=Women+5K"]
+    meet = datarows.parsePage(DATA_PAGE, url)
+    assert (meet.name, meet.date, meet.venue) == ("Valley XC Championships", "2026-11-08", "Lakeport, NJ")
+    e = meet.events[0]
+    assert (e.title, e.gender, e.meters, e.sport) == ("Men 8K", "M", 8000.0, "XC")
+    assert [(r.place, r.first, r.last, r.grade, r.school, r.seconds) for r in e.rows] == [
+        (1, "Adam", "Alpha", "FR", "North (Del.)", 1566.8), (2, "Ben", "Bravo", "SO", "South", 1568.1),
+        (None, "Cal", "Charlie", "JR", "South", None)]

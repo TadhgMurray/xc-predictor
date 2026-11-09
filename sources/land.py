@@ -224,6 +224,29 @@ def isCommunity(rows):
     return len(teams) >= 3 and sum(bool(_HOMETOWN.match(t)) for t in teams) >= 0.6 * len(teams)
 
 
+# ★ AN ELEMENTARY RACE (2026-11-09, Finish Line Results' "St. Matthew's
+#   Elementary Mini Meet": grades K to 5, a 0.8 km race). No pool we rate
+#   starts below grade 6; when most graded runners are in K-5 the race is
+#   left out. A middle school race with a few fifth graders stays.
+_ELEMENTARY = re.compile(r"^(K|[1-5])$", re.I)
+
+
+def isElementary(rows):
+    grades = [(r.grade or "").strip() for r in rows]
+    grades = [g for g in grades if g]
+    return len(grades) >= 3 and sum(bool(_ELEMENTARY.match(g)) for g in grades) > 0.5 * len(grades)
+
+
+def sportByTimes(sport, meters, rows):
+    """A race that states no distance and was run in cross country times
+    (median past ten minutes) is cross country: a track race always names
+    its distance (Rapid Results' 'Mens Open' on an XC championship day). Pure."""
+    if sport != "TF" or meters:
+        return sport
+    secs = sorted(r.seconds for r in rows if r.seconds)
+    return "XC" if secs and secs[len(secs) // 2] >= 600 else sport
+
+
 def withoutReprints(races):
     """Races, less any that only re-prints others of the same meet: a
     combined 'Boys and Girls 2K' whose every runner (name and time) is in
@@ -293,11 +316,12 @@ def fromHytek(meet, slug, url):
         lm.skipped += e.skipped
         if not e.rows or _RELAY.search(e.title) or _FIELD.search(e.title):
             continue
-        if isAgeGroup(e.title) or isCommunity(e.rows):
+        if isAgeGroup(e.title) or isCommunity(e.rows) or isElementary(e.rows):
             lm.skipped += len(e.rows)
             continue
+        sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters)
         lm.races.append(LandedRace(n=e.number, title=e.title, gender=e.gender,
-                                   sport=getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters),
+                                   sport=sportByTimes(sport, e.meters, e.rows),
                                    meters=e.meters, rows=_landedRows(e.rows)))
     kept = withoutReprints(lm.races)
     lm.skipped += sum(len(r.rows) for r in lm.races if r not in kept)
@@ -322,7 +346,7 @@ def fromMeetPro(index, results, slug, url):
             continue
         rounds = got if isinstance(got[0], tuple) else [("", got)]
         for rnd, rows in rounds:
-            if isCommunity(rows):
+            if isCommunity(rows) or isElementary(rows):
                 lm.skipped += len(rows)
                 continue
             prelim = bool(re.search(r"prelim|semi|heat|quarter", rnd or "", re.I))
@@ -331,7 +355,8 @@ def fromMeetPro(index, results, slug, url):
             lm.races.append(LandedRace(n=e.number + (PRELIM_OFFSET if prelim else 0),
                                        title=e.title + (" Prelims" if prelim else ""), gender=e.gender,
                                        sport=("XC" if getattr(e, "xc", False)
-                                              else sportOf(e.title, index.name, e.meters)),
+                                              else sportByTimes(sportOf(e.title, index.name, e.meters),
+                                                                e.meters, rows)),
                                        meters=e.meters, rows=_landedRows(rows)))
     return lm
 

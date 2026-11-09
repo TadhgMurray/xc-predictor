@@ -64,12 +64,11 @@ def isReport(text):
 
 
 def _gender(title):
-    t = title.lower()
-    if re.search(r"\b(girls?|women'?s?|female)\b", t):
-        return "F"
-    if re.search(r"\b(boys?|men'?s?|male)\b", t):
-        return "M"
-    return ""
+    """A title naming both genders is the one it names last (sources.meetpro._gender)."""
+    words = re.findall(r"\b(girls?|women'?s?|female|boys?|men'?s?|male)\b", title.lower())
+    if not words:
+        return ""
+    return "F" if words[-1].startswith(("girl", "women", "female")) else "M"
 
 
 def _meters(title):

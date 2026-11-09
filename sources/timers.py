@@ -54,7 +54,7 @@ for _p in (_ROOT, os.path.join(_ROOT, "scripts")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from sources import hytek, land, meetpro, meetreport, registry     # noqa: E402
+from sources import datarows, hytek, land, meetpro, meetreport, registry     # noqa: E402
 
 _now = time.monotonic       # the budget's clock (tests replace it)
 MAX_AGE = 30 * 86400        # a page fetched within 30 days is read from the store
@@ -144,10 +144,29 @@ async def fetchMeet(fetcher, slug, url, kind=None):
             if r.body:
                 results[e.number] = meetpro.parseRounds(r.body.decode("utf-8", "replace"))
         return land.fromMeetPro(idx, results, slug, url), "meetpro"
+    if got.body[:5] != b"%PDF-" and datarows.isDataPage(got.body.decode("utf-8", "replace")):
+        return await dataRowsMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "data rows"
     listing = directoryReports(got.body.decode("utf-8", "replace"), url) if got.body[:5] != b"%PDF-" else []
     if listing:
         return await mergeReports(fetcher, slug, url, listing)
     return await _hytekReport(fetcher, slug, url, got.body), "hytek"
+
+
+async def dataRowsMeet(fetcher, slug, url, page):
+    """A data-rows results page (sources.datarows: EliteFeats) and the pages
+    of its other divisions -> one LandedMeet."""
+    meet = datarows.parsePage(page, url)
+    for k, durl in enumerate(datarows.divisionUrls(page, url)[:MAX_PAGES], 1):
+        r = await fetcher.fetch(durl, MAX_AGE)
+        if not r.body or _isChallenge(r.body):
+            continue
+        other = datarows.parsePage(r.body.decode("utf-8", "replace"), durl)
+        have = {e.title for e in meet.events}
+        for e in other.events:
+            if e.title not in have:
+                e.number = len(meet.events) + 1
+                meet.events.append(e)
+    return land.fromHytek(meet, slug, url)
 
 
 async def mergeReports(fetcher, slug, url, listing):

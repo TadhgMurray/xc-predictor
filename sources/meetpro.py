@@ -52,12 +52,13 @@ def _text(fragment):
 
 
 def _gender(title):
-    t = title.lower()
-    if re.search(r"\b(girls|women|female)\b", t):
-        return "F"
-    if re.search(r"\b(boys|men|male)\b", t):
-        return "M"
-    return ""
+    """'Girls 1600 Meters' -> 'F'. A title naming both ('MEN & WOMEN (High
+    School) • 5 Kilometers Women's': a combined race scored by gender) is
+    the gender it names LAST."""
+    words = re.findall(r"\b(girls?|women'?s?|female|boys?|men'?s?|male)\b", title.lower())
+    if not words:
+        return ""
+    return "F" if words[-1].startswith(("girl", "women", "female")) else "M"
 
 
 def _isoDate(text):
@@ -231,12 +232,20 @@ def parseSinglePage(page):
         elif t and not idx.place and re.search(r",\s*[A-Z]{2}\b", t):
             idx.place = t
     results = {}
+    # ! TWO SECTIONS CAN SHARE AN ID (Finish Line Results, 2026-11-09: a
+    #   "MEN & WOMEN" race scored by gender is <section id="event5"> twice,
+    #   boys then girls). Keyed by the id alone, the girls' rows replaced the
+    #   boys' and landed under both titles: a repeat id gets its own number.
+    used = set()
     for num, body in _SECTION.findall(page):
         cells = [_text(x) for x in re.findall(r'class="bold-cell"[^>]*>(.*?)</p>', body, re.S | re.I)]
         name = next((c for c in reversed(cells) if c and not re.match(r"race\s*#", c, re.I)), "")
         if not name:
             continue
         n = int(num)
+        while n in used:
+            n += 1000
+        used.add(n)
         # a cross country team score: five scorers, displacers in brackets, a
         # 1-5 spread -- no track meet scores a race like that
         xc = bool(re.search(r'class="(?:spread|scoring-order)"', body))

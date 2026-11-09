@@ -211,6 +211,11 @@ MAX_FRAMES = 4
 def frameUrls(page, base):
     """The timer's own frame / iframe pages a page is built from. Pure."""
     own, out = _site(_host(base)), []
+    sp = urllib.parse.urlsplit(base)
+    if sp.path and not sp.path.endswith("/") and "." not in sp.path.rsplit("/", 1)[-1]:
+        # '/events/academyxc26' is a folder the server answered without its
+        # slash: its frames are inside it, as a browser sent there would see
+        base = urllib.parse.urlunsplit((sp.scheme, sp.netloc, sp.path + "/", "", ""))
     for src in _FRAME.findall(page or ""):
         u = urllib.parse.urljoin(base, _html.unescape(src.strip()))
         if u.startswith("http") and _site(_host(u)) == own and u not in out and u != base:
@@ -234,6 +239,9 @@ def _rebase(page, url):
                   if (m.group(1) or m.group(2)) else m.group(0), page)
 
 
+_ONCLICK = re.compile(r"""onclick\s*=\s*["'][^"']*?location(?:\.href)?\s*=\s*(?:&#39;|\\?')([^'&\\]+)""", re.I)
+
+
 def links(page, base):
     """(absolute url, link text) for every <a href> on a page, in order."""
     out, seen = [], set()
@@ -248,6 +256,13 @@ def links(page, base):
             continue
         seen.add(u)
         out.append((u, _html.unescape(_TAG.sub(" ", inner)).strip()))
+    # ★ A ROW THAT IS A LINK (2026-11-09, CAG's Timing: <tr onclick=
+    #   "window.location='/results/2025/<meet>/index.html'">): read like one
+    for href in _ONCLICK.findall(page)[:MAX_LINKS]:
+        u = urllib.parse.urljoin(base, _html.unescape(href.strip()))
+        if u.startswith("http") and u not in seen:
+            seen.add(u)
+            out.append((u, ""))
     return out
 
 
@@ -298,8 +313,10 @@ def candidates(page, index_url, since_year):
             #   read for its own report links, a few per timer (MAX_SUBPAGES)
             if PAGE_SKIP.search(path) or (_NAV_WORDS.search(name) and not re.search(r"result", name, re.I)):
                 continue
+            # ★ OR AN EVENT'S PAGE, OR ONE LINKED AS RESULTS (Live Running Results'
+            #   /events/academyxc26, Pirate Timing's /jpi222 "Live Results")
             if re.search(r"/20\d\d/", path) or (sp.query and re.search(r"result|meet", path + sp.query, re.I)) \
-                    or re.search(r"result|meet", path, re.I):
+                    or re.search(r"result|meet|/events?/", path, re.I) or re.search(r"result", text, re.I):
                 add(u, "page")
     return out
 
@@ -370,8 +387,10 @@ def isReport(body):
     # ! CRYSTAL REPORTS HTML (Hy-Tek's web export: YenTiming, Ticker Timing)
     #   places every word in its own <div>, so the Hy-Tek line never reads
     #   whole in the raw page
+    from sources import datarows
+    text = body[:400000].decode("utf-8", "replace")
     return (bool(hytek._HEADER.search(head.decode("utf-8", "replace"))) or b"MeetPro" in head[:20000]
-            or b"Crystal Reports" in head[:2000])
+            or b"Crystal Reports" in head[:2000] or datarows.isDataPage(text))
 
 
 async def walkListing(fetcher, url, since_year, max_age, need, depth=0):
@@ -405,25 +424,75 @@ async def walkListing(fetcher, url, since_year, max_age, need, depth=0):
     return meets
 
 
+_ACCOUNT_IN_TEXT = re.compile(r"tfmeetpro\.com/([\w\-]+)/?((?:\s*(?:and|,|&)\s*/[\w\-]+/?)*)")
+
+
+def accountsNamed(*texts):
+    """Every MeetPro account the research file names for a timer, in order:
+    'results.tfmeetpro.com/Pierre_Timing and /Jayy_Pierre_Family_Enter/' ->
+    ['Pierre_Timing', 'Jayy_Pierre_Family_Enter']. Pure."""
+    out = []
+    for m in _ACCOUNT_IN_TEXT.finditer(" ".join(t or "" for t in texts)):
+        for a in [m.group(1)] + re.findall(r"/([\w\-]+)", m.group(2) or ""):
+            if a not in out:
+                out.append(a)
+    return out
+
+
 async def discover(fetcher, source, since_year=None, per_source=10, known=frozenset(),
                    index_max_age=6 * 3600):
     """([(url, kind)], note) for one registry Source: up to per_source meet
-    pages not already landed."""
+    pages not already landed -- off its own results index first, then off
+    every MeetPro account the research file names for it, newest first.
+
+    ★ A TIMER'S MEETPRO ACCOUNTS ARE ITS INDEX TOO (2026-11-09). Eleven timers
+      (Finish Line Results, Swobie, Common Timing, Aldrich ...) had a MileSplit
+      profile on record as their results page -- a feed's page, never read --
+      though the research file names their own account on results.tfmeetpro
+      .com; AthleticLIVE tenants post some meets only there."""
     since_year = since_year or datetime.date.today().year
     index = source.results_url.split(" ")[0] if source.results_url else source.website
+    accounts = accountsNamed(getattr(source, "results_url", ""), getattr(source, "platform", ""),
+                             getattr(source, "notes", ""), getattr(source, "sample_url", ""),
+                             getattr(source, "website", ""))
+    own, note, listed = [], "", 0
     if not index or not index.startswith("http"):
-        return [], "no results page on record"
-    account = meetproAccount(index)
-    if account:
-        meets, note = await listMeetproAccount(fetcher, account, since_year, index_max_age)
-        new = [(u, "meetpro") for u, _d in meets if u not in known][:per_source]
-        return new, f"{note}; {len(meets)} meets from {since_year} on, {len(new)} new"
+        note = "no results page on record"
+    elif meetproAccount(index):
+        note = ""                                    # an account root: listed below
+    elif FEED_HOSTS.search(_host(index)):
+        note = "results page on record is a feed's (not read)"
+    else:
+        own, note, listed = await _ownIndex(fetcher, index, since_year, per_source, known, index_max_age)
+    # ! ONLY WHEN THE OWN PAGE LISTS NO MEETS: a timer whose own index works
+    #   (Mitchell Timing links its MeetPro meets itself) is not listed again
+    #   off the bucket every night -- 700 meet folders are 70 listing pages
+    if not accounts or listed:
+        return own, note
+    seen = {u for u, _k in own}
+    extra, notes = [], []
+    for account in accounts:
+        if len(own) + len(extra) >= per_source:
+            break
+        meets, n = await listMeetproAccount(fetcher, account, since_year, index_max_age)
+        notes.append(f"{account} ({n}): {len(meets)} meets from {since_year} on")
+        for u, _d in meets:
+            if u not in known and u not in seen:
+                seen.add(u)
+                extra.append((u, "meetpro"))
+    new = (own + extra)[:per_source]
+    return new, "; ".join(x for x in [note] + notes if x) + f"; {len(new)} new"
+
+
+async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age):
+    """([(url, kind)], note, meet pages found): the meets the timer's own
+    results page links to (found counts the known ones too)."""
     got = await fetcher.fetch(index, index_max_age)
     if not got.body:
-        return [], got.note or f"index HTTP {got.status}"
+        return [], got.note or f"index HTTP {got.status}", 0
     page = got.body.decode("utf-8", "replace")
     if isAliveTenant(page):
-        return [], "AthleticLIVE tenant -- read by sources.athleticlive"
+        return [], "AthleticLIVE tenant -- read by sources.athleticlive", 0
     found, subindexes, subpages = [], 0, [0]
 
     def fresh():
@@ -475,4 +544,4 @@ async def discover(fetcher, source, since_year=None, per_source=10, known=frozen
     await take(ordered(candidates(page, index, since_year)), 0)
     new = freshMeets()[:per_source]
     return new, (f"{len(found)} meet pages" + (f" (via {subindexes} sub-index pages)" if subindexes else "")
-                 + f", {len(new)} new")
+                 + f", {len(new)} new"), len(found)

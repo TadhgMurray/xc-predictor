@@ -180,3 +180,21 @@ def test_past_its_budget_the_run_starts_no_new_meet(monkeypatch, tmp_path):
     monkeypatch.setattr(F.RawStore.__init__, "__defaults__", (str(tmp_path),))
     timers.cmdAll(_args(minutes=1, out=str(tmp_path / "x.jsonl")))
     assert fetched == ["http://results.tfmeetpro.com/Acct/A/index.html"]
+
+
+def test_every_meetpro_account_the_research_file_names_is_found():
+    assert discover.accountsNamed(
+        "AthleticLIVE + MeetPro HTML on results.tfmeetpro.com/Acct_One and /Acct_Two/ (host)",
+        "see results.tfmeetpro.com/Acct_One/") == ["Acct_One", "Acct_Two"]
+
+
+def test_a_timer_whose_page_is_a_feeds_is_read_off_its_accounts():
+    fetcher = FakeFetcher({lambda u: "marker=" in u: LIST_2,
+                           lambda u: u.startswith(discover.MEETPRO_BUCKET_LIST): LIST_1})
+    src = types.SimpleNamespace(results_url="https://xx.milesplit.com/timing/1/acct", website="",
+                                platform="MileSplit + MeetPro HTML on results.tfmeetpro.com/Acct/",
+                                notes="", sample_url="", slug="acct")
+    urls, note = asyncio.run(discover.discover(fetcher, src, 2026, 5))
+    assert [u for u, _k in urls] == ["http://results.tfmeetpro.com/Acct/Reused_Folder/index.html",
+                                     "http://results.tfmeetpro.com/Acct/River%20%26%20Pines%20XC/index.html"]
+    assert "feed" in note and not any("milesplit" in u for u in fetcher.asked)
