@@ -261,7 +261,7 @@
                         {%- if race.place and not race.is_field
                                and race.time_raw and race.time_raw < 999999 -%}
                             <span class="no-break">{{ race.place|ordinal }}</span>{% if race.team_place %}
-                            <span class="muted no-break">· {{ race.team_place|ordinal }} on team</span>
+                            <span class="muted no-break"><span class="sep">· </span>{{ race.team_place|ordinal }} on team</span>
                             {%- endif %}
                         {%- else -%} - {%- endif -%}
                     </td>

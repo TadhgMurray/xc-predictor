@@ -941,8 +941,17 @@ main.ath-page.rc .season td.res-cell .res-ev { display: block; font-size: .8rem;
   main.ath-page.rc .season table { min-width: 47rem; }
 }
 main.ath-page.rc .season td.flags .flag { margin: 0 1px 2px 0; padding: 1px 4px; font-size: 10.5px; }
-/* "· 1st on team" under the place, as a small sub-line */
+/* "1st on team" under the place, as a small sub-line -- its own line, so no
+   leading "·" (owner, 2026-11-09: it read as a stray dot) */
 main.ath-page.rc .season td.place-cell .muted { display: block; font-size: .8rem; line-height: 1.2; }
+main.ath-page.rc .season td.place-cell .muted .sep { display: none; }
+/* ★ EVERY CELL'S FIRST LINE ON ONE LINE (owner, 2026-11-09: "the first row
+     text locations seem kind of off"). The meet, result and place cells
+     are two lines (course, distance, team place under them) and start at
+     the top; the date, rating, 5K and course cells are one line and were
+     centred between those two, so a row's main numbers sat half a line
+     below its meet name. Top-aligned, they share the first line. */
+main.ath-page.rc .season table td { vertical-align: top; }
 main.ath-page.rc .rc-side > h2 { font-size: 1.1rem; }
 main.ath-page.rc .rc-side > h2:not(:first-child) { margin-top: 1.6rem; }
 main.ath-page.rc .rc-tbar-end .toggle-row { margin: 0; }
