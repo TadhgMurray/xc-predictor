@@ -122,6 +122,14 @@ def _divisionsUncached(cur, state):
             FROM   school_unit
             WHERE  state = %(st)s AND sport = 'XC' AND NOT is_college
               AND  class IS NOT NULL AND class <> ''
+              -- ★ A SCHOOL'S CLASS COUNTS ONLY WHEN IT HAS NO STATE DIVISION
+              --   (audit 2026-11-09: CA listed "Class AAA" -- San Francisco's
+              --   city league -- and "Class 2A/4A/5A" beside Divisions 1-5,
+              --   and /projections/ca/aaa projected Lowell at Woodward Park).
+              --   Where the state meet's tier is state_div, a class is a
+              --   league's word, not a state meet; TX, whose tier IS the
+              --   class, has no state_div to shadow it.
+              AND  (state_div IS NULL OR state_div = '')
         ) t
         GROUP BY v, kind
     """, {"st": state})

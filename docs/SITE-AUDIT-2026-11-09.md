@@ -25,6 +25,11 @@ fix this track will make next · **PIPELINE** = for the pipeline/data track
 | Every school page linked "Record book →" to "still being compiled". | The link shows only when the book exists. | school.html |
 | All-time athletes board sorted by name: 503 after 55 s; grade/races/last 4-7 s. | Grade, last race and races get indexes matching the board order (built by step 10 with the board; until then and for other columns the unnarrowed board serves rating order and says so). The headers it cannot serve are greyed with a tooltip; a state, school or conference filter turns them back on. OWNER: name/school/state/first/year sorts on the whole country stay off (cut). | rankings.sortServed, build_ranking_results as_sort_*, rankings.js |
 | /compare "best race" was a 7th-grade own-pool 153.5; youth seasons with no HS value printed raw and took the edge. | The best race is the best HS value; season cells with no HS value are left out. | compare.athleteCard, stampEdgeHs |
+| Projections and state odds listed league classes as state divisions (CA "Class AAA", SF's city league; /projections/ca/aaa projected Lowell). | A school's class counts as a state division only when the school has no state division. State odds follow at the next build. | projections._divisionsUncached |
+| /schools/<state> "Colleges" was mostly high schools (name lookup). | A college by its school_unit college units in that state; the name lookup is only the fallback. | app.schools_directory |
+| Recruiting school page: "↑ faster" beside a slower best race. | The cell names the two season numbers it compares. | recruiting_school.html |
+| Track courses CSV named 27k venues "loc:100003:out". | Venue names in bulk, "(indoor)" for the indoor side. | data_snapshots._trackVenueNames |
+| Sitemap left out the tool pages. | Added the tools and the per-state what-it-takes and projections pages. | build_sitemap |
 | Tools menu "Training paces" landed on the XC course table (the Paces tab stays hidden until an athlete is chosen). | `#paces` switches the source to an athlete and focuses the athlete box. | conversions.js |
 
 ## Every page

@@ -171,7 +171,10 @@
         <td class="rec-hs">{% if r.hs_school and r.hs_school|is_team %}{{ crest(r.hs_school, r.hs_state, level='hs') }}<a href="{{ school_href(r.hs_school, r.hs_state, pool='hs_' ~ gender) }}">{{ r.hs_label }}</a>{% elif r.hs_school %}{{ r.hs_label }}{% endif %}</td>
         <td class="num rec-t"><b>{% for k in evs %}<span class="ev ev-{{ k }}{{ ' rec-off' if (r.off or {}).get(k) }}"{% if (r.off or {}).get(k) %} title="Not one of this recruit's main events, so not counted in {{ school }}'s {{ evname[k] }} times"{% endif %}>{{ fmt_time((r.t_hs or {}).get(k)) or "-" }}</span>{% endfor %}</b><span class="rec-rt">{% for k in evs %}<span class="ev ev-{{ k }}">{{ ("%.1f"|format(r.r_hs[k])) if (r.r_hs or {}).get(k) is not none else "" }}</span>{% endfor %}</span></td>
         <td class="rec-c">{% if r.change is not none %}{% if r.change >= 1.5 %}<span class="rec-up">↑ faster</span>{% elif r.change <= -1.5 %}<span class="rec-dn">↓ slower</span>{% else %}<span class="rec-eq">about the same</span>{% endif %}
-          <span class="rec-rt">{{ tt(r.t_col, evs) }} · {{ "%.1f"|format(r.hs_equiv) }}</span>{% else %}<span class="rc-dim">-</span>{% endif %}</td>
+          {# ★ THE TWO NUMBERS THE ARROW COMPARES (audit 2026-11-09: "↑ faster"
+             sat beside a best race slower than the college time; the arrow
+             is senior season against first college season) #}
+          <span class="rec-rt">{{ tt(r.t_col, evs) }} · senior season {{ "%.1f"|format(r.hs_rating) }} → college {{ "%.1f"|format(r.hs_equiv) }}{# hs-ok: hs_rating and hs_equiv are both on the HS scale (recruiting.schoolRecruits) #}</span>{% else %}<span class="rc-dim">-</span>{% endif %}</td>
       </tr>
       {% endfor %}
       {% if c.unlinked %}

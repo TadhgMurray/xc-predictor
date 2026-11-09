@@ -38,8 +38,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 MAX_PER_FILE = 45000
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "static", "sitemaps")
+# ★ AND THE TOOL PAGES (audit 2026-11-09: none of the Tools menu was in the
+#   sitemap). /projections and /movers are left out while their bare index
+#   is on the owner's cut list; their state pages are listed by state below.
 FIXED_PAGES = ("/", "/rankings", "/meets", "/conversions", "/predictions",
-               "/recruiting", "/coaches", "/coaches/recruits", "/about")
+               "/recruiting", "/coaches", "/coaches/recruits", "/about",
+               "/what-it-takes", "/ncaa", "/breakouts", "/scale", "/goal",
+               "/data", "/updates", "/compare")
 
 
 def chunk(items, n=MAX_PER_FILE):
@@ -213,7 +218,10 @@ def collect(conn, race_years=None, athlete_years=None):
                         #   all-time page per state, the URL the route
                         #   itself redirects to (lower-case)
                         + [("/records", None)]
-                        + [(f"/records/{c.lower()}", None) for c in STATE_NAMES]}
+                        + [(f"/records/{c.lower()}", None) for c in STATE_NAMES]
+                        # the state tool pages, the URLs the routes keep
+                        + [(f"/what-it-takes/{c.lower()}", None) for c in STATE_NAMES]
+                        + [(f"/projections/{c.lower()}", None) for c in STATE_NAMES]}
     with conn.cursor() as cur:
         # ★ THE RACE LISTS ARE TWO FULL-TABLE GROUP BYs (34M and 30M rows,
         #   millions of groups) and the athlete list a third over 12.9M. At

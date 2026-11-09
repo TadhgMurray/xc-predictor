@@ -13865,11 +13865,27 @@ def schools_directory(state=None):
                     counts = [(c, L.STATE_NAMES[c], by.get(c, 0))
                               for c in L.US_STATES if c in L.STATE_NAMES]
                 else:
-                    cur.execute("""SELECT school, n_athletes FROM school_identity
-                                   WHERE is_primary AND state = %s AND n_athletes >= 3
-                                   ORDER BY n_athletes DESC, school""", (state,))
+                    # ★ A COLLEGE BY ITS UNITS, NOT ITS NAME (audit
+                    #   2026-11-09: CA's 241 "colleges" were mostly high
+                    #   schools -- San Marcos, Poly, Arcadia -- because any
+                    #   name a college shares anywhere matched
+                    #   _collegeState). school_unit.is_college is set by a
+                    #   college conference or division for THIS school in
+                    #   THIS state. The name lookup stays the fallback before
+                    #   the units are built.
+                    cur.execute("SELECT to_regclass('public.school_unit') IS NOT NULL AS ok")
+                    is_col = ("EXISTS (SELECT 1 FROM school_unit u WHERE u.school = si.school"
+                              " AND u.state = si.state AND u.is_college)"
+                              if cur.fetchone()["ok"] else "NULL::boolean")
+                    cur.execute(f"""
+                        SELECT si.school, si.n_athletes, {is_col} AS is_college
+                        FROM   school_identity si
+                        WHERE  si.is_primary AND si.state = %s AND si.n_athletes >= 3
+                        ORDER  BY si.n_athletes DESC, si.school""", (state,))
                     for r in cur.fetchall():
-                        (colleges if _collegeState(r["school"]) else others).append(r)
+                        college = (r["is_college"] if r["is_college"] is not None
+                                   else bool(_collegeState(r["school"])))
+                        (colleges if college else others).append(r)
             except psycopg2.Error:
                 conn.rollback()
     name = L.STATE_NAMES.get(state or "", "")

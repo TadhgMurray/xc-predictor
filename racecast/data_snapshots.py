@@ -22,6 +22,7 @@
 # ★ HS-EQUIVALENT, LIKE EVERY RATING THE SITE SHOWS (CLAUDE.md): each row
 #   stores the rating on the public scale (pool_view.toHs) at the moment it
 #   is copied. A row with no name is left out (rankings.UNNAMED_OUT's rule).
+import re
 import csv
 import io
 
@@ -236,9 +237,53 @@ def courses_csv(snap_id):
                        FROM data_snapshot_course WHERE snap_id = %s
                        ORDER BY course, distance_m""", (snap_id,))
         rows = cur.fetchall()
+        rows = _trackVenueNames(cur, rows)
         conn.rollback()
     return _csv(["course", "distance_m", "difficulty_pct_vs_flat_track", "results"], rows,
                 f"racecast-{snap[2].lower()}-courses-{snap_id}.csv")
+
+
+_LOC_KEY = re.compile(r"^(?:TF:)?loc:(-?\d+):(in|out)$")
+
+
+def _trackVenueNames(cur, rows):
+    """★ A TRACK VENUE BY ITS NAME (audit 2026-11-09: 27,273 of the track
+    snapshot's 31,523 rows named the course "loc:100003:out", an internal
+    key). One bulk read: each location's most common venue name across its
+    meets (app.get_tf_venue_label's first choice), "(indoor)" for the indoor
+    side; a location with no name keeps "Track venue <n>". Scrubbed as the
+    pages are (feed_scrub): a CSV is not a page the response hook sees."""
+    locs = {}
+    for r in rows:
+        m = _LOC_KEY.match(str(r[0] or ""))
+        if m:
+            locs[int(m.group(1))] = None
+    if not locs:
+        return rows
+    try:
+        cur.execute("SAVEPOINT venue_names")
+        cur.execute("""
+            SELECT m.location_id,
+                   mode() WITHIN GROUP (ORDER BY NULLIF(btrim(t.venue_name), '')) AS name
+            FROM   meets_tf m
+            JOIN   meets_tf_meta t ON t.meet_id = m.meet_id
+            WHERE  m.location_id = ANY(%s)
+            GROUP  BY m.location_id""", (sorted(locs),))
+        for loc, name in cur.fetchall():
+            locs[int(loc)] = name
+        cur.execute("RELEASE SAVEPOINT venue_names")
+    except Exception:                                   # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT venue_names")
+    from feed_scrub import scrub
+    out = []
+    for r in rows:
+        m = _LOC_KEY.match(str(r[0] or ""))
+        if m:
+            name = locs.get(int(m.group(1))) or f"Track venue {m.group(1)}"
+            name = scrub(name) + (" (indoor)" if m.group(2) == "in" else "")
+            r = (name,) + tuple(r[1:])
+        out.append(r)
+    return out
 
 
 def _exists(cur):
