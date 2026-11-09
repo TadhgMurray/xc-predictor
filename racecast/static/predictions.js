@@ -4022,7 +4022,12 @@ async function loadWeather(div) {
   const el = $("wx-target");
   if (!el) return;
   try {
-    const res = await fetch("/api/predict/weather?" + buildQuery(div).toString());
+    /* ! THE WEATHER NEEDS THE PLACE AND THE DAY, NOT THE LINEUP (2026-11-08:
+         a championship's field of ~560 runner ids made the URL past nginx's
+         limit, a 414, once ids were tokens) */
+    const wq = buildQuery(div);
+    ["field", "remove", "add", "sim", "person_id"].forEach((k) => wq.delete(k));
+    const res = await fetch("/api/predict/weather?" + wq.toString());
     const d = await res.json();
     if (!d.available) { el.innerHTML = ""; return; }
     const when = d.hour_local != null ? ` at ${d.hour_local}:00` : "";

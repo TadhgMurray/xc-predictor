@@ -273,7 +273,11 @@ def decodePath(path):
 # id-bearing parameters whose value may hold several ids or a compound key:
 # the predictions page's div_ids=<d>,<d> and person_id=<a>,<a>, and a track
 # race key div_id=<div>-<event>
-_LIST_PARAMS = set(QUERY_KINDS) | {"div_ids", "person_ids", "ids"}
+# ! AND THE PREDICTIONS PAGE'S LINEUP (owner, 2026-11-08: "some things get
+#   messed up by the new ids like predictions"): field=[[school, [ids], n]],
+#   remove=<ids>, add=<ids> -- every prediction 400'd "field person_ids must
+#   be numbers" until these were decoded too
+_LIST_PARAMS = set(QUERY_KINDS) | {"div_ids", "person_ids", "ids", "field", "remove", "add"}
 _IN_VALUE = re.compile(r"(?<![0-9a-z])[amdrv][0-9a-z]{13}(?![0-9a-z])")
 
 
@@ -285,13 +289,21 @@ def _decodeIn(text):
 
 
 def decodeQuery(qs):
+    """The id-bearing parameters of a query string (or a form body) with
+    their tokens decoded. ! A VALUE IS READ UNQUOTED: in field=%5B%5B%22..%22
+    a token follows '%22', whose '2' would otherwise read as part of an id
+    and hide it."""
+    import urllib.parse as _up
     if not qs:
         return qs
     out = []
     for part in qs.split("&"):
         k, eq, v = part.partition("=")
-        if eq and k in _LIST_PARAMS:
-            v = _decodeIn(v)
+        if eq and _up.unquote_plus(k) in _LIST_PARAMS:
+            plain = _up.unquote_plus(v)
+            got = _decodeIn(plain)
+            if got != plain:
+                v = _up.quote_plus(got, safe=",")
         out.append(k + eq + v)
     return "&".join(out)
 

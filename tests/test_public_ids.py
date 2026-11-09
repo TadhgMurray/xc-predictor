@@ -152,7 +152,9 @@ def test_lists_and_track_race_keys_in_a_query():
     e = P.encode
     q = P.decodeQuery(f"div_ids={e('d', 1)}%2C{e('d', 2)}&div_id={e('d', 3)}-27"
                       f"&person_id={e('a', 4)},{e('a', 5)}&meet_id={e('m', -6)}")
-    assert q == "div_ids=1%2C2&div_id=3-27&person_id=4,5&meet_id=-6"
+    import urllib.parse as up
+    assert up.parse_qs(q) == {"div_ids": ["1,2"], "div_id": ["3-27"], "person_id": ["4,5"],
+                              "meet_id": ["-6"]}
 
 
 def test_forms_carry_tokens_and_come_back_as_integers():
@@ -175,3 +177,17 @@ def test_forms_carry_tokens_and_come_back_as_integers():
 def test_a_track_race_with_no_division():
     out = P.rewriteHtml('<a href="/race/tf/100/27/None">x</a>')
     assert out == f'<a href="/race/tf/{P.encode("m", 100)}/27/None">x</a>'
+
+
+def test_a_predictions_lineup_comes_back_as_integers():
+    """owner, 2026-11-08: every prediction 400'd once the lineup carried tokens."""
+    import urllib.parse as up
+    e = P.encode
+    field = json.dumps([["Aquinas", [e("a", 101), e("a", 102)], 7]])
+    qs = up.urlencode({"meet_id": e("m", 9), "field": field, "remove": e("a", 5) + "," + e("a", 6),
+                       "add": e("a", 7), "team": "Aquinas"})
+    got = up.parse_qs(P.decodeQuery(qs))
+    assert got["meet_id"] == ["9"] and got["remove"] == ["5,6"] and got["add"] == ["7"]
+    assert json.loads(got["field"][0]) == [["Aquinas", [101, 102], 7]] or \
+        json.loads(got["field"][0]) == [["Aquinas", ["101", "102"], 7]]
+    assert got["team"] == ["Aquinas"]
