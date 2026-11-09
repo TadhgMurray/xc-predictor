@@ -51,7 +51,7 @@ import re
 
 from markupsafe import escape
 
-KINDS = ("rankings", "top1", "risers", "breakout", "national")
+KINDS = ("rankings", "top1", "risers", "breakout", "national", "teams", "alltime")
 TOP_N = 10
 NATIONAL_N = 25
 RISERS_N = 3
@@ -254,6 +254,21 @@ def caption(post):
             lines.append(f"New this week: {names}.")
         lines.append("Every state's list → link in bio")
         lines.append(_pick(["Who's missing?", "Who's too low?"], key))
+    elif k == "teams":
+        rows = post.get("rows") or []
+        if rows:
+            lines.append(f"{rows[0]['school']} leads {where}’s team board with {rows[0].get('points')} points.")
+            if len(rows) > 1:
+                lines.append(f"{rows[1]['school']} next at {rows[1].get('points')}.")
+        lines.append("Points from 1,000 simulated meets → link in bio")
+        lines.append(_pick(["Who’s too low?", "Who takes state?"], key))
+    elif k == "alltime":
+        rows = post.get("rows") or []
+        if rows:
+            r = rows[0]
+            lines.append(f"The best race ever run in {where}: {r['name']}, {r.get('year')}.")
+        lines.append("Every era on one scale → link in bio")
+        lines.append("Who’s missing?")
     lines.append(hashtags(post))
     return "\n".join(lines)
 
@@ -644,6 +659,63 @@ def nationalPost(cur, sport, pool, year, weeks):
     return p
 
 
+def teamsPost(cur, sport, pool, state, year, week):
+    """The state's top 10 teams this season (the team board, teams.py):
+    points from the simulated meets, the top five's average, the best
+    runner. None when the board has fewer than ten."""
+    from werkzeug.datastructures import MultiDict
+    import teams as T
+    from pool_view import stampBoardRows
+    f, err = T.parseFilters(MultiDict({"sport": sport, "pool": pool, "state": state,
+                                       "year": str(year), "limit": "10"}))
+    if err:
+        return None
+    rows = [dict(r) for r in T.getTeamRankings(cur, f)]
+    if len(rows) < TOP_N:
+        return None
+    T.fillBestRunner(cur, rows)
+    stampBoardRows(rows, rating_keys=("top5_mean",), sport=sport)
+    out = []
+    for i, r in enumerate(rows[:TOP_N]):
+        out.append({"rank": i + 1, "name": None, "school": r["school"], "state": r.get("state") or state,
+                    "points": r.get("points"), "top5": r.get("hs_top5_mean") or r.get("top5_mean"),
+                    "hs_top5": r.get("hs_top5_mean"),
+                    "sub": f'No. 1 {r["best_name"]}' if r.get("best_name") else "", "move": 0})
+    p = _base("teams", sport, pool, state, week)
+    p.update(rows=out)
+    return p
+
+
+def alltimePost(cur, sport, pool, state, week):
+    """The state's ten best performances ever, one per runner (the
+    performance board, rankings.py)."""
+    from werkzeug.datastructures import MultiDict
+    import rankings as RK
+    from pool_view import stampBoardRows
+    f, err = RK.parseFilters(MultiDict({"board": "performance", "sport": sport, "pool": pool,
+                                        "state": state, "limit": "80"}))
+    if err:
+        return None
+    rows = [dict(r) for r in RK.getPerformanceRankings(cur, f)]
+    stampBoardRows(rows, rating_keys=("rating",))
+    seen, out = set(), []
+    for r in rows:
+        if r.get("person_id") in seen:
+            continue
+        seen.add(r.get("person_id"))
+        out.append({"rank": len(out) + 1, "name": r.get("name") or "Unknown", "school": r.get("school"),
+                    "state": state, "rating": r.get("rating"), "hs": r.get("hs_rating"),
+                    "year": str(r.get("race_date") or "")[:4], "time": _clock(r.get("time_seconds")),
+                    "person_id": r.get("person_id")})
+        if len(out) == TOP_N:
+            break
+    if len(out) < TOP_N:
+        return None
+    p = _base("alltime", sport, pool, state, week)
+    p.update(rows=out)
+    return p
+
+
 def photoFiles(folder=None):
     folder = folder or os.environ.get("XCP_SOCIAL_PHOTOS") or ""
     if not folder or not os.path.isdir(folder):
@@ -749,9 +821,11 @@ def admin_social_html(pid):
     sess, go = requireAdmin()
     if go:
         return go
+    import social_compose as C
     r = _one(pid)
-    return Response(postHtml(r["data"], _assetsWeb(r["data"], r["data"].get("photo"))),
-                    mimetype="text/html")
+    spec = C.cleanSpec(r["data"], r["data"].get("spec") or C.defaultSpec(r["data"]))
+    _path, url = _photoOf(spec)
+    return Response(C.pages(r["data"], spec, C.webAssets(url))[0], mimetype="text/html")
 
 
 @bp.route("/account/admin/social/<int:pid>.png")
@@ -779,3 +853,150 @@ def admin_social_photo(name):
     if name not in files:
         abort(404)
     return send_file(os.path.join(folder, name))
+
+
+# ------------------------------------------------------------------ #
+#  the composer: /account/admin/social/compose (owner, 2026-11-09:
+#  "choose a post type, then a body type, then a picture if needed")
+# ------------------------------------------------------------------ #
+
+def _specFrom(args, data):
+    import social_compose as C
+    saved = dict(data.get("spec") or C.defaultSpec(data))
+    for k in ("body", "photo", "file", "fmt"):
+        v = args.get(k)
+        if v is not None:
+            saved[k] = v or None
+    return C.cleanSpec(data, saved)
+
+
+def _photoOf(spec):
+    """(folder path, web url) of the spec's photo, when it is one of the
+    owner's files; else (None, None)."""
+    folder, files = photoFiles()
+    name = spec.get("file")
+    if spec.get("photo") == "none" or not name or name not in files:
+        return None, None
+    return os.path.join(folder, name), f"/account/admin/social/photo/{name}"
+
+
+def _specQuery(spec):
+    import urllib.parse
+    return urllib.parse.urlencode({k: (spec.get(k) or "") for k in ("body", "photo", "file", "fmt")})
+
+
+@bp.route("/account/admin/social/compose")
+def admin_social_compose():
+    import social_compose as C
+    from uploads import requireAdmin
+    sess, go = requireAdmin()
+    if go:
+        return go
+    with _db() as (conn, cur):
+        cur.execute("SELECT to_regclass('public.social_post') AS t")
+        if cur.fetchone()["t"] is None:
+            abort(404)
+        cur.execute("SELECT max(week) AS w FROM social_post")
+        week = cur.fetchone()["w"]
+        cur.execute("""SELECT id, kind, scope, pool, data->>'scope_name' AS scope_name
+                       FROM social_post WHERE week = %s
+                       ORDER BY (scope = 'US') DESC, scope, pool, kind""", (week,))
+        posts = [dict(r) for r in cur.fetchall()]
+    if not posts:
+        abort(404)
+    kinds = [k for k in C.KIND_WORDS if any(p["kind"] == k for p in posts)]
+    pid = request.args.get("pid", type=int)
+    kind = request.args.get("kind")
+    if pid is None or not any(p["id"] == pid for p in posts):
+        kind = kind if kind in kinds else kinds[0]
+        pid = next(p["id"] for p in posts if p["kind"] == kind)
+    row = _one(pid)
+    data = row["data"]
+    kind = row["kind"]
+    spec = _specFrom(request.args, data)
+    folder, files = photoFiles()
+    _path, url = _photoOf(spec)
+    n = len(C.pages(data, spec, C.webAssets(url)))
+    of_kind = [p for p in posts if p["kind"] == kind]
+    for p in of_kind:
+        p["label"] = f'{"National" if p["scope"] == "US" else (p["scope_name"] or p["scope"])} · {POOL_WORDS.get(p["pool"], p["pool"])}'
+    return render_template(
+        "admin_social_compose.html", pid=pid, kind=kind, kinds=kinds, kind_words=C.KIND_WORDS,
+        of_kind=of_kind, spec=spec, bodies=C.bodiesFor(kind), body_words=C.BODY_WORDS,
+        photos=C.PHOTOS, photo_words=C.PHOTO_WORDS, files=files, folder=folder, n_pages=n,
+        q=_specQuery(spec), fmt_size=C.FORMATS[spec["fmt"]], csrf=sess["csrf"],
+        saved=bool(data.get("spec")), caption=row.get("caption") or "", week=week)
+
+
+@bp.route("/account/admin/social/compose/<int:pid>/<int:page>.html")
+def admin_social_compose_html(pid, page):
+    import social_compose as C
+    from uploads import requireAdmin
+    sess, go = requireAdmin()
+    if go:
+        return go
+    data = _one(pid)["data"]
+    spec = _specFrom(request.args, data)
+    _path, url = _photoOf(spec)
+    pages_ = C.pages(data, spec, C.webAssets(url))
+    if not 0 <= page < len(pages_):
+        abort(404)
+    return Response(pages_[page], mimetype="text/html")
+
+
+@bp.route("/account/admin/social/compose/<int:pid>/<int:page>.png")
+def admin_social_compose_png(pid, page):
+    import tempfile
+    import social_compose as C
+    from uploads import requireAdmin
+    sess, go = requireAdmin()
+    if go:
+        return go
+    row = _one(pid)
+    data = row["data"]
+    spec = _specFrom(request.args, data)
+    path, _url = _photoOf(spec)
+    pages_ = C.pages(data, spec, C.fileAssets(path))
+    if not 0 <= page < len(pages_):
+        abort(404)
+    out = os.path.join(tempfile.mkdtemp(prefix="compose_"), "post.png")
+    if not C.renderPng(pages_[page], out, spec["fmt"]):
+        return Response("The image could not be rendered on the server (no browser?). "
+                        "Open the preview and screenshot it instead.", status=503, mimetype="text/plain")
+    name = (f'racecast_{row["scope"]}_{row["pool"]}_{row["kind"]}_{spec["body"]}'
+            f'{"_story" if spec["fmt"] == "story" else ""}{"_" + str(page + 1) if len(pages_) > 1 else ""}.png')
+    return send_file(out, mimetype="image/png", download_name=name, as_attachment=True)
+
+
+@bp.route("/account/admin/social/compose/<int:pid>", methods=["POST"])
+def admin_social_compose_save(pid):
+    """Keep this design for the post: its spec goes into the post's data and
+    its image is rendered again for the posts page."""
+    import json as _json
+    from flask import redirect
+    import accounts as AC
+    import social_compose as C
+    from uploads import requireAdmin
+    sess, go = requireAdmin()
+    if go:
+        return go
+    if not AC.csrfOk(sess):
+        abort(400)
+    row = _one(pid)
+    data = dict(row["data"])
+    spec = _specFrom(request.form, data)
+    data["spec"] = spec
+    path, _url = _photoOf(spec)
+    png = row.get("png_path")
+    try:
+        os.makedirs(outDir(), exist_ok=True)
+        target = png or os.path.join(outDir(), f'{row["week"]}_{row["sport"]}_{row["pool"]}_{row["scope"]}_{row["kind"]}.png')
+        if C.renderPng(C.pages(data, spec, C.fileAssets(path))[0], target, spec["fmt"]):
+            png = target
+    except Exception as exc:                             # noqa: BLE001
+        print(f"[compose] {pid}: {type(exc).__name__}: {exc}", flush=True)
+    with _db() as (conn, cur):
+        cur.execute("UPDATE social_post SET data = %s, png_path = %s WHERE id = %s",
+                    (_json.dumps(data, default=str), png, pid))
+        conn.commit()
+    return redirect(f"/account/admin/social/compose?pid={pid}&saved=1")

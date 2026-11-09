@@ -215,10 +215,14 @@ def test_step_in_pipeline_and_report_only():
 def test_admin_routes_are_gated():
     src = open(os.path.join(ROOT, "racecast", "social.py"), encoding="utf-8").read() + "\n"
     routes = re.findall(r'@bp.route\("([^"]+)"\)\ndef \w+\([^)]*\):\n((?:    .*\n)+?)\n', src)
-    assert len(routes) == 4
+    # 4 pages and photos, 3 for the composer (2026-11-09); its POST route is
+    # gated the same way (checked below)
+    assert len(routes) == 7
     for path, body in routes:
         assert path.startswith("/account/admin/social"), path
-        assert "requireAdmin()" in body.splitlines()[1], path
+        assert any("requireAdmin()" in ln for ln in body.splitlines()[:5]), path
+    post = src.split('methods=["POST"])', 1)[1][:1200]
+    assert "requireAdmin()" in post and "AC.csrfOk(sess)" in post
 
 
 # ---- the board query, against Postgres ---------------------------------

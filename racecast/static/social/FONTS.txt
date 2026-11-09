@@ -5,5 +5,8 @@ both under the SIL Open Font License 1.1 (https://openfontlicense.org):
                                  (https://github.com/xotypeco/big_shoulders)
   ArchivoNarrow.woff2            Copyright 2019 The Archivo Narrow Project Authors
                                  (https://github.com/Omnibus-Type/ArchivoNarrow)
+  Inter-var.woff2                Copyright 2016 The Inter Project Authors
+                                 (https://github.com/rsms/inter) -- the composer's
+                                 posts (racecast/social_compose.py, 2026-11-09)
 
 Latin subsets as served by fonts.googleapis.com; not modified.

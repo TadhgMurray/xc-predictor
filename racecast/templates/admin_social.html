@@ -34,7 +34,7 @@
 <header class="rc-hd"><div class="rc-hgrid rc-hone"><div class="rc-left">
   <div class="rc-sport"><span class="sport-tag sport-tag--site">Admin · private</span></div>
   <h1>Posts{% if week %} · week of {{ week }}{% endif %}</h1>
-  <div class="rc-meta">{{ posts|length }} shown · built by pipeline step 13g_social ·
+  <div class="rc-meta">{{ posts|length }} shown · built by pipeline step 13g_social · <a href="/account/admin/social/compose"><b>Compose a post</b></a> ·
     <a href="/account/admin/uploads">Uploads</a> · <a href="/account/admin/fixes">Fixes</a> · <a href="/account/admin/accounts">Accounts</a> · <a href="/account/status">Site status</a></div>
 </div></div></header>
 
@@ -60,6 +60,7 @@
   <textarea class="sp-cap" id="cap{{ p.id }}">{{ p.caption }}</textarea>
   <div class="sp-row">
     <button type="button" data-copy="cap{{ p.id }}">Copy caption</button>
+    <a href="/account/admin/social/compose?pid={{ p.id }}">Compose</a>
     {% if p.has_png %}<a href="/account/admin/social/{{ p.id }}.png?dl=1">Download image</a>
     {% else %}<a href="/account/admin/social/{{ p.id }}.html" target="_blank">Open page</a> (no PNG this run: screenshot it at 1080×1350){% endif %}
   </div>

@@ -190,6 +190,21 @@ def main():
                     except Exception as exc:            # noqa: BLE001
                         conn.rollback()
                         print(f"[social] {st} {pool}: {type(exc).__name__}: {exc}")
+                    # ★ THE TEAM BOARD AND THE ALL-TIME LIST (owner, 2026-11-09):
+                    #   two more post types per state, each in its own savepoint
+                    #   so a slow or failed board costs only that post
+                    for build in (lambda: S.teamsPost(cur, sport, pool, st, year, weeks[0]),
+                                  lambda: S.alltimePost(cur, sport, pool, st, weeks[0])):
+                        try:
+                            cur.execute("SAVEPOINT sp_extra")
+                            cur.execute("SET LOCAL statement_timeout = '60s'")
+                            got = build()
+                            cur.execute("RELEASE SAVEPOINT sp_extra")
+                            if got:
+                                posts.append(got)
+                        except Exception as exc:        # noqa: BLE001
+                            cur.execute("ROLLBACK TO SAVEPOINT sp_extra")
+                            print(f"[social] {st} {pool} extra: {type(exc).__name__}: {str(exc)[:160]}")
                 print(f"[social] {sport} {pool} week of {weeks[0]}: {len(states)} states")
             conn.rollback()
     if not posts:
@@ -200,6 +215,16 @@ def main():
         p["photo"] = S.pickPhoto(photos, S.postKey(p), None if p["scope"] == "US" else p["scope"])
         p["caption"] = S.caption(p)
 
+    # ★ THE COMPOSER DRAWS THEM (racecast/social_compose.py, owner-approved
+    #   2026-11-09): each post's body is defaultSpec's pick, which turns over by
+    #   state and week; the owner re-composes any of them on
+    #   /account/admin/social/compose. Crests come from the start-up cache.
+    import social_compose as C
+    try:
+        import school_logo as SL
+        SL.loadCrests(getConn)
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[social] crests not loaded ({type(exc).__name__}: {exc}); posts draw without them")
     out = S.outDir()
     rend = None
     if render:
@@ -214,20 +239,27 @@ def main():
     t1 = time.time()
     for p in posts:
         p["png_path"] = None
-        html = S.postHtml(p, fileAssets(folder, p["photo"]))
+        p["spec"] = C.defaultSpec(p)
+        htmls = C.pages(p, p["spec"], C.fileAssets(None))
         name = f'{p["week"]}_{p["sport"]}_{p["pool"]}_{p["scope"]}_{p["kind"]}'
         if a.html_dir:
             os.makedirs(a.html_dir, exist_ok=True)
-            with open(os.path.join(a.html_dir, name + ".html"), "w", encoding="utf-8") as f:
-                f.write(html)
+            for i, html in enumerate(htmls):
+                with open(os.path.join(a.html_dir, f"{name}{'_' + str(i + 1) if i else ''}.html"), "w",
+                          encoding="utf-8") as f:
+                    f.write(html)
             with open(os.path.join(a.html_dir, name + ".txt"), "w", encoding="utf-8") as f:
                 f.write(p["caption"] + "\n")
         if rend:
             try:
-                path = os.path.join(out, name + ".png")
-                rend.render(html, path)
-                p["png_path"] = path
-                n_png += 1
+                paths = []
+                for i, html in enumerate(htmls):
+                    path = os.path.join(out, f"{name}{'_' + str(i + 1) if i else ''}.png")
+                    rend.render(html, path)
+                    paths.append(path)
+                p["png_path"] = paths[0]
+                p["png_pages"] = paths
+                n_png += len(paths)
             except Exception as exc:                    # noqa: BLE001
                 print(f"[social] {name}: render failed ({type(exc).__name__}: {str(exc)[:160]})")
     if rend:
