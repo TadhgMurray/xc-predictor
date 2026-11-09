@@ -79,8 +79,17 @@ claim() {
   return 0
 }
 unclaim() { rm -rf "$OUT/.claim_$1"; }
+# ★ THE PACK MUST BE THERE AND SETTLED (owner, 2026-11-09: "no pack at
+#   engine/data/packed_XC_TF.npz"). A pipeline run deletes it (06_clear_cache)
+#   and writes it again (07_pack); a solve started in between failed at once,
+#   one cutoff after another. Now that is a wait: the file exists and has
+#   not changed for 10 minutes.
+PACK="$ROOT/engine/data/packed_XC_TF.npz"
+packReady() {
+  [ -f "$PACK" ] && [ $(( $(date +%s) - $(stat -c %Y "$PACK") )) -ge 600 ]
+}
 availGb() { awk '/^MemAvailable:/ {print int($2 / 1048576)}' /proc/meminfo; }
-ready() { ! inQuiet && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
+ready() { ! inQuiet && packReady && ! busy && [ "$(availGb)" -ge "${XCP_REPLAY_MIN_GB:-70}" ]; }
 say() { echo "[replay] $(date -u '+%F %H:%M') UTC  $*" | tee -a "$LOGDIR/summary.log"; }
 
 if [ "${1:-}" = "--list" ]; then
@@ -106,7 +115,7 @@ for d in $DATES; do
   if [ -f "$snap" ]; then continue; fi
   waited=0
   until ready; do
-    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
+    [ "$waited" -eq 0 ] && say "$d: waiting (quiet hours, the pack being rebuilt, another solve or model fit, or under ${XCP_REPLAY_MIN_GB:-70} GB free: $(availGb) GB)"
     waited=1
     sleep 300
   done
