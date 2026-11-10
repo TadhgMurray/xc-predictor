@@ -131,8 +131,42 @@ def _meetsFor(cur, kind, unit):
     cur.execute(f"""SELECT DISTINCT mu.meet_id, mu.source FROM meet_unit mu
                     WHERE mu.sport = 'XC' AND mu.kind = %s AND mu.unit = ANY(%s) {extra}""",
                 (kind, spell))
-    return {((r["meet_id"], r["source"]) if isinstance(r, dict) else (r[0], r[1]))
-            for r in cur.fetchall()}
+    got = {((r["meet_id"], r["source"]) if isinstance(r, dict) else (r[0], r[1]))
+           for r in cur.fetchall()}
+    return got | _twinMeets(cur, got)
+
+
+def _twinMeets(cur, meets):
+    """★ AND THE SAME RACE FROM THE OTHER FEED (owner's check, 2026-11-10:
+    the NCAA DI championships' 8,306 college-feed results matched 0 ranked
+    rows -- "No rated men's results at the NCAA DI championship yet"). A
+    race both feeds carry is stored twice, tied by canon_meet_id, and the
+    flagged twin (result_twin) never ranks; meet_unit tags the college
+    feed's copy. The other copy's (meet_id, source) joins the set, so the
+    ranked rows are read wherever they are."""
+    if not meets:
+        return set()
+    try:
+        cur.execute("SAVEPOINT goal_twins")
+        cur.execute("""SELECT DISTINCT canon_meet_id FROM results
+                       WHERE meet_id = ANY(%s) AND canon_meet_id IS NOT NULL""",
+                    (sorted({m for m, _s in meets}),))
+        canons = [r["canon_meet_id"] if isinstance(r, dict) else r[0]
+                  for r in cur.fetchall()]
+        out = set()
+        if canons:
+            cur.execute("""SELECT DISTINCT meet_id, source FROM results
+                           WHERE canon_meet_id = ANY(%s)""", (canons,))
+            out = {((r["meet_id"], r["source"]) if isinstance(r, dict) else (r[0], r[1]))
+                   for r in cur.fetchall()}
+        cur.execute("RELEASE SAVEPOINT goal_twins")
+        return out
+    except Exception:                                   # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT goal_twins")
+        except Exception:                               # noqa: BLE001
+            pass
+        return set()
 
 
 _ROWS = """

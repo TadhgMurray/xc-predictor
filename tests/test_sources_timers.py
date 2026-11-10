@@ -435,3 +435,12 @@ def test_every_page_offered_gets_an_outcome():
 
 def test_the_ext_seen_table_is_in_the_landing_ddl():
     assert "CREATE TABLE IF NOT EXISTS ext_seen" in L.DDL
+
+
+def test_kilometers_are_read_before_the_miles_in_brackets():
+    # race titles as printed on Heartland Timing's Clearwater Invitational and
+    # Y Timing's 3A Region 1 XC 2026 reports (2026-11-10)
+    assert hytek.metersOf("WOMEN (HS Open ) • 5 Kilometers (3.11 Miles)") == 5000
+    assert hytek.metersOf("MEN • 3.2 Kilometers (1.99 Miles) 3A-1") == 3200
+    assert hytek.metersOf("MEN (8th Grade) • 2 Miles (3.22 Kilometers)") == 3218.7
+    assert hytek.metersOf("5k Run CC Varsity") == 5000

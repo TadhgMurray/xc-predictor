@@ -98,7 +98,9 @@ if [ -n "$pol" ]; then
 fi
 if [ -s "$LOCK.want" ] && ! ( exec 7>>"$LOCK.want"; flock -n 7 ) 2>/dev/null; then
     echo ""
-    echo "  A RUN IS WAITING FOR IT: $(cat "$LOCK.want") -- no queued job starts first."
+    echo "  WAITING FOR IT, AHEAD OF ANY BACKUP OR RACE MODEL: $(cat "$LOCK.want")"
+    echo "  (a queued nightly scrapes as soon as the run notes results_stable=1, and"
+    echo "   prices and publishes when the run lets go -- deploy/nightly_update.sh)"
 fi
 if [ -n "$holders" ]; then
     echo ""

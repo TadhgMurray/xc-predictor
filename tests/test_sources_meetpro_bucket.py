@@ -170,7 +170,7 @@ def test_past_its_budget_the_run_starts_no_new_meet(monkeypatch, tmp_path):
     monkeypatch.setattr(discover, "discover", disc)
     fetched = []
 
-    async def fetchMeet(fetcher, slug, url, kind=None):
+    async def fetchMeet(fetcher, slug, url, kind=None, max_age=None):
         fetched.append(url)
         return None, "nothing"
     monkeypatch.setattr(timers, "fetchMeet", fetchMeet)

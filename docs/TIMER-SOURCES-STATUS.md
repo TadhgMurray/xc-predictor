@@ -116,3 +116,13 @@ Status: **works** = parsed real meets in the dry run (two newest shown, dated an
 | indiana-wesleyan-university-school-meetpro-account | nothing new | MeetPro account: nothing from 2026 |
 | smart-event-management-llc | can't | no index of its own: reports posted on hosts' SportsEngine pages |
 | live-running-results-track-timing-and-data-management-result | works | 2026-10-17 ABQ Academy Extravaganzqa (XC 10 races 1191 rows) |
+
+## 2026-11-10: more timers
+
+- **Arrow Live Results** (`sources/arrow.py`): one job reads every state's recent races, groups a timer's races of one day into a meet, and lands the cross country ones (34 timers in the research file post here). Arrow pages state no distance: those races land without one.
+- **Race Roster** (`sources/raceroster.py`): the search index since Aug 1 plus the research file's meets; 129 school meets this season on 2026-11-10 (70 in the October research). Structured rows are mapped by column label, text reports by their header columns. A distance in the race title wins over Race Roster's 1000 m placeholder; races with no school and no grade (open races) are left out.
+- **Custom timers switched on** (`registry.CUSTOM_ON`): Heartland Timing (KS), Y Timing (AR), Extra Mile Timing (CA, LAUSD leagues), Crescent City Timing (LA). A dry run of all 88 `custom` sources (`python -m sources.timers all --dry --try-kind custom`) found these parse; of the rest, 27 post only to a feed and most others list no results pages on their own site.
+- **Fixed**: the meet finder looped on pages linking each other (BAYTAF, Chuck Score, Platt Systems, ScoreYourRace: RecursionError); "5 Kilometers (3.11 Miles)" read as 5005.1 m.
+- **The server needs `pdftotext`** (`apt-get install -y poppler-utils`): without it every PDF report fails (Finished Results' CCAA PDFs, 2026-11-07). The timer job now says so at the start.
+- **Also checked** (2026-11-10): the 123 `unknown` sources (one more on: Sub5 Track Club's hub, CO); Gopher State Events (MN) lists no meet after 2025-10-25; RunnerCard's 2026 meet pages come back empty; CCR Timing and MyChipTime are road races.
+- **The OnlineRaceResults archive** on Race Roster (about 600 school meets, 2019-2025): the owner said yes (2026-11-10). `bash deploy/rr_archive.sh` walks it through the lock, up to 240 minutes a run, and carries on where it stopped.

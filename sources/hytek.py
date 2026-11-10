@@ -163,17 +163,21 @@ def secondsOf(mark):
 
 
 def metersOf(title):
-    """'5k Run CC Varsity' -> 5000; '3200 Meter Run' -> 3200; '2 Mile' -> 3218.7."""
+    """'5k Run CC Varsity' -> 5000; '3200 Meter Run' -> 3200; '2 Mile' -> 3218.7.
+
+    ! THE FIRST DISTANCE THE TITLE STATES WINS (2026-11-10, Heartland and Y
+      Timing): "5 Kilometers (3.11 Miles)" is 5000, not the rounded miles in
+      brackets, and "2 Miles (3.22 Kilometers)" is 3218.7."""
     t = title.lower()
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(k|km)\b", t)
-    if m:
-        return float(m.group(1)) * 1000
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(meters?|metres?|m)\b", t)
-    if m:
-        return float(m.group(1))
-    m = re.search(r"(\d+(?:\.\d+)?)\s*mile", t)
-    if m:
-        return round(float(m.group(1)) * 1609.344, 1)
+    hits = []
+    for rx, conv in ((r"(\d+(?:\.\d+)?)\s*(?:k|km|kilometers?|kilometres?)\b", lambda v: v * 1000),
+                     (r"(\d+(?:\.\d+)?)\s*(?:meters?|metres?|m)\b", lambda v: v),
+                     (r"(\d+(?:\.\d+)?)\s*mile", lambda v: round(v * 1609.344, 1))):
+        m = re.search(rx, t)
+        if m:
+            hits.append((m.start(), conv(float(m.group(1)))))
+    if hits:
+        return min(hits)[1]
     m = re.search(r"\b(one|two|three)\s+mile", t)
     if m:
         return round({"one": 1, "two": 2, "three": 3}[m.group(1)] * 1609.344, 1)

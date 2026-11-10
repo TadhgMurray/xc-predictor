@@ -109,7 +109,11 @@
     return wrap;
   }
 
+  // ! NO INTRO NOTE ON AN ATHLETE PAGE (owner, 2026-11-10: "you can drop
+  //   note"). It took two lines under the name on a phone; the same words
+  //   are the button's title. Team pages keep it.
   function helpLine(first) {
+    if (cfg.follow === 'athlete') return '';
     return first ? '<p class="rc-follow-help">' + esc(helper) + '</p>' : '';
   }
 

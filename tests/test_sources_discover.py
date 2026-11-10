@@ -90,3 +90,25 @@ def test_words_inside_words_are_not_nav_or_road():
 
 def test_crystal_reports_html_is_a_report():
     assert discover.isReport(b'<HTML><HEAD><META NAME="Author" CONTENT="Crystal Reports 11.0">')
+
+
+def test_pages_that_link_to_each_other_are_read_once():
+    # 2026-11-10, baytaf.org and three more: two index.htm pages on the
+    # timer's own site, each linking the other, went round until Python's
+    # RecursionError lost the timer's whole night
+    a = '<a href="https://t.example/a/index.htm">A</a><a href="https://t.example/b/index.htm">B</a>'
+    pages = {"https://t.example/results.htm": a, "https://t.example/a/index.htm": a,
+             "https://t.example/b/index.htm": a}
+
+    class Counting(_FakeFetcher):
+        asked = []
+
+        async def fetch(self, url, max_age=None):
+            self.asked.append(url)
+            return await _FakeFetcher.fetch(self, url, max_age)
+    f = Counting(pages)
+    found, _note, _n = asyncio.run(discover._ownIndex(f, "https://t.example/results.htm", 2026, 5,
+                                                      set(), None))
+    assert found == []
+    assert f.asked.count("https://t.example/a/index.htm") == 1
+    assert f.asked.count("https://t.example/b/index.htm") == 1

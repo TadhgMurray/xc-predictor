@@ -464,6 +464,9 @@ def _all(a, conn):
     from sources.fetch import Fetcher, RawStore
     since = a.since_year or _dt.date.today().year
     srcs = [s for s in registry.load() if s.enabled and s.kind != "blocked"]
+    # the platforms read whole (Arrow, Race Roster): run when the registry
+    # lists timers on them
+    platforms = {s.kind for s in registry.load()}
     # ! --try-kind (dry runs only): sources of a kind not switched on yet,
     #   through the same reader, to see which already parse
     if getattr(a, "try_kind", None):
@@ -586,7 +589,8 @@ def _all(a, conn):
         from types import SimpleNamespace
         from sources import arrow
         src = SimpleNamespace(slug=arrow.SLUG)
-        if os.environ.get("XCP_ARROW", "1") == "0" or (a.only and arrow.SLUG not in set(a.only)):
+        if (os.environ.get("XCP_ARROW", "1") == "0" or (a.only and arrow.SLUG not in set(a.only))
+                or not platforms & {"arrow"}):
             return src, [], "off"
         try:
             meets, note = await arrow.discover(fetcher, since, int(os.environ.get("XCP_ARROW_PER_RUN", "12")),
@@ -614,7 +618,8 @@ def _all(a, conn):
         from types import SimpleNamespace
         from sources import raceroster
         src = SimpleNamespace(slug=raceroster.SLUG)
-        if os.environ.get("XCP_RACEROSTER", "1") == "0" or (a.only and raceroster.SLUG not in set(a.only)):
+        if (os.environ.get("XCP_RACEROSTER", "1") == "0" or (a.only and raceroster.SLUG not in set(a.only))
+                or not platforms & {"raceroster"}):
             return src, [], "off"
         try:
             todo, note = await raceroster.discover(

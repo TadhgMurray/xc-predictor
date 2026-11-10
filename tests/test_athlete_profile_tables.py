@@ -191,3 +191,31 @@ def test_team_place_only_for_a_scored_cross_country_team():
     src = _src(os.path.join(ROOT, "racecast", "app.py"))
     assert "pl.place, pl.team_place, pl.team_n," in src       # XC half
     assert "NULL::bigint                  AS team_n" in src     # track half
+
+
+def test_rating_records_compare_hs_equivalents():
+    # Newberry, 2026-11-10: an MS race's own-pool number beat his best race
+    src = _src(os.path.join(ROOT, "racecast", "app.py"))
+    assert 'rating_of   = lambda r: (r.get("hs_rating") if r.get("hs_rating") is not None' in src
+
+
+def test_a_class_never_stands_beside_a_state_division():
+    # Newberry, 2026-11-10: "TX D6A · Class 5A" off a meet naming both
+    import school_units as SU
+    row = {"state_div": "6A", "state": "TX"}
+    for v in ("5A", "6A", "2", "AA", "Class D"):
+        assert SU._classShadowed(v, row), v
+    assert not SU._classShadowed("5A", {"state": "TX"})        # no division: it shows
+    assert not SU._classShadowed("Catholic", row)               # not a classification
+
+
+def test_a_league_label_drops_its_gender_word():
+    # Josh Bodach, 2026-11-10: "IHSAA GIRLS" on a boy
+    import school_units as SU
+    assert "GIRLS" not in SU._label("league", "IHSAA GIRLS", False).upper()
+    assert "BOYS" not in SU._label("league", "IHSAA BOYS", False).upper()
+
+
+def test_no_follow_note_on_an_athlete_page():
+    js = _src(os.path.join(ROOT, "racecast", "static", "follow.js"))
+    assert "if (cfg.follow === 'athlete') return '';" in js
