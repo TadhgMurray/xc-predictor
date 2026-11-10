@@ -2693,6 +2693,20 @@ def athlete(person_id):
                             or athlete["header_pool"])
     athlete["team_state"] = ((latest_team.get("state") if latest_team else None)
                              or athlete["header_state"])
+    # ★ ONE "RECRUITING" LINK, FOR WHOEVER CAN STILL BE RECRUITED (owner,
+    #   2026-11-10: "sure, but transfers"). A high schooler or a college
+    #   runner whose team season is this academic year or last; a 2010
+    #   graduate's last high-school season is not.
+    try:
+        import datetime as _dt_rk
+        from season_year import academicYear
+        _ly = int((latest_team or {}).get("year") or 0)
+        _lv = str(athlete["team_pool"] or "").split("|")[0].split("_")[0]
+        athlete["recruit_kind"] = (_lv if _lv in ("hs", "college")
+                                   and _ly >= academicYear(_dt_rk.date.today()) - 1
+                                   else None)
+    except Exception:                                    # noqa: BLE001
+        athlete["recruit_kind"] = None
     # ! NOT athlete["school"] = _season_school(races): `races` is the whole
     #   career, so this line headed Liam Lucas "Loyola Blakefield" (31 high
     #   school rows) over his Tufts season, whatever the header row said.
@@ -13801,6 +13815,9 @@ def api_recruiting():
                     "limit": f["limit"], "offset": f["offset"], "note": note})
 
 
+RECRUIT_COMPS_MIN = 10
+
+
 @app.route("/recruit/<int:person_id>")
 def recruit_profile(person_id):
     import recruiting as R
@@ -13812,8 +13829,13 @@ def recruit_profile(person_id):
             # "Runners like you" per sport (comps.py): who was here before
             # and how it went; None where there is no season or no table
             from comps import runnersLikeYou
+            # ★ NOT BELOW RECRUIT_COMPS_MIN MATCHES (owner, 2026-11-10: the
+            #   national #2 junior read "0 of 1 (0%) ran cross country in
+            #   college", with a median of one runner): a cohort that small
+            #   says nothing, so the tab is not shown
             prof["comps"] = [c for c in (runnersLikeYou(cur, person_id, sp)
-                                         for sp in R.SPORTS) if c]
+                                         for sp in R.SPORTS)
+                             if c and (c.get("n") or 0) >= RECRUIT_COMPS_MIN]
     from comps import CLASS_WORD, CLASS_SHORT
     for c in prof["comps"]:
         for e in c["examples"]:

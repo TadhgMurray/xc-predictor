@@ -267,12 +267,13 @@ class Routes(unittest.TestCase):
         self.assertEqual(api.get_json()["teams"][0]["place"], 1)
         self.assertIn("public", api.headers["Cache-Control"])
 
-    def test_movers_pages(self):
-        self.assertEqual(self.client.get("/movers").status_code, 200)
+    def test_movers_is_cut_to_breakouts(self):
+        r = self.client.get("/movers")
+        self.assertEqual(r.status_code, 301)
+        self.assertTrue(r.headers["Location"].endswith("/breakouts"))
         r = self.client.get("/movers?state=CA&pool=hs_f&sport=xc")
-        self.assertEqual(r.status_code, 200)
-        self.assertIn(b"This week in California", r.data)
-        self.assertIn(b"two weekly snapshots", r.data)
+        self.assertEqual(r.status_code, 301)
+        self.assertIn("/breakouts?state=CA&level=", r.headers["Location"])
 
     def test_team_season_page(self):
         r = self.client.get("/school/A/season?pool=hs_m&state=CA")

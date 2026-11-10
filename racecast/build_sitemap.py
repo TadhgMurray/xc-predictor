@@ -39,8 +39,8 @@ MAX_PER_FILE = 45000
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "static", "sitemaps")
 # ★ AND THE TOOL PAGES (audit 2026-11-09: none of the Tools menu was in the
-#   sitemap). /projections and /movers are left out while their bare index
-#   is on the owner's cut list; their state pages are listed by state below.
+#   sitemap). /movers is cut (a redirect to /breakouts); /projections' bare
+#   index is left out, its state pages are listed by state below.
 FIXED_PAGES = ("/", "/rankings", "/meets", "/conversions", "/predictions",
                "/recruiting", "/coaches", "/coaches/recruits", "/about",
                "/what-it-takes", "/ncaa", "/breakouts", "/scale", "/goal",

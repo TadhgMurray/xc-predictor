@@ -52,9 +52,10 @@ def test_single_pool_pages_have_no_scale_switch():
 def test_every_remaining_caller_gets_the_advanced_box():
     callers = [f for f in os.listdir(T) if f.endswith(".html") and f != "_scale.html"
                and "{{ scale_toggle(" in read("racecast", "templates", f)]
-    for f in ADVANCED:
-        assert f in callers, f
-    assert not set(callers) & set(SINGLE_POOL), callers
+    # ★ THE TOGGLE IS CUT (owner, 2026-11-10): no page offers the own scale
+    #   any more; every rating shown is HS-equivalent. The macro stays for
+    #   now, unused, so an old include cannot break a page.
+    assert callers == [], callers
     s = read("racecast", "templates", "_scale.html")
     macro = s[s.index("{% macro scale_toggle"):]
     assert 'id="scale-toggle"' in macro and "<summary>Advanced</summary>" in macro

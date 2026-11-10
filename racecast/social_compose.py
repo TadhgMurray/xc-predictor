@@ -245,7 +245,7 @@ def subtitle(post, body=None):
 
 def foot(post, body=None):
     k = post.get("kind")
-    left = {"teams": "racecast.co/teams", "risers": "racecast.co/movers", "picks": "racecast.co/projections",
+    left = {"teams": "racecast.co/teams", "risers": "racecast.co/breakouts", "picks": "racecast.co/projections",
             "teampicks": "racecast.co/projections", "preview": "racecast.co/predictions",
             "teampreview": "racecast.co/predictions"}.get(k, "racecast.co")
     right = {"rankings": "Wk: places moved since last week", "national": "Wk: places moved since last week",
