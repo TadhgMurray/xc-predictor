@@ -117,6 +117,28 @@ if _HAVE_NUMBA:
                 if has_ind:
                     p_ind[t, ind_idx[i]] += wr * hs * ind_w[i]
 
+    @njit(parallel=True, cache=True)
+    def _zero(p):
+        for t in prange(p.shape[0]):
+            p[t, :] = 0.0
+
+    @njit(parallel=True, cache=True)
+    def _colsum(p, n):
+        # chunk 0, then + chunk 1, + chunk 2 ... per column: the order
+        # numpy's p.sum(axis=0) adds a C-ordered array's rows in, so the
+        # total is the same to the bit (tests/test_joint_kernels.py)
+        out = np.empty(n)
+        nb = (n + 4095) // 4096
+        for k in prange(nb):
+            j0 = k * 4096
+            j1 = min(n, j0 + 4096)
+            for j in range(j0, j1):
+                out[j] = p[0, j]
+            for t in range(1, p.shape[0]):
+                for j in range(j0, j1):
+                    out[j] += p[t, j]
+        return out
+
 
 def _edges(D):
     """Chunk edges on athlete boundaries, cached on D; None if the rows are
@@ -180,8 +202,22 @@ def fusedMatvec(D, w, h, amp, b):
     #   measured 664 ms per 8M rows against 76 ms for the random-access terms
     #   alone. 32 doubles (256 bytes) of slack puts each copy on lines of its
     #   own, beyond the adjacent-line prefetcher's pair.
-    def priv(size):
-        return np.zeros((nch, max(int(size), 1) + _PAD))
+    # ★ KEPT BETWEEN CALLS (2026-11-10). At 48 chunks the private copies of
+    #   d and u are ~300 MB; allocated fresh, every one of the ~1,400 matvecs
+    #   a go-live runs page-faulted them in, and numpy summed them on one
+    #   core. Now they live on D, are zeroed in parallel, and are summed in
+    #   parallel in numpy's own order -- the same numbers to the bit.
+    bufs = getattr(D, "_kern_bufs", None)
+    if bufs is None or bufs.get("nch") != nch:
+        bufs = D._kern_bufs = {"nch": nch}
+
+    def priv(size, key):
+        shape = (nch, max(int(size), 1) + _PAD)
+        p = bufs.get(key)
+        if p is None or p.shape != shape:
+            p = bufs[key] = np.empty(shape)
+        _zero(p)
+        return p
 
     has_beta = bool(D.n_beta) and b.get("beta") is not None
     has_c = bool(D.n_c) and b.get("c") is not None
@@ -197,13 +233,13 @@ def fusedMatvec(D, w, h, amp, b):
     out_beta = np.zeros(D.n_ath if has_beta else 1)
     out_g = np.zeros(D.n_ath if has_g else 1)
     out_q = np.zeros(D.n_ath if has_q else 1)
-    p_d, p_u, p_mu = priv(D.n_cell), priv(D.n_race), priv(n_mu)
-    p_c = priv(D.n_c if has_c else 1)
-    p_r = priv(D.n_pool if has_r else 1)
-    p_e = priv(D.n_e if has_e else 1)
-    p_k = priv(D.n_group if has_k else 1)
-    p_imp = priv(D.n_imp if has_imp else 1)
-    p_ind = priv(D.n_ind if has_ind else 1)
+    p_d, p_u, p_mu = priv(D.n_cell, "d"), priv(D.n_race, "u"), priv(n_mu, "mu")
+    p_c = priv(D.n_c if has_c else 1, "c")
+    p_r = priv(D.n_pool if has_r else 1, "r")
+    p_e = priv(D.n_e if has_e else 1, "e")
+    p_k = priv(D.n_group if has_k else 1, "k")
+    p_imp = priv(D.n_imp if has_imp else 1, "imp")
+    p_ind = priv(D.n_ind if has_ind else 1, "ind")
 
     F, I = _DUMMY_F, _DUMMY_I
     _kernel(edges, D.athlete, D.cell, D.race, D.group_row, D.mu_idx,
@@ -232,7 +268,7 @@ def fusedMatvec(D, w, h, amp, b):
         print(f"[joint] kernels: fused matvec on, {nch} chunks", flush=True)
         _ANNOUNCED = True
 
-    parts = [out_a, p_d.sum(axis=0)[:D.n_cell], p_u.sum(axis=0)[:D.n_race],
+    parts = [out_a, _colsum(p_d, D.n_cell), _colsum(p_u, D.n_race),
              p_mu.sum(axis=0)[:n_mu]]
     if D.n_beta:
         parts.append(out_beta if has_beta else np.zeros(D.n_ath))

@@ -147,3 +147,20 @@ def test_a_whole_solve_is_the_same_either_way(monkeypatch):
                 "beta", "curve", "rating", "tau2", "sigma_u2"):
         np.testing.assert_allclose(on[key], off[key], rtol=1e-7, atol=1e-9,
                                    err_msg=key)
+
+
+def test_kept_buffers_give_the_fresh_answer_to_the_bit():
+    """2026-11-10: the private copies are kept on D between matvecs and
+    zeroed and summed in parallel -- a second call (stale buffers) must be
+    the fresh call exactly, and the parallel sum numpy's own."""
+    D, rng = _fakeDesign(seed=9)
+    w, h, amp = rng.random(D.n), 1 + .1 * rng.normal(size=D.n), \
+        1 + .1 * rng.normal(size=D.n)
+    jk.fusedMatvec(D, w, h, amp, D.unpack(rng.normal(size=D.n_total)))
+    b = D.unpack(rng.normal(size=D.n_total))
+    again = jk.fusedMatvec(D, w, h, amp, b)
+    D._kern_bufs = None
+    fresh = jk.fusedMatvec(D, w, h, amp, b)
+    assert np.array_equal(again, fresh)
+    p = rng.normal(size=(7, 10_000))
+    assert np.array_equal(jk._colsum(p, 9_000), p.sum(axis=0)[:9_000])
