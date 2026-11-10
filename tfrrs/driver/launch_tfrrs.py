@@ -15,7 +15,6 @@ from run_tfrrs import runDrain
 from playwright.sync_api import sync_playwright
 import asyncio
 from playwright.async_api import async_playwright
-from vpn_rotation import VPNRotator
 import random
 
 # ★ THE ATHLETIC.NET LAUNCHER'S SETTINGS (owner, 2026-11-01: "make sure the
@@ -100,8 +99,8 @@ def _closePage(handle):
 
 # main  (ASYNC)
 # Purpose: Run the TFRRS scrape: reset stale claims once, open an async browser,
-#          build the rotator, and drain the queue with SESSION_COUNT concurrent
-#          sessions + meets-based VPN rotation.
+#          and drain the queue with SESSION_COUNT concurrent
+#          sessions from the one address.
 # ★ SAY WHAT THERE IS TO DO BEFORE OPENING A BROWSER, the same lesson the
 #   anet launcher learned: six sessions reporting "0 processed" over an empty
 #   queue is indistinguishable from a broken scraper.
@@ -231,9 +230,6 @@ async def main():
 
     await asyncio.to_thread(_prepareQueue)
 
-    # The shared rotator — coordinates VPN rotation across all sessions.
-    rotator = VPNRotator()
-
     # Async Playwright: each session gets its OWN page from this one browser.
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False,
@@ -247,7 +243,7 @@ async def main():
             await page.add_init_script(WEBDRIVER_MASK)
             return page
 
-        await runDrain(make_page, _urlFor, rotator)
+        await runDrain(make_page, _urlFor)
 
     _fillVenueNames("[tfrrs venues]")
     print("TFRRS drain complete", flush=True)

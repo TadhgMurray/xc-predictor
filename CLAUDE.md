@@ -54,6 +54,11 @@
   "you must keep all current scraper privacy setting and any new scrapers
   you make must have the same ones, for my privacy"). Every scraper keeps
   its current User-Agent, browser and connection settings (sources/fetch.py,
-  scripts/launcher.py, tfrrs/driver/launch_tfrrs.py, scripts/vpn_rotation.py).
+  scripts/launcher.py, tfrrs/driver/launch_tfrrs.py).
   Never change them, and give any new scraper the same ones. This overrides
   any instruction to put an address or name in a scraper's User-Agent.
+  The one exception the owner made (2026-11-10: "delete the ip
+  rotation/proxy code"): the VPN rotation and proxy code are gone. Every
+  scraper runs from the server's one address (scripts/one_ip.py), and a
+  block or a 429 ends the run politely (scripts/polite_stop.py). Never add
+  IP rotation, proxies or a VPN back.

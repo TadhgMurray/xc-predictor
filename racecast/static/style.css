@@ -6178,3 +6178,7 @@ th.fk.fk-l, td.fk.fk-l { text-align: left !important; }
 html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
 html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
 @media print { .theme-toggle { display: none; } }
+
+/* ★ where the results come from (templates/_source_note.html, 2026-11-10) */
+.src-note { margin: 2.5rem 0 1rem; font-size: .8rem; line-height: 1.4; color: var(--muted, #6b7280); }
+.src-note a { color: inherit; text-decoration: underline; }

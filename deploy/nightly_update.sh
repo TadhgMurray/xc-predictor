@@ -98,7 +98,7 @@ scrape() {
   #   held .pipeline.lock for a day and a half, and the full pipeline would
   #   not start). This shell holds the lock for the night; a leftover
   #   virtual screen must not.
-  NO_VPN=1 timeout "${SCRAPE_MIN}m" xvfb-run -a "$@" > "$LOGDIR/$name.log" 2>&1 9>&-
+  timeout "${SCRAPE_MIN}m" xvfb-run -a "$@" > "$LOGDIR/$name.log" 2>&1 9>&-
   rc=$?
   el=$(( $(date +%s) - t0 ))
   # ! run in the background: FAILED cannot be set from here, so the
@@ -168,7 +168,7 @@ _scrapeAll() {
     echo "== scrape (anet ${XCP_NIGHTLY_ANET_SPORT-XC} + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
     # ★ SLOW AND FEW (owner, 2026-10-22: "make those scrapes go slowly so
     #   they don't get banned, like 2 sessions, 5-10 seconds"). The night runs
-    #   from the server's own address (NO_VPN), so the sources see one IP:
+    #   from the server's own address (the only one there is), so the sources see one IP:
     #   two sessions per feed, 5-10 s between meets. About 15 meets a minute
     #   per feed -- a weeknight's new meets in well under the 3-hour bound.
     #   The XCP_NIGHTLY_* names win over the full run's NUM_SESSIONS /

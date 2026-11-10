@@ -24,7 +24,7 @@ from database import (
 )
 from scrape_results import scrapeMeetBySport, scrapeMeetTFMetaOnly
 from scraper import CloudflareException
-from vpn_rotation import VPNRotator
+from one_ip import OneIP
 from async_db_helper import runDbCall
 from scrape_tuning import NUM_SESSIONS, perMeetDelayRange, perRequestDelayRange
  
@@ -58,32 +58,17 @@ if ANET_SPORT and ANET_SPORT not in ("XC", "TF"):
 META_ONLY = False
 
 # How many meets to scrape before restarting the browser.
-# Restarts prevent WebSocket connection collapse on long sessions and
-# cycle to a fresh proxy IP.
+# Restarts prevent WebSocket connection collapse on long sessions.
 RESTART_EVERY = 200
 
 # ⚠ A CRASHED SESSION BACKS OFF AND, AFTER SESSION_MAX_CRASHES IN A ROW, STOPS
 #   (owner, 2026-10-07: every session failed "BrowserType.launch: Target page,
 #   context or browser has been closed" and went straight back for another
 #   batch -- 104,680 rows claimed and never scraped). The wait doubles from
-#   CRASH_BACKOFF_S: 30, 60, 120, 240s -- 7.5 minutes, five VPN rotation
-#   windows (90s), enough for a rotation or a memory spike to clear. A launch
-#   that still fails after that is not transient and needs a person.
+#   CRASH_BACKOFF_S: 30, 60, 120, 240s -- 7.5 minutes, enough for a memory
+#   spike to clear. A launch that still fails after that is not transient and needs a person.
 CRASH_BACKOFF_S = float(os.environ.get("CRASH_BACKOFF_S", 30))
 SESSION_MAX_CRASHES = int(os.environ.get("SESSION_MAX_CRASHES", 5))
-
-# How long a session waits after its post-rotation reload comes back 429, before
-# rejoining normal scraping. We wait-then-rejoin — we do NOT retry the reload.
-_RELOAD_429_COOLDOWN_SECONDS = 60
-
-# Per-reload navigation timeout. Generous: a fresh IP mid-CF-challenge can take a
-# few seconds to return the document.
-_RELOAD_TIMEOUT_MS = 30000
-
-# How many times to retry a meet after a block-triggered rotation
-# before giving up and moving on. 3 retries means we try the meet
-# on up to 4 different IPs total before skipping it.
-MAX_BLOCK_RETRIES = 3
 
 # NEW — the full meet_id range to sweep. Each session gets a
 # non-overlapping slice of this range (see _computeSessionRange below).
@@ -112,11 +97,6 @@ CHECKPOINT_DIR = "checkpoints"
 # OS process. A healthy close is well under a second; if it hasn't finished in
 # 10s the WebSocket is wedged and waiting longer just freezes the session.
 _BROWSER_CLOSE_TIMEOUT_SECONDS = 10
-
-# How long to wait after a block when the rotation turned out to be a no-op
-# (we're inside the rotator's 90s cooldown). Short — just enough to not tight-loop
-# against an IP that's still settling, WITHOUT paying for a browser restart.
-_BLOCK_NOOP_BACKOFF_SECONDS = 60
 
 
 # List of 3 dictionaries, one for each sessions. Each has slightly different
@@ -593,9 +573,8 @@ async def _launchBrowser(playwright):
 #          and viewport so each restart looks like a slightly different  machine.
 # Arguments:
 #           browser: the browser object to create the context on.
-#           proxy_index: which proxy to use if proxies are re-enabled.
 # Output: A Playwright browser context.
-async def _buildContext(browser, proxy_index: int):
+async def _buildContext(browser):
 
 
     # Returns the necessary browser context.
@@ -725,9 +704,8 @@ async def _killOldBrowser(old_browser, label: str):
 #           old_browser: the browser object to close. Could already be closed/not
 #                        existing(none).
 #           config: the session config dict with user_agent and viewport.
-#           proxy_index: which proxy to use if proxies are re-enabled.
 # Output: Returns a tuple of (browser, page) ready to scrape with.
-async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int = 0):
+async def restartBrowser(playwright, old_browser, config: dict):
 
     label = config["label"]
 
@@ -739,7 +717,7 @@ async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int
     # Launches browser, builds its context, and opens a new page.
     browser = await _launchBrowser(playwright)
     try:
-        page = await _openPage(browser, proxy_index)
+        page = await _openPage(browser)
     except BaseException:
         # ! A Chrome that launched but could not open athletic.net was
         #   dropped un-closed -- a live process leaked on every failed start.
@@ -749,8 +727,8 @@ async def restartBrowser(playwright, old_browser, config: dict, proxy_index: int
     return browser, page
 
 
-async def _openPage(browser, proxy_index):
-    context = await _buildContext(browser, proxy_index)
+async def _openPage(browser):
+    context = await _buildContext(browser)
     page    = await context.new_page()
 
     # NEW — block images/fonts/media on every request this page makes,
@@ -770,136 +748,6 @@ async def _openPage(browser, proxy_index):
     await page.goto("https://www.athletic.net", timeout=60000)
     await page.wait_for_load_state("domcontentloaded", timeout=10000)
     return page
-
-    # _reloadWithCooldown
-# Purpose: After a REAL VPN rotation, reload this session's page so its Cloudflare
-#          clearance matches the new exit IP. The proactive (meet-count) rotation
-#          path swaps the IP underneath every session WITHOUT restarting their
-#          browsers, so each page is still holding clearance issued for the OLD IP
-#          — reloading re-runs the CF handshake on the new one. Sessions call this
-#          staggered across the 90s window (POST_ROTATION_STAGGER_SECONDS) so they
-#          don't all reload at once. If the reload itself returns 429 (the fresh IP
-#          is already rate-limited by the reload burst), this session waits
-#          _RELOAD_429_COOLDOWN_SECONDS and returns — it does NOT retry the reload.
-# Arguments:
-#           page: this session's Playwright page (None-guarded defensively).
-#           label: session label for log output, e.g. "[Session 7]".
-# Output: None. Best-effort — never raises into the caller; a failed reload just
-#         means the next scrape attempt pays for CF clearance instead.
-async def _reloadWithCooldown(page, label: str):
-
-    # Guard: nothing to reload. Shouldn't happen at the call site, but a None
-    # page must never crash the session.
-    if page is None:
-        return
-
-    try:
-        # page.reload() re-navigates to the page's CURRENT url — athletic.net,
-        # since scraping is navigation-free and never moves the page off it — and
-        # returns the main-document Response. "domcontentloaded" returns as soon
-        # as the HTML is parsed; we don't need sub-resources (_blockHeavyResources
-        # aborts them anyway).
-        response = await page.reload(
-            wait_until="domcontentloaded",
-            timeout=_RELOAD_TIMEOUT_MS,
-        )
-    except Exception as e:
-        # Timeout/navigation error. Non-fatal — log and rejoin; the next
-        # scrapeMeetBySport hits its own block handling if the IP is truly bad.
-        print(f"{label} post-rotation reload failed ({e}) — rejoining anyway")
-        return
-
-    # Cloudflare's 1015 rate-limit page is served as a real HTTP 429 on the
-    # document, so the reload's own response status detects it — no need to reach
-    # into the scraper layer. (response is None only for non-HTTP navigations,
-    # which can't occur here.)
-    if response is not None and response.status == 429:
-        print(f"{label} post-rotation reload got 429 — waiting "
-              f"{_RELOAD_429_COOLDOWN_SECONDS}s before rejoining")
-        await asyncio.sleep(_RELOAD_429_COOLDOWN_SECONDS)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Block Handler
-# ─────────────────────────────────────────────────────────────────────────────
-# Pattern:
-#   1. Log what happened and why.
-#   2. (Cloudflare only) Remove the current server — it's confirmed blocked.
-#   3. Call rotator.rotate() to switch to a new IP.
-#   4. Return True/False so the session loop knows whether to retry.
-#
-# The RETRY LOOP lives in the session, not here. These handlers just rotate
-# and signal. Keeping retry logic in the caller means the handler stays
-# small and testable.
-
-# _handleCloudflareBlock
-# Purpose: Responds to a Cloudflare/HTML block on the current meet. Asks the
-#          rotator to switch IPs, but ONLY restarts the browser when the IP
-#          actually changed. A rotation request the rotator turns into a no-op
-#          (inside the 90s post-rotation cooldown, or another session already
-#          rotated) must NOT trigger a browser restart — restarting re-runs the
-#          expensive Cloudflare JS challenge on the SAME IP and piles load onto an
-#          IP that's already settling. The old version restarted unconditionally,
-#          which is what turned a single 429 into a storm of browser refreshes.
-# Arguments:
-#           rotator: the shared VPNRotator instance from main().
-#           playwright: the Playwright instance (needed to restart the browser).
-#           old_browser: the current browser (reused as-is if the IP didn't change).
-#           old_page: the current page (reused as-is if the IP didn't change).
-#           config: session config dict for restartBrowser.
-#           proxy_index: current proxy index, passed through / incremented.
-#           label: session label for log output e.g. "[Session 3]".
-# Output: Tuple of (browser, page, proxy_index).
-#           - real IP change  -> a freshly restarted (browser, page)
-#           - cooldown no-op   -> the SAME (old_browser, old_page), after a backoff
-#           - rotation failure -> (None, None), caller skips the meet
-async def _handleCloudflareBlock(rotator, playwright, old_browser, old_page,
-                                  config: dict, proxy_index: int,
-                                  label: str) -> tuple:
-
-    print(f"[{label}] Cloudflare block detected — removing current server and rotating")
- 
-    # Remove the current server BEFORE rotating so _advanceIndex() in
-    # rotate() moves to a genuinely different server, not back to this one.
-    # removeCurrentServer() is synchronous — it mutates the list directly.
-    rotator.removeCurrentServer()
-
-    # Snapshot the rotation counter BEFORE asking to rotate. rotate() returns
-    # True both when it really rotated AND when it skipped (cooldown / someone
-    # else already rotated). The counter is the only thing that distinguishes
-    # them: it increments ONLY on a real rotation. So comparing before/after is
-    # how we learn whether the exit IP actually changed.
-    count_before = rotator.rotation_count
- 
-    # Rotate to the next server. rotate() handles the lock, the CLI calls,
-    # the 10s wait, and the skip-if-already-rotated logic.
-    success = await rotator.rotate(label, "Cloudflare block")
- 
-    if not success:
-        print(f"[{label}] Rotation failed after Cloudflare block — skipping meet")
-        return None, None, proxy_index
- 
-    # Did the IP actually change? True only if a real rotation bumped the counter
-    # (ours, or another session's that we picked up while waiting on the lock —
-    # either way the IP is now fresh and a restart is warranted).
-    ip_changed = rotator.rotation_count > count_before
-
-    if not ip_changed:
-        # Cooldown no-op: rotator deliberately refused because a recent rotation
-        # is still settling. Same IP → a restart would only re-solve Cloudflare
-        # and add load. Back off briefly and reuse the existing browser/page so
-        # the caller's retry loop tries again IN PLACE.
-        print(f"{label} Rotation skipped (cooldown) — reusing browser, "
-              f"backing off {_BLOCK_NOOP_BACKOFF_SECONDS}s")
-        await asyncio.sleep(_BLOCK_NOOP_BACKOFF_SECONDS)
-        return old_browser, old_page, proxy_index
-
-    # Real IP change — NOW a restart earns its cost: it drops dead keep-alive
-    # connections from the old IP and gets a fresh Cloudflare clearance on the new
-    # one. Bump proxy_index so the per-restart config cycles too.
-    proxy_index += 1
-    browser, page = await restartBrowser(playwright, old_browser, config, proxy_index)
-
-    return browser, page, proxy_index
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Range splitting
@@ -1136,7 +984,7 @@ async def _processMeetResult(n: int, exists: bool, meet_id: int, sport: str,
 # Arguments:
 #           playwright: the Playwright instance shared across all sessions.
 #           config: the session config dict with label, user_agent, viewport.
-#           rotator: the shared VPNRotator instance from main().
+#           rotator: the shared OneIP instance from main() (nothing to rotate to).
 #           index: this session's position in active_configs (0-based) —
 #                  used for the checkpoint file name.
 #           session_start: this session's range lower bound (inclusive).
@@ -1200,7 +1048,7 @@ async def _afterCrash(browser, pending, crashes, label):
     return None, crashes, False
 
 
-async def runSession(playwright, config: dict, rotator: VPNRotator,
+async def runSession(playwright, config: dict, rotator: OneIP,
                       index: int, first_meet_id: int, session_end: int,
                       stride: int) -> dict:
     
@@ -1225,19 +1073,12 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
     # Tracks meets scraped by this browser instance. Resets on each restart.
     meets_since_restart = 0
 
-    # Tracks the last # of VPN rotations this session has seen.
-    last_rotation_generation = 0
-
     # Tracks how many consecutive failures in a row.
     # Resets to 0 on any success.
     consecutive_failures = 0
 
     # How many unscraped meets to pull from DB at one time.
     BATCH_SIZE = 50
-
-    # Tracks which proxy to use — increments on each browser restart
-    # so we cycle through different IPs over time.
-    proxy_index = SESSION_CONFIGS.index(config)  # start each session on a different proxy
 
     # The claimed (meet_id, sport) rows not yet recorded -- handed back to
     # the queue if the session crashes -- and the crashes in a row.
@@ -1299,9 +1140,8 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                 # Close old browser, open fresh one, reset the counter.
                 if browser is None or meets_since_restart >= RESTART_EVERY:
                     browser, page = await restartBrowser(
-                        playwright, browser, config, proxy_index
+                        playwright, browser, config
                     )
-                    proxy_index         += 1
                     meets_since_restart  = 0
 
                 # Attempts to scrape each sport this meet_id still hasn't
@@ -1311,93 +1151,36 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                     # goes back to the queue (the PoliteStop handler below)
                     polite_stop.check()
 
-                    # ── Scrape with retry loop ────────────────────────────────
-                    # On a Cloudflare block we rotate and retry the same meet
-                    # up to MAX_BLOCK_RETRIES times. If rotation fails or we
-                    # exhaust retries, we skip the meet and move on.
+                    # ── Scrape the meet ───────────────────────────────────────
+                    # One address, nothing to rotate to (scripts/one_ip.py): a
+                    # Cloudflare block ends the run politely, or skips the meet
+                    # when polite mode is off.
 
                     n = -1       # default to failed if we never succeed
                     # ! AND exists WITH IT (2026-09-26). It was never reset per
-                    #   meet: when the Cloudflare retries ran out it still held
-                    #   the PREVIOUS meet's answer, and a real meet could be
-                    #   written as state 4, "no meet here", never asked again.
-                    #   A meet we never reached is a failure (state 2), retried.
+                    #   meet: a block left the PREVIOUS meet's answer, and a real
+                    #   meet could be written as state 4, "no meet here", never
+                    #   asked again. A meet we never reached is a failure
+                    #   (state 2), retried.
                     exists = True
-                    block_retries = 0
-
-                    # Scrape the meet — tries XC first, then TF.
-                    # scrapeMeetUnified handles sport detection and queue retagging.
-                    while block_retries <= MAX_BLOCK_RETRIES:
-                        try:
-                            # Wait out any in-progress rotation, then take this
-                            # session's staggered slot in the 90s post-rotation
-                            # window (waitForTunnel sleeps us to it). Snapshot the
-                            # generation BEFORE so we can tell whether we actually
-                            # came through a NEW rotation.
-                            gen_before = last_rotation_generation
-                            last_rotation_generation = await rotator.waitForTunnel(
-                                index, 
-                                last_rotation_generation, 
-                                len(SESSION_CONFIGS)
+                    try:
+                        # Meta-only TF re-scrape: GetMeetData only, no results.
+                        # XC still goes through the normal path even in meta mode
+                        # (this pass is about repairing TF metadata).
+                        if META_ONLY and sport == "TF":
+                            n, exists = await scrapeMeetTFMetaOnly(
+                                page, meet_id, label, rotator
                             )
-
-                            # The generation advances ONLY on a real rotation. If it
-                            # moved while we waited, the exit IP just changed under
-                            # us — reload to refresh Cloudflare clearance on the new
-                            # IP (the 60s 429 cooldown is inside the helper).
-                            if last_rotation_generation != gen_before:
-                                await _reloadWithCooldown(page, label)
-
-                            # Meta-only TF re-scrape: GetMeetData only, no results.
-                            # XC still goes through the normal path even in meta mode
-                            # (this pass is about repairing TF metadata).
-                            if META_ONLY and sport == "TF":
-                                n, exists = await scrapeMeetTFMetaOnly(
-                                    page, meet_id, label, rotator
-                                )
-                            else:
-                                n, exists = await scrapeMeetBySport(
-                                    page, meet_id, sport,
-                                    label, rotator
-                                )
-                            break
-
-                        except CloudflareException:
-                            # ★ POLITE MODE: a block is a "no" for tonight --
-                            #   no rotation, no retry (polite_stop.py)
-                            if polite_stop.trip(label, f"Cloudflare block on meet {meet_id}"):
-                                break
-                            block_retries += 1
-
-                            if block_retries > MAX_BLOCK_RETRIES:
-                                # Exhausted retries — log and give up on this meet.
-                                print(f"{label} Block retries exhausted for meet "
-                                    f"{meet_id} — skipping")
-                                break
-
-                            print(f"{label} Block retry {block_retries}/"
-                                f"{MAX_BLOCK_RETRIES} for meet {meet_id}")
-
-                            # Ask the rotator to switch IPs. The browser is only
-                            # restarted if the IP actually changed; on a cooldown
-                            # no-op we get the SAME browser back and retry in place.
-                            prev_browser = browser
-                            browser, page, proxy_index = await _handleCloudflareBlock(
-                                rotator, playwright, browser, page,
-                                config, proxy_index, label
+                        else:
+                            n, exists = await scrapeMeetBySport(
+                                page, meet_id, sport,
+                                label, rotator
                             )
-
-                            # Rotation itself failed — skip meet entirely.
-                            if browser is None:
-                                break
-
-                            # Only reset the restart counter if we genuinely
-                            # restarted. `is not` is an IDENTITY check: restartBrowser
-                            # returns a brand-new object, so this is True only on a
-                            # real restart. On a no-op we reuse the same object, so
-                            # its progress toward the next RESTART_EVERY is preserved.
-                            if browser is not prev_browser:
-                                meets_since_restart = 0
+                    except CloudflareException:
+                        # ★ POLITE MODE: a block is a "no" for tonight
+                        #   (polite_stop.py); with it off, the meet is skipped
+                        polite_stop.trip(label, f"Cloudflare block on meet {meet_id}")
+                        print(f"{label} Cloudflare block on meet {meet_id} -- skipping it")
                     
                     # Record result.
                     processed, failed, results_saved, consecutive_failures = (
@@ -1408,10 +1191,6 @@ async def runSession(playwright, config: dict, rotator: VPNRotator,
                     )
                     pending.discard((meet_id, sport))
                     crashes = 0
-
-                    # Proactive rotation check — rotates every GLOBAL_MEETS_PER_ROTATION
-                    # meets across all sessions combined.
-                    await rotator.checkRotation(label)
 
                     # Pause between meets — per-session pacing knob (scrape_tuning.py).
                     # Widen perMeetDelayRange there if you see [429] lines; narrow to speed up.
@@ -1731,9 +1510,9 @@ async def main():
     #   spinning up six copies of Chrome to discover it.
     _prepareQueue()
 
-    # One VPNRotator shared across all sessions. Passed into every runSession
-    # call so they all coordinate rotation through the same lock and counter.
-    rotator = VPNRotator()
+    # One address, nothing to rotate to (scripts/one_ip.py): its stuck-session
+    # pause is the one thing the scrapers still ask of it.
+    rotator = OneIP()
  
     async with async_playwright() as playwright:
  
