@@ -686,3 +686,20 @@ def test_the_seek_table_is_the_same_on_every_layout(builder, built, name):
         conn.close()
     assert len(got["lab_flag_off"]) > 20
     assert got["lab_flag_off"] == got[f"lab_{name}"]
+
+
+def test_the_signature_drops_the_orderings_postgres_drops():
+    # 2026-11-10: e0126da's as_sort_grade_idx was stated `grade ASC NULLS
+    # LAST`; pg_indexes says `grade`, so verifyIndexes refused every swap
+    import rr_layout as R
+    same = [("(pool, sport, grade ASC NULLS LAST, mean_rating DESC, person_id)",
+             "CREATE INDEX i ON public.t USING btree (pool, sport, grade, mean_rating DESC, person_id)"),
+            ("(a DESC NULLS FIRST)", "CREATE INDEX i ON t USING btree (a DESC)"),
+            ("(a ASC NULLS FIRST)", "CREATE INDEX i ON t USING btree (a NULLS FIRST)"),
+            ("(a DESC NULLS LAST, b)", "CREATE INDEX i ON t USING btree (a DESC NULLS LAST, b)")]
+    for canon, stored in same:
+        assert R.indexSig(canon) == R.indexSig(stored), canon
+    # what changes an index still tells it apart
+    assert R.indexSig("(a DESC)") != R.indexSig("(a)")
+    assert R.indexSig("(a NULLS FIRST)") != R.indexSig("(a)")
+    assert R.indexSig("(a DESC NULLS LAST)") != R.indexSig("(a DESC)")

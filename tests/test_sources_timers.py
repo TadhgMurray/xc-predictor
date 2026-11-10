@@ -444,3 +444,25 @@ def test_kilometers_are_read_before_the_miles_in_brackets():
     assert hytek.metersOf("MEN • 3.2 Kilometers (1.99 Miles) 3A-1") == 3200
     assert hytek.metersOf("MEN (8th Grade) • 2 Miles (3.22 Kilometers)") == 3218.7
     assert hytek.metersOf("5k Run CC Varsity") == 5000
+
+
+def test_a_class_year_becomes_the_grade_on_the_meets_day():
+    # iResultsLIVE prints "Year 2028"; the site audit found grade "2010"
+    assert L.gradeFromClassYear("2028", "2026-10-17") == "11"
+    assert L.gradeFromClassYear("2027", "2027-03-14") == "12"        # spring: the same school year
+    assert L.gradeFromClassYear("2031", "2026-09-12") == "8"         # a middle schooler
+    assert L.gradeFromClassYear("2040", "2026-09-12") == ""          # no grade, never a guess
+    assert L.gradeFromClassYear("2028", "2026-10-17", college=True) == "JR"     # = an 11th grader
+    assert L.gradeFromClassYear("2030", "2026-10-17", college=True) == "FR"
+    assert L.gradeFromClassYear("2027", "2026-10-17", college=True) == "SR"
+    assert L.gradeFromClassYear("11", "2026-10-17") == "11"
+    assert L.gradeFromClassYear("JR", "2026-10-17", college=True) == "JR"
+
+
+def test_a_race_of_college_teams_reads_class_years_as_college_classes():
+    rows = [hytek.Row(i, "L", "F", "2030", t, 1500.0 + i, "")
+            for i, t in enumerate(["Utah State University", "Weber State University", "Boise State Univ.",
+                                   "Snow College"], 1)]
+    lm = L.fromHytek(hytek.Meet(name="Steve Reeder Invite", date="2026-09-25",
+                                events=[hytek.Event(1, "F", "Women 6k", 6000.0, rows=rows)]), "t", "u")
+    assert {r.grade for r in lm.races[0].rows} == {"FR"}

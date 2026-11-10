@@ -353,6 +353,7 @@ def test_a_finals_listing_that_repeats_the_prelims_keeps_the_final():
             INSERT INTO results_tf SELECT 400 + g, g, 'anet', 70, 1, 4, 560 + g, '2026-05-10', {p_}
                 FROM generate_series(1, 39) g;
         """)
+        TF.prepareRule(cur, "results_tf", "TF", "dup_race_copy")   # staged since 2026-11-10
         cur.execute(f"SELECT result_id FROM ({TF.dupRaceCopySql('results_tf', 'TF')}) s")
         return {r[0] for r in cur.fetchall()}
 

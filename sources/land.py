@@ -370,14 +370,50 @@ def _statusOf(mark, seconds):
     return STATUS_MARKS.get((mark or "").upper().strip(), None)
 
 
-def _landedRows(rows):
+# ★ A CLASS YEAR IS NOT A GRADE (owner, 2026-11-10: "yes, but what about
+#   college"). Some reports print the class of 2028 where the grade goes
+#   (iResultsLIVE's "Year" column; the site audit's grade "2010"). It is
+#   turned into the runner's grade on the meet's own day -- the only moment
+#   both the column's meaning and the date are known: high school 12 minus
+#   the years left (a middle schooler comes out 6-8), college the class
+#   letters TFRRS uses (FR/SO/JR/SR). Out of range -> no grade, never a guess.
+_CLASS_YEAR = re.compile(r"^(?:19|20)\d\d$")
+_COLLEGE_TEAM = re.compile(r"\b(university|college|univ\.?|institute|academy of)\b|\bcc$|\bu$", re.I)
+
+
+def isCollegeField(rows):
+    """Most of a race's teams are colleges. Pure."""
+    teams = [(r.school or "").strip() for r in rows if (r.school or "").strip()]
+    return bool(teams) and sum(bool(_COLLEGE_TEAM.search(t)) for t in teams) > 0.5 * len(teams)
+
+
+def gradeFromClassYear(grade, date, college=False):
+    """'2028' at a 2026-10-17 meet -> '11' (high school) / 'SO' (college);
+    any other grade comes back as it is. Pure."""
+    g = (grade or "").strip()
+    if not _CLASS_YEAR.match(g):
+        return g
+    try:
+        import datetime as _dt
+        d = _dt.date.fromisoformat(str(date)[:10])
+    except (TypeError, ValueError):
+        return ""
+    left = int(g) - (d.year + (1 if d.month >= 8 else 0))      # school years after this one
+    if college:
+        return {0: "SR", 1: "JR", 2: "SO", 3: "FR"}.get(left, "")
+    hs = 12 - left
+    return str(hs) if 6 <= hs <= 12 else ""
+
+
+def _landedRows(rows, date=None):
+    college = isCollegeField(rows)
     out = []
     for r in rows:
         name = " ".join(x for x in (r.first, r.last) if x).strip()
         if not name:
             continue
         out.append(LandedRow(name=name, first=r.first or "", last=r.last or "",
-                             grade=(r.grade or "").strip(), school=(r.school or "").strip(),
+                             grade=gradeFromClassYear(r.grade, date, college), school=(r.school or "").strip(),
                              place=r.place, seconds=r.seconds, mark=r.mark or "",
                              status=_statusOf(r.mark, r.seconds)))
     return out
@@ -399,7 +435,7 @@ def fromHytek(meet, slug, url):
         sport = getattr(e, "sport", None) or sportOf(e.title, meet.name, e.meters, track)
         lm.races.append(LandedRace(n=e.number, title=e.title, gender=e.gender,
                                    sport=sportByTimes(sport, e.meters, e.rows),
-                                   meters=e.meters, rows=_landedRows(e.rows)))
+                                   meters=e.meters, rows=_landedRows(e.rows, meet.date)))
     kept = withoutReprints(lm.races)
     lm.skipped += sum(len(r.rows) for r in lm.races if r not in kept)
     lm.races = oneSport(kept, track)
@@ -435,7 +471,7 @@ def fromMeetPro(index, results, slug, url):
                                        sport=("XC" if getattr(e, "xc", False)
                                               else sportByTimes(sportOf(e.title, index.name, e.meters, track),
                                                                 e.meters, rows)),
-                                       meters=e.meters, rows=_landedRows(rows)))
+                                       meters=e.meters, rows=_landedRows(rows, index.date)))
     lm.races = oneSport(lm.races, track)
     return lm
 

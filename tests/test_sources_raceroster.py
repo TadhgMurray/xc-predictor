@@ -118,3 +118,20 @@ def test_an_open_race_with_no_school_or_grade_is_left_out():
             return await _Api.fetch(self, url, max_age)
     lm, _ = asyncio.run(R.readMeet(_Bare(), "c", "k", 0))
     assert lm.races == [] and lm.skipped == 75
+
+
+def test_a_text_report_with_a_ruler_and_no_time_heading():
+    # OnlineRaceResults' 2025 Muscatine Invitational on Race Roster: "Place
+    # TmPl No. First Name Gr School T4 Pace" over a ruler of =; the time
+    # column is "T4". Before: 17 of the meet's 418 runners read.
+    rows = R.textRows(raw("text_orr_muscatine_2025_jv_male.txt").decode())
+    assert len(rows) == 26
+    a = rows[0][0]
+    assert (a.place, a.first, a.last, a.grade, a.school, a.seconds) == (1, "Dylon", "Mason", "12",
+                                                                      "Muscatine", 1158.0)
+    assert [r.place for r, _g in rows] == list(range(1, 27))
+    assert all(r.seconds > 1000 for r, _g in rows)          # the time, never the pace
+
+
+def test_the_archive_redirect_is_resolved_without_following_it():
+    assert R.ORR_REDIRECT.format(25701).endswith("entity=event&id=25701")

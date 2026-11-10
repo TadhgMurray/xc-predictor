@@ -461,19 +461,16 @@ def test_a_split_nothing_explains_is_pinned_runner_by_runner():
                                                    kind="combined", mix=old)) == [("", "novote", None)]
 
 
-def test_generated_lines_in_the_hand_dict_are_judged_as_generated():
-    """data audit, 2026-11-10: IN Middle School Championship 2021, a 3000 m
-    floored to 2253 m by a merged-division floor appended into the hand dict,
-    and never vetoed because a hand-typed short override only 'lists'."""
+
+def test_every_override_is_judged_whoever_wrote_it():
+    """owner, 2026-11-10 ("yes"): the IN Middle School Championship 2021's
+    3000 m races at 2253, 2092 and 2655 m sat in the hand dict -- one a bare
+    line -- and a short override there was only listed, never vetoed."""
     import wrong_distance as WD
-    lines = [
-        "    (283954, 1129465): 2253,  # was 3000, small side ran ~2190, n=41  IN Middle School",
-        "    (9640, 2): 5150,           # was 3200, inferred 5100 (err 3%, tier A), gap +12.0, n=40",
-        "    (9756, 1): 5000,           # used 3200, inferred 4980 (err 1%), gap +11.0, n=33",
-        "    (1234, 5): 6000,  # owner: the Mt. SAC 6K, not 5K",
-        "    (777, 7): 4000,",
-    ]
-    assert WD.generatedKeys(lines) == {(283954, 1129465), (9640, 2), (9756, 1)}
-    # and a generated one shorter than the times say is replaced, not listed
+    assert WD.HAND_SHORT_STANDS is False
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "engine", "wrong_distance.py"), encoding="utf-8").read()
+    assert "hand=HAND_SHORT_STANDS and o[1] == HAND_DICT)" in src
+    # a short override the times reject is replaced; one they agree with stays
     assert WD.overrideVerdict(3000, 2253, 3000, 40, hand=False)[0] == "replace"
-    assert WD.overrideVerdict(3000, 2253, 3000, 40, hand=True)[0] == "list"
+    assert WD.overrideVerdict(3000, 2253, 2260, 40, hand=False)[0] == "keep"

@@ -140,7 +140,7 @@ def test_report_steps_in_groups_and_the_evidence_wait_just_before_17c():
     assert SH.count('wait "$EVID_PID"') == 1
     order = ['_REPORTS=(17_checklist "$PY -u scripts/run_checklist.py"',
              '17b_status "$PY -u scripts/print_status.py"',
-             '_REPORTS+=(16b_lacctic', '_REPORTS+=(16c_kailo_record', '_REPORTS+=(16d_backtest',
+             '_REPORTS+=(16b_lacctic', '_REPORTS+=(16d_backtest',
              'stepsN "${_REPORTS[@]}"', "step 17a_page_timing",
              '_REPORTS=(17c0_run_changes', '_REPORTS+=(17e_scoreboard',
              'wait "$EVID_PID"', "step 17c_report"]
@@ -149,6 +149,9 @@ def test_report_steps_in_groups_and_the_evidence_wait_just_before_17c():
     assert tail.count('stepsN "${_REPORTS[@]}"') == 2
     between = tail[at('wait "$EVID_PID"', tail):at("step 17c_report", tail)]
     assert "step " not in between.replace("step 17c_report", "")
+    # 16c_kailo_record left the group (2026-11-10): in the background from 10d2
+    assert "_REPORTS+=(16c_kailo_record" not in SH
+    assert at("step 10d2_restamp_units") < at("bgstep 16c_kailo_record") < at("\nbgwait\n")
 
 
 def test_only_the_report_reads_the_evidence_logs():

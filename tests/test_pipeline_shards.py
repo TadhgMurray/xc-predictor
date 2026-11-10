@@ -81,3 +81,10 @@ def test_the_search_index_runs_beside_the_tail_and_is_joined_before_its_reader()
             < sh.index("bgstep 17d_watchdog") < sh.index("step 19b_prewarm"))
     sm = read("racecast", "build_sitemap.py")
     assert "search_index " not in sm.replace("from search_index import", "")
+
+
+def test_state_odds_runs_beside_the_tail_after_its_only_reader():
+    # 2026-11-10: 810 s in line; 13g_social reads the last run's tables
+    sh = read("deploy", "run_pipeline.sh")
+    assert sh.index("step 13g_social") < sh.index("bgstep 13i_state_odds") < sh.index("\nbgwait\n")
+    assert "step 13i_state_odds" not in sh.replace("bgstep 13i_state_odds", "")

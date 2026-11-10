@@ -118,7 +118,7 @@ _LABELS = {
     "first": ("first name",),
     "last": ("last name",),
     "school": ("school", "team", "team name", "school name"),
-    "grade": ("grade", "year", "class", "yr", "cla"),
+    "grade": ("grade", "year", "class", "yr", "cla", "gr"),
     "time": ("time", "gun elapsed time", "gun time", "guntime", "chip elapsed time", "finish time",
              "chip time"),
     "gender": ("gender", "sex"),
@@ -178,14 +178,65 @@ def structuredRows(body):
     return out
 
 
-_HEADER = re.compile(r"^\s*(place|pl)\b.*\bname\b.*\btime\b", re.I)
+_HEADER = re.compile(r"^\s*(place|pl|pos)\b.*\bname\b", re.I)
+_RULER = re.compile(r"^[\s=\-]+$")
+_TIMEISH = re.compile(r"^(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d+)?$")
+
+
+def _spans(head, ruler):
+    """[(start, end, label)]: from the ruler under the header when there is
+    one ("===== ==== ====="), each run of = or - is a column; else from where
+    each heading word starts. Pure."""
+    if ruler:
+        runs = [(m.start(), m.end()) for m in re.finditer(r"[=\-]+", ruler)]
+        out = []
+        for k, (st, en) in enumerate(runs):
+            nxt = runs[k + 1][0] if k + 1 < len(runs) else None
+            out.append((st, nxt, " ".join(head[st:en + 1].split()).lower()))
+        return out
+    words = [(m.start(), m.group(0)) for m in re.finditer(r"\S+", head)]
+    return [(st, words[k + 1][0] if k + 1 < len(words) else None, w.lower())
+            for k, (st, w) in enumerate(words)]
+
+
+def _textColumns(spans, sample):
+    """{field: (start, end)} from the headings, and the time column from
+    the values when its heading is no time word ("T4"). Pure."""
+    cols = {}
+    # ! BY THE LABEL'S RANK, NOT THE COLUMN'S PLACE (iResultsLive, Pelham XC
+    #   Invitational 2026: "Sex Year School Grade" -- Year is the class of
+    #   2028, Grade is 11): "grade" wins over "year" wherever each sits
+    for f, names in _LABELS.items():
+        for n in names:
+            hit = [(st, en) for st, en, lab in spans if lab == n]
+            if hit:
+                cols[f] = hit[0]
+                break
+    if "name" not in cols and not ("first" in cols and "last" in cols):
+        hit = [(st, en) for st, en, lab in spans if "name" in lab and "team" not in lab]
+        if hit:
+            cols["name"] = hit[0]
+    if "place" not in cols and spans:
+        cols["place"] = spans[0][:2]
+    if "time" not in cols:
+        after = cols.get("name", (0, 0))[0]
+        for st, en, lab in spans:
+            if st <= after or "pace" in lab:
+                continue
+            vals = [(ln[st:en] if en else ln[st:]).strip() for ln in sample]
+            if vals and sum(bool(_TIMEISH.match(v)) for v in vals) >= 0.6 * len(vals):
+                cols["time"] = (st, en)
+                break
+    return cols
 
 
 def textRows(text):
     """An UNSTRUCTURED race's fixed-width text -> [(Row, '')]: the columns
     are read off the individual results' header line ("Place TmPl Bib Name
-    School Class Time Pace"), each field from its heading's start to the
-    next one's. The team block above it is skipped. Pure."""
+    School Class Time Pace"), or the ruler of = under it when there is one
+    (ORR's Muscatine 2025: "Place TmPl No. First Name Gr School T4 Pace"),
+    and the time column by its values when its heading is not a time word.
+    The team block above it is skipped. Pure."""
     lines = (text or "").splitlines()
     out = []
     i = 0
@@ -194,29 +245,28 @@ def textRows(text):
             i += 1
             continue
         head = lines[i]
-        starts = [(m.start(), m.group(0).lower()) for m in re.finditer(r"\S+", head)]
-        cols = {}
-        for k, (pos, word) in enumerate(starts):
-            end = starts[k + 1][0] if k + 1 < len(starts) else None
-            for f, names in _LABELS.items():
-                if word in names and f not in cols:
-                    cols[f] = (pos, end)
         i += 1
+        ruler = lines[i] if i < len(lines) and _RULER.match(lines[i]) and "=" in lines[i] + "-" else None
+        if ruler is not None and not re.search(r"[=\-]{2,}", ruler):
+            ruler = None
+        if ruler is not None:
+            i += 1
+        body = []
         while i < len(lines) and lines[i].strip() and not _HEADER.match(lines[i]):
-            ln = lines[i]
-            if re.match(r"^\s*-{5,}", ln):
-                i += 1
-                continue
-            cut = lambda f: (ln[cols[f][0]:cols[f][1]] if f in cols else "").strip()  # noqa: E731
-            # the time is the first time-shaped token from its column on (a
-            # long school name can push it right)
-            tail = ln[cols["time"][0]:] if "time" in cols else ""
-            tm = re.search(r"\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|\bDN[FS]\b|\bDQ\b", tail)
+            if not _RULER.match(lines[i]):
+                body.append(lines[i])
+            i += 1
+        cols = _textColumns(_spans(head, ruler), body[:20])
+        for ln in body:
+            cut = lambda f: ((ln[cols[f][0]:cols[f][1]] if cols[f][1] else ln[cols[f][0]:])  # noqa: E731
+                             if f in cols else "").strip()
+            mark = cut("time")
+            tm = re.search(r"\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|\bDN[FS]\b|\bDQ\b",
+                           mark or (ln[cols["time"][0]:] if "time" in cols else ""))
             row = _row(cut("place"), cut("name"), cut("first"), cut("last"), cut("grade"),
                        cut("school"), tm.group(0) if tm else "")
             if row:
                 out.append((row, ""))
-            i += 1
     return out
 
 
@@ -251,10 +301,15 @@ def events(title, rows, number, meters):
 
 # ---------------------------------------------------------------- fetching
 
-async def resolveCode(fetcher, event_id):
+ORR_REDIRECT = ("https://results.raceroster.com/redirect/third-party"
+                "?source=onlineraceresults&entity=event&id={}")
+
+
+async def resolveCode(fetcher, event_id, url=None):
     """eventId -> results code: the redirect's Location, not followed.
-    Kept in the page store like any page (a code never changes)."""
-    url = f"{API}/events/redirect/{event_id}"
+    Kept in the page store like any page (a code never changes). url: a
+    different redirect to resolve (the OnlineRaceResults archive's)."""
+    url = url or f"{API}/events/redirect/{event_id}"
     meta = fetcher.store.meta(url)
     if meta and meta.get("status") == 200:
         body = fetcher.store.body(url) or b""
@@ -275,6 +330,8 @@ async def resolveCode(fetcher, event_id):
         fetcher.limiter.release(host, lock)
     m = re.search(r"/v3/events/([A-Za-z0-9]+)", r.headers.get("Location") or "")
     if not m:
+        if r.status_code in (301, 302) and "not-found" in (r.headers.get("Location") or ""):
+            fetcher.store.put(url, 200, b"")          # asked: nothing there
         return None
     fetcher.store.put(url, 200, m.group(1).encode())
     return m.group(1)
@@ -379,14 +436,130 @@ async def discover(fetcher, since, per_run, known, max_pages=5, index_max_age=20
                             f"{min(len(todo), per_run)} new")
 
 
+# ---------------------------------------------------------------- the archive
+
+ARCHIVE_DDL = """
+CREATE TABLE IF NOT EXISTS rr_archive (
+    orr_id    bigint PRIMARY KEY,      -- OnlineRaceResults' event id
+    code      text,                    -- Race Roster's results code, when it has one
+    status    text,                    -- 'none' | 'not school' | 'landed: <what>' | 'no races' | ...
+    meet_key  text,
+    at        timestamptz NOT NULL DEFAULT now()
+)"""
+
+
+async def archiveOne(fetcher, orr_id):
+    """One OnlineRaceResults id -> (code, status, LandedMeet | None)."""
+    code = await resolveCode(fetcher, None, ORR_REDIRECT.format(orr_id))
+    if not code:
+        return None, "none", None
+    got = await fetcher.fetch(f"{API}/events/{code}", 365 * 86400)
+    if not got.body:
+        return code, f"event {got.status}", None
+    ev = parseEvent(got.body)
+    item = {"name": ev["name"], "country": ev["country"], "subs": [s.get("name") or "" for s in ev["subs"]]}
+    if not ev["subs"]:
+        return code, "no results", None
+    if not isSchool(item):
+        return code, "not school", None
+    key = eventKey(ev["eid"] or f"orr{orr_id}", (ev["date"] or "0000")[:4])
+    lm, why = await readMeet(fetcher, code, key, 365 * 86400)
+    if lm is None or not lm.races:
+        return code, f"no races ({why})", None
+    return code, "school", lm
+
+
+def cmdArchive(a):
+    """★ THE ONLINERACERESULTS ARCHIVE (owner, 2026-11-10: "yes"). Its
+    events moved to Race Roster under their old ids, reachable only by
+    walking them (raceroster_adapter_notes.md section 7): ids 22,300-25,800
+    are 2019-2025, about 600 school meets. Resumable (rr_archive remembers
+    every id asked), bounded by --minutes, landed through land -> dedup ->
+    promote like every timer meet. Run it through the lock:
+    deploy/rr_archive.sh."""
+    import os
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    if a.write:
+        from database import getConn
+        with getConn() as conn:
+            return _archive(a, conn)
+    return _archive(a, None)
+
+
+def _archive(a, conn):
+    import time as _t
+    from sources.fetch import Fetcher, RawStore
+    fetcher = Fetcher(RawStore())
+    deadline = _t.monotonic() + a.minutes * 60 if a.minutes else None
+    done = set()
+    if conn is not None:
+        with conn.cursor() as cur:
+            cur.execute(ARCHIVE_DDL)
+            land.initTables(cur)
+            cur.execute("SELECT orr_id FROM rr_archive WHERE orr_id BETWEEN %s AND %s", (a.lo, a.hi))
+            done = {r[0] for r in cur.fetchall()}
+        conn.commit()
+    ids = [i for i in range(a.hi, a.lo - 1, -1) if i not in done]       # newest first
+    print(f"[rr archive] ids {a.lo:,}..{a.hi:,}: {len(ids):,} to ask ({len(done):,} asked before)", flush=True)
+    tally, landed = {}, 0
+
+    async def go():
+        nonlocal landed
+        for n, orr in enumerate(ids, 1):
+            if deadline and _t.monotonic() > deadline:
+                print(f"[rr archive] --minutes spent; {len(ids) - n + 1:,} ids wait for the next run")
+                break
+            try:
+                code, status, lm = await archiveOne(fetcher, orr)
+            except Exception as exc:                                # noqa: BLE001
+                print(f"  {orr}: {type(exc).__name__}: {exc}")
+                continue
+            tally[status.split(" (")[0]] = tally.get(status.split(" (")[0], 0) + 1
+            if lm is not None:
+                print(f"  {orr}: {land.summary(lm)}", flush=True)
+            if conn is not None:
+                with conn.cursor() as cur:
+                    if lm is not None:
+                        what = land.landMeet(cur, lm)[1]
+                        status = f"landed: {what}"
+                        landed += 1
+                    cur.execute("""INSERT INTO rr_archive (orr_id, code, status, meet_key)
+                                   VALUES (%s, %s, %s, %s) ON CONFLICT (orr_id) DO UPDATE SET
+                                   code = EXCLUDED.code, status = EXCLUDED.status,
+                                   meet_key = EXCLUDED.meet_key, at = now()""",
+                                (orr, code, status[:200], lm.url if lm is not None else None))
+                conn.commit()
+            if n % 100 == 0:
+                print(f"[rr archive] {n:,}/{len(ids):,} asked: {tally}", flush=True)
+    asyncio.run(go())
+    print(f"[rr archive] {tally}; landed {landed}; fetcher {fetcher.stats}")
+    if conn is not None and landed:
+        from sources import dedup, promote
+        dedup.run(conn, write=True, show=20)
+        promote.run(conn, apply=True, show=20)
+        print("[rr archive] link them with: python scripts/link_uploads.py --source timer --apply "
+              "(the nightly 04a does it too)")
+    return 0
+
+
 def main(argv=None):
     import argparse
     from sources.fetch import Fetcher, RawStore
-    ap = argparse.ArgumentParser(description="Race Roster: parse, print (dry run)")
-    ap.add_argument("--dry", action="store_true", required=True)
+    ap = argparse.ArgumentParser(description="Race Roster: parse, print (dry run); archive: the ORR walk")
+    ap.add_argument("cmd", nargs="?", choices=("archive",))
+    ap.add_argument("--dry", action="store_true")
+    ap.add_argument("--write", action="store_true", help="archive: land what it finds")
+    ap.add_argument("--lo", type=int, default=22300)
+    ap.add_argument("--hi", type=int, default=25800)
+    ap.add_argument("--minutes", type=float, help="archive: stop asking after this long")
     ap.add_argument("--limit", type=int, default=5)
     ap.add_argument("--code", action="append", help="a results code to read")
     a = ap.parse_args(argv)
+    if a.cmd == "archive":
+        return cmdArchive(a)
+    if not a.dry:
+        ap.error("--dry (or the archive command)")
     fetcher = Fetcher(RawStore())
 
     async def go():
