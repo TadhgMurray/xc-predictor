@@ -32,6 +32,8 @@ fix this track will make next · **PIPELINE** = for the pipeline/data track
 | Sitemap left out the tool pages. | Added the tools and the per-state what-it-takes and projections pages. | build_sitemap |
 | /what-it-takes index was 51 bare links. | A table: each state's hardest division mark to make state (and its easiest), boys and girls, from the stored marks only (never a live compute). | cuts.indexRows |
 | /ncaa index cards said only "32 teams · 9 regions". | Each card names the favourites by win chance, the last team in and the first out, from the stored weekly projection. | ncaa_pages.ncaa_index |
+| Every XC meet share card fell back to the default image (KeyError: slice(None, 10, None): scoreRows returns a dict now). | The card reads scoreRows' teams list. | cards.meetCardData |
+| /meets ?year= showed 0 meets, a date range 1, college level old HS meets: candidates were an arbitrary 3,200 and the date was applied after. | scripts/backfill_meet_dates.py dates every meet from its results (only 172k of 862k had a date) and indexes it; once the index exists the browse picks by date, newest first. | meets_filter.meetDatesIndexed, dateBounds |
 | Tools menu "Training paces" landed on the XC course table (the Paces tab stays hidden until an athlete is chosen). | `#paces` switches the source to an athlete and focuses the athlete box. | conversions.js |
 
 ## Every page

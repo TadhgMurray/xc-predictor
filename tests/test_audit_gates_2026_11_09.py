@@ -147,3 +147,30 @@ def test_the_what_it_takes_index_shows_each_states_marks(monkeypatch):
     html = A.app.test_client().get("/what-it-takes").get_data(as_text=True)
     assert "/what-it-takes/ca/1" in html and "135.2" in html
     assert "easiest D5" in html
+
+
+def test_meets_pick_by_date_once_dates_are_indexed(monkeypatch):
+    import meets_filter as M
+    monkeypatch.setattr(M, "meetDatesIndexed", lambda cur, sport: True)
+    monkeypatch.setattr(M, "hasMeetUnits", lambda cur: False)
+    monkeypatch.setattr(M, "levelClause", lambda *a, **k: "")
+    import sharedcache
+    monkeypatch.setattr(sharedcache, "tableOid", lambda cur, t, now=None: None)
+
+    class Cur:
+        def __init__(self):
+            self.sql, self.params = [], []
+
+        def execute(self, sql, params=None):
+            self.sql.append(sql)
+            self.params.append(params)
+
+        def fetchall(self):
+            return []
+    cur = Cur()
+    f = {"sport": "XC", "year": 2025, "from": None, "to": None, "school": None,
+         "state": None, "q": None, "level": None}
+    M.filteredMeets(cur, f)
+    sql, params = cur.sql[-1], cur.params[-1]
+    assert "m.meet_date >= %(pick_lo)s" in sql and "ORDER  BY max(m.meet_date) DESC" in sql
+    assert params["pick_lo"] == "2025-08-15" and params["pick_hi"] == "2026-08-15"

@@ -985,7 +985,13 @@ def meetCardData(cur, meet_id):
     rows = get_race_results(cur, meet_id, div["div_id"])
     if not rows:
         return None
-    teams = scoreRows([dict(r) for r in rows])
+    # ★ scoreRows returns {"teams": [...], "incomplete": [...]} now; the
+    #   card sliced it as a list and every XC meet card failed (KeyError:
+    #   slice(None, 10, None), audit 2026-11-09). The meet page's shape:
+    #   unsplitTeams folds the identity key back into the school.
+    from meet_compile import unsplitTeams
+    scored = scoreRows([dict(r) for r in rows])
+    teams = (unsplitTeams(scored).get("teams") or []) if isinstance(scored, dict) else list(scored or [])
     # the winner's rating on the HS-equivalent scale, the page's default
     # (owner, 2026-10-09); every row stamped so an unranked winner takes
     # the race's modal pool, as on the race page
