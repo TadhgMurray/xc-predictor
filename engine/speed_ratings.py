@@ -63,6 +63,7 @@ from speed_ratings_db import (streamResults, saveCourseDifficulties,
 from itertools import chain
 
 import os
+import sys
 
 SPORTS = ("XC", "TF")
 
@@ -1422,8 +1423,12 @@ def packOrLoad(sports, today, merge, cache):
     # was unknown -- and an unknown phase cannot be weighed against the solve
     # when deciding what is worth optimising.
     t0 = time.time()
-    stream = _prefetched(chain(*(streamResults(s) for s in sports)))
-    cols = packResults(stream, today, merge=merge)
+    state = _packParallel(sports, today, merge)
+    if state is not None:
+        cols = packResults(None, today, merge=merge, _state=state)
+    else:
+        stream = _prefetched(chain(*(streamResults(s) for s in sports)))
+        cols = packResults(stream, today, merge=merge)
     print(f"[time] stream + pack: {time.time() - t0:.1f}s")
     attachCourseCoords(cols)
     attachCourseGeometry(cols)
@@ -1521,7 +1526,10 @@ def attachCourseGeometry(cols):
 #            The athlete key is (person_id, pool) with the sport already inside
 #            the pool string, so an athlete's XC and TF abilities are separate
 #            unknowns. The venue key is namespaced by sport for the same reason.
-def packResults(batches, today, merge=False):
+def _packLoop(batches, today, merge=False):
+    """packResults' row loop: the batches into typed chunks and the
+    athlete / venue / team code tables, in encounter order. Split out so
+    the two sports can run it side by side (_packParallel)."""
     census = defaultdict(int)
     # Counts what the TF rollover moved. Folded into `census` at the end so it
     # rides the existing "[engine] ... census: {...}" line rather than adding a
@@ -1710,6 +1718,143 @@ def packResults(batches, today, merge=False):
           f"{t_loop:.0f}s the rest of the row loop ({t_loop * _us:.1f} us/row), "
           f"{n_rows:,} rows")
 
+    return {"chunks": chunks, "a_uniq": a_uniq, "v_uniq": v_uniq,
+            "t_uniq": t_uniq, "census": census}
+
+
+# ★ THE TWO SPORTS PACKED SIDE BY SIDE (2026-11-10, back-end track). Run
+#   20261108_155220's 07_pack was 2,930 s IN LINE: XC streamed 19:07-19:23,
+#   then TF 19:23-19:39, one after the other, each at ~33k rows/s -- the
+#   per-row Python loop (_packLoop), not the database. The two sports share
+#   nothing in that loop but the code tables, so each runs in its own forked
+#   process and the parent merges them in the order the single loop would
+#   have met them: XC's chunks and codes first, then TF's, every TF code
+#   re-mapped onto the XC table where the key is shared (team keys are;
+#   athlete keys carry the sport in the pool, venue keys are "XC:"/"TF:").
+#   The pack is the SAME ARRAYS, BYTE FOR BYTE (tests/test_pack_parallel.py).
+#   XCP_PACK_PARALLEL=0 goes back to the one loop.
+# ! FORK AND THE DATABASE. A child inherits the parent's pool and its
+#   sockets; closing or collecting them there would end the PARENT's
+#   sessions. The child parks the inherited pool (never used, never closed),
+#   opens its own, and leaves with os._exit (no finalizers).
+_PARKED = []
+
+
+def _remapCodes(codes, other_uniq, lookup, uniq):
+    """Codes into other_uniq -> codes into uniq, appending the keys uniq has
+    not met (in other_uniq's order); -1 stays -1."""
+    m = np.empty(len(other_uniq), dtype=np.int64)
+    for i, k in enumerate(other_uniq):
+        c = lookup.get(k)
+        if c is None:
+            c = lookup[k] = len(uniq)
+            uniq.append(k)
+        m[i] = c
+    codes = np.asarray(codes)
+    if not len(m):
+        return codes
+    return np.where(codes >= 0, m[np.clip(codes, 0, None)], -1).astype(codes.dtype)
+
+
+def _mergePackStates(states):
+    """_packLoop results, one per sport in stream order -> one, as if one
+    loop had read them all in that order."""
+    out = {"chunks": [], "a_uniq": [], "v_uniq": [], "t_uniq": [],
+           "census": defaultdict(int)}
+    look = {"a_uniq": {}, "v_uniq": {}, "t_uniq": {}}
+    for st in states:
+        maps = {}
+        for key in ("a_uniq", "v_uniq", "t_uniq"):
+            maps[key] = st[key]
+        for ch in st["chunks"]:
+            ch = list(ch)
+            ch[1] = _remapCodes(ch[1], maps["a_uniq"], look["a_uniq"], out["a_uniq"])
+            ch[2] = _remapCodes(ch[2], maps["v_uniq"], look["v_uniq"], out["v_uniq"])
+            ch[12] = _remapCodes(ch[12], maps["t_uniq"], look["t_uniq"], out["t_uniq"])
+            out["chunks"].append(tuple(ch))
+        # a sport with no chunk still owns its keys (none: a key is made only
+        # for a kept row) -- but keep the tables in order regardless
+        for key in ("a_uniq", "v_uniq", "t_uniq"):
+            for k in maps[key]:
+                if k not in look[key]:
+                    look[key][k] = len(out[key]); out[key].append(k)
+        for k, v in st["census"].items():
+            out["census"][k] += v
+    return out
+
+
+def _packChild(sport, today, merge, path):
+    import pickle
+    try:
+        import database as _db
+        _PARKED.append((_db._pool, _db._slots))       # never closed here
+        _db._pool = None
+        _db._slots = None
+        st = _packLoop(_prefetched(streamResults(sport)), today, merge)
+        st["census"] = dict(st["census"])
+        with open(path, "wb") as fh:
+            pickle.dump(st, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        code = 0
+    except BaseException:                             # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        code = 1
+    sys.stdout.flush(); sys.stderr.flush()
+    os._exit(code)
+
+
+def _packParallel(sports, today, merge):
+    """Each sport's _packLoop in its own forked process, merged; None when it
+    does not apply (one sport, XCP_PACK_PARALLEL=0, no fork) -- the caller
+    then runs the one loop."""
+    if len(sports) < 2 or os.environ.get("XCP_PACK_PARALLEL", "1") in ("0", "false") \
+            or not hasattr(os, "fork"):
+        return None
+    import pickle
+    import tempfile
+    # the shared lookups, loaded ONCE here so both children inherit them
+    for fn in (loadClubPros, loadClubMajority, loadProTeams, loadUnattachedRaceLevel,
+               loadAnetLevels, loadSeasonLevels, loadProSeasons, loadCollegeFirst,
+               loadGradeUntrusted, loadUpperclassFirst):
+        try:
+            fn()
+        except Exception as exc:                      # noqa: BLE001 -- the child retries
+            print(f"[pack] warm-up {fn.__name__}: {type(exc).__name__}: {exc}")
+    sys.stdout.flush(); sys.stderr.flush()
+    tmp = tempfile.mkdtemp(prefix="pack_", dir=_CACHE_DIR)
+    kids = []
+    for sp in sports:
+        path = os.path.join(tmp, f"{sp}.pkl")
+        pid = os.fork()
+        if pid == 0:
+            _packChild(sp, today, merge, path)        # never returns
+        kids.append((sp, pid, path))
+    print(f"[pack] {len(kids)} sports packing side by side: "
+          + ", ".join(f"{sp} pid {pid}" for sp, pid, _ in kids), flush=True)
+    states, bad = [], []
+    for sp, pid, path in kids:
+        _, status = os.waitpid(pid, 0)
+        if status != 0 or not os.path.exists(path):
+            bad.append(sp)
+            continue
+        with open(path, "rb") as fh:
+            states.append(pickle.load(fh))
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+    if bad:
+        raise RuntimeError(f"[pack] the {', '.join(bad)} pack process failed (its "
+                           "traceback is above); XCP_PACK_PARALLEL=0 packs in one loop")
+    return _mergePackStates(states)
+
+
+def packResults(batches, today, merge=False, _state=None):
+    """_state: a _packLoop result made elsewhere (_packParallel); else the
+    loop runs here, over `batches`, exactly as it always did."""
+    if _state is None:
+        _state = _packLoop(batches, today, merge)
+    chunks, a_uniq, v_uniq, t_uniq = (_state["chunks"], _state["a_uniq"],
+                                      _state["v_uniq"], _state["t_uniq"])
+    census = _state["census"]
     if not chunks:
         return None
 

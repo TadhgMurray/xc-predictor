@@ -106,7 +106,11 @@ def test_the_results_index_covers_the_place_count_and_the_feed_list():
 def test_the_results_tables_are_vacuumed_after_a_run():
     sh = _read("deploy", "run_pipeline.sh")
     assert "gentle_vacuum.py --table results --table results_tf" in sh
-    assert sh.index("step 18_vacuum") < sh.index("18c_vacuum_results")
+    # since 2026-11-10: in the background once the last bulk writer of
+    # results (09d) is done, beside the boards -- not in line at the end
+    i = sh.index("bgstep 18c_vacuum_results")
+    assert sh.index("step 09d_outliers") < i < sh.index("step 16_rowguard_apply")
+    assert sh.index("bgstep 18c_vacuum_results") < sh.index("\nbgwait\n")
 
 
 # ---------------------------------------------------------------- 3 --

@@ -2609,8 +2609,10 @@ def athlete(person_id):
                 race["rank_outlier"] = side
                 # thin = another person's row or a wrong distance, like fast;
                 # mixed = a combined men's and women's list, distance unknown;
-                # field / level rows were really run, so their marks stay
-                if side in ("fast", "thin", "mixed"):
+                # race = a whole field far above itself, most often a short
+                # course: its times are not this distance's either;
+                # field / level / day rows were really run, so their marks stay
+                if side in ("fast", "thin", "mixed", "race"):
                     for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
                               "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):
@@ -2691,6 +2693,20 @@ def athlete(person_id):
                             or athlete["header_pool"])
     athlete["team_state"] = ((latest_team.get("state") if latest_team else None)
                              or athlete["header_state"])
+    # ★ ONE "RECRUITING" LINK, FOR WHOEVER CAN STILL BE RECRUITED (owner,
+    #   2026-11-10: "sure, but transfers"). A high schooler or a college
+    #   runner whose team season is this academic year or last; a 2010
+    #   graduate's last high-school season is not.
+    try:
+        import datetime as _dt_rk
+        from season_year import academicYear
+        _ly = int((latest_team or {}).get("year") or 0)
+        _lv = str(athlete["team_pool"] or "").split("|")[0].split("_")[0]
+        athlete["recruit_kind"] = (_lv if _lv in ("hs", "college")
+                                   and _ly >= academicYear(_dt_rk.date.today()) - 1
+                                   else None)
+    except Exception:                                    # noqa: BLE001
+        athlete["recruit_kind"] = None
     # ! NOT athlete["school"] = _season_school(races): `races` is the whole
     #   career, so this line headed Liam Lucas "Loyola Blakefield" (31 high
     #   school rows) over his Tufts season, whatever the header row said.
@@ -11493,9 +11509,19 @@ def api_rankings():
     #   for "Georgetown" and "Notre Dame" that is a high school; a college
     #   row takes the college directory's state (teamState, the athlete
     #   page's answer since "Amherst (WI)"), anything else the primary.
+    # ★ AN ABILITY ROW'S STATE IS THE SEASON'S HOME (data audit, 2026-11-10:
+    #   "Coronado CA" for a Colorado Springs runner, "Northfield ... MN" for
+    #   a Denver one -- the name's biggest cluster). athlete_season.state is
+    #   now the athlete's career home whenever the season raced there, so a
+    #   school-age season row passes it, and teamState keeps it when the
+    #   name has a school in that state. A performance row's state is the
+    #   venue's -- a travel state -- and is not passed.
+    _season_rows = f.get("board") == "ability"
     for _r in rows:
         _pool = _r.get("pool") or _r.get("rating_pool")
-        _r["school_state"] = (school_identity.teamState(_r.get("school"), _pool, None,
+        _ctx = (_r.get("state") if _season_rows and str(_pool or "").startswith(("hs_", "ms_", "elem_"))
+                else None)
+        _r["school_state"] = (school_identity.teamState(_r.get("school"), _pool, _ctx,
                                                          _r.get("person_id"))
                               if _pool else None) or school_identity.primaryState(_r.get("school"))
     # the crest keys off school_state, not `state`: a result row's state is
@@ -12604,6 +12630,24 @@ def _upcomingChampsCached():
                 app.logger.exception("upcoming championships failed")
                 return None
         out = [dict(m) for m in out]
+        # ★ THIS YEAR'S HOST COURSE ON THE NCAA CHAMPIONSHIPS (owner,
+        #   2026-11-10; upcoming_preview.HOST_COURSES): the link opens the
+        #   race on it, the course box says so, and it can be changed
+        try:
+            import upcoming_preview as _UP
+            want = {m["meet_id"]: _UP.hostPattern(m.get("name"), m.get("source"), m.get("date"))
+                    for m in out}
+            if any(want.values()):
+                with getConn() as conn:
+                    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                        cur.execute("SET statement_timeout = '20s'")
+                        found = {p: _UP.hostCourse(cur, p) for p in set(want.values()) if p}
+                        conn.rollback()
+                for m in out:
+                    if want.get(m["meet_id"]):
+                        m["course"] = found.get(want[m["meet_id"]])
+        except Exception:                               # noqa: BLE001 -- last year's course then
+            app.logger.exception("host courses failed")
         for m in out:
             day = _dt.date.fromisoformat(m["date"])
             m["when"] = day.strftime("%a %b ") + str(day.day)
@@ -12611,7 +12655,7 @@ def _upcomingChampsCached():
                                                     m["name"] or "")).strip(" -")
             m["href"] = "/predictions?" + urllib.parse.urlencode(
                 {"meet_id": m["meet_id"], "src": m["source"], "date": m["date"],
-                 "pick": "predicted"})
+                 "pick": "predicted", **({"course": m["course"]} if m.get("course") else {})})
         return out
     try:
         rows, _ = ttlcache.get(("predict_upcoming", _dt.date.today().isoformat()),
@@ -13771,6 +13815,9 @@ def api_recruiting():
                     "limit": f["limit"], "offset": f["offset"], "note": note})
 
 
+RECRUIT_COMPS_MIN = 10
+
+
 @app.route("/recruit/<int:person_id>")
 def recruit_profile(person_id):
     import recruiting as R
@@ -13782,8 +13829,13 @@ def recruit_profile(person_id):
             # "Runners like you" per sport (comps.py): who was here before
             # and how it went; None where there is no season or no table
             from comps import runnersLikeYou
+            # ★ NOT BELOW RECRUIT_COMPS_MIN MATCHES (owner, 2026-11-10: the
+            #   national #2 junior read "0 of 1 (0%) ran cross country in
+            #   college", with a median of one runner): a cohort that small
+            #   says nothing, so the tab is not shown
             prof["comps"] = [c for c in (runnersLikeYou(cur, person_id, sp)
-                                         for sp in R.SPORTS) if c]
+                                         for sp in R.SPORTS)
+                             if c and (c.get("n") or 0) >= RECRUIT_COMPS_MIN]
     from comps import CLASS_WORD, CLASS_SHORT
     for c in prof["comps"]:
         for e in c["examples"]:

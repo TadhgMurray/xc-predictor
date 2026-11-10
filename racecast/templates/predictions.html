@@ -108,7 +108,7 @@
         {% for m in champs_national + champs_state[:8] %}
         <tr>
           <td class="tn"><a href="{{ m.href }}">{{ m.title }}</a>
-            <span class="sp">{{ m.when }} · from the {{ m.last_date[:4] }} meet{% if m.kind == 'national' %} · national{% endif %}</span></td>
+            <span class="sp">{{ m.when }} · from the {{ m.last_date[:4] }} meet{% if m.course %} · at {{ m.course }}{% endif %}{% if m.kind == 'national' %} · national{% endif %}</span></td>
           <td class="go-c"><a href="{{ m.href }}" aria-label="Predict {{ m.title }}">Predict &rarr;</a></td>
         </tr>
         {% endfor %}
@@ -335,7 +335,7 @@
          the control when an injected rating actually carries a different
          HS-equivalent, and a single-pool meet never sees a switch that would
          do nothing. #}
-    <div class="toggle-row">{{ scale_toggle(hidden=True) }}</div>
+    {# ★ the "own scale" toggle is cut (owner, 2026-11-10): every rating shown is HS-equivalent #}
 
     {# --- TEAM --- #}
     <div class="who-pane" data-pane="team">

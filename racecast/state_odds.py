@@ -555,7 +555,15 @@ def athleteOdds(person_id):
                 ORDER  BY a.year DESC LIMIT 1
             """, (int(person_id),))
             row = cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            row = dict(row)
+            # the meet has been run: no odds for it (cuts.stateFinalRun)
+            import cuts
+            if cuts.stateFinalRun(cur, row["state"], row.get("year"),
+                                  row.get("gender"), row.get("division")):
+                return None
+            return row
         return _connCall(q, None)
     try:
         val, _ = ttlcache.get(("odds-ath", int(person_id)), compute, ttl=_TTL)
@@ -597,7 +605,11 @@ def schoolOdds(school, state):
                   AND  t.year = (SELECT max(year) FROM state_odds_meta)
                 ORDER  BY t.gender, t.division
             """, (school, state, state))
-            return [dict(r) for r in cur.fetchall()]
+            import cuts
+            # the meet has been run: no odds for it (cuts.stateFinalRun)
+            return [dict(r) for r in cur.fetchall()
+                    if not cuts.stateFinalRun(cur, r["state"], r.get("year"),
+                                              r.get("gender"), r.get("division"))]
         return _connCall(q, [])
     val, _ = ttlcache.get(("odds-school", school, state), compute, ttl=_TTL)
     out = []
@@ -737,8 +749,11 @@ def odds_page(state):
                     want = want if want in have else have[0]
                 athletes, teams = divisionOdds(cur, st, want, gender,
                                                metas[0]["year"])
+            import cuts
+            final = (cuts.stateFinalFor(cur, st, metas[0]["year"], gender, want)
+                     if metas else None)
     ctx = pageContext(st, metas, want, gender, athletes, teams, names)
-    return render_template("state_odds.html", **ctx)
+    return render_template("state_odds.html", final=final, **ctx)
 
 
 def asOf(dates):

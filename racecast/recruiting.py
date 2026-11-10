@@ -22,7 +22,7 @@
 #   board is divided by pool_view.hsFactor(college pool), the same one
 #   number the HS-equivalent view multiplies college rows by, so the
 #   placement here agrees with the mixed boards.
-from season_floor import floorSql, DEFAULT_FLOOR
+from season_floor import floorSql, DEFAULT_FLOOR, boardFloorExplicit
 from us_state import fiftyStateList
 
 POOLS = ("hs_m", "hs_f")
@@ -480,7 +480,7 @@ def _divisionBoard(cur, f):
             plain.execute("SAVEPOINT recruit_place")
             try:
                 plain.execute(f"""SELECT s.mean_rating::float8 FROM athlete_season s
-                                  WHERE {floorSql(f['min_races_explicit'])} {where}
+                                  WHERE {floorSql(boardFloorExplicit(f))} {where}
                                     AND s.mean_rating IS NOT NULL""", params)
                 ratings = sorted(r[0] for r in plain.fetchall())
                 total = countOf(plain, f)

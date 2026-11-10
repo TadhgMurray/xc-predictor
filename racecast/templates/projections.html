@@ -204,6 +204,12 @@
       {% endif %}
     </div>
   </div></header>
+{# ★ the meet has been run (cuts.stateFinalFor): say so, link the result #}
+{% if final %}
+<div class="p2-banner" role="note"><b>This state meet has been run.</b> The forecast below was made before it.
+  {% if final.meet_id and final.div_id %}<a href="/race/xc/{{ final.meet_id }}/{{ final.div_id }}">See the results{% if final.meet_name %} of {{ final.meet_name }}{% endif %} →</a>{% endif %}</div>
+{% endif %}
+
 
   <nav class="p2-toggles" aria-label="Projection options">
     <span class="p2-seg" role="group" aria-label="Gender">

@@ -92,6 +92,12 @@ INSERT INTO meets VALUES (12,112,'Darrell Lee 5000m (track) 2024'),
   (13,113,'Eastside Track Club XC Invitational');
 INSERT INTO results VALUES (1112, 6102, 'anet', 12, 112, 12, 1, 937.8, '2024-11-18'),
   (1113, 6103, 'anet', 13, 113, 13, 1, 960.0, '2024-09-14');
+-- ... and a track time trial that says "on District track" (2026-11-10, the
+-- data audit), beside a comeback meet: 1131 goes, 1132 stays
+INSERT INTO meets VALUES (16,116,'Alta Sierra 1 Mile Time Trial on District track'),
+  (17,117,'Back on Track Invitational');
+INSERT INTO results VALUES (1131, 6120, 'anet', 16, 116, 16, 1, 309.5, '2020-07-29'),
+  (1132, 6121, 'anet', 17, 117, 17, 1, 1000.0, '2020-09-12');
 -- xc_track_copy (2026-10-18): the 2026 Mid-Season Mania, no "placeholder";
 -- 1121 is the track row 1921 to the tenth; 1122 a real XC race another day
 INSERT INTO meets VALUES (14,114,'2026 Mid-Season Mania 1600m Invitational');

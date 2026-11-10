@@ -489,7 +489,7 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
     # last season's rounds run this year, where this season's are not
     # posted yet: the nightly only (predictedPast runs the model)
     past = ((lambda mid, div, on: predictedPast(cur, mid, div, src, on))
-            if live and forecast else None)
+            if (live or byRating()) and forecast else None)
     used = {}
     try:
         cur.execute("SAVEPOINT up_qual")
@@ -694,6 +694,54 @@ def upcomingChampionships(cur, today=None, thorough=False):
     return out
 
 
+# ★ THIS YEAR'S HOST COURSE (owner, 2026-11-10: "for the big races this year
+#   for NCAAs like nationals should we default set the course to the new
+#   course? Just for the ones on the board"). A championship on the board is
+#   last year's meet run again, so it ran on last year's course; the NCAA
+#   rotates hosts. (rule key, season) -> a pattern for the host course's
+#   name as the courses list holds it (hostCourse picks the one with a
+#   difficulty and the most meets). Add a season's hosts when the NCAA
+#   names them (ncaa.com, "future championship sites").
+HOST_COURSES = {
+    # 2026: DI Terre Haute (Indiana State), DII Lawrence (Kansas), DIII
+    # Northfield (Carleton College) -- NCAA site announcement, Oct 2024
+    ("ncaa_d1", 2026): r"la\s*vern\s*gibson",
+    ("ncaa_d2", 2026): r"rim\s*rock",
+    ("ncaa_d3", 2026): r"huyck|carleton",
+}
+
+
+def hostPattern(name, source, date):
+    """The host-course pattern for a championship run on `date` (ISO), or
+    None. Pure but for qualifying.ruleFor."""
+    import qualifying as Q
+    rule = Q.ruleFor(name, source)
+    if rule is None or not date:
+        return None
+    return HOST_COURSES.get((rule["key"], int(str(date)[:4])))
+
+
+def hostCourse(cur, pattern):
+    """The courses list's name for a host pattern: one the predictor can set
+    (predict._applyCourse reads meets.course_name), preferring one with a
+    difficulty, then the one most meets ran on. None when nothing matches."""
+    cur.execute("""
+        SELECT m.course_name AS name, count(DISTINCT m.meet_id) AS n,
+               bool_or(cd.difficulty IS NOT NULL) AS has_cell
+        FROM   meets m
+        LEFT JOIN course_canonical cc
+               ON cc.course_name = m.course_name
+              AND round(cc.gps_lat::numeric, 5) = round(m.gps_lat::numeric, 5)
+              AND round(cc.gps_long::numeric, 5) = round(m.gps_long::numeric, 5)
+        LEFT JOIN course_difficulties cd ON cd.canonical_id = cc.canonical_id
+        WHERE  m.course_name ~* %s
+        GROUP  BY m.course_name
+        ORDER  BY bool_or(cd.difficulty IS NOT NULL) DESC, count(DISTINCT m.meet_id) DESC
+        LIMIT  1""", (pattern,))
+    rows = _dictRows(cur)
+    return rows[0]["name"] if rows else None
+
+
 def championshipKey(name, source):
     """Which championship a meet is, whatever its name says that year: the
     rule's key (NCAA DI/DII/DIII, NXN), else the edition name. Pure."""
@@ -839,6 +887,131 @@ def predictedRound(cur, meet_id, gender, source, live=False, every=False):
     return predictedDiv(cur, meet_id, race["div_id"], source, live)
 
 
+# ★ A ROUND NOT YET RUN IS PLACED BY SEASON RATING (owner, 2026-11-10: "it
+#   should start by picking runners by season rating over prediction, so
+#   loading is faster"; Dylan Cote missing from D3 nationals, too few NESCAC
+#   teams). A predicted round counted only when its model forecast had been
+#   stored, and the nightly's model runs fit 143 of 198 fields in their hour:
+#   a regional with no stored forecast was simply left out, with every team
+#   and runner in it. Now its field -- each school's current squad
+#   (predict.meetField "thisyear", the same squads the page lists) -- is
+#   ordered by HS-equivalent season rating, one scale for a college round's
+#   high-school-rated freshmen too. No model, a few queries, never missing.
+#   XCP_QUALIFY_BY=model brings the model's forecasts back.
+def byRating():
+    return os.environ.get("XCP_QUALIFY_BY", "rating") != "model"
+
+
+# ★ ONE SCHOOL UNDER EACH FEED'S SPELLING (owner, 2026-11-10: Dylan Cote,
+#   Wesleyan, in no D3 regional; "too few NESCAC teams"). A college round is
+#   the college feed's meet, its schools spelled "Wesleyan"; a runner whose
+#   season row came from the high-school feed's copy of the same races is
+#   under "Wesleyan (Conn.)", and a squad read by school name never holds
+#   them. spellingExtras puts every such runner -- same school by
+#   search_index.schoolFold, SAME STATE ("Trinity (Conn.)" is not
+#   "Trinity (Texas)") -- under the round's spelling; ratedRows then keeps
+#   each school's best seven (or as many as it brought).
+def spellingExtras(teams, candidates):
+    """[(person_id, round school, rating, pool)] for season rows filed
+    under another spelling of a round's school in its state, not already
+    in the field. candidates: [(person_id, school, state, rating, pool)].
+    Pure but for search_index.schoolFold."""
+    from search_index import schoolFold
+    have = {int(r["person_id"]) for t in teams or [] for r in t.get("runners") or []
+            if r.get("person_id") is not None}
+    by = {(schoolFold(t["school"]), t["state"]): t["school"]
+          for t in teams or [] if t.get("school") and t.get("state")}
+    out = []
+    for pid, school, state, rating, pool in candidates:
+        own = by.get((schoolFold(school), state))
+        if own and own != school and int(pid) not in have:
+            out.append((int(pid), own, rating, pool))
+    return out
+
+
+def ratedRows(teams, extra=(), cap=7):
+    """Qualifying rows [(person_id, school, seconds, rating)] from a field's
+    teams (meetField's) and extra (person_id, school, rating, pool) rows,
+    fastest first, each school at most max(cap, the runners its team had).
+    `seconds` is 10000 / the HS-equivalent rating: only its order is read
+    (qualifying sorts a round by it). Pure but for pool_view."""
+    import pool_view as PV
+    seen = {}
+
+    def hs(rating, pool, stamped=None):
+        if stamped:
+            return float(stamped)
+        if not rating:
+            return None
+        return PV.toHs(float(rating), (pool or "").split("|")[0], "XC") or float(rating)
+    for t in teams or []:
+        for r in t.get("runners") or []:
+            v = hs(r.get("rating"), r.get("pool"), r.get("hs_rating"))
+            if r.get("person_id") is not None and v:
+                seen[int(r["person_id"])] = (t.get("school"), v)
+    for pid, school, rating, pool in extra:
+        v = hs(rating, pool)
+        if pid is not None and v and int(pid) not in seen:
+            seen[int(pid)] = (school, v)
+    rows = [(pid, school, 10000.0 / v, v) for pid, (school, v) in seen.items()]
+    rows.sort(key=lambda r: (r[2], r[0]))
+    room = {t.get("school"): max(cap, len(t.get("runners") or [])) for t in teams or []}
+    per = collections.Counter()
+    out = []
+    for r in rows:
+        if r[1] in room:
+            if per[r[1]] >= room[r[1]]:
+                continue
+            per[r[1]] += 1
+        out.append(r)
+    return out
+
+
+def ratedDiv(cur, meet_id, div_id, source, add=None):
+    """One race not yet run, its field placed by season rating (byRating).
+    add: person ids who race it too (regionRunners), with their school now."""
+    def compute():
+        import predict as P
+        try:
+            cur.execute("SAVEPOINT up_rated")
+            f = P.meetField(cur, int(meet_id), int(div_id), "XC", when="thisyear",
+                            source=source) or {}
+            teams = f.get("teams") or []
+            # the round's schools under the other feed's spelling (spellingExtras)
+            states = sorted({t["state"] for t in teams if t.get("state")})
+            pools = collections.Counter((r.get("pool") or "").split("|")[0]
+                                        for t in teams for r in t.get("runners") or [])
+            pool = pools.most_common(1)[0][0] if pools else None
+            extra = []
+            if states and pool:
+                cur.execute("""SELECT person_id, school, state, mean_rating, pool FROM athlete_season
+                               WHERE sport = 'XC' AND year = %s AND state = ANY(%s)
+                                 AND split_part(pool, '|', 1) = %s AND mean_rating IS NOT NULL""",
+                            (f.get("season_year"), states, pool))
+                extra = spellingExtras(teams, [(r["person_id"], r["school"], r["state"],
+                                                r["mean_rating"], r["pool"])
+                                               for r in _dictRows(cur)])
+            missing = sorted(set(add or ()))
+            if missing:
+                cur.execute("""SELECT person_id, school, mean_rating, pool FROM athlete_season
+                               WHERE sport = 'XC' AND year = %s AND person_id = ANY(%s)
+                                 AND mean_rating IS NOT NULL""",
+                            (f.get("season_year"), missing))
+                extra += [(r["person_id"], r["school"], r["mean_rating"], r["pool"])
+                          for r in _dictRows(cur)]
+            _release(cur, "up_rated")
+        except Exception as exc:                        # noqa: BLE001
+            _undo(cur, "up_rated")
+            print(f"rated round {source} {meet_id}/{div_id}: {type(exc).__name__}: {exc}",
+                  flush=True)
+            return []
+        return ratedRows(f.get("teams"), extra)
+    rows, _ = ttlcache.get(("up_rated", source, int(meet_id), int(div_id),
+                            tuple(sorted(add or ()))), compute, ttl=TTL,
+                           ttl_of=lambda v: TTL if v else FAIL_TTL)
+    return rows
+
+
 def predictedDiv(cur, meet_id, div_id, source, live=False):
     """One race that has not run, as we predict it (predictedRound).
     ! STORED OR ALREADY CACHED ONLY, NEVER RUN HERE (owner, 2026-11-03: "you
@@ -848,6 +1021,8 @@ def predictedDiv(cur, meet_id, div_id, source, live=False):
       (build_meet_forecasts.py, soonest meet first) stores the rounds; until
       then the round is not counted."""
     import meet_forecast as MF
+    if byRating():
+        return ratedDiv(cur, meet_id, div_id, source)
     if live:                              # the nightly (build_qualified_fields)
         pred = racePrediction(cur, meet_id, div_id, source)
         return _rowsOf(pred)
@@ -870,6 +1045,10 @@ def predictedPast(cur, meet_id, div_id, source, on, region=False):
     only. Kept per process, so a round shared by several championships is
     predicted once. region=True: the round's region's best runners now
     race it too (regionRunners)."""
+    if byRating():
+        return ratedDiv(cur, meet_id, div_id, source,
+                        add=regionRunners(cur, meet_id, div_id, source, on) if region else None)
+
     def compute():
         add = regionRunners(cur, meet_id, div_id, source, on) if region else set()
         return livePrediction(cur, meet_id, div_id, source, on=on, add=add)

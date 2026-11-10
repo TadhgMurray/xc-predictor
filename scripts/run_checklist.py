@@ -344,7 +344,7 @@ _RESCAN_TIMEOUT_MS = 900_000            # 15 minutes; it is a scan of results
 
 _FRESH_SQL = """
     CREATE TEMP TABLE _ck_fresh AS
-    SELECT DISTINCT r.person_id
+    SELECT DISTINCT 'XC'::text AS sport, r.result_id, r.person_id
     FROM   results r
     LEFT   JOIN meets m  ON m.div_id  = r.div_id  AND r.source = 'anet'
     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
@@ -353,10 +353,46 @@ _FRESH_SQL = """
         OR COALESCE(mt.division_distances -> r.div_id::text ->> 'div_name',
                     '') ~* %(rx)s)
     UNION
-    SELECT DISTINCT r.person_id
+    SELECT DISTINCT 'TF', r.result_id, r.person_id
     FROM   results_tf r
     WHERE  r.person_id IS NOT NULL
       AND  COALESCE(r.event_short, '') ~* %(rx)s
+    UNION
+    SELECT DISTINCT 'TF', r.result_id, r.person_id
+    FROM   results_tf r
+    JOIN   (SELECT DISTINCT meet_id, div_id, source FROM meets_tf
+             WHERE division ~* %(rx)s) d
+           ON d.meet_id = r.meet_id AND d.div_id = r.div_id AND d.source = r.source
+    WHERE  r.person_id IS NOT NULL
+"""
+
+# ★ THE ENGINE'S WHOLE RULE, NOT HALF OF IT (2026-11-10; run 20261108_155220
+#   FAILED here on 126 "missing" athletes). Since 2026-11-02 wheelchair_flag
+#   lists a PERSON only at MIN_CHAIR_RACES chair races or MIN_CHAIR_SHARE of
+#   their races (Chris Barbato: one para race among 128 took his whole
+#   career out); below that bar only the chair RACES are left out, in
+#   wheelchair_result. This check still said "any chair race -> the person
+#   must be listed", so every below-bar runner read as a stale list, and the
+#   run failed on exactly the people the 11-02 change chose not to list.
+#   Now: a person over the bar must be in wheelchair_person, and a chair race
+#   of anyone else must be in wheelchair_result. Either one missing is the
+#   list out of date; missing AND rated is a chair time on the boards.
+#   (It also reads the anet track DIVISION, as step 04b does -- the
+#   Kohen Grantom shape, which the old rescan never looked at.)
+_FRESH_PEOPLE_SQL = """
+    CREATE TEMP TABLE _ck_people AS
+    WITH c AS (SELECT person_id, count(*) AS n_chair FROM _ck_fresh GROUP BY 1),
+    t AS (SELECT person_id, count(*) AS n_total FROM (
+            SELECT person_id FROM results
+             WHERE person_id IN (SELECT person_id FROM c)
+            UNION ALL
+            SELECT person_id FROM results_tf
+             WHERE person_id IN (SELECT person_id FROM c)) x GROUP BY 1)
+    SELECT c.person_id,
+           (c.n_chair >= %(min_races)s
+            OR c.n_chair::float / GREATEST(COALESCE(t.n_total, c.n_chair), 1) >= %(min_share)s)
+             AS over_bar
+    FROM c LEFT JOIN t ON t.person_id = c.person_id
 """
 
 
@@ -368,20 +404,20 @@ def checkWheelchairFresh(cur):
               "athletes by person. Run: python engine/wheelchair_flag.py --write")
         return
     try:
-        from wheelchair_flag import WHEELCHAIR_RX          # the engine's rule
+        from wheelchair_flag import WHEELCHAIR_RX, MIN_CHAIR_RACES, MIN_CHAIR_SHARE
     except Exception as exc:                               # noqa: BLE001
         _mark("WARN", name, f"could not import the engine's rule: {exc}")
         return
+    has_wr = _exists(cur, "wheelchair_result")
 
     # ! BOUNDED. This is the same scan step 04b does, and the checklist runs
-    #   at the end of a five-hour night; a pathological plan must not turn
-    #   the go/no-go into another hour. A timeout is a WARN, never a PASS --
-    #   "we did not look" and "we looked and it was clean" are not the same
-    #   answer, and the whole point of this check is that the reassuring one
-    #   was being printed without looking.
+    #   at the end of a long night; a timeout is a WARN, never a PASS --
+    #   "we did not look" and "we looked and it was clean" are not the same.
     try:
         cur.execute(f"SET LOCAL statement_timeout = {_RESCAN_TIMEOUT_MS}")
         cur.execute(_FRESH_SQL, {"rx": WHEELCHAIR_RX})
+        cur.execute(_FRESH_PEOPLE_SQL, {"min_races": int(MIN_CHAIR_RACES),
+                                        "min_share": float(MIN_CHAIR_SHARE)})
     except Exception as exc:                               # noqa: BLE001
         cur.connection.rollback()
         _mark("WARN", name,
@@ -391,41 +427,53 @@ def checkWheelchairFresh(cur):
         return
     cur.execute("SET LOCAL statement_timeout = 0")
 
+    # people over the bar the list does not hold
     cur.execute("""
-        SELECT count(*) FROM _ck_fresh f
-        WHERE NOT EXISTS (SELECT 1 FROM wheelchair_person w
-                          WHERE w.person_id = f.person_id)""")
-    n_missing = cur.fetchone()[0]
-    if not n_missing:
+        CREATE TEMP TABLE _ck_missing_people AS
+        SELECT p.person_id FROM _ck_people p
+        WHERE  p.over_bar
+          AND  NOT EXISTS (SELECT 1 FROM wheelchair_person w
+                           WHERE w.person_id = p.person_id)""")
+    cur.execute("SELECT count(*) FROM _ck_missing_people")
+    n_people = cur.fetchone()[0]
+    # chair races of everyone else, not left out one by one
+    wr = ("AND NOT EXISTS (SELECT 1 FROM wheelchair_result x "
+          "WHERE x.sport = f.sport AND x.result_id = f.result_id)") if has_wr else ""
+    cur.execute(f"""
+        CREATE TEMP TABLE _ck_missing_races AS
+        SELECT f.sport, f.result_id FROM _ck_fresh f
+        WHERE  NOT EXISTS (SELECT 1 FROM wheelchair_person w
+                           WHERE w.person_id = f.person_id) {wr}""")
+    cur.execute("SELECT count(*) FROM _ck_missing_races")
+    n_races = cur.fetchone()[0]
+    if not n_people and not n_races:
         _mark("PASS", name,
-              "the engine's rule finds nobody wheelchair_person is missing")
+              "the engine's rule finds no listed-worthy athlete and no chair "
+              "race the lists leave rated")
         return
 
-    # missing is bad; missing AND RATED is the thing the owner is looking at
     rated = []
-    for t in ("results", "results_tf"):
+    for t, sp in (("results", "XC"), ("results_tf", "TF")):
         cur.execute(f"""
             SELECT count(*) FROM {t} r
             WHERE  r.speed_rating IS NOT NULL
-              AND  EXISTS (SELECT 1 FROM _ck_fresh f
-                           WHERE f.person_id = r.person_id)
-              AND  NOT EXISTS (SELECT 1 FROM wheelchair_person w
-                               WHERE w.person_id = r.person_id)""")
+              AND (EXISTS (SELECT 1 FROM _ck_missing_people m
+                           WHERE m.person_id = r.person_id)
+                OR EXISTS (SELECT 1 FROM _ck_missing_races m
+                           WHERE m.sport = %s AND m.result_id = r.result_id))""", (sp,))
         n = cur.fetchone()[0]
         if n:
             rated.append(f"{t}: {n:,}")
+    what = (f"{n_people:,} athlete(s) over the bar not in wheelchair_person, "
+            f"{n_races:,} chair race(s) of others not in wheelchair_result")
     fix = ("Rebuild it: python engine/wheelchair_flag.py --write "
            "(pipeline step 04b), then rerun 09b_fill and the boards.")
     if rated:
-        _mark("FAIL", name,
-              f"wheelchair_person is STALE -- the engine's rule finds "
-              f"{n_missing:,} chair athlete(s) it does not list, and they "
-              f"carry ratings right now ({'; '.join(rated)}). " + fix)
+        _mark("FAIL", name, f"the chair lists are STALE -- {what}, and they carry "
+                            f"ratings right now ({'; '.join(rated)}). " + fix)
     else:
-        _mark("WARN", name,
-              f"wheelchair_person is STALE: the engine's rule finds "
-              f"{n_missing:,} chair athlete(s) it does not list. None is "
-              f"rated yet, so no board is wrong today. " + fix)
+        _mark("WARN", name, f"the chair lists are STALE: {what}. None is rated, "
+                            f"so no board is wrong today. " + fix)
 
 
 # ---- 4b. the stale-rating invariant (2026-08-27 postmortem) ----------- #

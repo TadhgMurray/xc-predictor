@@ -3333,7 +3333,23 @@ WITH season_med AS (
            count(speed_rating)                              AS n_rated
     FROM   {{load_table}}
     WHERE  {{shard_where}}
-    GROUP  BY person_id, pool, sport, year)
+    GROUP  BY person_id, pool, sport, year),
+-- ★ A SCHOOL-AGE ATHLETE'S HOME IS WHERE THEY RACE MOST OVER THEIR CAREER
+--   (data audit, 2026-11-10: Oliver Horton, Coronado HS, Colorado Springs --
+--   CSML league, the CHSAA state meet -- #1 on ARIZONA's 2026 high school
+--   boys' board. His 2026 season held three races, one at an Arizona
+--   invitational, and the season's state was the plain mode of its venues,
+--   ties alphabetical). The career's rows are dozens; one trip cannot move
+--   them. A hash count per (person, state), then the top: no extra
+--   ordered-set sort on the season aggregate.
+home AS (
+    SELECT DISTINCT ON (person_id) person_id, state
+    FROM  (SELECT person_id, state, count(*) AS n
+           FROM   {{load_table}}
+           WHERE  {{shard_where}} AND pool ~ '^(hs|ms|elem)_'
+             AND  state IS NOT NULL AND speed_rating IS NOT NULL
+           GROUP  BY 1, 2) c
+    ORDER  BY person_id, n DESC, state)
 INSERT INTO {{season_table}}
     (person_id, pool, sport, year, mean_rating, decayed_rating, best_rating,
      n_races, first_race, last_race, state, school, grade)
@@ -3345,7 +3361,11 @@ SELECT base.person_id, base.pool, base.sport, base.year,
        count(*),
        min(race_date),
        max(race_date),
-       mode() WITHIN GROUP (ORDER BY state),
+       -- a school-age season that raced at home at all is home's season;
+       -- otherwise (a move, a college season) the season's own venues
+       CASE WHEN base.pool ~ '^(hs|ms|elem)_' AND bool_or(base.state = h.state)
+            THEN max(h.state)
+            ELSE mode() WITHIN GROUP (ORDER BY base.state) END,
        -- ★ THE TEAM THEY RACED FOR, NOT "UNATTACHED" (owner, 2026-09-04):
        --   a season mostly unattached with a few races for a school is that
        --   school's; only a season with no school at all stays unattached.
@@ -3389,6 +3409,7 @@ SELECT base.person_id, base.pool, base.sport, base.year,
                               AND grade ~* '^(FR|SO|JR|SR)-?[1-6]$'),
                 mode() WITHIN GROUP (ORDER BY grade))
 FROM {{load_table}} base
+LEFT JOIN home h ON h.person_id = base.person_id
 JOIN season_med sm ON sm.person_id = base.person_id AND sm.pool = base.pool
                   AND sm.sport = base.sport AND sm.year = base.year
 -- ⚠ RATED ROWS ONLY, SINCE #46. ranking_results now also carries time-only
