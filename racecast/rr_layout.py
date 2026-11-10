@@ -155,6 +155,17 @@ def indexSig(ddl):
     i = ddl.find("(")
     tail = ddl[i:] if i >= 0 else ddl
     tail = _ANY_WITH.sub("", tail)
+    # ⚠ AND THE DEFAULT ORDERINGS (2026-11-10): pg_indexes writes
+    #   `grade ASC NULLS LAST` back as plain `grade`, and `x DESC NULLS FIRST`
+    #   as `x DESC` -- the defaults are dropped. e0126da's as_sort_grade_idx
+    #   pair was stated with them, so verifyIndexes called both missing on
+    #   every build, rebuilt them, still could not match, and REFUSED the
+    #   athlete_season swap (tests/test_rr_layout_flags.py, 8 failures).
+    #   Dropped here the way Postgres drops them; DESC and a non-default
+    #   NULLS clause stay, because those change the index.
+    tail = re.sub(r"(?i)\s+ASC\s+NULLS\s+LAST\b", "", tail)
+    tail = re.sub(r"(?i)\s+DESC\s+NULLS\s+FIRST\b", " DESC", tail)
+    tail = re.sub(r"(?i)\s+ASC\b", "", tail)                # ASC NULLS FIRST -> NULLS FIRST
     return re.sub(r"[\s()]", "", tail).lower()
 
 
