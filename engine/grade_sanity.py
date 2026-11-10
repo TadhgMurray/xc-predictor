@@ -447,6 +447,12 @@ def splitStatements(sql):
     return out
 
 
+# ★ NO TEMP TABLES HERE (2026-11-10; run 20261109_033652: rule [8] 267 s,
+#   rule [7] 120 + 78 s). Postgres never puts a TEMP table inside a parallel
+#   plan, so rule [8]'s scan of both result tables for 443,664 candidate
+#   seasons (filtered through tmp_club_cand) and rule [7]'s bars ran on one
+#   core. Every scratch table in this file is UNLOGGED now, as allraces and
+#   the rest already were: the same rows, replaced by the next run.
 def runTimed(cur, sql, label="", slow=1.0):
     """Execute a script statement by statement, printing the ones that
     take longer than `slow` seconds with their first meaningful line."""
@@ -2356,7 +2362,7 @@ def eliteFieldSeasons(cur):
     # one gender per id, only where the athletes table agrees with itself
     cur.execute("""
         DROP TABLE IF EXISTS tmp_elite_gender;
-        CREATE TEMP TABLE tmp_elite_gender AS
+        CREATE UNLOGGED TABLE tmp_elite_gender AS
             SELECT athlete_id AS id, min(gender) AS gender
             FROM   athletes WHERE gender IN ('M', 'F')
             GROUP  BY athlete_id HAVING count(DISTINCT gender) = 1;
@@ -2380,7 +2386,7 @@ def eliteFieldSeasons(cur):
         t0 = time.time()
         cur.execute(f"""
             DROP TABLE IF EXISTS tmp_elite_src;
-            CREATE TEMP TABLE tmp_elite_src AS
+            CREATE UNLOGGED TABLE tmp_elite_src AS
                 SELECT r.* FROM {table} r
                 WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
                   AND  r.time_seconds > 0 {relay}
@@ -2406,7 +2412,8 @@ def eliteFieldSeasons(cur):
         #   the senior world record for the gender is impossible, so those
         #   rows are out of the bar AND out of the comparison below.
         cur.execute(f"""
-            CREATE TEMP TABLE tmp_elite AS
+            DROP TABLE IF EXISTS tmp_elite;
+            CREATE UNLOGGED TABLE tmp_elite AS
                 SELECT * FROM ({_eliteRowsSql(sport, src="tmp_elite_src")}) e
                 WHERE  e.t5k >= CASE e.gender WHEN 'F' THEN {WR_5K_S['F']}
                                               ELSE {WR_5K_S['M']} END;
@@ -2530,7 +2537,7 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
     # question, small next to the corpus
     cur.execute(f"""
         DROP TABLE IF EXISTS tmp_club_rows;
-        CREATE TEMP TABLE tmp_club_rows AS
+        CREATE UNLOGGED TABLE tmp_club_rows AS
             SELECT r.person_id, {_ACAD_R} AS acad, lower(btrim(r.school)) AS club
             FROM   results r
             WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
@@ -2553,7 +2560,7 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
     #   not count as a school in signal 1.
     alias_rows = clubAliases(club_seasons)
     cur.execute("DROP TABLE IF EXISTS tmp_club_alias; "
-                "CREATE TEMP TABLE tmp_club_alias (person_id bigint, alias text, club text)")
+                "CREATE UNLOGGED TABLE tmp_club_alias (person_id bigint, alias text, club text)")
     if alias_rows:
         from psycopg2.extras import execute_values as _ev
         _ev(cur, "INSERT INTO tmp_club_alias VALUES %s", alias_rows, page_size=10000)
@@ -2607,7 +2614,7 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
         print(f"    [8] no high school season on a club ({time.time() - t0:.0f}s)")
         return {}
     cur.execute("DROP TABLE IF EXISTS tmp_club_cand; "
-                "CREATE TEMP TABLE tmp_club_cand (person_id bigint, acad int)")
+                "CREATE UNLOGGED TABLE tmp_club_cand (person_id bigint, acad int)")
     from psycopg2.extras import execute_values
     execute_values(cur, "INSERT INTO tmp_club_cand VALUES %s", cand, page_size=10000)
     cur.execute("ANALYZE tmp_club_cand")
@@ -2839,7 +2846,7 @@ def seasonCeilings(cur, keys):
         return {}
     from psycopg2.extras import execute_values
     cur.execute("DROP TABLE IF EXISTS tmp_ceil_keys; "
-                "CREATE TEMP TABLE tmp_ceil_keys (person_id bigint, acad int)")
+                "CREATE UNLOGGED TABLE tmp_ceil_keys (person_id bigint, acad int)")
     execute_values(cur, "INSERT INTO tmp_ceil_keys VALUES %s", keys, page_size=10000)
     cur.execute("ANALYZE tmp_ceil_keys")
     cur.execute("SET enable_nestloop = off")
@@ -2894,7 +2901,7 @@ def thinFieldSeasons(cur, nuked_seasons):
         return set()
     from psycopg2.extras import execute_values
     cur.execute("DROP TABLE IF EXISTS tmp_nuked; "
-                "CREATE TEMP TABLE tmp_nuked (person_id bigint, acad int, "
+                "CREATE UNLOGGED TABLE tmp_nuked (person_id bigint, acad int, "
                 "PRIMARY KEY (person_id, acad))")
     execute_values(cur, "INSERT INTO tmp_nuked VALUES %s",
                    sorted(nuked_seasons), page_size=10000)
