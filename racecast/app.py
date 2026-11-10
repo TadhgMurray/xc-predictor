@@ -3352,7 +3352,7 @@ def get_races(cur, person_id):
                -- ! ONE lateral pass per race, both counts via FILTER: the
                --   two-subquery version scanned each division twice, and a
                --   200-race career paid 400 scans per page view.
-               pl.place, pl.team_place,
+               pl.place, pl.team_place, pl.team_n,
                -- the course, for the second line under the meet name
                {_xc_course_sql('r')}        AS course
         FROM results r
@@ -3373,7 +3373,13 @@ def get_races(cur, person_id):
                        count(*) FILTER (WHERE {_placed_sql('r2')} AND (r2.time_seconds < r.time_seconds
                            OR (r2.time_seconds = r.time_seconds AND r2.result_id < r.result_id))
                            AND r2.school IS NOT DISTINCT FROM r.school)
-                       + 1 END AS team_place
+                       + 1 END AS team_place,
+                   -- the runner's team in this race: placed finishers of the
+                   -- same school (the page shows "Nth on team" only for a
+                   -- scored team, five or more; owner, 2026-11-10)
+                   count(*) FILTER (WHERE {_placed_sql('r2')}
+                           AND r.school IS NOT NULL
+                           AND r2.school = r.school) AS team_n
             FROM results r2
             WHERE r2.meet_id = r.meet_id AND r2.div_id = r.div_id
               AND r2.source = r.source
@@ -3446,6 +3452,7 @@ def get_races(cur, person_id):
                     ELSE pl.place END       AS place,
                CASE WHEN COALESCE(r.is_field, 0) = 1 THEN NULL
                     ELSE pl.team_place END  AS team_place,
+               NULL::bigint                  AS team_n,   -- no team line on track
                NULL::text                    AS course
        FROM results_tf r
         LEFT JOIN LATERAL (
@@ -3529,7 +3536,7 @@ _LINK_FIELDS = {"meet_id", "div_id", "event_id", "result_id", "source",
                 "canon_meet_id",
                 # place is computed WITHIN the linked division; the tfrrs
                 # twin's div 0 would give a different, wrong number.
-                "place", "team_place"}
+                "place", "team_place", "team_n"}
 
 
 def _race_identity(race):
