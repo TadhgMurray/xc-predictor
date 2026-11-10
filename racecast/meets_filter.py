@@ -235,7 +235,7 @@ _BROWSE_SQL = """
                min(m.meet_name)   AS meet_name,
                {course_pick}      AS course_name,
                min(m.state)       AS state
-        FROM   {meets_table} m
+        FROM   {meets_from}
         WHERE  m.meet_name IS NOT NULL
           {state_clause}
           {q_clause}
@@ -421,6 +421,48 @@ def unitValues(cur, sport, kind, state, q, limit=60):
     return [(r["unit"], r["n"]) if isinstance(r, dict) else (r[0], r[1]) for r in rows]
 
 
+_DATED = {}
+
+
+def meetDatesIndexed(cur, sport):
+    """True once scripts/backfill_meet_dates.py has dated and indexed the
+    sport's meets (meets.meet_date for XC, meets_tf_meta.meet_date for
+    track). Asked once per process per sport."""
+    if sport in _DATED:
+        return _DATED[sport]
+    name = "meets_meet_date_idx" if sport == "XC" else "meets_tf_meta_meet_date_idx"
+    try:
+        cur.execute("SELECT to_regclass(%s) IS NOT NULL", (name,))
+        row = cur.fetchone()
+        ok = bool(row[0] if isinstance(row, (tuple, list)) else list(row.values())[0])
+    except Exception:                                # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                            # noqa: BLE001
+            pass
+        return False                                 # asked again next time
+    _DATED[sport] = ok
+    return ok
+
+
+def dateBounds(sport, f):
+    """(lo, hi) ISO text bounds on a meet's date for the filter's season
+    and range, hi exclusive; None for an open side. A season is the stored
+    academic year: SEASON_START_MMDD of year Y up to the same day of Y+1."""
+    from season_year import SEASON_START_MMDD
+    lo = hi = None
+    if f.get("year") is not None:
+        y = int(f["year"])
+        lo, hi = f"{y}-{SEASON_START_MMDD}", f"{y + 1}-{SEASON_START_MMDD}"
+    if f.get("from"):
+        lo = max(lo, f["from"]) if lo else f["from"]
+    if f.get("to"):
+        # the stored dates are 'YYYY-MM-DD'; the day itself is inside
+        end = f["to"][:10] + "~"
+        hi = min(hi, end) if hi else end
+    return lo, hi
+
+
 def filteredMeets(cur, f):
     sport = f["sport"]
     table = "results" if sport == "XC" else "results_tf"
@@ -540,10 +582,32 @@ def filteredMeets(cur, f):
             and not f.get("from") and not f.get("to")):
         pick_order = "ORDER  BY m.meet_id DESC"
         params["scan"] = MAX_MEETS * 2
+    # ★ BY THE MEET'S OWN DATE, ONCE EVERY MEET HAS ONE (audit 2026-11-09:
+    #   ?year=2025 showed 0 meets, a weekend's date range 1, ?level=college
+    #   2015 high-school meets -- the candidates were an arbitrary 3,200 and
+    #   the year was applied only inside the LATERAL, after the pick).
+    #   scripts/backfill_meet_dates.py dates every meet from its results and
+    #   indexes the column; from then the pick itself keeps the season or the
+    #   range and takes the newest first. Until then, the old pick.
+    dated = meetDatesIndexed(cur, sport)
+    if dated:
+        dcol = "m.meet_date" if sport == "XC" else "t.meet_date"
+        lo, hi = dateBounds(sport, f)
+        if lo:
+            state_clause += f" AND {dcol} >= %(pick_lo)s"
+            params["pick_lo"] = lo
+        if hi:
+            state_clause += f" AND {dcol} < %(pick_hi)s"
+            params["pick_hi"] = hi
+        pick_order = f"ORDER  BY max({dcol}) DESC NULLS LAST, m.meet_id DESC"
+        params["scan"] = MAX_MEETS * 2
 
     unit_clause, unit_cols = unitSql(f, "m", params, units_present)
     # the columns read the picked meet, the clause narrows the scan
-    sql = _BROWSE_SQL.format(meets_table=meets_table, table=table,
+    meets_from = f"{meets_table} m"
+    if dated and sport != "XC":
+        meets_from = "meets_tf m LEFT JOIN meets_tf_meta t ON t.meet_id = m.meet_id"
+    sql = _BROWSE_SQL.format(meets_from=meets_from, table=table,
                              course_pick=course_pick, pick_order=pick_order,
                              state_clause=state_clause, q_clause=q_clause,
                              year_clause=year_clause,
