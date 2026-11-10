@@ -2102,7 +2102,12 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 #   never goes dark.
 # (13c0_person_redirects and 13c0_search_helpers, its three source tables,
 #  ran in the background beside the pack since 2026-11-07)
-step 13c_search_index "$PY" -u racecast/search_index.py
+# ★ IN THE BACKGROUND SINCE 2026-11-10 (run 20261108_155220: 729 s in line).
+#   It builds search_index_new and swaps it in; no step until the watchdog
+#   (17d, started after 16) reads the table -- the sitemap takes only pure
+#   functions from search_index.py (meetAltIndex, meetLink, isTwinCopy) --
+#   so it is joined just before 17d starts. Prewarm (19b) comes after bgwait.
+bgstep 13c_search_index "$PY" -u racecast/search_index.py
 # ★ THE WEEK'S FROZEN COPY (owner, 2026-11-06: "is this done in the pipeline?"):
 #   both sports' season ratings and the course difficulties as a dated
 #   snapshot on /data, the newest 8 weeks kept (data_snapshots.py). A full
@@ -2158,6 +2163,8 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 # ★ THE DATA WATCHDOG, IN THE BACKGROUND (2026-10-18: 53 min in line before
 #   the vacuum). Every step that writes what readers see is done by here;
 #   report only. FAILED is the run's failures so far (17* are reports).
+# the search index (13c, in the background): the watchdog below counts it
+bgjoin 13c_search_index
 if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
   bgstep 17d_watchdog "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind full \
                       --step-name 17d_watchdog --failed "$FAILED" --send --ensure-indexes
