@@ -277,81 +277,93 @@ def main():
             return
         mode = "APPLY" if a.apply else "DRY RUN"
         print(f"[tfrrs-link] {mode}")
-        with conn.cursor() as cur:
-            if a.apply:
-                _log(cur)
-            n = fanout(cur, a.apply)
-            print(f"[tfrrs-link] pass 1, fan-out: {n:,} rows")
-        conn.commit() if a.apply else conn.rollback()
-
-        if not a.no_freshmen:
-            import link_freshmen as L
-            now = L.academicYear()
-            years = [now - 2, now - 1, now]
+        # ★ THE NAME REGISTRY, BUILT ONCE FOR THE PASSES BELOW
+        #   (scripts/name_registry.py, 2026-11-10): passes 2b, 4 and 5 each
+        #   read every (person, name) of the corpus -- about nine minutes
+        #   apiece. Triggers note every person a row moves to or from while
+        #   this runs, and each pass refreshes exactly those, so every pass
+        #   sees what a full read would. Off (XCP_LINK_REGISTRY=0, or any
+        #   failure here): each pass reads the corpus in full, as before.
+        import name_registry as NR
+        NR.install(conn)
+        try:
             with conn.cursor() as cur:
-                fresh_by = L.freshmen(cur, years)
-                # ★ AND THE YEAR BEFORE EACH, for a gap year (L.pairsAll)
-                senior_by = L.seniors(cur, L.seniorYears(years))
-                by_year = L.pairsAll(fresh_by, senior_by, years)
-                pairs = []
-                for y in years:
-                    p, skipped = by_year[y]
-                    print(f"[tfrrs-link] pass 2, freshmen {y}: {len(p):,} "
-                          f"pairs; skipped {skipped}")
-                    pairs += p
-                # ★ AND THE SAME-NAME GROUPS, TOLD APART BY RACE TIMES
-                #   (L.timePairsAll; its own rule, its own --undo-times)
-                by_time, _bands = L.timePairsAll(cur, fresh_by, senior_by, years)
-                tpairs = []
-                for y in years:
-                    tp, tskip = by_time[y]
-                    print(f"[tfrrs-link] pass 2, race times {y}: {len(tp):,} "
-                          f"pairs; skipped {tskip}")
-                    tpairs += tp
-            conn.rollback()                  # temp tables only
-            pairs = L.dedupePairs(pairs)
-            taken = {p[0] for p in pairs}
-            tpairs = L.dedupePairs([p for p in tpairs if p[0] not in taken])
-            if a.apply and pairs:
-                moved = L.write(conn, pairs)
-                print(f"[tfrrs-link] pass 2: joined {len(pairs):,} freshmen; "
-                      f"rows {moved}")
-            # ! WRITTEN ONLY WITH XCP_LINK_TIMES=1 (owner reviews a dry run
-            #   of link_freshmen.py first); reported every run either way
-            times_on = os.environ.get("XCP_LINK_TIMES", "0") not in ("0", "", "false")
-            if tpairs and not times_on:
-                print(f"[tfrrs-link] pass 2: {len(tpairs):,} race-time pairs found, "
-                      f"not written (XCP_LINK_TIMES=1 to write them)")
-            if a.apply and tpairs and times_on:
-                moved = L.write(conn, tpairs, rule=L.TIME_RULE)
-                print(f"[tfrrs-link] pass 2: joined {len(tpairs):,} by race "
-                      f"times; rows {moved}")
-
-        # ★ PASS 2b, HIGH SCHOOL TFRRS ROWS (2026-10-25): an fl. / indiana.tfrrs.org
-        #   meet's runner joins their athletic.net career by name + school +
-        #   grade (scripts/link_tfrrs_hs.py; rule 'tfrrs_hs'), before pass 3
-        #   would mint them a second person. XCP_LINK_TFRRS_HS=0 skips it.
-        if os.environ.get("XCP_LINK_TFRRS_HS", "1") not in ("0", "false"):
-            import link_tfrrs_hs as LH
-            LH.run(conn, a.apply, days=int(os.environ.get("XCP_LINK_TFRRS_HS_DAYS", "14")))
-        if not a.no_mint:
-            with conn.cursor() as cur:
-                n = mint(cur, a.apply, a.mint_seasons)
-                print(f"[tfrrs-link] pass 3, mint: {n:,} rows")
+                if a.apply:
+                    _log(cur)
+                n = fanout(cur, a.apply)
+                print(f"[tfrrs-link] pass 1, fan-out: {n:,} rows")
             conn.commit() if a.apply else conn.rollback()
-        # ★ PASS 4, THE UPLOADS (2026-10-10): its own rules, its own log
-        #   rules ('upload' / 'upload_mint'), the same --undo
-        if not a.no_uploads and os.environ.get("XCP_LINK_UPLOADS", "1") not in ("0", "false"):
-            import link_uploads as LU
-            LU.run(conn, a.apply)
-        # ★ AND THE TIMING COMPANIES' ROWS (2026-10-25): a timer meet no feed
-        #   had, promoted by sources/promote.py, is linked by the same rules
-        #   (link_uploads --source timer; rules 'timer' / 'timer_mint')
-        if not a.no_uploads and os.environ.get("XCP_LINK_TIMERS", "1") not in ("0", "false"):
-            import link_uploads as LU
-            LU.run(conn, a.apply, feed=LU.TIMER)
-        if not a.apply:
-            print("[tfrrs-link] dry run -- nothing written; --apply to link")
+
+            if not a.no_freshmen:
+                import link_freshmen as L
+                now = L.academicYear()
+                years = [now - 2, now - 1, now]
+                with conn.cursor() as cur:
+                    fresh_by = L.freshmen(cur, years)
+                    # ★ AND THE YEAR BEFORE EACH, for a gap year (L.pairsAll)
+                    senior_by = L.seniors(cur, L.seniorYears(years))
+                    by_year = L.pairsAll(fresh_by, senior_by, years)
+                    pairs = []
+                    for y in years:
+                        p, skipped = by_year[y]
+                        print(f"[tfrrs-link] pass 2, freshmen {y}: {len(p):,} "
+                              f"pairs; skipped {skipped}")
+                        pairs += p
+                    # ★ AND THE SAME-NAME GROUPS, TOLD APART BY RACE TIMES
+                    #   (L.timePairsAll; its own rule, its own --undo-times)
+                    by_time, _bands = L.timePairsAll(cur, fresh_by, senior_by, years)
+                    tpairs = []
+                    for y in years:
+                        tp, tskip = by_time[y]
+                        print(f"[tfrrs-link] pass 2, race times {y}: {len(tp):,} "
+                              f"pairs; skipped {tskip}")
+                        tpairs += tp
+                conn.rollback()                  # temp tables only
+                pairs = L.dedupePairs(pairs)
+                taken = {p[0] for p in pairs}
+                tpairs = L.dedupePairs([p for p in tpairs if p[0] not in taken])
+                if a.apply and pairs:
+                    moved = L.write(conn, pairs)
+                    print(f"[tfrrs-link] pass 2: joined {len(pairs):,} freshmen; "
+                          f"rows {moved}")
+                # ! WRITTEN ONLY WITH XCP_LINK_TIMES=1 (owner reviews a dry run
+                #   of link_freshmen.py first); reported every run either way
+                times_on = os.environ.get("XCP_LINK_TIMES", "0") not in ("0", "", "false")
+                if tpairs and not times_on:
+                    print(f"[tfrrs-link] pass 2: {len(tpairs):,} race-time pairs found, "
+                          f"not written (XCP_LINK_TIMES=1 to write them)")
+                if a.apply and tpairs and times_on:
+                    moved = L.write(conn, tpairs, rule=L.TIME_RULE)
+                    print(f"[tfrrs-link] pass 2: joined {len(tpairs):,} by race "
+                          f"times; rows {moved}")
+
+            # ★ PASS 2b, HIGH SCHOOL TFRRS ROWS (2026-10-25): an fl. / indiana.tfrrs.org
+            #   meet's runner joins their athletic.net career by name + school +
+            #   grade (scripts/link_tfrrs_hs.py; rule 'tfrrs_hs'), before pass 3
+            #   would mint them a second person. XCP_LINK_TFRRS_HS=0 skips it.
+            if os.environ.get("XCP_LINK_TFRRS_HS", "1") not in ("0", "false"):
+                import link_tfrrs_hs as LH
+                LH.run(conn, a.apply, days=int(os.environ.get("XCP_LINK_TFRRS_HS_DAYS", "14")))
+            if not a.no_mint:
+                with conn.cursor() as cur:
+                    n = mint(cur, a.apply, a.mint_seasons)
+                    print(f"[tfrrs-link] pass 3, mint: {n:,} rows")
+                conn.commit() if a.apply else conn.rollback()
+            # ★ PASS 4, THE UPLOADS (2026-10-10): its own rules, its own log
+            #   rules ('upload' / 'upload_mint'), the same --undo
+            if not a.no_uploads and os.environ.get("XCP_LINK_UPLOADS", "1") not in ("0", "false"):
+                import link_uploads as LU
+                LU.run(conn, a.apply)
+            # ★ AND THE TIMING COMPANIES' ROWS (2026-10-25): a timer meet no feed
+            #   had, promoted by sources/promote.py, is linked by the same rules
+            #   (link_uploads --source timer; rules 'timer' / 'timer_mint')
+            if not a.no_uploads and os.environ.get("XCP_LINK_TIMERS", "1") not in ("0", "false"):
+                import link_uploads as LU
+                LU.run(conn, a.apply, feed=LU.TIMER)
+            if not a.apply:
+                print("[tfrrs-link] dry run -- nothing written; --apply to link")
+        finally:
+            NR.uninstall(conn)
 
 
 if __name__ == "__main__":

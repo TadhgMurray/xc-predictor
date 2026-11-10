@@ -356,7 +356,17 @@ def gather(cur, feed=UPLOAD, rows_sql=None):
     # ⚠ THE WHOLE REGISTRY AND BOTH RESULT TABLES, NOT A SURNAME PREFILTER
     #   (link_teamless gather's rule): a namesake missed here is a link that
     #   looks unique and is not. Grouped before the name key is computed.
-    cur.execute(f"""
+    # ★ BUILT ONCE PER 04a (scripts/name_registry.py, 2026-11-10): when
+    #   link_tfrrs_rows installed the registry on this connection, the same
+    #   pairs come from it, refreshed for every person that moved since.
+    import name_registry as NR
+    if NR.ready(cur.connection):
+        moved = NR.refresh(cur)
+        cur.execute("CREATE TEMP TABLE lu_p AS SELECT DISTINCT person_id, nm, name FROM lu_reg "
+                    "WHERE nm IN (SELECT nm FROM lu_keys)")
+        print(f"[name-registry] namesakes from the registry ({moved:,} persons refreshed)", flush=True)
+    else:
+        cur.execute(f"""
         CREATE TEMP TABLE lu_p AS
         SELECT DISTINCT person_id, nm, name FROM (
             SELECT a.person_id, {nameKeySql('a.first_name', 'a.last_name')} AS nm,
