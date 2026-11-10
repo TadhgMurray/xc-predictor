@@ -32,6 +32,8 @@ fix this track will make next · **PIPELINE** = for the pipeline/data track
 | Sitemap left out the tool pages. | Added the tools and the per-state what-it-takes and projections pages. | build_sitemap |
 | /what-it-takes index was 51 bare links. | A table: each state's hardest division mark to make state (and its easiest), boys and girls, from the stored marks only (never a live compute). | cuts.indexRows |
 | /ncaa index cards said only "32 teams · 9 regions". | Each card names the favourites by win chance, the last team in and the first out, from the stored weekly projection. | ncaa_pages.ncaa_index |
+| Every XC meet share card fell back to the default image (KeyError: slice(None, 10, None): scoreRows returns a dict now). | The card reads scoreRows' teams list. | cards.meetCardData |
+| /meets ?year= showed 0 meets, a date range 1, college level old HS meets: candidates were an arbitrary 3,200 and the date was applied after. | scripts/backfill_meet_dates.py dates every meet from its results (only 172k of 862k had a date) and indexes it; once the index exists the browse picks by date, newest first. | meets_filter.meetDatesIndexed, dateBounds |
 | Tools menu "Training paces" landed on the XC course table (the Paces tab stays hidden until an athlete is chosen). | `#paces` switches the source to an athlete and focuses the athlete box. | conversions.js |
 
 ## Every page
@@ -155,3 +157,67 @@ bare list of states. The plan:
 - School record books (step 13h school part) are nearly empty.
 - school_units junk names; "Remove Remove" (107 races); grade "2010";
   school "11 34-Unattached".
+
+## Second pass, 2026-11-10: features inside the pages
+
+The first pass judged whole pages. This one went through every block,
+tab and button inside them.
+
+**Fixed in this pass**
+- School page "Best athletes" left out the school's best runner (Denton
+  Guyer: Ruel Newberry, national #2): one row per person took the max
+  across pools, and a middle-school number won. Now one row per person per
+  pool (school.schoolTopAthletes).
+- State-meet forecasts kept forecasting meets already run ("64% to finish
+  top 8 if Ruel makes state" after he won it; /projections/mi/1 projecting
+  Jenison 156 pts after it won with 100). The athlete line, the athlete and
+  school odds lines stand down once the state's final is on record; the
+  projections and state-odds pages say the meet has been run and link the
+  result (cuts.stateFinalFor).
+
+**Same job, several places (owner decides)**
+- Forecast a state meet: /projections/<st>/<div> and /state-odds/<st> (the
+  same simulation twice), the /predictions picker, the school tracker's
+  "Projected state place", the athlete line. Keep /projections.
+- Rating to time: /conversions, /scale, the race and course "On the track"
+  tabs, every "5K equiv" column.
+- "What do I need": /goal (74 views), /what-it-takes, the athlete
+  "points short of" line, /recruiting "Enter a time".
+- College fit: /recruiting, /recruit "In college" ranks, athlete "College
+  fit", "Similar runners" and "One-page profile" links.
+- Find recruits: /coaches (0 views, no link anywhere), /coaches/recruits
+  (3 views), /recruiting.
+- Who improved: /breakouts, /movers (0 views), five "most improved" sorts
+  in the recruit search, /recruit "Gain".
+- Forecast one meet: /predictions, /meet/preview, meet "Predict this
+  meet", race "Predict next year" (a field whose seniors have left),
+  /compare "Both athletes in one race".
+- Grade our forecasts: /meet/recap (2 views), /recaps (10), /updates.
+- Team scores: the race page's Teams tab and its Team scores sidebar, both
+  on desktop.
+
+**Bad or noisy features**
+- Athlete page record badges: 215 badges on 116 races; R, RSR and "CR
+  (Overall)" on courses run once.
+- Athlete sidebar "Average rating" (a blend of grade 7 through senior
+  year) and "Best rating" (repeats the header).
+- "1st on team" on club, Junior Olympic and national meets.
+- Course difficulty shown as "+7.8%" with no sign explained.
+- /recruit "Runners like you": "0 of 1 (0%) ran in college" for the
+  national #2 junior; medians over one runner.
+- State projections race every school in the division (MI D1: 159 teams;
+  the real meet had about 27), so team scores are inflated.
+- Home page: 4 levels × 3 tabs × 25 rows of rankings; previews that link
+  to "Nothing to project for this meet yet"; "On this day".
+- Rankings "Show each level's own scale" and the predictions copy of it:
+  against the HS-equivalent rule.
+- /updates prints "MS XC ratings rose 4.0" one day and "fell 4.0" the next.
+- Wrong labels: "IHSAA GIRLS" on a boy; "Grade 19+", "SR-4", "2027 Track",
+  an NCAA season labelled "Professional"; "League 1 · #2 of 18 in 1" on
+  /unit; MI "Class A/B/C/D/OPEN" phantom divisions on projections and what
+  it takes.
+- The same venue as two courses (Michigan International Speedway and
+  "Michigan International Speedway (MIS)"), so the 2026 MHSAA final has no
+  difficulty and is missing from the record history.
+- Nothing tracks clicks on tabs, pickers or most buttons (usage.EVENTS),
+  so most in-page features have no usage numbers.

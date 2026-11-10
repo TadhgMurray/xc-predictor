@@ -543,3 +543,82 @@ def test_only_open_qualifiers_add_a_regions_runners():
               "NCAA Division II Cross Country Championships",
               "NCAA Division III Cross Country Championships"):
         assert not Q.ruleFor(n).get("region_adds"), n
+
+
+# ---- a round not yet run, placed by season rating (owner, 2026-11-10) ---- #
+
+def test_a_round_not_yet_run_is_ordered_by_hs_equivalent_rating(monkeypatch):
+    import pool_view
+    import upcoming_preview as U
+    monkeypatch.setattr(pool_view, "toHs", lambda r, pool, sport=None:
+                        r * (1.2 if pool.startswith("college") else 1.0))
+    teams = [{"school": "Middlebury", "runners": [
+                 {"person_id": 1, "rating": 140.0, "pool": "college_m|x", "hs_rating": 168.0},
+                 {"person_id": 2, "rating": 130.0, "pool": "college_m"}]},
+             {"school": "Williams", "runners": [
+                 {"person_id": 3, "rating": 160.0, "pool": "hs_m"},   # a freshman, HS-rated
+                 {"person_id": 4, "rating": None, "pool": "college_m"}]}]
+    rows = U.ratedRows(teams, extra=[(5, "MIT", 150.0, "college_m"), (1, "X", 1.0, "hs_m")])
+    assert [r[0] for r in rows] == [5, 1, 3, 2]          # 180, 168, 160, 156
+    assert rows[0][1] == "MIT" and rows[1][1] == "Middlebury"
+    assert rows[0][2] < rows[1][2] and abs(rows[0][3] - 180.0) < 1e-9
+
+
+def test_rounds_are_rated_unless_the_model_is_asked_for(monkeypatch):
+    import upcoming_preview as U
+    calls = []
+    monkeypatch.setattr(U, "ratedDiv", lambda cur, m, d, s, add=None: calls.append((m, d)) or [])
+    monkeypatch.delenv("XCP_QUALIFY_BY", raising=False)
+    assert U.predictedDiv(None, 7, 9, "tfrrs") == [] and calls == [(7, 9)]
+    monkeypatch.setenv("XCP_QUALIFY_BY", "model")
+    assert not U.byRating()
+
+
+def test_this_years_ncaa_host_course():
+    """(owner, 2026-11-10) The board's NCAA championships open on this year's
+    host course, not last year's."""
+    import re
+    import upcoming_preview as U
+    d1 = U.hostPattern("NCAA Division I Cross Country Championships", "tfrrs", "2026-11-21")
+    d3 = U.hostPattern("NCAA Division III Cross Country Championships", "tfrrs", "2026-11-21")
+    assert d1 and re.search(d1, "LaVern Gibson Championship Course", re.I)
+    assert d3 and re.search(d3, "Bill Huyck Championship Course", re.I)
+    assert U.hostPattern("NCAA Division I Cross Country Championships", "tfrrs", "2027-11-20") is None
+    assert U.hostPattern("Some Invitational", "anet", "2026-11-21") is None
+
+
+def test_a_schools_other_spelling_joins_its_squad_in_its_state_only():
+    """(owner, 2026-11-10) Dylan Cote's season row is 'Wesleyan (Conn.)';
+    the college feed's regional spells it 'Wesleyan'."""
+    import upcoming_preview as U
+    teams = [{"school": "Wesleyan", "state": "CT", "runners": [{"person_id": 1}]},
+             {"school": "Trinity", "state": "CT", "runners": []}]
+    got = U.spellingExtras(teams, [(9, "Wesleyan (Conn.)", "CT", 115.6, "college_m"),
+                                   (8, "Trinity (Texas)", "TX", 120.0, "college_m"),
+                                   (1, "Wesleyan (Conn.)", "CT", 110.0, "college_m"),
+                                   (7, "Wesleyan", "CT", 100.0, "college_m")])
+    assert got == [(9, "Wesleyan", 115.6, "college_m")]
+
+
+def test_a_school_keeps_its_best_seven(monkeypatch):
+    import pool_view
+    import upcoming_preview as U
+    monkeypatch.setattr(pool_view, "toHs", lambda r, pool, sport=None: r)
+    teams = [{"school": "W", "runners": [{"person_id": i, "rating": 100.0 + i, "pool": "college_m"}
+                                         for i in range(7)]}]
+    rows = U.ratedRows(teams, extra=[(50, "W", 200.0, "college_m"), (51, "X", 90.0, "college_m")])
+    w = [r[0] for r in rows if r[1] == "W"]
+    assert len(w) == 7 and w[0] == 50 and 0 not in w        # the newcomer in, the slowest out
+    assert any(r[0] == 51 for r in rows)                      # a school not in the round: kept
+
+
+def test_the_field_says_which_teams_were_at_large():
+    rule = {"teams_auto": 1, "teams_at_large": 1, "ind_auto": 0, "team_size": 7}
+
+    def team(school, start, n=5):
+        return [(start + i, school, 1000.0 + start + i, 150.0 - start - i) for i in range(n)]
+    rounds = {"east": team("A", 0) + team("B", 10), "west": team("C", 20) + team("D", 40)}
+    explain = {}
+    Q.selectField(rule, rounds, explain=explain)
+    assert explain["auto"] == {"east": ["A"], "west": ["C"]}
+    assert explain["at_large"] == [("east", "B")]               # B is stronger than D

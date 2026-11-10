@@ -37,6 +37,8 @@ def test_browse_views_are_shared(tmp_path, monkeypatch):
     monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "shared"))
     monkeypatch.setattr(sharedcache, "tableOid", lambda cur, t, now=None: 7)
     monkeypatch.setattr(M, "hasMeetUnits", lambda cur: False)
+    # the meet-date probe (backfill_meet_dates) is its own statement
+    monkeypatch.setattr(M, "meetDatesIndexed", lambda cur, sport: False)
     rows = [{"meet_id": 1, "meet_name": "Big Ten", "date": "2026-02-27", "n_results": 900}]
     cur = _Cur(rows)
     a = M.filteredMeets(cur, _f(state="OH"))

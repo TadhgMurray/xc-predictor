@@ -145,7 +145,7 @@ def test_the_pack_asks_the_helper():
     # ! THE TEAM FACTS MOVED INTO rowTeamFacts (P1), which the pack and the
     #   fill both call; the helper is asked there now.
     src = _src("engine/speed_ratings.py")
-    assert "rowTeamFacts(" in _function(src, "packResults")
+    assert "rowTeamFacts(" in _function(src, "_packLoop")   # the row loop, split out of packResults (2026-11-10)
     assert "unattachedEntry(no_team, race_top_level)" in _function(src, "rowTeamFacts")
 
 

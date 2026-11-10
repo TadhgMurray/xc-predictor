@@ -16,8 +16,9 @@ def read(*p):
 
 def test_pipeline_order_and_shards():
     sh = read("deploy", "run_pipeline.sh")
-    assert sh.index("11b_indexes") < sh.index("12_courses") < sh.index("12b_prepare")
-    assert sh.index("12b_prepare") < sh.index("shards 12b_course_pages \"$XCP_COURSE_SHARDS\"") < sh.index("12b_finish")
+    assert sh.index("11b_indexes") < sh.index("12_courses") < sh.index("step 12b_prepare")
+    assert (sh.index("step 12b_prepare") < sh.index("shards 12b_course_pages \"$XCP_COURSE_SHARDS\"")
+            < sh.index("step 12b_finish"))
     assert "shards() {" in sh and '--shard "$k/$n"' in sh
     assert "13c_search_index" in sh and "search_index.py --only units" not in sh
     assert sh.index("13b_pool_consts") < sh.index("13c_search_index")
@@ -44,3 +45,29 @@ def test_search_index_swaps():
     main = src[src.index("def main("):]
     assert (main.index('_dropShadow(cur, "search_index_new")')
             < main.index("for key, fn in _LOADERS.items():"))
+
+
+def test_a_skipped_shard_step_skips_its_prepare_and_finish():
+    # run 20261108_155220 (--fast): 12b_course_pages skipped, 12b_prepare
+    # emptied the shadow, 12b_finish refused to swap it and FAILED the run
+    import subprocess, tempfile, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sh = open(os.path.join(root, "deploy", "run_pipeline.sh")).read()
+    for g in ("12b_course_pages", "12c_venue_pages"):
+        i = sh.index(f"if willRun {g}; then")
+        block = sh[i:sh.index("\nfi\n", i)]
+        assert "prepare" in block and "finish" in block and "else" in block
+    assert "12b_course_pages" in sh[sh.index("FAST_SKIP="):sh.index('if [ "$FAST" -eq 1 ]')]
+    # willRun answers --skip and --from like the steps do
+    a = sh.index("beforeFrom() {"); b = sh.index("\n}\n", a) + 3
+    w = sh.index("willRun() {"); we = sh.index("\n", w)
+    fns = ('skipped() { case "$SKIP" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }\n'
+           + sh[sh.index("_ALWAYS="):sh.index("\n", sh.index("_ALWAYS="))] + "\n"
+           + sh[a:b] + sh[w:we] + "\n")
+    def run(skip, frm):
+        out = subprocess.run(["bash", "-c", fns + f'SKIP="{skip}"; FROM={frm}; willRun 12b_course_pages && echo yes || echo no'],
+                             capture_output=True, text=True)
+        return out.stdout.strip()
+    assert run(",12b_course_pages,", 0) == "no"
+    assert run("", 13) == "no"
+    assert run("", 12) == "yes"

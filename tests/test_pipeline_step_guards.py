@@ -51,7 +51,10 @@ def test_golive_takes_the_advisory_lock_first():
 
 def test_pipeline_holds_a_lock_and_runs_the_diags_in_parallel():
     s = _src("deploy", "run_pipeline.sh")
-    assert "flock -n 9" in s and ".pipeline.lock" in s
+    # the lock is taken through deploy/lockctl.sh (2026-11-09), which flocks fd 9
+    assert "lock_take pipeline exclusive" in s
+    lk = _src("deploy", "lockctl.sh")
+    assert "flock -n 9" in lk and ".pipeline.lock" in lk
     assert "steps2 15_rowguard_diag_xc" in s
     assert 'step 15_rowguard_diag_xc' not in s
 
