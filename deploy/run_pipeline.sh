@@ -1997,6 +1997,16 @@ stepsN 10a_board_sanity "$PY -u scripts/board_sanity.py --top ${XCP_SANITY_TOP:-
 #   before anything that reads those columns: 10g's conference ranks, 11's
 #   team boards (the conferences board), 10f's recruiting.
 step 10d2_restamp_units "$PY" -u racecast/build_ranking_results.py --stage restamp
+# ★ THE BOARDS' VACUUM STARTS HERE, NOT AT THE END (2026-11-10; run
+#   20261108_155220: 18_vacuum 1,150 s in line after the reports). Its two
+#   tables are written by build_ranking_results alone, and 10d2's restamp
+#   is its last stage in the run -- from here they are only read. Same
+#   trickle as before, beside the board steps and 18c; joined just before
+#   18b_integrity_boards, which must read the pages after the vacuum's last
+#   write. 11b only builds an index on them when one is missing (the finish
+#   stage carries the old table's over); that build then queues behind the
+#   vacuum -- no longer than the old order took -- and blocks no reader.
+bgstep 18_vacuum "$PY" -u scripts/gentle_vacuum.py
 # (10e_meet_units ran in the background beside the pack since 2026-11-07)
 stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
        10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
@@ -2239,11 +2249,12 @@ step 17c_report       "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
 #   otherwise summarise()'s notify_owner mail carries WATCHDOG.txt.
 # (17d_watchdog runs in the background since 2026-10-18 -- started after 16)
 
-# ---- the gentle vacuum, last ----------------------------------------- #
+# ---- the gentle vacuum ------------------------------------------------ #
 # the boards tables are built with autovacuum off (createShadow); this is
-# the one pass they need, at a trickle, after everything the site is
-# waiting for has shipped. See scripts/gentle_vacuum.py.
-step 18_vacuum        "$PY" -u scripts/gentle_vacuum.py
+# the one pass they need, at a trickle (scripts/gentle_vacuum.py). Started
+# in the background after 10d2 since 2026-11-10; collected here, before the
+# integrity read below.
+bgjoin 18_vacuum
 # ★ AND THE BOARDS TABLES READ AGAIN, AFTER IT (2026-10-20). Two builds in a
 #   row put a ranking_results live that read clean at build time and had a
 #   bad page hours later -- the server log said "page verification failed,
