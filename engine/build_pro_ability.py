@@ -136,6 +136,24 @@ def scan(min_time=200.0, max_time=6000.0, sports=("XC", "TF"), limit=None):
     #
     # ! THE ROW IS SKIPPED, NOT THE SEASON. One corrupt distance is one bad
     #   mark; the athlete's other races in that season still speak for them.
+    # ★ THE TWO SPORTS SIDE BY SIDE (2026-11-10; run 20261109_033652:
+    #   05c_pro_ability 2,944 s in line, XC then TF through the pack's own
+    #   loader one row at a time). Each sport's loop runs in its own forked
+    #   process (_scanSports); the merge is the one loop's: XC's bests
+    #   first, a TF best replaces one only when STRICTLY faster (the loop's
+    #   `nt < have[0]`), the counts add, the wild sample is XC's then TF's.
+    #   Not with --limit (its stop is order-dependent). XCP_PRO_PARALLEL=0
+    #   is the one loop.
+    if limit is None and len(sports) > 1 and \
+            os.environ.get("XCP_PRO_PARALLEL", "1") not in ("0", "false") and hasattr(os, "fork"):
+        best, n_rows, n_used, n_wild, wild = _scanSports(sports, min_time, max_time)
+        return _finish(best, n_rows, n_used, n_wild, wild)
+    best, n_rows, n_used, n_wild, wild = _scanOne(sports, min_time, max_time, limit)
+    return _finish(best, n_rows, n_used, n_wild, wild)
+
+
+def _scanOne(sports, min_time, max_time, limit=None):
+    """The row loop over `sports`, in order: (best, n_rows, n_used, n_wild, wild)."""
     band = {g: poolBandFor(ABILITY_CURVE_POOL[g], ABILITY_CURVE_SPORT)
             for g in ("M", "F")}
     best = {}
@@ -181,7 +199,65 @@ def scan(min_time=200.0, max_time=6000.0, sports=("XC", "TF"), limit=None):
                 break
         if limit and n_used >= limit:
             break
+    return best, n_rows, n_used, n_wild, wild
 
+
+_PARKED = []
+
+
+def _scanSports(sports, min_time, max_time):
+    """_scanOne per sport in forked processes, merged as the one loop would."""
+    import pickle
+    import shutil
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="pro_ability_")
+    sys.stdout.flush(); sys.stderr.flush()
+    kids = []
+    for sp in sports:
+        path = os.path.join(tmp, f"{sp}.pkl")
+        pid = os.fork()
+        if pid == 0:
+            code = 1
+            try:
+                import database as _db
+                _PARKED.append((_db._pool, _db._slots))      # never closed here
+                _db._pool = None
+                _db._slots = None
+                out = _scanOne((sp,), min_time, max_time)
+                with open(path, "wb") as fh:
+                    pickle.dump(out, fh, protocol=pickle.HIGHEST_PROTOCOL)
+                code = 0
+            except BaseException:                            # noqa: BLE001
+                import traceback
+                traceback.print_exc()
+            sys.stdout.flush(); sys.stderr.flush()
+            os._exit(code)
+        kids.append((sp, pid, path))
+    print(f"[pro-ability] {len(kids)} sports scanned side by side", flush=True)
+    outs, bad = [], []
+    for sp, pid, path in kids:
+        _, status = os.waitpid(pid, 0)
+        if status != 0 or not os.path.exists(path):
+            bad.append(sp)
+            continue
+        with open(path, "rb") as fh:
+            outs.append(pickle.load(fh))
+    shutil.rmtree(tmp, ignore_errors=True)
+    if bad:
+        raise RuntimeError(f"[pro-ability] the {', '.join(bad)} scan failed (traceback above); "
+                           "XCP_PRO_PARALLEL=0 scans in one loop")
+    best, n_rows, n_used, n_wild, wild = {}, 0, 0, 0, []
+    for b, r, u, w, wl in outs:                              # in `sports` order
+        for key, val in b.items():
+            have = best.get(key)
+            if have is None or val[0] < have[0]:
+                best[key] = val
+        n_rows += r; n_used += u; n_wild += w
+        wild += wl[:max(0, 12 - len(wild))]
+    return best, n_rows, n_used, n_wild, wild
+
+
+def _finish(best, n_rows, n_used, n_wild, wild):
     hist = {g: [0] * (len(_BINS) + 1) for g in ("M", "F")}
     able = {}
     for key, (nt, gender) in best.items():
