@@ -676,8 +676,40 @@ def _all(a, conn):
             got.append((key, lm, why))
         return src, got, note
 
+    # ★ MILESPLIT, THE SAME WAY (owner, 2026-11-10: "they both told me it
+    #   was fine, so you wanna do milesplit?"; sources/milesplit.py): every
+    #   state's newest results, the free raw files only. 540 timers in the
+    #   research file post only there. XCP_MILESPLIT=0 leaves it out;
+    #   XCP_MILESPLIT_PER_RUN meets a night.
+    async def milesplitJob():
+        from types import SimpleNamespace
+        from sources import milesplit
+        src = SimpleNamespace(slug=milesplit.SLUG)
+        if (os.environ.get("XCP_MILESPLIT", "1") == "0" or (a.only and milesplit.SLUG not in set(a.only))
+                or not platforms & {"milesplit"}):
+            return src, [], "off"
+        try:
+            meets, note = await milesplit.discover(fetcher, since, int(os.environ.get("XCP_MILESPLIT_PER_RUN", "25")),
+                                                   known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for mt in meets:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(meets) - len(got)} meets wait for the next run"
+                break
+            try:
+                lm, why = await milesplit.readMeet(fetcher, mt, RETRY_AGE if mt["url"] in retry else MAX_AGE)
+                if lm is not None and _recent(lm.date) and mt["url"] not in retry:
+                    lm, why = await milesplit.readMeet(fetcher, mt, RECENT_AGE)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((mt["url"], lm, why))
+        return src, got, note
+
     async def go(f):
-        for fut in asyncio.as_completed([one(s) for s in srcs] + [arrowJob(), raceRosterJob(), iresultsJob()]):
+        for fut in asyncio.as_completed([one(s) for s in srcs]
+                                        + [arrowJob(), raceRosterJob(), iresultsJob(), milesplitJob()]):
             report(*(await fut), f)
 
     with open(out, "w", encoding="utf-8") as f:
