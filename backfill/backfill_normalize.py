@@ -1591,6 +1591,13 @@ def _streamSQL(cfg, age_band=False, rating_pool=False):
     #   the column shape either way, the same trick as event_id above.
     rating_pool_col = ("r.rating_pool" if rating_pool
                        else "NULL::text AS rating_pool")
+    # ★ ONE WORKER'S SHARE (_drainParallel): whole MEETS, so every division
+    #   is read by one worker, in the scan's own order.
+    if _SHARD["n"] > 1:
+        n, k = int(_SHARD["n"]), int(_SHARD["k"])
+        cond = f"((COALESCE(r.meet_id, 0) % {n}) + {n}) % {n} = {k}"
+        only += (f"\n          AND {cond}" if "WHERE" in only
+                 else f"\n        WHERE {cond}")
     return f"""
         SELECT r.result_id, r.source, r.meet_id, r.div_id, {event_id_col},
                {event_short_col}, r.time_seconds, {grade_col},
@@ -3749,6 +3756,140 @@ def _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target):
     return processed, written, skipped, census
 
 
+# ★ THE HOT LOOP IN SEVERAL PROCESSES (2026-11-10, back-end track). Run
+#   20261108_155220's 05_backfill_xc: 42.7M rows through _drainStream at
+#   ~28k rows/s, 26 of its 45 minutes, one Python process -- the per-row
+#   classifier, not the database. Now XCP_BACKFILL_WORKERS (default 3)
+#   forked workers each stream the rows of every n-th MEET (the filter in
+#   _streamSQL), classify them with the same row_fn and lookups (built once,
+#   before the fork, shared copy-on-write), and COPY into the one staging
+#   table. The merge after is unchanged.
+#   THE SAME VALUES: a row's value depends only on the row and the lookups,
+#   and staging is joined by result_id, so the written table is identical.
+#   The census adds up exactly (counts, pool split, the extremes); every
+#   division sits whole in one worker in scan order, so the suspect audit's
+#   per-division sample is the one a single pass takes. Only the percentile
+#   reservoir -- a random sample already -- is a fresh random sample.
+# ! FORK AND THE DATABASE: the child parks the inherited pool (never closed:
+#   closing it would end the parent's sessions) and leaves with os._exit.
+#   Not used for --limit, --profile, a dry run or the update write path.
+_SHARD = {"n": 1, "k": 0}
+_PARKED = []
+
+
+def _backfillWorkers(apply, limit, cfg, staging):
+    import os
+    n = int(os.environ.get("XCP_BACKFILL_WORKERS", "3") or 1)
+    if not apply or limit or staging is None or cfg.write_mode != "copy" \
+            or _SHARD.get("profiling") or not hasattr(os, "fork"):
+        return 1
+    return max(1, n)
+
+
+def _mergeCensus(into, other):
+    for k, v in other.counts.items():
+        into.counts[k] = into.counts.get(k, 0) + v
+    for v, tr in other.fastest.sorted_items():
+        into.fastest.offer(v, tr)
+    for v, tr in other.slowest.sorted_items():
+        into.slowest.offer(v, tr)
+    # two uniform samples -> one, each value kept in proportion to its share
+    a, b = into.reservoir, other.reservoir
+    seen = a._seen + b._seen
+    if b._buf:
+        pool = [(x, a._seen / max(len(a._buf), 1)) for x in a._buf] + \
+               [(x, b._seen / max(len(b._buf), 1)) for x in b._buf]
+        if len(pool) > a._cap:
+            pool = random.choices([x for x, _ in pool], weights=[w for _, w in pool], k=a._cap)
+        else:
+            pool = [x for x, _ in pool]
+        a._buf = list(pool)
+    a._seen = seen
+    for key, st in other.suspects.stats.items():
+        mine = into.suspects.stats.get(key)
+        if mine is None:
+            into.suspects.stats[key] = st
+        else:                                   # (a division never splits: belt and braces)
+            mine["n"] += st["n"]; mine["under"] += st["under"]; mine["corrupt"] += st["corrupt"]
+            if st["min"] is not None and (mine["min"] is None or st["min"] < mine["min"]):
+                mine["min"] = st["min"]
+            mine["sample"] = (mine["sample"] + st["sample"])[:64]
+    for key, v in other.pool_split.items():
+        into.pool_split[key] = into.pool_split.get(key, 0) + v
+    return into
+
+
+def _drainChild(cfg, row_fn, target, n, k, path):
+    import os
+    import pickle
+    code = 1
+    try:
+        import database as _db
+        _PARKED.append((_db._pool, _db._slots))
+        _db._pool = None
+        _db._slots = None
+        _SHARD["n"], _SHARD["k"] = n, k
+        with getConn() as read_conn, getConn() as write_conn:
+            _assertDistinctBackends(read_conn, write_conn)
+            stream = _openStream(read_conn, cfg)
+            try:
+                out = _drainStream(stream, write_conn, cfg, row_fn, True, 0, target)
+            finally:
+                _closeStreamQuietly(stream)
+                _releaseReadLocks(read_conn)
+        census = out[3]
+        census.pool_split = dict(getattr(row_fn, "pool_split", {}))
+        with open(path, "wb") as fh:
+            pickle.dump((out[0], out[1], out[2], census), fh,
+                        protocol=pickle.HIGHEST_PROTOCOL)
+        code = 0
+    except BaseException:                       # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+    sys.stdout.flush(); sys.stderr.flush()
+    os._exit(code)
+
+
+def _drainParallel(cfg, row_fn, target, n):
+    import os
+    import pickle
+    import shutil
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix=f"backfill_{cfg.sport.lower()}_")
+    sys.stdout.flush(); sys.stderr.flush()
+    kids = []
+    for k in range(n):
+        path = os.path.join(tmp, f"{k}.pkl")
+        pid = os.fork()
+        if pid == 0:
+            _drainChild(cfg, row_fn, target, n, k, path)      # never returns
+        kids.append((k, pid, path))
+    print(f"[{cfg.sport}] {n} workers, each every {n}th meet: "
+          + ", ".join(f"pid {pid}" for _, pid, _ in kids), flush=True)
+    outs, bad = [], []
+    for k, pid, path in kids:
+        _, status = os.waitpid(pid, 0)
+        if status != 0 or not os.path.exists(path):
+            bad.append(k)
+            continue
+        with open(path, "rb") as fh:
+            outs.append(pickle.load(fh))
+    shutil.rmtree(tmp, ignore_errors=True)
+    if bad:
+        raise RuntimeError(f"[{cfg.sport}] backfill worker(s) {bad} failed (traceback "
+                           "above); the staging table is incomplete and is not merged. "
+                           "XCP_BACKFILL_WORKERS=1 runs the one loop")
+    processed = sum(o[0] for o in outs)
+    written = sum(o[1] for o in outs)
+    skipped = sum(o[2] for o in outs)
+    census = outs[0][3]
+    for o in outs[1:]:
+        _mergeCensus(census, o[3])
+    print(f"[{cfg.sport}] all workers: processed {processed:,} | written {written:,} | "
+          f"skipped {skipped:,}", flush=True)
+    return processed, written, skipped, census
+
+
 # _runBackfill
 # Purpose : orchestrate ONE sport end to end with TWO connections — a read
 #           connection holding the server-side stream, and a separate write
@@ -3799,13 +3940,20 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
         staging = _createStaging(write_conn, cfg.sport)
         target = staging
 
-    stream = _openStream(read_conn, cfg)           # server-side cursor, single scan
-    try:
-        out = _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target)
-        out[3].pool_split = getattr(row_fn, "pool_split", {})
-    finally:
-        _closeStreamQuietly(stream)                # never masks the real error
-        _releaseReadLocks(read_conn)               # MUST precede the merge (see above)
+    n_workers = _backfillWorkers(apply, limit, cfg, staging)
+    if n_workers > 1:
+        # the parent's read transaction is already committed (above); the
+        # workers open their own connections and streams
+        write_conn.commit()
+        out = _drainParallel(cfg, row_fn, target, n_workers)
+    else:
+        stream = _openStream(read_conn, cfg)       # server-side cursor, single scan
+        try:
+            out = _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target)
+            out[3].pool_split = getattr(row_fn, "pool_split", {})
+        finally:
+            _closeStreamQuietly(stream)            # never masks the real error
+            _releaseReadLocks(read_conn)           # MUST precede the merge (see above)
 
     # The read transaction is now over, so its ACCESS SHARE lock on `table` is
     # gone and the merge's ALTER TABLE ... RENAME can take ACCESS EXCLUSIVE.
@@ -4044,6 +4192,7 @@ def _runOneSport(sport: str, apply: bool, limit: int, profile: bool = False,
 
     with getConn() as read_conn, getConn() as write_conn:
         if profile:
+            _SHARD["profiling"] = True             # one loop: cProfile sees one process
             processed, written, skipped, census = _profiled(
                 _runBackfill, read_conn, write_conn, cfg, apply, limit)
         else:
