@@ -465,3 +465,16 @@ def test_a_race_of_college_teams_reads_class_years_as_college_classes():
     lm = L.fromHytek(hytek.Meet(name="Steve Reeder Invite", date="2026-09-25",
                                 events=[hytek.Event(1, "F", "Women 6k", 6000.0, rows=rows)]), "t", "u")
     assert {r.grade for r in lm.races[0].rows} == {"FR"}
+
+
+def test_a_plain_fixed_width_report_is_read_when_no_hytek_layout_fits():
+    # T&H Timing's 2026 PCC boys varsity PDF, as pdftotext gives it: "Place
+    # Bib Name Year Team Name ... Clock Time Pace", the times under "Clock"
+    text = read("tests", "fixtures", "timers", "th_2026_pcc_boys_varsity.txt")
+    m = T._fixedWidth(text)
+    (e,) = m.events
+    assert e.gender == "M" and len(e.rows) == 47
+    r = e.rows[0]
+    assert (r.place, r.first, r.last, r.grade, r.school, r.seconds) == (1, "Willy", "Wilks", "10",
+                                                                      "Washington Township", 1027.56)
+    assert m.date == ""        # this PDF prints no date: it is not landed on a guess

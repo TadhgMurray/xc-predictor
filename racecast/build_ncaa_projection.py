@@ -566,6 +566,10 @@ def project(div, gender, teams, team_of, races, draws, seed=0, asof=None):
             "proj": status.get(t, "out" if t in region_of else None),
             "wins_now": int(W[t, credit].sum()),
             "wins_season": int(W[t].sum()),
+            # ★ THE SEVEN WHO RUN (owner, 2026-11-10: the predictions page's
+            #   NCAA field comes from this projection, upcoming_preview.
+            #   projectionField): the squad the regionals were drawn with
+            "runners": [int(r["pid"]) for r in tm["runners"][:SQUAD]],
         })
 
     def winsDetail(t):
