@@ -237,7 +237,43 @@ async def _hytekReport(fetcher, slug, url, body, max_age=MAX_AGE):
         meet = meetreport.parseRunMeet(text, url)
     elif not any(e.rows for e in meet.events) and meetreport.isTabbed(text):
         meet = meetreport.parseTabbed(text, url)
+    if not any(e.rows for e in meet.events):
+        meet = _fixedWidth(text) or meet
     return land.fromHytek(meet, slug, url)
+
+
+_DATE_LINE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b|\b([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})\b")
+
+
+def _fixedWidth(text):
+    """★ ONE MORE LAYOUT (2026-11-10, T&H Timing's 2026 PCC PDF): a plain
+    fixed-width list under a "Place Bib Name Year Team Name ... Time" header,
+    no Hy-Tek lines. sources.raceroster.textRows reads it; the race is the
+    text's first line, the date the first one printed near the top.
+    -> hytek.Meet, or None. Pure."""
+    import datetime as _dt
+    from sources.raceroster import textRows
+    rows = [r for r, _s in textRows(text)]
+    if not rows:
+        return None
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    title = lines[0] if lines else ""
+    date = None
+    for ln in lines[:12]:
+        m = _DATE_LINE.search(ln)
+        if not m:
+            continue
+        try:
+            date = (_dt.date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m.group(1)
+                    else _dt.datetime.strptime(f"{m.group(4)} {m.group(5)} {m.group(6)}", "%B %d %Y").date())
+            date = date.isoformat()
+            break
+        except ValueError:
+            continue
+    t = title.lower()
+    g = "F" if re.search(r"\b(girl|women|female)", t) else ("M" if re.search(r"\b(boy|men|male)", t) else "")
+    return hytek.Meet(name=title, date=date or "", events=[hytek.Event(number=1, gender=g, title=title,
+                                                                        meters=hytek.metersOf(title), rows=rows)])
 
 
 def _urls(a):

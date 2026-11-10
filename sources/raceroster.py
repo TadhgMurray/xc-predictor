@@ -120,7 +120,7 @@ _LABELS = {
     "school": ("school", "team", "team name", "school name"),
     "grade": ("grade", "year", "class", "yr", "cla", "gr"),
     "time": ("time", "gun elapsed time", "gun time", "guntime", "chip elapsed time", "finish time",
-             "chip time"),
+             "chip time", "clock time"),
     "gender": ("gender", "sex"),
 }
 
@@ -195,8 +195,20 @@ def _spans(head, ruler):
             out.append((st, nxt, " ".join(head[st:en + 1].split()).lower()))
         return out
     words = [(m.start(), m.group(0)) for m in re.finditer(r"\S+", head)]
-    return [(st, words[k + 1][0] if k + 1 < len(words) else None, w.lower())
-            for k, (st, w) in enumerate(words)]
+    # ! A TWO-WORD HEADING IS ONE COLUMN ("Team Name", "Clock Time": T&H
+    #   Timing's 2026 PCC PDF cut the school at "Name" -- "Washi")
+    merged = []
+    for st, w in words:
+        if merged and f"{merged[-1][1]} {w}".lower() in _PAIRS:
+            merged[-1] = (merged[-1][0], f"{merged[-1][1]} {w}")
+        else:
+            merged.append((st, w))
+    return [(st, merged[k + 1][0] if k + 1 < len(merged) else None, w.lower())
+            for k, (st, w) in enumerate(merged)]
+
+
+_PAIRS = {"team name", "school name", "first name", "last name", "full name", "clock time", "chip time",
+          "gun time", "finish time", "race place", "overall place", "team place", "team score"}
 
 
 def _textColumns(spans, sample):
@@ -260,9 +272,15 @@ def textRows(text):
         for ln in body:
             cut = lambda f: ((ln[cols[f][0]:cols[f][1]] if cols[f][1] else ln[cols[f][0]:])  # noqa: E731
                              if f in cols else "").strip()
+            # ! THE TIME CAN START LEFT OF ITS HEADING (T&H Timing's 2026 PCC
+            #   PDF: "Clock Time" over "17:07.56", the column cut at "Time"
+            #   gave "7.56"): the first time-shaped token from a little
+            #   before the column on -- the pace, to its right, comes after
+            tre = r"\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|\bDN[FS]\b|\bDQ\b"
             mark = cut("time")
-            tm = re.search(r"\d{1,2}:\d{2}(?::\d{2})?(?:\.\d+)?|\bDN[FS]\b|\bDQ\b",
-                           mark or (ln[cols["time"][0]:] if "time" in cols else ""))
+            tm = re.fullmatch(tre, mark) if mark else None
+            if not tm and "time" in cols:
+                tm = re.search(rf"(?<![\d:.])(?:{tre})", ln[max(0, cols["time"][0] - 12):])
             row = _row(cut("place"), cut("name"), cut("first"), cut("last"), cut("grade"),
                        cut("school"), tm.group(0) if tm else "")
             if row:
