@@ -124,21 +124,23 @@ class Meet:
 #   then the meet's name and day -- no "Meet Manager" line at all, so none
 #   was read as a report)
 _HEADER = re.compile(r"hy-tek'?s\s+(?:meet|team)\s+manager|^[^\n]{3,90}\s-\s+Contractor License\s*$", re.I | re.M)
-_EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)\b\s*(.*)$", re.I)
+# ★ "WOMENS" / "MENS" (2026-11-10, Licensed to Finish on MileSplit: "Event 1
+#   Womens 3200 Meter Run"): the word boundary after "Women" read no event
+_EVENT = re.compile(r"^\s*Event\s+(\d+)\s+(Girls|Boys|Women|Men|Mixed|Coed)(?:'?s)?\b\s*(.*)$", re.I)
 # ★ THE GENDER CAN COME LAST (2026-10-23, LiveTrackResults' youth meets:
 #   "Event 1  2000 Meter Run CC 8 & Under Division Girls"): the first pattern
 #   read no events at all on those pages
 _EVENT_ANY = re.compile(r"^\s*Event\s+(\d+)\s+(\S.*?)\s*$", re.I)
 # ★ OR A LETTER IN PARENTHESES (2026-11-09, TRXC Timing's GLVC and MSHSAA
 #   reports: "Event 1  (M) 8k Run CC"): no event at all was read on them
-_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)\b|\(([MFWBG])\)", re.I)
+_GENDER_WORD = re.compile(r"\b(Girls|Boys|Women|Men|Mixed|Coed)(?:'?s)?\b|\(([MFWBG])\)", re.I)
 _GENDER_LETTER = {"m": "men", "b": "boys", "f": "women", "w": "women", "g": "girls"}
 # ★ A "RANKINGS" REPORT HAS NO EVENT LINE (2026-10-25, YenTiming's Wayne
 #   Invitational modified races): the race's title stands alone --
 #   "Boys 2400 Meter Run CC Modified" -- above a header with a Comp# column
 #   and an unlabelled grade. A bare title is an event when it starts with a
 #   gender word, names a race, and a Name ... Time header follows.
-_BARE_EVENT = re.compile(r"^\s*(Girls|Boys|Women|Men|Mixed|Coed)\s+(\S.*\b(Run|Meters?|Mile|Dash|Hurdles|"
+_BARE_EVENT = re.compile(r"^\s*(Girls|Boys|Women|Men|Mixed|Coed)(?:'?s)?\s+(\S.*\b(Run|Meters?|Mile|Dash|Hurdles|"
                          r"Steeplechase|Walk|\d+(?:\.\d+)?\s*k)\b.*?)\s*$", re.I)
 _TITLE_DATE = re.compile(r"^(.*?)\s+-\s+(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})(?:\s+to\s+\S+)?\s*$")
 # ★ SPRINTS UNDER TEN SECONDS AND THOUSANDTHS (parser review, 2026-11-02):
@@ -148,6 +150,10 @@ _MARK = r"(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,3})?|\d{1,3}\.\d{1,3}"
 _ROW_TAIL = re.compile(rf"\s+(?P<mark>{_MARK}|DNF|DQ|DNS|NT|SCR)\s*(?:[*#xXqQ]\s*)?(?P<pts>\d+)?"
                        rf"(?:\s+(?:[+-]\d{{1,2}}\.\d|NWI))?\s*$")
 _PLACE = re.compile(r"^\s*(\d+|--|-)\s+")
+# ★ "ATHLETE" FOR "NAME", AND A BARE "#" OVER THE BIB (2026-11-10, HXN
+#   Championships on MileSplit: "#  Athlete  Yr Team  Mark  H#" -- no row
+#   was read, and the bib would have opened every name)
+_NAME_HEAD = re.compile(r"(?<!\S)(?:Name|Athlete)(?!\S)")
 _GRADE_WORD = r"(?:FR|SO|JR|SR)-\d|\d{1,2}|FR|SO|JR|SR|R?FR|R?SO|R?JR|R?SR|GR|M?\d"
 _GENDER = {"girls": "F", "women": "F", "boys": "M", "men": "M"}
 
@@ -189,7 +195,7 @@ def metersOf(title):
 def _columns(header):
     """Start columns of the grade and school fields, from the header line."""
     cols = {}
-    if re.search(r"(?<!\S)Comp#?(?!\S)", header):
+    if re.search(r"(?<!\S)Comp#?(?!\S)", header) or re.search(r"(?<!\S)#(?!\S)\s+(?:Name|Athlete)\b", header):
         cols["comp"] = True
     for name, keys in (("grade", ("Year", "Yr", "Grade", "Gr", "Age", "Cl")),
                        ("school", ("School", "Team", "Affiliation"))):
@@ -215,6 +221,9 @@ def _columns(header):
             cols["seed"] = before[0].start()
         if re.search(r"(?<!\S)(Avg|Pace|Mile)(?!\S)", header[res.end():], re.I):
             cols["pace"] = True
+        # a heat column after the result ("Mark  H#") is not points
+        if re.search(r"(?<!\S)H#(?!\S)", header[res.end():]) and not re.search(r"(?i)points|pts", header):
+            cols["heat"] = True
     return cols
 
 
@@ -252,6 +261,8 @@ def _parseRow(line, cols):
             pts = after.group(1) if after else None
     if mark is None:
         return None
+    if cols.get("heat"):
+        pts = None
     place = int(pm.group(1)) if pm.group(1).isdigit() else None
     body = line[:cut]
     if "seed" in cols:
@@ -310,7 +321,10 @@ def parseReport(text):
             meet.licensee = meet.licensee or re.split(r"\s{2,}|hy-tek", line, flags=re.I)[0] \
                 .replace(" - Contractor License", "").replace("Licensed to", "").strip()
             # the next non-empty lines are the title and the venue
-            nxt = [l.strip() for l in lines[i + 1:i + 4] if l.strip()]
+            # ★ TWO BANNER LINES (2026-11-10, Extra Mile Timing: "Licensed to
+            #   ... - Contractor License" over "HY-TEK's Meet Manager 5/6/2026"):
+            #   the second was taken for the meet's name
+            nxt = [l.strip() for l in lines[i + 1:i + 5] if l.strip() and not _HEADER.search(l)][:3]
             if nxt and not meet.name:
                 t = _TITLE_DATE.match(nxt[0])
                 if t:
@@ -337,7 +351,7 @@ def parseReport(text):
             anyev = _EVENT_ANY.match(line)
             gw = _GENDER_WORD.search(anyev.group(2)) if anyev else None
         bare = None if (ev or (anyev and gw)) else _BARE_EVENT.match(line)
-        if bare and not any(re.search(r"(?<!\S)Name(?!\S)", l) and re.search(r"Time|Finals", l, re.I)
+        if bare and not any(_NAME_HEAD.search(l) and re.search(r"Time|Finals|Mark", l, re.I)
                             for l in lines[i + 1:i + 3]):
             bare = None
         if bare:
@@ -372,7 +386,7 @@ def parseReport(text):
             continue
         if re.match(r"^\s*=+\s*$", line):
             continue
-        if re.search(r"(?<!\S)Name(?!\S)", line) and re.search(r"Finals|Time|Results|Mark", line, re.I):
+        if _NAME_HEAD.search(line) and re.search(r"Finals|Time|Results|Mark", line, re.I):
             cols, in_rows = _columns(line), True
             continue
         if not in_rows:

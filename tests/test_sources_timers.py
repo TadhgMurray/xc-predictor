@@ -478,3 +478,23 @@ def test_a_plain_fixed_width_report_is_read_when_no_hytek_layout_fits():
     assert (r.place, r.first, r.last, r.grade, r.school, r.seconds) == (1, "Willy", "Wilks", "10",
                                                                       "Washington Township", 1027.56)
     assert m.date == ""        # this PDF prints no date: it is not landed on a guess
+
+
+def test_a_meet_name_with_last_years_template_year_takes_its_dates_year():
+    from sources.land import yearOfDate
+    assert yearOfDate("STATE XC 2025", "2026-11-05") == "STATE XC 2026"
+    assert yearOfDate("2025 Fall Classic", "2026-09-01") == "2026 Fall Classic"
+    assert yearOfDate("Holiday Classic 2025", "2026-01-03") == "Holiday Classic 2025"
+    assert yearOfDate("Meet 2024", "2026-09-01") == "Meet 2024"
+    assert yearOfDate("Big 12 XC", "2026-10-31") == "Big 12 XC"
+
+
+def test_a_second_banner_line_is_not_the_meets_name():
+    from sources import hytek
+    text = ("Licensed to Extra Mile Timing - Contractor License\n"
+            "                 HY-TEK's Meet Manager 5/6/2026 06:25 PM\n"
+            "       Crosstown League Finals - 5/6/2026\n"
+            "              LA SouthWest College\n"
+            "                     Results\n")
+    m = hytek.parseReport(text)
+    assert (m.name, m.date, m.venue) == ("Crosstown League Finals", "2026-05-06", "LA SouthWest College")

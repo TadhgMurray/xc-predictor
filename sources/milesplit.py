@@ -30,6 +30,7 @@ from sources import hytek, land
 SLUG = "milesplit"
 STATES = ("al ak az ar ca co ct de dc fl ga hi id il in ia ks ky la me md ma mi mn ms mo mt ne nv "
           "nh nj nm ny nc nd oh ok or pa ri sc sd tn tx ut vt va wa wv wi wy").split()
+_TRACK_PLACE = re.compile(r"(?i)\b(track|indoor|fieldhouse)\b(?!\s*(?:(?:&|and)\s*field\s+)?club)")
 _LOGIN = re.compile(r"(?i)<form[^>]+action=\"[^\"]*/login|you must be logged in|sign in to view")
 
 
@@ -205,6 +206,7 @@ async def readMeet(fetcher, meet, max_age):
         return None, got.note or f"HTTP {got.status}"
     page = got.body.decode("utf-8", "replace")
     m = hytek.Meet(name=meet["name"], date=meet["date"], venue=meet["venue"])
+    heads = [meet["name"] or "", meet["venue"] or ""]
     for u in rawUrls(page, meet["url"]):
         r = await _get(fetcher, u, max_age)
         if not r.body:
@@ -212,14 +214,23 @@ async def readMeet(fetcher, meet, max_age):
         body = r.body.decode("utf-8", "replace")
         if _LOGIN.search(body) and "<pre" not in body.lower() and "<table" not in body.lower():
             continue                                  # behind a login: not read
-        for e in eventsOf(rawText(body)):
+        text = rawText(body)
+        for ln in text.splitlines()[:8]:              # the banner: above the first rule or event
+            if re.match(r"\s*(=|-{5}|Event\s+\d)", ln):
+                break
+            heads.append(ln)
+        for e in eventsOf(text):
             e.number = len(m.events) + 1
             m.events.append(e)
     # ★ THE SEASON SAYS THE SPORT (2026-11-10, Section 5 Championships:
     #   "Boys Class C - 5K Run", no cross country word anywhere, read as
     #   track). MileSplit's lists mix both sports; a meet run from August to
     #   mid-December with no sprint, hurdle or field event is cross country.
-    if isFallMeet(meet["date"]) and not land.isTrackMeet([e.title for e in m.events]):
+    # ! NOT ON A TRACK (2026-11-10, Athletes in Action Evening of Miles: a
+    #   November 3200 and mile "at Athletes in Action Track"): a meet whose
+    #   name, venue or report banner says track or indoor keeps its sport.
+    if isFallMeet(meet["date"]) and not land.isTrackMeet([e.title for e in m.events]) \
+            and not any(_TRACK_PLACE.search(h) for h in heads):
         for e in m.events:
             e.sport = "XC"
     lm = land.fromHytek(m, SLUG, meet["url"])

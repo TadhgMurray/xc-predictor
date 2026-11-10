@@ -331,6 +331,20 @@ def withoutReprints(races):
 _TRACK_ONLY = re.compile(r"hurdle|steeple|dash|\b(?:55|60|100|110|200|300|400)\s*(?:m\b|meters?)", re.I)
 
 
+def yearOfDate(name, date):
+    """A meet name whose own year is not its date's -> the date's year
+    (2026-11-10, Y Timing's state meet: "STATE XC 2025" on the 11/5/2026
+    report, last year's template). Only a lone trailing or leading year
+    one off; "2025-26 Indoor" and the like are left alone. Pure."""
+    m = re.fullmatch(r"(.*?\S)\s+(20\d\d)|(20\d\d)\s+(\S.*)", name or "")
+    if not m or not date or not re.match(r"20\d\d-(0[2-9]|1[0-2])", str(date)):   # January: a December meet's name
+        return name
+    yr, want = int(m.group(2) or m.group(3)), int(str(date)[:4])
+    if abs(yr - want) != 1:
+        return name
+    return f"{m.group(1)} {want}" if m.group(2) else f"{want} {m.group(4)}"
+
+
 def isTrackMeet(titles):
     """A meet holding a sprint, hurdles, a steeplechase or a field event is a
     track meet, whatever its longest race. Pure."""
@@ -422,7 +436,7 @@ def _landedRows(rows, date=None):
 def fromHytek(meet, slug, url):
     """sources.hytek.Meet -> LandedMeet. Events with no rows, relays and
     field events are left out: the engine rates individual running races."""
-    lm = LandedMeet(slug=slug, url=url, name=meet.name, date=meet.date, venue=meet.venue,
+    lm = LandedMeet(slug=slug, url=url, name=yearOfDate(meet.name, meet.date), date=meet.date, venue=meet.venue,
                     place="", state=stateOf(meet.venue), licensee=meet.licensee)
     track = isTrackMeet([e.title for e in meet.events])
     for e in meet.events:
