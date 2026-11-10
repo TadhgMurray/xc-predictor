@@ -472,8 +472,12 @@ def test_generated_lines_in_the_hand_dict_are_judged_as_generated():
         "    (9756, 1): 5000,           # used 3200, inferred 4980 (err 1%), gap +11.0, n=33",
         "    (1234, 5): 6000,  # owner: the Mt. SAC 6K, not 5K",
         "    (777, 7): 4000,",
+        "    (194004, 811037): 2092,  # was 3000, field +48.7 over its own heads, n=63, snap +0.3%  -- Laverne Gibson Course",
+        "    (194004, 811038): 2655,  # was 3000, field +15.5 over its own heads, n=237, snap +0.7%",
+        "    (55, 6): 4000,  # was 5000, field +20.1 over the POOL median (COLD, career-less), n=30, snap +1.0%",
     ]
-    assert WD.generatedKeys(lines) == {(283954, 1129465), (9640, 2), (9756, 1)}
+    assert WD.generatedKeys(lines) == {(283954, 1129465), (9640, 2), (9756, 1),
+                                       (194004, 811037), (194004, 811038), (55, 6)}
     # and a generated one shorter than the times say is replaced, not listed
     assert WD.overrideVerdict(3000, 2253, 3000, 40, hand=False)[0] == "replace"
     assert WD.overrideVerdict(3000, 2253, 3000, 40, hand=True)[0] == "list"

@@ -151,8 +151,13 @@ HAND_DICT = "_DISTANCE_OVERRIDES_XC"     # the hand-typed overrides in correctio
 #   "list"ed, never vetoed: "a hand-typed one only underrates, so it stays".
 #   A generated one is judged as generated: the times reject it, it goes.
 GENERATED_DICT = "generated:_DISTANCE_OVERRIDES_XC"
-_GEN_LINE = re.compile(r"^\s*\((-?\d+),\s*(-?\d+)\):\s*[\d.]+,\s*#\s*(?:was|used)\s+\d+,"
-                       r"\s*(?:inferred|small side ran)")
+# ! AND scripts/rebuild_overrides.py's passes: "# was 3000, field +48.7 over
+#   its own heads, n=63, snap +0.3%" (the IN Middle School Championship's
+#   girls, 2092 and 2655 m, owner's server read 2026-11-10), "over the POOL
+#   median (COLD, career-less)".
+_GEN_LINE = re.compile(r"^\s*\((-?\d+),\s*(-?\d+)\):\s*[\d.]+,\s*#\s*(?:was|used)\s+\d+(?:\.\d+)?,"
+                       r"\s*(?:inferred|small side ran|field\s+[+-]?[\d.]+\s+over\s+(?:its own heads|the POOL))")
+_GEN_WORDS = ("inferred", "small side ran", "over its own heads", "over the POOL")
 
 
 def generatedKeys(lines):
@@ -160,7 +165,7 @@ def generatedKeys(lines):
     Pure over an iterable of corrections.py lines."""
     out = set()
     for line in lines:
-        if "inferred" not in line and "small side ran" not in line:
+        if not any(w in line for w in _GEN_WORDS):
             continue
         m = _GEN_LINE.match(line)
         if m:
