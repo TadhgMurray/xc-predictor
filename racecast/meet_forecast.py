@@ -336,6 +336,33 @@ def latestScoredDate(cur):
     return _day(row.get("d")) if isinstance(row, dict) else None
 
 
+def upcomingKeys(cur, today):
+    """{(source, meet_id)} of the meets with a stored forecast still to be
+    run: the ones whose preview has a field (the entries, or last year's
+    edition carried forward). The home page's "Preview" link names only
+    these (audit 2026-11-10: it opened "Nothing to project for this meet
+    yet" for a USATF association meet)."""
+    if not tableReady(cur):
+        return set()
+    try:
+        cur.execute("SAVEPOINT mf_up")
+        cur.execute(f"""SELECT DISTINCT source, meet_id FROM {TABLE}
+                        WHERE meet_date >= %s""", (str(today),))
+        rows = cur.fetchall()
+        cur.execute("RELEASE SAVEPOINT mf_up")
+    except Exception:                                   # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT mf_up")
+        except Exception:                               # noqa: BLE001
+            pass
+        return set()
+    out = set()
+    for r in rows:
+        src, mid = (r["source"], r["meet_id"]) if isinstance(r, dict) else (r[0], r[1])
+        out.add((src, int(mid)))
+    return out
+
+
 def recapKeys(cur, today):
     """{(source, meet_id)} of the meets with a stored forecast whose day has
     come: the ones a meet page, the preview and the home page link to a

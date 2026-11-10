@@ -221,3 +221,25 @@ tab and button inside them.
   difficulty and is missing from the record history.
 - Nothing tracks clicks on tabs, pickers or most buttons (usage.EVENTS),
   so most in-page features have no usage numbers.
+
+## Owner decisions, 2026-11-10
+
+- Done: /movers cut (301 to /breakouts); the "own scale" toggle cut from
+  rankings and predictions; /recruit "Runners like you" hidden below 10
+  matches; the athlete page's College fit / Similar runners / One-page
+  profile links merged into one "Recruiting" link for a current high
+  schooler (to /recruit, which links the other two) or a current college
+  runner (to /recruiting's Transfers tab); the home "Preview" link only
+  for a meet with a stored forecast (entries or last year's field).
+- Kept: race-page team scores in both places; the home rankings snapshot.
+- Logged for the data chats: state projections race every school, not the
+  qualifiers; phantom divisions and unit labels.
+- Open, shown to the owner as renders: "1st on team" outside scored team
+  races, record badges (keep only PR and SR?), "On this day", the top of
+  the athlete page, merging state odds into projections.
+- "Predict next year" keeps graduating seniors until August: the race
+  link opens the this-season field, and _currentSquads only ages a season
+  out once academicYear(today) has moved past it. The fix is a next-year
+  mode threaded from the race link through /api/predict/field to
+  _currentSquads (read the season as finished: drop the terminal grade,
+  age grades, drop transfers). Predictions page: owner to say who does it.

@@ -42,10 +42,8 @@ def test_the_page_loads_the_view_before_the_script_that_reads_it():
     tags = re.findall(r"<script src=\"\{\{ static_v\('([^']+)'\)", html)
     assert "scale-view.js" in tags and "predictions.js" in tags
     assert tags.index("scale-view.js") < tags.index("predictions.js"), tags
-    assert 'from "_scale.html" import scale_toggle' in html
-    # hidden at render: the rosters are fetched, so the server cannot know
-    # whether this meet has a pool the factor moves
-    assert "scale_toggle(hidden=True)" in html
+    # ★ the own-scale toggle is cut (owner, 2026-11-10)
+    assert "{{ scale_toggle(" not in html
 
 
 def test_every_rating_the_page_draws_goes_through_rv():

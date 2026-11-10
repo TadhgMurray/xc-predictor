@@ -125,6 +125,16 @@ def _previewHelpers():
                      if m["sport"] == sport]
         except Exception:                               # noqa: BLE001
             return None
+        # ★ ONLY A MEET WHOSE PREVIEW HAS A FIELD (audit 2026-11-10): a
+        #   stored forecast (the entries, or last year's edition carried
+        #   forward); none of the week's meets has one, no link
+        try:
+            have = _upcomingKeys()
+        except Exception:                               # noqa: BLE001
+            have = set()
+        meets = [m for m in meets
+                 if ("tfrrs" if m.get("source") == "tfrrs" else "anet",
+                     int(m["meet_id"])) in have]
         if not meets:
             return None
         top = max(meets, key=lambda m: (m["n_races"], -len(m["date"] or "")))
@@ -153,6 +163,19 @@ def _previewHelpers():
 # ★ ONE READ PER WORKER PER TTL for every link to a recap on every page: the
 #   set of (source, meet_id) with a stored forecast whose day has come
 _RECAP_KEYS_TTL = 3600.0
+
+
+def _upcomingKeys():
+    import meet_forecast as MF
+
+    def compute():
+        with getConn() as conn:
+            with _cursor(conn) as cur:
+                out = MF.upcomingKeys(cur, _today())
+                conn.rollback()
+                return out
+    return ttlcache.get(("upcoming_keys", _today().isoformat()), compute,
+                        ttl=_RECAP_KEYS_TTL)[0]
 
 
 def _recapKeys():
@@ -304,28 +327,23 @@ def _stateNames():
 
 @bp.route("/movers")
 def movers_page():
-    import breakouts as B
+    """★ CUT (owner, 2026-11-10: "sure"): the weekly movers page had 0 views
+    in 14 days and its lists repeated /breakouts. An old link goes to
+    Breakouts, same state, level and sport. movers.py stays: the social
+    composer's "risers" posts read its digest."""
     import movers as M
-    states, names = _stateNames()
-    st = (request.args.get("state") or "").strip().upper() or None
-    if st and st not in names:
-        st = None
-    pool = (request.args.get("pool") or "hs_m").strip().lower()
-    if pool not in M.LEVEL_OF:
-        pool = "hs_m"
-    with getConn() as conn:
-        with _cursor(conn) as cur:
-            sport_arg = (request.args.get("sport") or "").strip().lower()
-            sport = B.SPORTS.get(sport_arg) or B.defaultSport(B.latestDates(cur))
-            d = M.digest(cur, sport, pool, st) if st else None
-            conn.rollback()
-    level = M.LEVEL_OF[pool]
-    words = B.LEVELS[level][1]
-    lede = M.sentences(d, names[st], d["window"]) if d else []
-    return render_template("movers.html", d=d, state=st,
-                           state_name=names.get(st or "", ""), states=states,
-                           pool=pool, pools=[(p, B.LEVELS[l][1]) for p, l in M.LEVEL_OF.items()],
-                           level=level, words=words, sport=sport, lede=lede)
+    q = {}
+    st = (request.args.get("state") or "").strip().upper()
+    if st:
+        q["state"] = st
+    pool = (request.args.get("pool") or "").strip().lower()
+    if pool in M.LEVEL_OF:
+        q["level"] = M.LEVEL_OF[pool]
+    sport = (request.args.get("sport") or "").strip().lower()
+    if sport:
+        q["sport"] = sport
+    from urllib.parse import urlencode
+    return redirect("/breakouts" + ("?" + urlencode(q) if q else ""), code=301)
 
 
 # ------------------------------------------------------------------ #
