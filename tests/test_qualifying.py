@@ -585,3 +585,40 @@ def test_this_years_ncaa_host_course():
     assert d3 and re.search(d3, "Bill Huyck Championship Course", re.I)
     assert U.hostPattern("NCAA Division I Cross Country Championships", "tfrrs", "2027-11-20") is None
     assert U.hostPattern("Some Invitational", "anet", "2026-11-21") is None
+
+
+def test_a_schools_other_spelling_joins_its_squad_in_its_state_only():
+    """(owner, 2026-11-10) Dylan Cote's season row is 'Wesleyan (Conn.)';
+    the college feed's regional spells it 'Wesleyan'."""
+    import upcoming_preview as U
+    teams = [{"school": "Wesleyan", "state": "CT", "runners": [{"person_id": 1}]},
+             {"school": "Trinity", "state": "CT", "runners": []}]
+    got = U.spellingExtras(teams, [(9, "Wesleyan (Conn.)", "CT", 115.6, "college_m"),
+                                   (8, "Trinity (Texas)", "TX", 120.0, "college_m"),
+                                   (1, "Wesleyan (Conn.)", "CT", 110.0, "college_m"),
+                                   (7, "Wesleyan", "CT", 100.0, "college_m")])
+    assert got == [(9, "Wesleyan", 115.6, "college_m")]
+
+
+def test_a_school_keeps_its_best_seven(monkeypatch):
+    import pool_view
+    import upcoming_preview as U
+    monkeypatch.setattr(pool_view, "toHs", lambda r, pool, sport=None: r)
+    teams = [{"school": "W", "runners": [{"person_id": i, "rating": 100.0 + i, "pool": "college_m"}
+                                         for i in range(7)]}]
+    rows = U.ratedRows(teams, extra=[(50, "W", 200.0, "college_m"), (51, "X", 90.0, "college_m")])
+    w = [r[0] for r in rows if r[1] == "W"]
+    assert len(w) == 7 and w[0] == 50 and 0 not in w        # the newcomer in, the slowest out
+    assert any(r[0] == 51 for r in rows)                      # a school not in the round: kept
+
+
+def test_the_field_says_which_teams_were_at_large():
+    rule = {"teams_auto": 1, "teams_at_large": 1, "ind_auto": 0, "team_size": 7}
+
+    def team(school, start, n=5):
+        return [(start + i, school, 1000.0 + start + i, 150.0 - start - i) for i in range(n)]
+    rounds = {"east": team("A", 0) + team("B", 10), "west": team("C", 20) + team("D", 40)}
+    explain = {}
+    Q.selectField(rule, rounds, explain=explain)
+    assert explain["auto"] == {"east": ["A"], "west": ["C"]}
+    assert explain["at_large"] == [("east", "B")]               # B is stronger than D

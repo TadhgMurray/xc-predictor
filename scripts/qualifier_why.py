@@ -72,6 +72,7 @@ def main():
                        FROM results r
                        LEFT JOIN LATERAL (SELECT meet_name FROM meets_tfrrs x
                                           WHERE r.source = 'tfrrs' AND x.meet_id = r.meet_id
+                                            AND x.sport = 'XC'
                                           LIMIT 1) mt ON TRUE
                        LEFT JOIN LATERAL (SELECT meet_name FROM meets x
                                           WHERE r.source = 'anet' AND x.meet_id = r.meet_id
@@ -85,6 +86,29 @@ def main():
         for r in cur.fetchall():
             print(f"  {str(r['date'])[:10]}  {r['school']!s:28.28} {r['meet']}  "
                   f"({r['source']} {r['meet_id']})")
+
+        # ★ THEIR RATING ROWS THIS SEASON, AND UNDER WHICH SCHOOL (2026-11-10:
+        #   Dylan Cote, seven person ids, "Wesleyan" and "Wesleyan (Conn.)").
+        #   A round's squads are read by school name: a runner whose season
+        #   row is under another spelling, or another person id, is in no
+        #   squad of the round.
+        from season_year import seasonYearFromIso
+        season = seasonYearFromIso("XC", day)
+        cur.execute("""SELECT person_id, school, state, split_part(pool, '|', 1) AS pool,
+                              round(mean_rating::numeric, 1) AS rating, n_races
+                       FROM   athlete_season
+                       WHERE  person_id = ANY(%s) AND sport = 'XC' AND year = %s
+                       ORDER  BY n_races DESC""", (sorted(ids), season))
+        srows = cur.fetchall()
+        print(f"\ntheir {season} season rows (a round's squads are read by school name):")
+        for r in srows:
+            print(f"  person {r['person_id']}: {r['school']!r} ({r['state'] or '?'}), {r['pool']}, "
+                  f"rating {r['rating']}, {r['n_races']} races")
+        if not srows:
+            print("  none: no squad of any round can hold them")
+        if len(ids) > 1:
+            print(f"  ! {len(ids)} person ids for one name: if these are one runner, their races "
+                  "are split between them: scripts/find_split_people.py --why <id> <id>")
 
         # every meet in the two windows that looks like a round, and the rule's verdict
         print("\nmeets in the round windows that look like rounds (this season, last):")
@@ -147,8 +171,10 @@ def main():
         mids = sorted({m for _k, m, _d, _r in seen})
         if mids:
             table = "meets_tfrrs" if src == "tfrrs" else "meets"
-            cur.execute(f"SELECT DISTINCT meet_id, meet_name FROM {table} WHERE meet_id = ANY(%s)",
-                        (mids,))
+            # ! THE COLLEGE FEED'S IDS ARE PER SPORT (2026-11-10: the D3
+            #   Mideast regional printed as "UNH vs Maine - Dual Meet")
+            cur.execute(f"SELECT DISTINCT meet_id, meet_name FROM {table} WHERE meet_id = ANY(%s)"
+                        + (" AND sport = 'XC'" if table == "meets_tfrrs" else ""), (mids,))
             names = {int(r["meet_id"]): r["meet_name"] for r in cur.fetchall()}
         conn.rollback()
 
@@ -164,6 +190,19 @@ def main():
             team = (f", team {teams.index(r[1]) + 1} of {len(teams)}" if r[1] in teams else "")
             where = f"place {i} of {len(order)} for {r[1]!r}{team}"
         print(f"  {names.get(mid, mid)!s:50.50} {kind}: {len(order)} runners; {a.name} {where}")
+    # ★ HOW EACH TEAM GOT IN (owner, 2026-11-10: "can it tell at-larges?"):
+    #   each round's automatic teams, then the at-large picks in the order the
+    #   pecking order made them (qualifying.selectField's explain)
+    picks = info.get("picks") or {}
+    if picks.get("auto"):
+        print("\nteams in automatically, by round:")
+        for k, schools in picks["auto"].items():
+            print(f"  {names.get(k, k)!s:50.50} {', '.join(map(str, schools)) or '-'}")
+    if picks.get("at_large") is not None:
+        print(f"\nat-large teams, in pick order ({len(picks['at_large'])}):")
+        for i, (k, school) in enumerate(picks["at_large"], 1):
+            kk = k[1] if isinstance(k, tuple) else k
+            print(f"  {i:>2}. {school}  (from {names.get(kk, kk)})")
     inn = sorted(ids & set(field or {}))
     print(f"\n{a.name} {'IS' if inn else 'is NOT'} in the field"
           + (f" (for {field[inn[0]]!r})" if inn else ""))
