@@ -622,3 +622,33 @@ def test_the_field_says_which_teams_were_at_large():
     Q.selectField(rule, rounds, explain=explain)
     assert explain["auto"] == {"east": ["A"], "west": ["C"]}
     assert explain["at_large"] == [("east", "B")]               # B is stronger than D
+
+
+def test_the_ncaa_field_is_the_projections_most_likely_one():
+    """(owner, 2026-11-10: one source of truth) The /ncaa projection's
+    selected teams' sevens and its selected individuals, until the
+    regionals have run."""
+    import datetime as dt
+    import upcoming_preview as U
+    payload = {"regional_date": "2026-11-14", "regions": [{"name": "Mideast"}, {"name": "East"}],
+               "teams": [{"school": "Wesleyan", "proj": "at-large", "runners": [1, 2, 3]},
+                         {"school": "MIT", "proj": "auto", "runners": [4, 5]},
+                         {"school": "Bates", "proj": "out", "runners": [6, 7]},
+                         {"school": "Colby", "proj": None, "runners": [8]}],
+               "individuals": [{"pid": 6, "team": 2}, {"pid": 9, "team": 99}]}
+    field, info = U.fieldFromProjection(payload, "ncaa_d3", "2026-11-06", dt.date(2026, 11, 10))
+    assert field == {1: "Wesleyan", 2: "Wesleyan", 3: "Wesleyan", 4: "MIT", 5: "MIT", 6: "Bates"}
+    assert info["via"] == "ncaa_projection" and info["rounds"] == 2 and info["predicted"] == 2
+    # the regionals have run: their results, through the rule
+    assert U.fieldFromProjection(payload, "ncaa_d3", None, dt.date(2026, 11, 15)) == (None, None)
+    # a projection stored before the runners were kept
+    old = dict(payload, teams=[{"school": "MIT", "proj": "auto"}])
+    assert U.fieldFromProjection(old, "ncaa_d3", None, dt.date(2026, 11, 10)) == (None, None)
+
+
+def test_only_ncaa_rules_read_the_projection(monkeypatch):
+    import upcoming_preview as U
+    monkeypatch.delenv("XCP_QUALIFY_NCAA", raising=False)
+    assert U.projectionField(None, "nxn", "M", "2026-12-05") == (None, None)
+    monkeypatch.setenv("XCP_QUALIFY_NCAA", "rule")
+    assert U.projectionField(None, "ncaa_d3", "M", "2026-11-21") == (None, None)
