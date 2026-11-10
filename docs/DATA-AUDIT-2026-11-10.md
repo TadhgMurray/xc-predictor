@@ -124,3 +124,18 @@ now judges every override against the times: one the times reject is
 vetoed (the listed distance stands), 300 a run under the circuit breaker.
 The owner's word is `engine/wrong_distance.py --hold anet/MEET/DIV`, which
 the writer never changes. `tests/test_wrong_distance.py`.
+
+## Cross country seasons open Aug 1 (owner, 2026-11-10)
+
+Tyler Connelly's Kennedale Wildcat Run (Aug 14, 2026, a Texas opener) sat in
+his 2025 season, whose heading then read "Grade 12" a year early. The
+Aug 15 seam is for track (Grotenhuis's summer meets close the season behind
+them); no early-August cross country race closes anything. `season_year`
+now opens a cross country season on Aug 1 and a track season on Aug 15, and
+every reader that keys a row's season passes the row's sport: grade_sanity,
+season_level, level_conflict, pro_flag, the pack and its pool lookups
+(speed_ratings, speed_ratings_db, pool_resolve), the backfill, meet_date_fix,
+link_feed_twins, the boards, the panels and the diagnostics. Only a person's
+first collegiate date (no row behind it) stays on the track seam.
+`tests/test_season_seam_aug15.py` checks the seams and that no row reader
+passes no sport.

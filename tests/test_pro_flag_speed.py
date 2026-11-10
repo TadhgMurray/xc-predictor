@@ -202,7 +202,7 @@ def _oldTeamSeasons(cur):
                    count(*) FILTER (WHERE lv = 'college'),
                    count(*) FILTER (WHERE lv IN ('club', 'pro')),
                    count(*) FILTER (WHERE lv = 'other')
-            FROM (SELECT r.person_id, {PF._YR} AS yr, {lv} AS lv
+            FROM (SELECT r.person_id, {PF._yr(results)} AS yr, {lv} AS lv
                   FROM {results} r
                   {joins}
                   WHERE r.person_id IS NOT NULL
@@ -353,7 +353,7 @@ def test_the_level_is_worked_out_once_per_row(pg):
                        count(*) FILTER (WHERE lv = 'college'),
                        count(*) FILTER (WHERE lv IN ('club', 'pro')),
                        count(*) FILTER (WHERE lv = 'other')
-                FROM (SELECT r.person_id, {PF._YR} AS yr,
+                FROM (SELECT r.person_id, {PF._yr('results')} AS yr,
                              pg_temp.said({lv}) AS lv
                       FROM results r {joins}
                       WHERE {live} {fence}) x

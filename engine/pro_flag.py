@@ -88,7 +88,10 @@ sys.path.insert(0, 'scripts')
 #   be left behind.
 from season_year import seasonYearSqlInt
 
-_YR = seasonYearSqlInt(None, "r.date")
+def _yr(results):
+    """The row's season for one table: cross country opens Aug 1, track Aug
+    15 (season_year, 2026-11-10)."""
+    return seasonYearSqlInt("TF" if str(results).endswith("_tf") else "XC", "r.date")
 
 # Unambiguously professional. Anchored where possible to avoid substring traps.
 # ⚠ INVITATION-ONLY MEETS ONLY, AND WIDENING THIS WAS TRIED AND REVERTED.
@@ -161,7 +164,7 @@ def nationalTeamSeedSql(results, meets, label_cols=()):
     labels = "".join(f"\n          AND COALESCE(m.{c}, '') !~* %s"
                      for c in label_cols)
     return f"""
-        SELECT DISTINCT r.person_id, {_YR} AS yr
+        SELECT DISTINCT r.person_id, {_yr(results)} AS yr
         FROM {results} r
         JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
         WHERE m.meet_name ~* %s AND m.meet_name !~* %s{labels}
@@ -369,7 +372,7 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
         joins, school_team = _schoolTeamSql(cur, results)
         cur.execute(f"""
             INSERT INTO tmp_school_rows
-            SELECT r.person_id, {_YR},
+            SELECT r.person_id, {_yr(results)},
                    count(*) FILTER (WHERE gk.school),
                    count(*) FILTER (WHERE NOT gk.school)
             FROM {results} r
@@ -500,7 +503,7 @@ def buildNcaaSeasons(cur):
     for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
         cur.execute(f"""
             INSERT INTO tmp_ncaa_season (person_id, yr)
-            SELECT DISTINCT r.person_id, {_YR}
+            SELECT DISTINCT r.person_id, {_yr(results)}
             FROM {results} r
             JOIN {meets} m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
             WHERE m.meet_name ~* %s AND r.date ~ '^(19|20)[0-9]{{2}}'
@@ -540,7 +543,7 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
     for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
         cur.execute(f"""
             INSERT INTO tmp_pro_race (person_id, yr)
-            SELECT r.person_id, {_YR}
+            SELECT r.person_id, {_yr(results)}
             FROM {results} r
             WHERE EXISTS (SELECT 1 FROM {meets} m
                           WHERE m.meet_id = r.meet_id AND m.div_id = r.div_id
@@ -671,7 +674,7 @@ def buildRaceTables(cur, grains, min_field=_MIN_FIELD, since=None):
         cur.execute(f"""
             CREATE TEMP TABLE tmp_member_{sfx} AS
             SELECT {rkeys}, r.person_id,
-                   ({_YR})::smallint AS yr
+                   ({_yr(results)})::smallint AS yr
             FROM {results} r WHERE {where}
         """)
         n_rows = cur.rowcount
@@ -920,7 +923,7 @@ def buildTeamSeasons(cur):
                    count(*) FILTER (WHERE lv IN ('club', 'pro')),
                    count(*) FILTER (WHERE lv = 'other'),
                    count(*) FILTER (WHERE g ~ '^0?([1-9]|1[0-2])(st|nd|rd|th)?$')
-            FROM (SELECT r.person_id, {_YR} AS yr, {lv} AS lv,
+            FROM (SELECT r.person_id, {_yr(results)} AS yr, {lv} AS lv,
                          lower(btrim(COALESCE(r.grade, ''))) AS g
                   FROM {results} r
                   {joins}
@@ -1107,7 +1110,7 @@ def reportPostCollegiate(cur, limit=60, person=None):
                 cur.execute(f"""
                     SELECT r.person_id, string_agg(DISTINCT r.school, ' / ')
                     FROM {results} r JOIN tmp_post_collegiate p
-                      ON p.person_id = r.person_id AND p.yr = {_YR}
+                      ON p.person_id = r.person_id AND p.yr = {_yr(results)}
                     WHERE r.person_id = ANY(%s)
                       AND r.date ~ '^(19|20)[0-9]{{2}}'
                     GROUP BY 1""", (ids,))

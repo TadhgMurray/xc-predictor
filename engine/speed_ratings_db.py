@@ -74,11 +74,12 @@ sys.path.insert(0, "engine")
 from database import getConn
 
 
-def _seasonAy(col):
+def _seasonAy(col, table=None):
     """season_year's academic-year SQL for a text date column -- the one
-    clock every pooling table is keyed on."""
+    clock every pooling table is keyed on. `table` names the sport (cross
+    country opens Aug 1, track Aug 15; 2026-11-10)."""
     from season_year import seasonYearSqlInt
-    return seasonYearSqlInt(None, col)
+    return seasonYearSqlInt("TF" if str(table).endswith("_tf") else "XC" if table else None, col)
 from merge_column import mergeColumn      # heap-rebuild write path (see below)
 import person_gender as _pg               # gender by the rows (issue 164)
 
@@ -1244,7 +1245,7 @@ def loadClubPros(min_pros=1):
                   -- ★ ACADEMIC YEAR, pro_athlete_season's own clock: this
                   --   compared a CALENDAR year with an academic span and
                   --   padded the end by a whole season to cover the gap
-                  AND  {_seasonAy('r.date')} BETWEEN pr.s0 AND pr.s1
+                  AND  {_seasonAy('r.date', table)} BETWEEN pr.s0 AND pr.s1
                   AND  (({team_expr}) IS NOT NULL OR r.school IS NOT NULL)
                 GROUP  BY 1, 2""")
             for team_id, school, n in cur.fetchall():
@@ -1307,7 +1308,7 @@ def loadClubMajority(club_team_ids, pro_team_ids, pro_schools):
             on_team = ("ct.team_id IS NOT NULL" if has_team else "FALSE")
             join_team = (f"LEFT JOIN club_teams ct ON ct.team_id = r.team_id" if has_team else "")
             parts.append(f"""
-                SELECT r.person_id, {_seasonAy('r.date')} AS yr,
+                SELECT r.person_id, {_seasonAy('r.date', table)} AS yr,
                        ({on_team} OR cs.school IS NOT NULL) AS is_club
                 FROM   {table} r
                 {join_team}

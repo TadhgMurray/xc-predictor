@@ -410,7 +410,7 @@ def rowTeamFacts(team_id, team_slug, school, person_id, race_date, sport,
         #   is not a club row: there is no club.
         # ! THE ACADEMIC YEAR, the clock loadClubMajority keys on
         if (team_level == "club" or has_pros) and \
-                not clubSeason(person_id, _academicYear(race_date)):
+                not clubSeason(person_id, _academicYear(race_date, sport)):
             has_pros = False
             if team_level == "club":
                 team_level = None
@@ -886,7 +886,7 @@ def loadSeasonLevels():
 #            lookup and the table cannot disagree. season_year is imported
 #            lazily because this function is also called from contexts that
 #            never touch the season tables.
-def _academicYear(race_date):
+def _academicYear(race_date, sport=None):
     """The season a race belongs to. Delegates -- it does not decide.
 
     ⚠ THIS USED TO HARD-CODE `month >= 7`, AND season_year.py HARD-CODED ITS
@@ -899,7 +899,7 @@ def _academicYear(race_date):
     if race_date is None:
         return None
     from season_year import seasonYearFor
-    return seasonYearFor(None, race_date)
+    return seasonYearFor(sport, race_date)
 
 
 def loadProSeasons():
@@ -1106,7 +1106,7 @@ def poolOf(grade, gender, source, school, sport, merge=False,
     #   because it always passes both; replay_rating and dump_pack_row do not.
     slvl = ay = None
     if pid is not None:
-        ay = _academicYear(race_date)
+        ay = _academicYear(race_date, sport)
         if ay is not None:
             # This sport's verdict, else the combined one.
             by_sport, combined = loadSeasonLevels()

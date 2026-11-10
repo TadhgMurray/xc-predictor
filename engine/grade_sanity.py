@@ -556,11 +556,17 @@ MIN_SEASONS_FOR_PROGRESSION = 3
 #   again -- three hand-rolled copies of one boundary, none of which matched.
 from season_year import seasonYearSqlInt
 
-_ACAD = seasonYearSqlInt(None, "date")
+# ★ PER TABLE (2026-11-10): cross country's season opens Aug 1, track's
+#   Aug 15 (season_year). Every branch below reads one table and takes that
+#   table's expression, so a grade is reasoned about in the season the
+#   boards put the race in.
+_ACAD_XC = seasonYearSqlInt("XC", "date")
+_ACAD_TF = seasonYearSqlInt("TF", "date")
 # ! QUALIFIED, for a query that joins another table with a `date` column
 #   (owner's run, 2026-09-29: rule 7's XC query joins `meets`, and a bare
 #   `date` there is ambiguous -- 04_grade_sanity died after 2h 17m on it)
-_ACAD_R = seasonYearSqlInt(None, "r.date")
+_ACAD_R_XC = seasonYearSqlInt("XC", "r.date")
+_ACAD_R_TF = seasonYearSqlInt("TF", "r.date")
 
 # ================================================================== #
 #  AGE BANDS -- issue #47, wired.
@@ -1031,7 +1037,7 @@ _BUILD = f"""
     CREATE UNLOGGED TABLE allraces AS
         SELECT person_id,
                substring(date, 1, 4)::int                        AS cal,
-               {_ACAD}                                            AS acad,
+               {_ACAD_XC}                                            AS acad,
                -- ★ #47: a banded grade in a division that writes AGES is not
                --   a grade at all, and loses both spellings here, before any
                --   rule can count it. See _ageBandJoins.
@@ -1069,7 +1075,7 @@ _BUILD = f"""
         UNION ALL
         SELECT person_id,
                substring(date, 1, 4)::int,
-               {_ACAD},
+               {_ACAD_TF},
                CASE WHEN ab.result_id IS NULL AND nt.school IS NULL
                     THEN n.norm END,
                CASE WHEN nt.school IS NULL THEN n.definite END,
@@ -1685,14 +1691,14 @@ _FIELD_DROP = """
 _TEAM_MINE_SQL = f"""
     CREATE UNLOGGED TABLE tl_mine AS
     WITH teams AS (
-        SELECT r.person_id, {_ACAD_R} AS acad,
+        SELECT r.person_id, {_ACAD_R_XC} AS acad,
                COALESCE(t.level = ANY(%(codes)s), false) AS hs
         FROM   results r
         JOIN   tl_cand c ON c.person_id = r.person_id
         LEFT   JOIN anet_team t ON t.team_id = r.team_id
         WHERE  r.date IS NOT NULL
         UNION ALL
-        SELECT r.person_id, {_ACAD_R},
+        SELECT r.person_id, {_ACAD_R_TF},
                COALESCE(t.level = ANY(%(codes)s), false)
         FROM   results_tf r
         JOIN   tl_cand c ON c.person_id = r.person_id
@@ -2325,7 +2331,7 @@ def _eliteRowsSql(sport, src=None):
         joins = ""
         table, extra = src or "results_tf", "AND COALESCE(r.is_relay, 0) = 0"
     return f"""
-        SELECT r.person_id, {_ACAD_R} AS acad, gradeLevel(normGrade(r.grade)) AS lvl,
+        SELECT r.person_id, {_ACAD_R_XC if sport == "XC" else _ACAD_R_TF} AS acad, gradeLevel(normGrade(r.grade)) AS lvl,
                g.gender, rl.top_level,
                r.time_seconds::float8 * power(5000.0 / d.dist, {ELITE_K}) AS t5k,
                lower(btrim(COALESCE(r.school, ''))) AS school
@@ -2531,12 +2537,12 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
     cur.execute(f"""
         DROP TABLE IF EXISTS tmp_club_rows;
         CREATE TEMP TABLE tmp_club_rows AS
-            SELECT r.person_id, {_ACAD_R} AS acad, lower(btrim(r.school)) AS club
+            SELECT r.person_id, {_ACAD_R_XC} AS acad, lower(btrim(r.school)) AS club
             FROM   results r
             WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
               AND  lower(r.school) ~ '{CLUB_NAME_RE}'
             UNION ALL
-            SELECT r.person_id, {_ACAD_R}, lower(btrim(r.school))
+            SELECT r.person_id, {_ACAD_R_TF}, lower(btrim(r.school))
             FROM   results_tf r
             WHERE  r.person_id IS NOT NULL AND r.date IS NOT NULL
               AND  lower(r.school) ~ '{CLUB_NAME_RE}';
@@ -2559,11 +2565,11 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
         _ev(cur, "INSERT INTO tmp_club_alias VALUES %s", alias_rows, page_size=10000)
         cur.execute(f"""
             SELECT DISTINCT r.person_id, r.acad, a.club
-            FROM   (SELECT r.person_id, {_ACAD_R} AS acad, lower(btrim(r.school)) AS team
+            FROM   (SELECT r.person_id, {_ACAD_R_XC} AS acad, lower(btrim(r.school)) AS team
                     FROM results r WHERE r.date IS NOT NULL
                       AND r.person_id IN (SELECT person_id FROM tmp_club_alias)
                     UNION ALL
-                    SELECT r.person_id, {_ACAD_R}, lower(btrim(r.school))
+                    SELECT r.person_id, {_ACAD_R_TF}, lower(btrim(r.school))
                     FROM results_tf r WHERE r.date IS NOT NULL
                       AND r.person_id IN (SELECT person_id FROM tmp_club_alias)) r
             JOIN   tmp_club_alias a ON a.person_id = r.person_id AND a.alias = r.team""")
@@ -2625,10 +2631,10 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
                bool_and(rl.top_level IN ('college', 'pro'))                AS all_senior,
                bool_or(rl.top_level = 'pro')                               AS any_pro
         FROM   tmp_club_cand c
-        JOIN   (SELECT r.person_id, {_ACAD_R} AS acad, r.school, r.meet_id, r.div_id, r.source
+        JOIN   (SELECT r.person_id, {_ACAD_R_XC} AS acad, r.school, r.meet_id, r.div_id, r.source
                 FROM results r WHERE r.person_id IN (SELECT person_id FROM tmp_club_cand)
                 UNION ALL
-                SELECT r.person_id, {_ACAD_R}, r.school, r.meet_id, r.div_id, r.source
+                SELECT r.person_id, {_ACAD_R_TF}, r.school, r.meet_id, r.div_id, r.source
                 FROM results_tf r WHERE r.person_id IN (SELECT person_id FROM tmp_club_cand)) r
                ON r.person_id = c.person_id AND r.acad = c.acad
         LEFT   JOIN race_top_level rl ON rl.race = {_raceKeyExpr('r')}
@@ -2848,10 +2854,10 @@ def seasonCeilings(cur, keys):
                count(*) FILTER (WHERE rl.top_level = 'college'),
                count(*) FILTER (WHERE rl.top_level = 'pro')
         FROM   tmp_ceil_keys c
-        JOIN   (SELECT r.person_id, {_ACAD_R} AS acad, r.meet_id, r.div_id, r.source
+        JOIN   (SELECT r.person_id, {_ACAD_R_XC} AS acad, r.meet_id, r.div_id, r.source
                 FROM results r WHERE r.person_id IN (SELECT person_id FROM tmp_ceil_keys)
                 UNION ALL
-                SELECT r.person_id, {_ACAD_R}, r.meet_id, r.div_id, r.source
+                SELECT r.person_id, {_ACAD_R_TF}, r.meet_id, r.div_id, r.source
                 FROM results_tf r WHERE r.person_id IN (SELECT person_id FROM tmp_ceil_keys)) r
                ON r.person_id = c.person_id AND r.acad = c.acad
         JOIN   race_top_level rl ON rl.race = {_raceKeyExpr('r')}
