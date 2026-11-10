@@ -1915,14 +1915,22 @@ step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prep
 #   XCP_RANK_SEAM="d1 d2 ..." states the seams (one date, as before, is two
 #   streams per sport).
 #   XCP_RANK_PARTS=2 XCP_RANK_STREAMS=4 is the old shape.
+# ★ THE STREAMS SHARED BY ROWS, NOT BY SPORT (2026-11-10; run 20261109_033652:
+#   four streams each, and the four track streams ran 2,063-2,388 s while the
+#   cross country ones were done in under 810 -- track has ~168M rows to XC's
+#   ~43M). Still eight streams at once (the same connections and load), now
+#   XC 2 and TF 6 (XCP_RANK_PARTS_XC / _TF): ~21M and ~28M rows a stream.
+#   XCP_RANK_PARTS, when set, still gives both sports that many.
 _RANK=()
 for _sp in XC TF; do
   _lc=$(echo "$_sp" | tr 'A-Z' 'a-z')
+  if [ "$_sp" = XC ]; then _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_XC:-2}}"
+  else _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_TF:-6}}"; fi
   _seams="${XCP_RANK_SEAM:-}"
   if [ -z "$_seams" ] && [ "$DRY" -eq 0 ] && ! beforeFrom 10_rankings_prepare \
-     && [ "${XCP_RANK_PARTS:-4}" -gt 2 ]; then
+     && [ "$_parts" -ge 2 ]; then
     _seams=$("$PY" racecast/build_ranking_results.py --stage seams --sport "$_sp" \
-               --parts "${XCP_RANK_PARTS:-4}" 2>>"$LOGDIR/10_rankings_seams.log" | tail -n 1)
+               --parts "$_parts" 2>>"$LOGDIR/10_rankings_seams.log" | tail -n 1)
     _seams=$(rankSeamsOk "$_seams")
   fi
   [ -n "$_seams" ] || _seams="2018-01-01"
@@ -2018,6 +2026,16 @@ step 10d2_restamp_units "$PY" -u racecast/build_ranking_results.py --stage resta
 #   stage carries the old table's over); that build then queues behind the
 #   vacuum -- no longer than the old order took -- and blocks no reader.
 bgstep 18_vacuum "$PY" -u scripts/gentle_vacuum.py
+# ★ KAILO'S UPCOMING MEETS, RECORDED BESIDE THE BOARDS (2026-11-10; run
+#   20261109_033652: 16c_kailo_record ran 2,295 s inside the report group,
+#   which waited on it -- 1,266 s longer than the next report). It writes
+#   only engine/data/kailo/<race>.json, which no step of the run reads
+#   (run_report, scoreboard and the watchdog do not), from the ratings and
+#   boards, final from here. XCP_KAILO=0 skips it; the 6-hourly
+#   xcp-kailo-record timer records them too.
+if [ "${XCP_KAILO:-1}" != "0" ]; then
+  bgstep 16c_kailo_record "$PY" -u scripts/kailo_compare.py --record
+fi
 # (10e_meet_units ran in the background beside the pack since 2026-11-07)
 stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
        10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
@@ -2105,7 +2123,11 @@ if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_s
 #   state_odds_* (racecast/build_state_odds.py). After the boards and units
 #   it reads; its own line, not chained, so a failure costs nothing else. OFF until
 #   XCP_STATE_ODDS=1: time a first build by hand (it simulates every state).
-if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then step 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
+# ★ IN THE BACKGROUND SINCE 2026-11-10 (run 20261109_033652: 810 s in line).
+#   Only the pages read state_odds_* -- 13g_social above reads the LAST
+#   run's tables, as it did when this ran after it in line -- so bgwait
+#   collects it at the end.
+if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then bgstep 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone
@@ -2217,9 +2239,8 @@ fi
 #   published and not yet run, once; the comparison scores those as
 #   "recorded" -- neither system saw the result. A few meets, a few dozen
 #   requests. XCP_KAILO=0 skips.
-if [ "${XCP_KAILO:-1}" != "0" ]; then
-  _REPORTS+=(16c_kailo_record "$PY -u scripts/kailo_compare.py --record")
-fi
+# (16c_kailo_record runs in the background from after 10d2 since 2026-11-10;
+#  see there)
 # ★ HOW GOOD THE PREDICTIONS WERE, EVERY RUN (owner, 2026-10-22: "how come no
 #   accuracy numbers show up"): the last two weeks' finished XC races
 #   re-predicted with each runner's history cut the day before, on the new

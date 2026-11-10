@@ -3759,7 +3759,7 @@ def _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target):
 # ★ THE HOT LOOP IN SEVERAL PROCESSES (2026-11-10, back-end track). Run
 #   20261108_155220's 05_backfill_xc: 42.7M rows through _drainStream at
 #   ~28k rows/s, 26 of its 45 minutes, one Python process -- the per-row
-#   classifier, not the database. Now XCP_BACKFILL_WORKERS (default 3)
+#   classifier, not the database. Now XCP_BACKFILL_WORKERS (XC 2, track 4)
 #   forked workers each stream the rows of every n-th MEET (the filter in
 #   _streamSQL), classify them with the same row_fn and lookups (built once,
 #   before the fork, shared copy-on-write), and COPY into the one staging
@@ -3779,7 +3779,13 @@ _PARKED = []
 
 def _backfillWorkers(apply, limit, cfg, staging):
     import os
-    n = int(os.environ.get("XCP_BACKFILL_WORKERS", "3") or 1)
+    # ★ BY ROWS, NOT EVEN (2026-11-10; run 20261109_033652: 05_backfill_tf
+    #   2,982 s, _xc 1,929 s, side by side -- track waited for): XC 2, track 4,
+    #   six workers between the two sports as before. XCP_BACKFILL_WORKERS
+    #   sets both; XCP_BACKFILL_WORKERS_XC / _TF one.
+    default = {"XC": "2", "TF": "4"}.get(cfg.sport, "3")
+    n = int(os.environ.get(f"XCP_BACKFILL_WORKERS_{cfg.sport}")
+            or os.environ.get("XCP_BACKFILL_WORKERS") or default)
     if not apply or limit or staging is None or cfg.write_mode != "copy" \
             or _SHARD.get("profiling") or not hasattr(os, "fork"):
         return 1

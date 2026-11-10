@@ -207,16 +207,33 @@ def ownFloorOnly(sport, rows):
     return out
 
 
+GENDER_SUBQUERY = """(SELECT a.gender FROM athletes a
+                 WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
+                   AND a.gender IN ('M', 'F')
+                 GROUP BY a.gender ORDER BY count(*) DESC, a.gender DESC LIMIT 1)"""
+
+
 def candidateSql(cur, sport):
     """Rows under PREFILTER_PACE s/km with the loader's distance, the
     athlete's sex and the row's rating pool."""
     from speed_ratings_db import _eventMetersSql
     table = "results" if sport == "XC" else "results_tf"
     rp = "r.rating_pool" if _hasColumn(cur, table, "rating_pool") else "NULL::text"
-    gender = """(SELECT a.gender FROM athletes a
-                 WHERE a.athlete_id = COALESCE(r.person_id, r.athlete_id)
-                   AND a.gender IN ('M', 'F')
-                 GROUP BY a.gender ORDER BY count(*) DESC, a.gender DESC LIMIT 1)"""
+    # ★ THE SEX OF EACH ATHLETE ONCE, NOT ONCE PER ROW (2026-11-10; run
+    #   20261109_033652: 06c 921 s in line, 578 s of it track). It was a
+    #   correlated subquery in the SELECT list -- an index probe, a GROUP BY
+    #   and a sort for each of the ~36M candidate rows. ag is the same answer
+    #   for every athlete in one pass over athletes: the sex on the most of
+    #   their rows, a tie to the later letter ('M'), as `ORDER BY count(*)
+    #   DESC, a.gender DESC LIMIT 1` chose; none when they have neither.
+    #   GENDER_SUBQUERY keeps the old expression (tests compare the two).
+    gender = "ag.gender"
+    ag = """LEFT JOIN (
+                SELECT athlete_id,
+                       (array_agg(gender ORDER BY n DESC, gender DESC))[1] AS gender
+                FROM  (SELECT athlete_id, gender, count(*) AS n FROM athletes
+                       WHERE gender IN ('M', 'F') GROUP BY 1, 2) c
+                GROUP BY 1) ag ON ag.athlete_id = COALESCE(r.person_id, r.athlete_id)"""
     if sport == "XC":
         dist = """COALESCE(dov.distance, m.distance,
                            (mt.division_distances -> r.div_id::text ->> 'distance')::real,
@@ -230,6 +247,7 @@ def candidateSql(cur, sport):
             LEFT JOIN meets_tfrrs mt ON r.source = 'tfrrs' AND mt.meet_id = r.meet_id AND mt.sport = 'XC'
             LEFT JOIN dist_override dov ON dov.meet_id = r.meet_id AND dov.div_id = r.div_id
             CROSS JOIN LATERAL (SELECT {dist} AS distance) d
+            {ag}
             WHERE  r.normalized_time IS NOT NULL
               AND  r.time_seconds > 0 AND d.distance BETWEEN {XC_DIST[0]} AND {XC_DIST[1]}
               AND  r.time_seconds / (d.distance / 1000.0) < {PREFILTER_PACE}"""
@@ -242,6 +260,7 @@ def candidateSql(cur, sport):
         LEFT JOIN meets_tf m ON m.meet_id = r.meet_id AND m.div_id = r.div_id
                             AND m.event_id = r.event_id AND m.source = r.source
         CROSS JOIN LATERAL (SELECT {dist} AS distance) d
+        {ag}
         WHERE  r.normalized_time IS NOT NULL
           AND  r.time_seconds > 0 AND COALESCE(r.is_relay, 0) = 0 AND COALESCE(r.is_field, 0) = 0
           AND  d.distance BETWEEN {TF_DIST[0]} AND {TF_DIST[1]}

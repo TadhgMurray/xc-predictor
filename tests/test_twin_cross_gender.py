@@ -39,6 +39,7 @@ def test_the_copy_in_the_other_genders_race_is_flagged():
         pg += [(7, "M", 40, 0, False), (8, "F", 0, 1, False)]
         cur.executemany("INSERT INTO results VALUES (%s,%s,%s,%s,%s,%s,%s,%s)", rows)
         cur.executemany("INSERT INTO person_gender VALUES (%s,%s,%s,%s,%s)", pg)
+        T.prepareRule(cur, "results", "XC", "dup_cross_gender")      # staged since 2026-11-10
         cur.execute(T.dupCrossGenderSql("results", "XC"))
         assert sorted(r[0] for r in cur.fetchall()) == [900]
         assert "WHERE false" in T.dupCrossGenderSql("results_tf", "TF")

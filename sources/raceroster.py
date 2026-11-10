@@ -203,10 +203,19 @@ def _textColumns(spans, sample):
     """{field: (start, end)} from the headings, and the time column from
     the values when its heading is no time word ("T4"). Pure."""
     cols = {}
-    for st, en, lab in spans:
-        for f, names in _LABELS.items():
-            if f not in cols and (lab in names or (f == "name" and "name" in lab and "team" not in lab)):
-                cols[f] = (st, en)
+    # ! BY THE LABEL'S RANK, NOT THE COLUMN'S PLACE (iResultsLive, Pelham XC
+    #   Invitational 2026: "Sex Year School Grade" -- Year is the class of
+    #   2028, Grade is 11): "grade" wins over "year" wherever each sits
+    for f, names in _LABELS.items():
+        for n in names:
+            hit = [(st, en) for st, en, lab in spans if lab == n]
+            if hit:
+                cols[f] = hit[0]
+                break
+    if "name" not in cols and not ("first" in cols and "last" in cols):
+        hit = [(st, en) for st, en, lab in spans if "name" in lab and "team" not in lab]
+        if hit:
+            cols["name"] = hit[0]
     if "place" not in cols and spans:
         cols["place"] = spans[0][:2]
     if "time" not in cols:

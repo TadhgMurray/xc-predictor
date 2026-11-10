@@ -321,3 +321,30 @@ def test_the_rejects_are_reported_with_enough_to_chase_them():
     pid, sport, dist, t, nt = wild[0]
     assert (sport, dist, t) == ("XC", 4_700_000.0, 300.0)
     assert nt < 1.0
+
+
+# ------------------------------------------------------------------ #
+#  THE TWO SPORTS SIDE BY SIDE (2026-11-10): the same answer as one loop
+# ------------------------------------------------------------------ #
+def test_the_parallel_scan_is_the_one_loop_exactly(monkeypatch):
+    import random
+    rnd = random.Random(11)
+    rows = {"XC": [], "TF": []}
+    for sport in ("XC", "TF"):
+        for _ in range(4000):
+            pid = rnd.randint(1, 300)
+            rows[sport].append(_row(pid, f"20{rnd.randint(20, 25)}-{rnd.choice(['03', '10'])}-15",
+                                    sport, rnd.choice(["M", "F", "M", None]),
+                                    rnd.choice([1600.0, 3200.0, 5000.0, 8000.0, 100000.0, None]),
+                                    rnd.choice([round(rnd.uniform(200, 2000), 1), 820.0, 0])))
+    # exact cross-sport ties: the same person-season, the same mark, both sports
+    for pid in range(400, 420):
+        for sport in ("XC", "TF"):
+            rows[sport].append(_row(pid, "2024-10-15", sport, "M", 5000.0, 830.0))
+    monkeypatch.setenv("XCP_PRO_PARALLEL", "0")
+    one = _scan(rows)
+    monkeypatch.setenv("XCP_PRO_PARALLEL", "1")
+    two = _scan(rows)
+    assert one == two
+    able, best = one[0], one[1]
+    assert best and able and one[5] > 0          # wild rows were met, the bar reached

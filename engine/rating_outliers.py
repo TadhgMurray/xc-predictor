@@ -352,7 +352,7 @@ def _estimateRows(cur):
     return n
 
 
-def _sourceSelect(cur, sport, since, persons, sample_mod, prior_fast):
+def _sourceSelect(cur, sport, since, persons, sample_mod, prior_fast, block_range=None):
     table = TABLES[sport]
     if not (_tableExists(cur, table) and _hasCol(cur, table, "speed_rating")):
         return None
@@ -371,6 +371,11 @@ def _sourceSelect(cur, sport, since, persons, sample_mod, prior_fast):
         where.append(f"r.date >= '{int(since) - SINCE_MARGIN_YEARS}'")
     if persons:
         where.append("r.person_id = ANY(%(persons)s)")
+    if block_range is not None:          # one worker's share of the heap (_fillParallel)
+        lo, hi = block_range
+        where.append(f"r.ctid >= '({int(lo)},0)'::tid")
+        if hi is not None:
+            where.append(f"r.ctid < '({int(hi)},0)'::tid")
     if sample_mod and sample_mod > 1:
         # ! %% -- this statement is executed WITH parameters, so a bare %
         #   is a psycopg2 format error.
@@ -387,8 +392,47 @@ def _sourceSelect(cur, sport, since, persons, sample_mod, prior_fast):
         WHERE  {' AND '.join(where)}"""
 
 
+def _blocks(cur, table):
+    cur.execute("SELECT pg_relation_size(%s::regclass) / current_setting('block_size')::int",
+                (f"public.{table}",))
+    return int(_one(cur) or 0)
+
+
+def _fillParallel(cur, name, since, sample_mod, prior_fast, connect, streams):
+    """The stage filled by `streams` connections side by side, each from its
+    own block range of results and results_tf (see buildStage)."""
+    from concurrent.futures import ThreadPoolExecutor
+    cur.connection.commit()                  # the stage, visible to the workers
+    ranges = {}
+    for sp in ("XC", "TF"):
+        t = TABLES[sp]
+        if _tableExists(cur, t) and _hasCol(cur, t, "speed_rating"):
+            nb = _blocks(cur, t)
+            step = max(1, -(-nb // streams))
+            # the last range is open-ended: a block the size read missed is still read
+            ranges[sp] = [(i * step, (i + 1) * step if i < streams - 1 else None)
+                          for i in range(streams)]
+    if not ranges:
+        return
+
+    def work(i):
+        from pg_guard import guard
+        with connect() as wconn:
+            with wconn.cursor() as wcur:
+                guard(wcur, verbose=False)
+                parts = [_sourceSelect(wcur, sp, since, None, sample_mod, prior_fast,
+                                       block_range=ranges[sp][i]) for sp in ranges]
+                wcur.execute(f"INSERT INTO {name} (key, sport, result_id, person_id, d, "
+                             f"rating, nb, judge) " + "\nUNION ALL\n".join(p for p in parts if p),
+                             {"persons": []})      # the %% in a sample filter wants params
+            wconn.commit()
+
+    with ThreadPoolExecutor(max_workers=streams) as pool:
+        list(pool.map(work, range(streams)))
+
+
 def buildStage(cur, since=None, persons=None, sample_mod=None, shards=None,
-               name=STAGE, verbose=True):
+               name=STAGE, verbose=True, connect=None, streams=1):
     """Create `name`, hash-partitioned by person_id into `shards` unlogged
     partitions, and fill it with every rated row of both sports once.
     Returns the number of shards."""
@@ -409,13 +453,24 @@ def buildStage(cur, since=None, persons=None, sample_mod=None, shards=None,
     for i in range(shards):
         cur.execute(f"CREATE UNLOGGED TABLE {name}_{i} PARTITION OF {name} "
                     f"FOR VALUES WITH (MODULUS {shards}, REMAINDER {i})")
-    parts = [s for s in (_sourceSelect(cur, sp, since, persons, sample_mod,
-                                       prior_fast) for sp in ("XC", "TF")) if s]
-    if not parts:
-        return shards
-    cur.execute(f"INSERT INTO {name} (key, sport, result_id, person_id, d, "
-                f"rating, nb, judge) " + "\nUNION ALL\n".join(parts),
-                {"persons": list(persons or [])})
+    # ★ FILLED SIDE BY SIDE (2026-11-10; run 20261109_033652: the stage was
+    #   500 s of 09d's 1,041, one INSERT ... SELECT over both tables -- and
+    #   an INSERT never runs parallel). With connect and streams > 1 (the
+    #   pipeline's --streams), each of `streams` connections reads its own
+    #   block range (ctid) of results and results_tf: every row once, the
+    #   same rows. Nothing after this depends on the order rows land: the
+    #   window orders by (d, key), key is unique, the partitions are by
+    #   person, and the calibration sample is a hash of person_id.
+    if connect is not None and streams > 1 and not persons:
+        _fillParallel(cur, name, since, sample_mod, prior_fast, connect, streams)
+    else:
+        parts = [s for s in (_sourceSelect(cur, sp, since, persons, sample_mod,
+                                           prior_fast) for sp in ("XC", "TF")) if s]
+        if not parts:
+            return shards
+        cur.execute(f"INSERT INTO {name} (key, sport, result_id, person_id, d, "
+                    f"rating, nb, judge) " + "\nUNION ALL\n".join(parts),
+                    {"persons": list(persons or [])})
     for i in range(shards):
         cur.execute(f"ANALYZE {name}_{i}")
     if verbose:
@@ -1563,7 +1618,7 @@ def run(cur, since=None, k=None, floor=None, fast_sigma=None,
     t_all = time.time()
     with _Clock("stage: both tables read once"):
         shards = buildStage(cur, since=since, shards=shards,
-                            verbose=verbose)
+                            verbose=verbose, connect=connect, streams=streams)
     cal = {"k": k, "floor": floor}
     if k is None or floor is None:
         with _Clock("calibration: K and the floor"):

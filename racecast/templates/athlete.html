@@ -283,15 +283,14 @@
                     {% endif %}
                     {# Derived within the division, ties share a place. No
                        place for field events or DNS/DNF sentinel rows.
-                       ★ THE TEAM PLACE ONLY WHERE A TEAM WAS SCORED (owner,
-                       2026-11-10: "sure"): cross country, five or more of the
-                       runner's school placed. On track, at club, Junior
-                       Olympic and championship races "1st on team" was on
-                       every row and meant nothing. #}
+                       The team place always shows (owner, 2026-11-10, again:
+                       "I prefer x on team always being there" -- the
+                       scored-team-only rule was tried the same day and
+                       reverted). #}
                     <td class="place-cell">
                         {%- if race.place and not race.is_field
                                and race.time_raw and race.time_raw < 999999 -%}
-                            <span class="no-break">{{ race.place|ordinal }}</span>{% if race.team_place and race.sport == 'XC' and (race.team_n or 0) >= 5 %}
+                            <span class="no-break">{{ race.place|ordinal }}</span>{% if race.team_place %}
                             <span class="muted no-break"><span class="sep">· </span>{{ race.team_place|ordinal }} on team</span>
                             {%- endif %}
                         {%- else -%} - {%- endif -%}

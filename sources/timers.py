@@ -467,6 +467,7 @@ def _all(a, conn):
     # the platforms read whole (Arrow, Race Roster): run when the registry
     # lists timers on them
     platforms = {s.kind for s in registry.load()}
+    slugs = {s.slug for s in registry.load()}
     # ! --try-kind (dry runs only): sources of a kind not switched on yet,
     #   through the same reader, to see which already parse
     if getattr(a, "try_kind", None):
@@ -645,8 +646,70 @@ def _all(a, conn):
             got.append((key, lm, why))
         return src, got, note
 
+    # ★ iRESULTSLIVE, THE SAME WAY (2026-11-10; sources/iresults.py): the
+    #   New England timers' site (Yankee Timing, Granite State, Empire ...).
+    #   XCP_IRESULTS=0 leaves it out; XCP_IRESULTS_PER_RUN meets a night.
+    async def iresultsJob():
+        from types import SimpleNamespace
+        from sources import iresults
+        src = SimpleNamespace(slug=iresults.SLUG)
+        if (os.environ.get("XCP_IRESULTS", "1") == "0" or (a.only and iresults.SLUG not in set(a.only))
+                or "yankee-timing" not in slugs):
+            return src, [], "off"
+        try:
+            evs, note = await iresults.discover(fetcher, since, int(os.environ.get("XCP_IRESULTS_PER_RUN", "12")),
+                                                known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for ev in evs:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(evs) - len(got)} meets wait for the next run"
+                break
+            key = iresults.eventKey(ev["eid"])
+            try:
+                lm, why = await iresults.readMeet(fetcher, ev, RETRY_AGE if key in retry else MAX_AGE)
+                if lm is not None and _recent(lm.date) and key not in retry:
+                    lm, why = await iresults.readMeet(fetcher, ev, RECENT_AGE)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((key, lm, why))
+        return src, got, note
+
+    # ★ MILESPLIT, THE SAME WAY (owner, 2026-11-10: "they both told me it
+    #   was fine, so you wanna do milesplit?"; sources/milesplit.py): every
+    #   state's newest results, the free raw files only. 540 timers in the
+    #   research file post only there. XCP_MILESPLIT=0 leaves it out;
+    #   XCP_MILESPLIT_PER_RUN meets a night.
+    async def milesplitJob():
+        from types import SimpleNamespace
+        from sources import milesplit
+        src = SimpleNamespace(slug=milesplit.SLUG)
+        if (os.environ.get("XCP_MILESPLIT", "1") == "0" or (a.only and milesplit.SLUG not in set(a.only))
+                or not platforms & {"milesplit"}):
+            return src, [], "off"
+        try:
+            meets, note = await milesplit.discover(fetcher, since, int(os.environ.get("XCP_MILESPLIT_PER_RUN", "25")),
+                                                   known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for mt in meets:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(meets) - len(got)} meets wait for the next run"
+                break
+            try:
+                lm, why = await milesplit.readMeet(fetcher, mt, RETRY_AGE if mt["url"] in retry else MAX_AGE)
+                if lm is not None and _recent(lm.date) and mt["url"] not in retry:
+                    lm, why = await milesplit.readMeet(fetcher, mt, RECENT_AGE)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((mt["url"], lm, why))
+        return src, got, note
+
     async def go(f):
-        for fut in asyncio.as_completed([one(s) for s in srcs] + [arrowJob(), raceRosterJob()]):
+        for fut in asyncio.as_completed([one(s) for s in srcs]
+                                        + [arrowJob(), raceRosterJob(), iresultsJob(), milesplitJob()]):
             report(*(await fut), f)
 
     with open(out, "w", encoding="utf-8") as f:

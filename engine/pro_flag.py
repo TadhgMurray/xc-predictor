@@ -328,6 +328,29 @@ def _schoolTeamSql(cur, results):
                    f"ELSE FALSE END")
 
 
+# ★ SCRATCH TABLES ARE UNLOGGED, NOT TEMP (2026-11-10; run 20261109_033652:
+#   03_pro_flag 2,618 s, its three biggest passes -- memberships 647 s, the
+#   school veto 749 s, post-collegiate 863 s -- each a grouped pass over the
+#   168M results_tf rows). Postgres never scans a TEMP table in a parallel
+#   plan, so every pass that joined one (the team levels, the grade kinds)
+#   or grouped one (the memberships, and their two index builds) ran on one
+#   core; and the per-feed passes were INSERT ... SELECT, which never runs
+#   parallel at all. Now every scratch table here is UNLOGGED (as
+#   grade_sanity's are) and the per-feed passes are one CREATE TABLE AS. The
+#   rows are the rows. main() runs in one transaction: a dry run's rollback
+#   takes them; after a write they are dropped (dropScratch).
+SCRATCH = ("pf_grade_kind", "tmp_team_level", "tmp_team_lv", "tmp_pro_team",
+           "tmp_school_rows", "tmp_school_season", "tmp_ncaa_season", "tmp_pro_race",
+           "tmp_pro_season", "tmp_member_xc", "tmp_member_tf", "tmp_field_xc",
+           "tmp_field_tf", "tmp_team_rows", "tmp_team_season", "tmp_post_collegiate",
+           "tmp_long_career")
+
+
+def dropScratch(cur):
+    for t in SCRATCH:
+        cur.execute(f"DROP TABLE IF EXISTS {t}")
+
+
 def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
     """tmp_school_season (person_id, yr): the athlete-seasons the school veto
     removes from inference. See the block above; seasonIsSchool is the rule.
@@ -343,8 +366,13 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
         team_levels = got_levels if team_levels is None else team_levels
         pro_teams = got_pro if pro_teams is None else pro_teams
     _gradeKinds(cur)
+    # an unlogged copy of season_level's TEMP tmp_grade_kind: a temp table in
+    # a join keeps the whole scan off the parallel workers (SCRATCH, above)
+    cur.execute("DROP TABLE IF EXISTS pf_grade_kind")
+    cur.execute("CREATE UNLOGGED TABLE pf_grade_kind AS SELECT * FROM tmp_grade_kind")
+    cur.execute("ANALYZE pf_grade_kind")
     cur.execute("DROP TABLE IF EXISTS tmp_team_level")
-    cur.execute("CREATE TEMP TABLE tmp_team_level "
+    cur.execute("CREATE UNLOGGED TABLE tmp_team_level "
                 "(team_id bigint PRIMARY KEY, school boolean NOT NULL)")
     rows = [(int(t), lv in _SCHOOL_TEAM_LEVELS)
             for t, lv in (team_levels or {}).items() if lv]
@@ -353,35 +381,35 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
                        page_size=10000)
     # the level by name, for buildPostCollegiate (college vs club)
     cur.execute("DROP TABLE IF EXISTS tmp_team_lv")
-    cur.execute("CREATE TEMP TABLE tmp_team_lv "
+    cur.execute("CREATE UNLOGGED TABLE tmp_team_lv "
                 "(team_id bigint PRIMARY KEY, level text NOT NULL)")
     rows = [(int(t), str(lv)) for t, lv in (team_levels or {}).items() if lv]
     if rows:
         execute_values(cur, "INSERT INTO tmp_team_lv VALUES %s", rows,
                        page_size=10000)
     cur.execute("DROP TABLE IF EXISTS tmp_pro_team")
-    cur.execute("CREATE TEMP TABLE tmp_pro_team (team_id bigint PRIMARY KEY)")
+    cur.execute("CREATE UNLOGGED TABLE tmp_pro_team (team_id bigint PRIMARY KEY)")
     if pro_teams:
         execute_values(cur, "INSERT INTO tmp_pro_team VALUES %s",
                        [(int(t),) for t in pro_teams], page_size=10000)
 
     cur.execute("DROP TABLE IF EXISTS tmp_school_rows")
-    cur.execute("""CREATE TEMP TABLE tmp_school_rows
-                   (person_id bigint, yr int, n_school int, n_class int)""")
+    parts = []
     for results in ("results", "results_tf"):
         joins, school_team = _schoolTeamSql(cur, results)
-        cur.execute(f"""
-            INSERT INTO tmp_school_rows
-            SELECT r.person_id, {_yr(results)},
-                   count(*) FILTER (WHERE gk.school),
-                   count(*) FILTER (WHERE NOT gk.school)
+        parts.append(f"""
+            SELECT r.person_id::bigint AS person_id, ({_yr(results)})::int AS yr,
+                   (count(*) FILTER (WHERE gk.school))::int AS n_school,
+                   (count(*) FILTER (WHERE NOT gk.school))::int AS n_class
             FROM {results} r
             {joins}
-            LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade
+            LEFT JOIN pf_grade_kind gk ON gk.g = r.grade
             WHERE r.person_id IS NOT NULL
               AND r.date ~ '^(19|20)[0-9]{{2}}'
               AND {school_team}
             GROUP BY 1, 2""")
+    # ONE CREATE TABLE AS: an INSERT ... SELECT never runs parallel (SCRATCH)
+    cur.execute(f"CREATE UNLOGGED TABLE tmp_school_rows AS {' UNION ALL '.join(parts)}")
 
     cur.execute("SELECT to_regclass('grade_fix')")
     if cur.fetchone()[0] is not None:
@@ -389,7 +417,7 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
                                         AND gf.season = s.yr"""
         # season_level.refuseCollegeBeforeCollege's test, and seasonIsSchool's
         school = """CASE WHEN gf.person_id IS NOT NULL
-                         THEN COALESCE(gf.grade IN (SELECT g FROM tmp_grade_kind
+                         THEN COALESCE(gf.grade IN (SELECT g FROM pf_grade_kind
                                                     WHERE school), FALSE)
                               AND s.n_class <= s.n_school
                          ELSE s.n_school > s.n_class END"""
@@ -397,7 +425,7 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
         join, school = "", "s.n_school > s.n_class"
     cur.execute("DROP TABLE IF EXISTS tmp_school_season")
     cur.execute(f"""
-        CREATE TEMP TABLE tmp_school_season AS
+        CREATE UNLOGGED TABLE tmp_school_season AS
         SELECT DISTINCT s.person_id, s.yr
         FROM (SELECT person_id, yr, sum(n_school) AS n_school,
                      sum(n_class) AS n_class
@@ -499,7 +527,7 @@ def buildNcaaSeasons(cur):
     """The veto set tmp_ncaa_season: (person, year) pairs with any
     NCAA-named race."""
     cur.execute("DROP TABLE IF EXISTS tmp_ncaa_season")
-    cur.execute("CREATE TEMP TABLE tmp_ncaa_season (person_id bigint, yr int)")
+    cur.execute("CREATE UNLOGGED TABLE tmp_ncaa_season (person_id bigint, yr int)")
     for results, meets in (("results", "meets"), ("results_tf", "meets_tf")):
         cur.execute(f"""
             INSERT INTO tmp_ncaa_season (person_id, yr)
@@ -530,7 +558,7 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
     team_levels / pro_teams: see buildSchoolSeasons.
     """
     cur.execute("DROP TABLE IF EXISTS tmp_pro_race")
-    cur.execute("CREATE TEMP TABLE tmp_pro_race (person_id bigint, yr int)")
+    cur.execute("CREATE UNLOGGED TABLE tmp_pro_race (person_id bigint, yr int)")
 
     # ⚠ ONE ROW PER RESULT, NOT PER EVENT OF ITS DIVISION (2026-09-30). This
     #   was a JOIN on (meet_id, div_id), and meets_tf holds a row per (div,
@@ -557,7 +585,7 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
 
     cur.execute("DROP TABLE IF EXISTS tmp_pro_season")
     cur.execute(f"""
-        CREATE TEMP TABLE tmp_pro_season AS
+        CREATE UNLOGGED TABLE tmp_pro_season AS
         SELECT person_id, yr, count(*)::int AS pro_races, 0 AS round
         FROM tmp_pro_race
         GROUP BY person_id, yr
@@ -672,7 +700,7 @@ def buildRaceTables(cur, grains, min_field=_MIN_FIELD, since=None):
         #   smallint (a year fits in 32,767) and the race keys are already
         #   narrow; the win is not writing left(date,4) as text and casting.
         cur.execute(f"""
-            CREATE TEMP TABLE tmp_member_{sfx} AS
+            CREATE UNLOGGED TABLE tmp_member_{sfx} AS
             SELECT {rkeys}, r.person_id,
                    ({_yr(results)})::smallint AS yr
             FROM {results} r WHERE {where}
@@ -682,7 +710,7 @@ def buildRaceTables(cur, grains, min_field=_MIN_FIELD, since=None):
         # Field size per race-year, once. Small: one row per race.
         cur.execute(f"DROP TABLE IF EXISTS tmp_field_{sfx}")
         cur.execute(f"""
-            CREATE TEMP TABLE tmp_field_{sfx} AS
+            CREATE UNLOGGED TABLE tmp_field_{sfx} AS
             SELECT {keys}, yr, count(*)::int AS n
             FROM tmp_member_{sfx}
             GROUP BY {keys}, yr
@@ -902,9 +930,7 @@ def buildTeamSeasons(cur):
     'other' is a team nobody has levelled; 'none' (unattached) is not
     counted."""
     cur.execute("DROP TABLE IF EXISTS tmp_team_rows")
-    cur.execute("""CREATE TEMP TABLE tmp_team_rows
-                   (person_id bigint, yr int, n_school int, n_college int,
-                    n_club int, n_other int, n_graded int)""")
+    parts = []
     # ⚠ OFFSET 0 IS THE FIX FOR THE STEP'S SLOWEST PHASE (2026-10-25: 1,870 s
     #   of 03_pro_flag's 3,096 s on the server). Without it Postgres pulls the
     #   subquery up into the GROUP BY and pastes the whole `lv` expression --
@@ -915,14 +941,13 @@ def buildTeamSeasons(cur):
     #   same counts; only the number of times it is evaluated changes.
     for results in ("results", "results_tf"):
         joins, lv = _rowLevelSql(cur, results)
-        cur.execute(f"""
-            INSERT INTO tmp_team_rows
-            SELECT person_id, yr,
-                   count(*) FILTER (WHERE lv IN ('hs', 'ms', 'elem')),
-                   count(*) FILTER (WHERE lv = 'college'),
-                   count(*) FILTER (WHERE lv IN ('club', 'pro')),
-                   count(*) FILTER (WHERE lv = 'other'),
-                   count(*) FILTER (WHERE g ~ '^0?([1-9]|1[0-2])(st|nd|rd|th)?$')
+        parts.append(f"""
+            SELECT person_id::bigint AS person_id, yr::int AS yr,
+                   (count(*) FILTER (WHERE lv IN ('hs', 'ms', 'elem')))::int AS n_school,
+                   (count(*) FILTER (WHERE lv = 'college'))::int AS n_college,
+                   (count(*) FILTER (WHERE lv IN ('club', 'pro')))::int AS n_club,
+                   (count(*) FILTER (WHERE lv = 'other'))::int AS n_other,
+                   (count(*) FILTER (WHERE g ~ '^0?([1-9]|1[0-2])(st|nd|rd|th)?$'))::int AS n_graded
             FROM (SELECT r.person_id, {_yr(results)} AS yr, {lv} AS lv,
                          lower(btrim(COALESCE(r.grade, ''))) AS g
                   FROM {results} r
@@ -931,8 +956,10 @@ def buildTeamSeasons(cur):
                     AND r.date ~ '^(19|20)[0-9]{{2}}'
                   OFFSET 0) x
             GROUP BY 1, 2""")
+    # ONE CREATE TABLE AS: an INSERT ... SELECT never runs parallel (SCRATCH)
+    cur.execute(f"CREATE UNLOGGED TABLE tmp_team_rows AS {' UNION ALL '.join(parts)}")
     cur.execute("DROP TABLE IF EXISTS tmp_team_season")
-    cur.execute("""CREATE TEMP TABLE tmp_team_season AS
+    cur.execute("""CREATE UNLOGGED TABLE tmp_team_season AS
                    SELECT person_id, yr, sum(n_school)::int AS n_school,
                           sum(n_college)::int AS n_college,
                           sum(n_club)::int AS n_club,
@@ -960,7 +987,7 @@ def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
     #   passes one), so the same people come out of two GROUP BYs and one
     #   hash join.
     cur.execute(f"""
-        CREATE TEMP TABLE tmp_post_collegiate AS
+        CREATE UNLOGGED TABLE tmp_post_collegiate AS
         WITH col AS (
             SELECT person_id, yr FROM tmp_team_season WHERE n_college > 0
             UNION SELECT person_id, yr FROM tmp_ncaa_season),
@@ -1022,7 +1049,7 @@ def buildLongCareer(cur, seasons=LONG_CAREER_SEASONS):
     tmp_school_season and tmp_pro_season."""
     cur.execute("DROP TABLE IF EXISTS tmp_long_career")
     cur.execute(f"""
-        CREATE TEMP TABLE tmp_long_career AS
+        CREATE UNLOGGED TABLE tmp_long_career AS
         WITH f AS (SELECT person_id, min(yr) AS y0 FROM tmp_team_season GROUP BY 1),
              g AS (SELECT person_id, yr FROM tmp_team_season WHERE n_graded > 0)
         SELECT s.person_id, s.yr, (s.n_club + s.n_other)::int AS n
@@ -1138,7 +1165,7 @@ def mainPostCollegiate(person=None):
         buildNcaaSeasons(cur)
         buildSchoolSeasons(cur)
         cur.execute("DROP TABLE IF EXISTS tmp_pro_season")
-        cur.execute("CREATE TEMP TABLE tmp_pro_season "
+        cur.execute("CREATE UNLOGGED TABLE tmp_pro_season "
                     "(person_id bigint, yr int, pro_races int, round int)")
         cur.execute("SELECT to_regclass('pro_athlete_season')")
         if cur.fetchone()[0] is not None:
@@ -1278,6 +1305,8 @@ def main(write=False, rounds=_MAX_ROUNDS, show_dist=True, since=None):
                 n = writeTable(cur)
                 conn.commit()
                 print(f"\n[pro] wrote pro_athlete_season ({n:,} rows)")
+                dropScratch(cur)
+                conn.commit()
             else:
                 print("\n[pro] DRY RUN -- pass --write to save "
                       "pro_athlete_season")

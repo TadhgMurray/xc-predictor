@@ -3852,6 +3852,14 @@ def _restampByKey(conn, season_table):
                         SELECT DISTINCT school, state, ({_restampPool('')})
                         FROM   {season_table}""")
         n_keys = cur.rowcount
+        # ★ COUNTED AND INDEXED BEFORE THE PASSES RUN ON IT (2026-11-10; run
+        #   20261109_033652: "season units" took 1,399 s here against 351 s
+        #   for the same passes over 26M rows of the analysed shadow table in
+        #   10_rankings_finish). A temp table is never auto-analysed, so the
+        #   passes' joins to school_unit and their per-row subqueries were
+        #   planned on a guess. A plan, not a change: the rows are the rows.
+        cur.execute(f"CREATE INDEX ON {_RESTAMP_KEYS} (school, state)")
+        cur.execute(f"ANALYZE {_RESTAMP_KEYS}")
     conn.commit()                 # the keys outlive a failed stamping's rollback
     print(f"    [{time.time() - t0:7.1f}s] {n_keys:,} (school, state, college) keys")
     if _stampSeasonUnits(conn, _RESTAMP_KEYS) is False:
