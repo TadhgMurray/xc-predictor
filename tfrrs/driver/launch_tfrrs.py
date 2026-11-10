@@ -215,6 +215,17 @@ def _fillVenueNames(label="[venues]"):
               flush=True)
 
 
+_HEAVY = {"image", "font", "media"}
+
+
+async def _skipHeavy(route):
+    """Abort images, fonts and video; let everything else through."""
+    if route.request.resource_type in _HEAVY:
+        await route.abort()
+    else:
+        await route.continue_()
+
+
 async def main():
     # Stale-claim reset is blocking psycopg2 -> run it off the event loop.
     # ⚠ NOT IN RETRY MODE. This flips 3 -> 0, and a retry claims 2 and 3
@@ -241,6 +252,12 @@ async def main():
             ctx = await browser.new_context(viewport=_viewport())
             page = await ctx.new_page()
             await page.add_init_script(WEBDRIVER_MASK)
+            # ★ NO IMAGES, FONTS OR VIDEO (owner, 2026-11-10: "block the tfrrs
+            #   images"): every meet page pulled them all, most of its weight.
+            #   The results are in the page's text, and the athletic.net
+            #   launcher has blocked the same three kinds for months
+            #   (_blockHeavyResources). Nothing else about the browser changes.
+            await page.route("**/*", _skipHeavy)
             return page
 
         await runDrain(make_page, _urlFor)

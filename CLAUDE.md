@@ -62,3 +62,5 @@
   scraper runs from the server's one address (scripts/one_ip.py), and a
   block or a 429 ends the run politely (scripts/polite_stop.py). Never add
   IP rotation, proxies or a VPN back.
+  And (2026-11-10, "block the tfrrs images"): the TFRRS browser skips
+  images, fonts and video, as the athletic.net one long has.

@@ -50,3 +50,9 @@ def test_kailo_records_only_meets_not_yet_run():
     src = open(os.path.join(_ROOT, "scripts/kailo_compare.py")).read()
     body = src.split("def recordUpcoming")[1].split("\ndef ")[0]
     assert 'r.get("state") in UPCOMING' in body and '>= today' in body
+
+
+def test_tfrrs_pages_skip_images_fonts_and_video():
+    src = open(os.path.join(_ROOT, "tfrrs/driver/launch_tfrrs.py")).read()
+    assert '_HEAVY = {"image", "font", "media"}' in src
+    assert 'await page.route("**/*", _skipHeavy)' in src
