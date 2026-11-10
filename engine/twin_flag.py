@@ -865,7 +865,16 @@ TRACK_NAME_RX = (r"\(\s*track\s*\)"
                  r"|\mtrack\s+(5000|5k|3200|1600|mile)"
                  r"|\m(5000|3200|1600)\s*m?\s+track\M"
                  r"|(?<!back\s)(?<!get\s)(?<!stay\s)\mon\s+(the\s+)?([a-z]+\s+)?track\M(?!\s*(club|and|&|xc|cross))"
-                 r"|\m(800|1600|3200)\s*m?\s*/\s*(800|1600|3200)\s*m?\M")
+                 r"|\m(800|1600|3200)\s*m?\s*/\s*(800|1600|3200)\s*m?\M"
+                 # ★ AND ROADS AND BEACHES (owner-asked sweep, 2026-11-10:
+                 #   "2021 MakStar Road Race Invitational", ms_m #8 and #68;
+                 #   "CNW Winter Grand Prix Race #6: Road" and "#3: Track";
+                 #   "Galveston Ball Island Beach Run", hs_m #42). A road or
+                 #   a beach has no course history to price it on, so it was
+                 #   rated as an average course. "Road Runners" is a club.
+                 r"|\mroad\s+(race|run|mile|5k|10k|championships?)\M"
+                 r"|:\s*(road|track)\s*$"
+                 r"|\mbeach\s+run\M")
 
 
 # ★ A MEET OF SPLITS (owner, 2026-11-05, /athlete/33511944: "Lou Regions

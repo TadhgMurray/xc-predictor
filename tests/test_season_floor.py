@@ -114,12 +114,3 @@ if __name__ == "__main__":
         print("  - " + str(e).replace("\n", "\n  - "))
         sys.exit(1)
     print("test_season_floor: all checks passed")
-
-
-def test_the_all_time_view_floors_open_seasons_too():
-    """data audit, 2026-11-10: a one-race 2026 season was #3 on the all-time
-    middle school girls' board. A season's own board keeps the exemption."""
-    from season_floor import boardFloorExplicit
-    assert boardFloorExplicit({"year": None, "min_races_explicit": False}) is True
-    assert boardFloorExplicit({"year": [2026], "min_races_explicit": False}) is False
-    assert boardFloorExplicit({"year": [2026], "min_races_explicit": True}) is True

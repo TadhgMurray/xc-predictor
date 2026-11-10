@@ -232,3 +232,84 @@ def test_the_extra_sql_counts_people_and_reads_graduation_years():
     assert all(got.get(400 + g) == "mixed" for g in range(1, 41)), got
     assert got.get(599) == "level"
     assert 598 not in got
+
+
+# ---------------------------------------------- the owner's server read
+
+def test_two_races_in_one_list():
+    # Beantown: 57 men, a 7% gap, the women behind
+    assert RO.twoRacesSide(105, 0.066, 57, 48) == "mixed"
+    # the same gap at the tail is a race thinning out
+    assert RO.twoRacesSide(105, 0.066, 100, 5) is None
+    # a 2% gap mid-field is a race
+    assert RO.twoRacesSide(105, 0.02, 50, 55) is None
+    # a field too small to read
+    assert RO.twoRacesSide(20, 0.10, 10, 10) is None
+
+
+def _div(div, lvl, sfx, n, t3, m, meet=1, day="2018-10-16"):
+    return ("anet", meet, div, day, lvl, sfx, n, t3, m)
+
+
+def test_whitney_point_modified_is_faster_than_the_varsity():
+    divs = [_div(1, "ms", "_m", 83, 582.8, 3000),      # Modified Boys, 3rd 9:42.8
+            _div(2, "hs", "_m", 81, 1150.0, 4828),     # Boys Varsity, 3rd ~19:10
+            _div(3, "ms", "_f", 71, 641.6, 3000),      # Modified Girls, 3rd 10:41.6
+            _div(4, "hs", "_f", 47, 1340.0, 4828),     # Girls Varsity, 3rd ~22:20
+            _div(5, "hs", "_m", 43, 1230.0, 4828)]     # Boys JV
+    got = RO.siblingVerdicts(divs)
+    assert got == {("anet", 1, 1): "race", ("anet", 1, 3): "race"}
+
+
+def test_kentucky_1991_short_labels_poison_the_day():
+    divs = [_div(11, "hs", "_m", 25, 970.0, 4000, 7, "1991-11-02"),    # Boys A "4000"
+            _div(12, "hs", "_f", 14, 905.0, 3000, 7, "1991-11-02"),    # Girls A "3000"
+            _div(13, "hs", "_f", 15, 915.0, 3000, 7, "1991-11-02"),    # Girls AA
+            _div(14, "hs", "_m", 25, 960.0, 5000, 7, "1991-11-02"),    # Boys AA 5000
+            _div(15, "hs", "_f", 15, 935.0, 3000, 7, "1991-11-02"),    # Girls AAA
+            _div(16, "hs", "_m", 25, 945.0, 5000, 7, "1991-11-02")]    # Boys AAA 5000
+    got = RO.siblingVerdicts(divs)
+    assert got == {("anet", 7, 14): "day", ("anet", 7, 16): "day"}
+
+
+def test_an_ordinary_meet_is_left_alone():
+    divs = [_div(21, "hs", "_m", 150, 950.0, 5000, 9), _div(22, "hs", "_f", 140, 1090.0, 5000, 9),
+            _div(23, "hs", "_m", 120, 1060.0, 5000, 9), _div(24, "hs", "_f", 90, 1250.0, 5000, 9),
+            _div(25, "ms", "_m", 100, 620.0, 3200, 9), _div(26, "ms", "_f", 80, 700.0, 3200, 9)]
+    assert RO.siblingVerdicts(divs) == {}
+
+
+def test_one_slow_division_is_the_guards():
+    """a minority of short labels: the solve's guard sets them aside, so the
+    sound divisions are not flagged"""
+    divs = [_div(31, "hs", "_m", 150, 950.0, 5000, 4), _div(32, "hs", "_f", 140, 1090.0, 5000, 4),
+            _div(33, "hs", "_f", 30, 1100.0, 3000, 4)]
+    assert RO.siblingVerdicts(divs) == {}
+
+
+@pytest.mark.skipif(not DSN, reason="needs XCP_TWIN_TEST_DSN")
+def test_the_two_race_and_sibling_sql():
+    c, cur = _conn("oa_sib")
+    try:
+        cur.execute(_RESULTS + """
+            -- Beantown: 40 men 930-1000 s, then 30 women from 1080 s
+            INSERT INTO results SELECT g, 9000 + g, 'tfrrs', 5, 0, '2022-09-23', 130, 'college_f|XC',
+                                       'SR-4', 930 + g * 1.7 FROM generate_series(1, 40) g;
+            INSERT INTO results SELECT 100 + g, 9100 + g, 'tfrrs', 5, 0, '2022-09-23', 110, 'college_f|XC',
+                                       'SR-4', 1080 + g * 3 FROM generate_series(1, 30) g;
+            -- an ordinary list: 70 runners, no gap
+            INSERT INTO results SELECT 200 + g, 9200 + g, 'anet', 6, 61, '2022-09-24', 120, 'hs_m|XC',
+                                       '11', 950 + g * 4 FROM generate_series(1, 70) g;
+            -- Whitney Point: Modified (3000) faster than Varsity (4828)
+            INSERT INTO meets VALUES (71, 7, 3000), (72, 7, 4828);
+            INSERT INTO results SELECT 300 + g, 9300 + g, 'anet', 7, 71, '2018-10-16', 150, 'ms_m|XC',
+                                       '8', 570 + g * 5 FROM generate_series(1, 20) g;
+            INSERT INTO results SELECT 400 + g, 9400 + g, 'anet', 7, 72, '2018-10-16', 120, 'hs_m|XC',
+                                       '11', 1120 + g * 10 FROM generate_series(1, 20) g;
+        """)
+        two = {r[0] for r in RO.twoRaceRows(cur)}
+        sib = {r[0]: r[6] for r in RO.siblingRows(cur)}
+    finally:
+        _drop(c, cur, "oa_sib")
+    assert two == set(range(1, 41)) | set(range(101, 131))
+    assert sib == {300 + g: "race" for g in range(1, 21)}

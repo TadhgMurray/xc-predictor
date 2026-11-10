@@ -224,7 +224,7 @@ class TheBoardsExcludeThem(unittest.TestCase):
         with io.open(os.path.join(_ROOT, "racecast", "rankings.py"),
                      encoding="utf-8") as fh:
             src = fh.read()
-        self.assertGreaterEqual(src.count("floorSql(boardFloorExplicit(f))"), 5)
+        self.assertGreaterEqual(src.count("floorSql(f['min_races_explicit'])"), 5)
 
 
 class TheOtherReadersTheAuditNamed(unittest.TestCase):

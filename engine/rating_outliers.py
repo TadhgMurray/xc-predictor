@@ -1179,6 +1179,198 @@ def closeRows(cur):
             if careerSide(s, best, k, k_min=CLOSE_MIN)]
 
 
+# ★ TWO RACES IN ONE LIST, BY THE TIMES THEMSELVES (owner's server read,
+#   2026-11-10, scripts/board_suspects.py on the Coast-to-Coast Battle in
+#   Beantown "Combined 5k Women", 2022: 88 rows "college_f F", 1 "college_m
+#   M" -- the men's persons were MADE from this women's list, so their own
+#   gender says F and no gender count can see them; #9, #15, #20 on the
+#   all-time college women's board). The list says it itself: 57 men from
+#   15:31 to 17:47, then nobody for 7%, then the women from 19:04. A race
+#   thins out at its tail, never in its middle: a gap of GAP2_MIN (log) or
+#   more between consecutive finishers with GAP2_SIDE of the field on both
+#   sides of it is two races. Every row is 'mixed': one distance and one
+#   label for two fields.
+GAP2_N = 30            # finishers before a list is read for two races
+GAP2_MIN = 0.05        # the gap, log time: about a minute at 19:00
+GAP2_SIDE = 0.20       # of the field, and GAP2_SIDE_MIN rows, on each side
+GAP2_SIDE_MIN = 10
+GAP2_SQL = """
+    WITH t AS (
+        SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id,
+               left(r.date, 10) AS day, r.speed_rating AS s,
+               row_number() OVER w AS rn,
+               count(*) OVER (PARTITION BY r.source, r.meet_id, r.div_id) AS n,
+               ln(r.time_seconds) - ln(lag(r.time_seconds) OVER w) AS gap
+        FROM   results r
+        WHERE  r.speed_rating > 0 AND r.time_seconds > 0 AND r.person_id IS NOT NULL
+          AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+        WINDOW w AS (PARTITION BY r.source, r.meet_id, r.div_id
+                     ORDER BY r.time_seconds, r.result_id)),
+    cut AS (
+        SELECT DISTINCT source, meet_id, div_id
+        FROM   t
+        WHERE  n >= %(n)s AND gap >= %(gap)s
+          AND  rn - 1     >= greatest(%(side_min)s, n * %(side)s)
+          AND  n - rn + 1 >= greatest(%(side_min)s, n * %(side)s))
+    SELECT t.result_id, t.person_id, extract(year FROM t.day::date)::int, t.s
+    FROM   t JOIN cut USING (source, meet_id, div_id)
+"""
+
+
+def twoRacesSide(n, gap, before, after, n_min=GAP2_N, gap_min=GAP2_MIN,
+                 side=GAP2_SIDE, side_min=GAP2_SIDE_MIN):
+    """'mixed' when a gap of gap_min between consecutive finishers has
+    `before` finishers ahead of it and `after` behind, each at least side of
+    the field (and side_min). Pure."""
+    if (n or 0) < n_min or gap is None or gap < gap_min:
+        return None
+    need = max(side_min, n * side)
+    return "mixed" if before >= need and after >= need else None
+
+
+def twoRaceRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, None, 'mixed')]."""
+    cur.execute(GAP2_SQL, {"n": GAP2_N, "gap": GAP2_MIN, "side": GAP2_SIDE,
+                           "side_min": GAP2_SIDE_MIN})
+    return [(rid, "XC", pid, yr, float(s), None, "mixed")
+            for rid, pid, yr, s in cur.fetchall()]
+
+
+# ★ THE MEET'S OTHER RACES SAY WHICH LABEL IS WRONG (owner's server read,
+#   2026-11-10: Whitney Point 2018 -- Jalen Robinson's "other races: 0",
+#   so no runner-by-runner reference exists, and the Modified boys' 3000 m
+#   top three ran a 5000 m-equivalent 17% FASTER than the varsity boys' at
+#   the same meet that day; middle schoolers do not outrun the high
+#   school's varsity by a sixth. Kentucky 1991 -- the girls' "3000 m" top
+#   three a 5000 m-equivalent 60% slower than the boys', Boys A "4000 m"
+#   27% slower than Boys AAA: four short labels, the majority of the day's
+#   rows, so the solve's day guard kept THEM and set the 5000 m boys aside).
+#   Each division with SIB_MIN_N rated rows gets its third-fastest time as a
+#   5000 m equivalent (t * (5000 / d) ^ SIB_K) -- the leaders, not the tail,
+#   which JV and open fields differ in -- and is compared only where the
+#   order is certain:
+#     fast  a division FASTER by SIB_FAST than every division that must be
+#           faster than it: older, same gender (middle school vs high
+#           school, high school vs college), or men of its level or older
+#           for a women's division. Its label is longer than the course:
+#           every row 'race'.
+#     slow  a division SLOWER by SIB_SLOW_F than the same level's men (a
+#           women's division) or SIB_SLOW than the fastest division of its
+#           own gender and level: a label shorter than the course. When the
+#           slow divisions hold a majority of the meet-day's rows, the
+#           venue-day followed them (the guard's majority rule), and the
+#           OTHER divisions' rows carry a slow day they did not run: 'day'.
+#           The slow rows themselves are rated low, which is safe.
+#   ! anet only: the meets table holds its distances. A distance outside
+#     SIB_RANGE, or a level the pools cannot name, is not compared.
+SIB_K = 1.06
+SIB_MIN_N = 5
+SIB_FAST = 0.05
+SIB_SLOW = 0.25
+SIB_SLOW_F = 0.40
+SIB_RANGE = (1500.0, 12000.0)
+_LEVEL_ORDER = {"elem": 0, "ms": 1, "hs": 2, "college": 3}
+SIB_SQL = """
+    WITH x AS (
+        SELECT r.source, r.meet_id, r.div_id, left(r.date, 10) AS day,
+               split_part(split_part(COALESCE(r.rating_pool, ''), '|', 1), '_', 1) AS lvl,
+               right(split_part(COALESCE(r.rating_pool, ''), '|', 1), 2) AS sfx,
+               r.time_seconds AS ts
+        FROM   results r
+        WHERE  r.source = 'anet' AND r.speed_rating > 0 AND r.time_seconds > 0
+          AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'),
+    dv AS (
+        SELECT source, meet_id, div_id, day,
+               mode() WITHIN GROUP (ORDER BY lvl) AS lvl,
+               mode() WITHIN GROUP (ORDER BY sfx) AS sfx,
+               count(*) AS n,
+               (array_agg(ts ORDER BY ts))[3] AS t3
+        FROM   x GROUP BY 1, 2, 3, 4
+        HAVING count(*) >= %(min_n)s),
+    d AS (
+        SELECT div_id,
+               max(CASE WHEN distance < 50 THEN distance * 1609.34 ELSE distance END) AS m
+        FROM   meets WHERE distance > 0 GROUP BY 1)
+    SELECT dv.source, dv.meet_id, dv.div_id, dv.day, dv.lvl, dv.sfx, dv.n, dv.t3, d.m
+    FROM   dv JOIN d ON d.div_id = dv.div_id
+    WHERE  d.m BETWEEN %(lo)s AND %(hi)s
+"""
+
+
+def _e5(t3, metres, k=SIB_K):
+    return math.log(float(t3)) + k * math.log(5000.0 / float(metres))
+
+
+def siblingVerdicts(divs, fast=SIB_FAST, slow=SIB_SLOW, slow_f=SIB_SLOW_F):
+    """divs: [(source, meet_id, div_id, day, lvl, sfx, n, t3, metres)].
+    Returns {(source, meet_id, div_id): 'race' | 'day'}. Pure.
+
+    'race' for a division faster than every division that must be faster;
+    'day' for the sound divisions of a meet-day whose too-slow divisions
+    hold the majority of its rows."""
+    by = {}
+    for src, meet, div, day, lvl, sfx, n, t3, m in divs:
+        if lvl not in _LEVEL_ORDER or sfx not in ("_m", "_f") or not t3 or not m:
+            continue
+        by.setdefault((src, meet, day), []).append(
+            (div, _LEVEL_ORDER[lvl], sfx, int(n), _e5(t3, m)))
+    out = {}
+    for (src, meet, day), ds in by.items():
+        if len(ds) < 2:
+            continue
+        slow_divs = set()
+        for div, lv, sfx, n, e in ds:
+            # must be faster: the same gender older, and (for a women's
+            # division) the men of its level or older -- each relation by its
+            # own fastest division, so one wrong label among them (the
+            # Modified Boys beside the Modified Girls) cannot hide another
+            older = [e2 for d2, lv2, sfx2, _n2, e2 in ds
+                     if d2 != div and sfx2 == sfx and lv2 > lv]
+            men = [e2 for d2, lv2, sfx2, _n2, e2 in ds
+                   if d2 != div and sfx == "_f" and sfx2 == "_m" and lv2 >= lv]
+            if any(g and e < min(g) - fast for g in (older, men)):
+                out[(src, meet, div)] = "race"
+                continue
+            peers = [e2 for d2, lv2, sfx2, _n2, e2 in ds
+                     if d2 != div and lv2 == lv and sfx2 == sfx]
+            men_lv = [e2 for d2, lv2, sfx2, _n2, e2 in ds
+                      if d2 != div and lv2 == lv and sfx == "_f" and sfx2 == "_m"]
+            if (peers and e - min(peers) > slow) or (men_lv and e - min(men_lv) > slow_f):
+                slow_divs.add(div)
+        total = sum(n for _d, _l, _s, n, _e in ds)
+        bad = sum(n for d, _l, _s, n, _e in ds if d in slow_divs)
+        if slow_divs and bad * 2 > total:
+            for div, _lv, _sfx, _n, _e in ds:
+                if div not in slow_divs and (src, meet, div) not in out:
+                    out[(src, meet, div)] = "day"
+    return out
+
+
+def siblingRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, None, side)] for every
+    rated row of the divisions siblingVerdicts names."""
+    cur.execute(SIB_SQL, {"min_n": SIB_MIN_N, "lo": SIB_RANGE[0], "hi": SIB_RANGE[1]})
+    verdict = siblingVerdicts(cur.fetchall())
+    if not verdict:
+        return []
+    cur.execute("CREATE TEMP TABLE IF NOT EXISTS ro_sibling "
+                "(source text, meet_id bigint, div_id bigint, side text)")
+    cur.execute("TRUNCATE ro_sibling")
+    cur.executemany("INSERT INTO ro_sibling VALUES (%s, %s, %s, %s)",
+                    [(s, m, d, side) for (s, m, d), side in verdict.items()])
+    cur.execute("""
+        SELECT r.result_id, r.person_id, extract(year FROM left(r.date, 10)::date)::int,
+               r.speed_rating, v.side
+        FROM   ro_sibling v
+        JOIN   results r ON r.source = v.source AND r.meet_id = v.meet_id AND r.div_id = v.div_id
+        WHERE  r.speed_rating > 0 AND r.person_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'""")
+    return [(rid, "XC", pid, yr, float(s), None, side)
+            for rid, pid, yr, s, side in cur.fetchall()]
+
+
 def writeExtra(cur, rows):
     cur.executemany("""
         INSERT INTO rating_outlier (result_id, sport, person_id, season, rating, med, side)
@@ -1449,6 +1641,8 @@ def main():
                 extra += closeRows(cur)
                 extra += raceRows(cur)
                 extra += dayRows(cur)
+                extra += twoRaceRows(cur)
+                extra += siblingRows(cur)
                 printExtra(extra, args.show)
                 if args.write:
                     if args.since:

@@ -92,25 +92,6 @@ def floorSql(explicit, alias="s"):
             f"OR {alias}.year >= {int(OPEN_FROM)}) AND {rated}")
 
 
-def boardFloorExplicit(f):
-    """Whether a board's floor applies to open seasons too: when the reader
-    typed a minimum, and on the ALL-TIME view (no season picked).
-
-    ★ AN ALL-TIME BOARD HAS NO "EARLY IN THE SEASON" (data audit,
-      2026-11-10: Angelina Alder's 2026 cross country season, ONE race, #3
-      on the all-time middle school girls' ability board; Waylan Tolmie's
-      one race #15; four two-race 2026 seasons in the college women's top
-      20). The open-season exemption exists so this season's board is not
-      empty in September; ranked against every finished season of every
-      year, a one-race season is a performance wearing an ability's name,
-      the very thing the floor keeps out. The season's own board (a year
-      picked) keeps the exemption.
-    ! ONE ANSWER FOR THE BOARD, ITS COUNT, ITS RANK JUMP AND ITS STORED
-      POSITIONS (rankings: getAbilityRankings, countOf, rankOf, _seekKey;
-      recruiting's division board): each asks here."""
-    return bool(f.get("min_races_explicit")) or not f.get("year")
-
-
 def floorLabel(stored_year):
     """What the rank line says about its floor: '(3+ races)' or nothing."""
     return "" if isOpen(stored_year) else f"({DEFAULT_FLOOR}+ races)"

@@ -56,10 +56,7 @@ def test_which_boards_seek():
         == "performance|hs_m|XC|*|5000|-"
     assert fam("board=performance&pool=hs_f&sport=both&year=2024") == "performance|hs_f|both|2024|*|-"
     assert fam("board=ability&pool=hs_m&sport=XC&year=2012&min_races=3") == "ability|hs_m|XC|2012|*|e3"
-    # the all-time view holds open seasons to the floor too (2026-11-10,
-    # season_floor.boardFloorExplicit): its positions are the e3 family's
-    assert fam("board=ability&pool=ms_f&sport=TF") == "ability|ms_f|TF|*|*|e3"
-    assert fam("board=ability&pool=ms_f&sport=TF&year=2026") == "ability|ms_f|TF|2026|*|d"
+    assert fam("board=ability&pool=ms_f&sport=TF") == "ability|ms_f|TF|*|*|d"
     for qs in ("board=performance&pool=hs_m&sport=XC&state=CA",
                "board=performance&pool=hs_m&sport=XC&year=2023,2024",
                "board=performance&pool=hs_m&sport=XC&sort=date",

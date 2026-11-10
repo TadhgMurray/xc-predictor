@@ -541,7 +541,6 @@ def _multiInt(args, name, lo, hi):
 
 
 from season_floor import floorSql, seasonQuantileSql   # the race-count floor and the season quantile: one rule
-from season_floor import boardFloorExplicit            # noqa: E402  -- the all-time view's floor
 
 
 def parseFilters(args):
@@ -1773,7 +1772,7 @@ def seekFamily(f):
     else:
         if dist is not None or f.get("min_races") != DEFAULT_FLOOR:
             return None
-        floor = "e3" if boardFloorExplicit(f) else "d"
+        floor = "e3" if f.get("min_races_explicit") else "d"
     return seekFamilyKey(board, f["pool"], f["sport"], year, dist, floor)
 
 
@@ -2362,7 +2361,7 @@ def getAbilityRankings(cur, f):
     where = _whereClauses(f, params, with_dates=False)
     source = _abilitySource(f, params, where, precomputed=True)
     order = _orderBy(f, _SORTS_ABILITY, "s.mean_rating DESC", "s.person_id")
-    base_where = floorSql(boardFloorExplicit(f)) + " " + where
+    base_where = floorSql(f['min_races_explicit']) + " " + where
     if seek is not None:
         # ! FROM A KEY THAT STARTS ITS TIE GROUP: the rows at or past it in
         #   (mean_rating DESC NULLS LAST, person_id) are board[pos:]. The
@@ -2478,7 +2477,7 @@ def countOf(cur, f):
     cur.execute(f"""
         SELECT count(*)
         FROM   {source}
-        WHERE  {floorSql(boardFloorExplicit(f))} {where}
+        WHERE  {floorSql(f['min_races_explicit'])} {where}
     """, params)
     return int(cur.fetchone()[0])
 
@@ -2608,7 +2607,7 @@ def _rankByCount(cur, f, person_id):
         SELECT s.mean_rating
         FROM   {source}
         WHERE  s.person_id = %(person_id)s
-          AND  {floorSql(boardFloorExplicit(f))} {where}
+          AND  {floorSql(f['min_races_explicit'])} {where}
         ORDER  BY s.mean_rating DESC NULLS LAST
         LIMIT  1
     """, params)
@@ -2620,7 +2619,7 @@ def _rankByCount(cur, f, person_id):
     cur.execute(f"""
         SELECT count(*)
         FROM   {source}
-        WHERE  {floorSql(boardFloorExplicit(f))} {where}
+        WHERE  {floorSql(f['min_races_explicit'])} {where}
           AND  (s.mean_rating > %(target)s
                 OR (s.mean_rating = %(target)s
                     AND s.person_id < %(person_id)s))
@@ -2686,7 +2685,7 @@ def rankOf(cur, f, person_id):
                    row_number() OVER (ORDER BY {order}) AS rn
             FROM   {source}
             {nameLateral("s") if "a.name" in order else ""}
-            WHERE  {floorSql(boardFloorExplicit(f))} {where}
+            WHERE  {floorSql(f['min_races_explicit'])} {where}
         )
         SELECT min(rn) FROM ranked WHERE person_id = %(person_id)s
     """, params)
