@@ -943,7 +943,7 @@ main.ath-page.rc .season td.res-cell .res-ev { display: block; font-size: .8rem;
 main.ath-page.rc .season td.flags .flag { margin: 0 1px 2px 0; padding: 1px 4px; font-size: 10.5px; }
 /* "1st on team" under the place, as a small sub-line -- its own line, so no
    leading "·" (owner, 2026-11-09: it read as a stray dot) */
-main.ath-page.rc .season td.place-cell .muted { display: block; font-size: .8rem; line-height: 1.2; }
+main.ath-page.rc .season td.place-cell .muted { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); }
 main.ath-page.rc .season td.place-cell .muted .sep { display: none; }
 /* ★ EVERY CELL'S FIRST LINE ON ONE LINE (owner, 2026-11-09: "the first row
      text locations seem kind of off"). The meet, result and place cells
