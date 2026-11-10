@@ -6,7 +6,9 @@ or two runs side by side.
     python scripts/pipeline_profile.py logs/20261108_155220 logs/20261110_...   # before, after
     python scripts/pipeline_profile.py --top 25 logs/<run>
 
-Reads <run>/summary.log (one line per step: "name ok (123s, in parallel,
+"secs" is the summary line's time (for a background step: until the run
+COLLECTED it); "ran" is how long the step's own log ran, first stamped line
+to last. Reads <run>/summary.log (one line per step: "name ok (123s, in parallel,
 peak 4.2 GB, box down to 31 GB free)") and <run>/.mem/<step> (scripts/jobrun.py),
 and the first and last stamped line of each step's log for when it ran -- so a
 step's wall time can be told from the time it held up the run ("in line"
@@ -44,17 +46,41 @@ def load(run):
             m2 = re.search(r"peak_gb=([0-9.]+) min_avail_gb=([0-9.]+)", t)
             if m2:
                 e["peak"], e["low"] = float(m2.group(1)), float(m2.group(2))
+        e["ran"] = _ran(os.path.join(run, f"{name}.log"))
         steps[name] = e
     return steps
 
 
+_STAMP = re.compile(r"^(\d\d):(\d\d):(\d\d) ")
+
+
+def _ran(path):
+    """Seconds between a step log's first and last stamped line -- how long
+    the step itself ran. A background step's summary time is when the run
+    COLLECTED it, which can be hours after it finished (2026-11-10)."""
+    try:
+        with open(path, errors="replace") as fh:
+            stamps = [m.groups() for m in map(_STAMP.match, fh) if m]
+    except OSError:
+        return None
+    if not stamps:
+        return None
+    secs = [int(h) * 3600 + int(m) * 60 + int(x) for h, m, x in stamps]
+    total, prev = 0, secs[0]
+    for t in secs[1:]:
+        total += (t - prev) % 86400              # past midnight
+        prev = t
+    return total
+
+
 def fmt(e):
     if not e:
-        return f"{'':>7} {'':>6} {'':>5}"
+        return f"{'':>7} {'':>7} {'':>6} {'':>5}"
     pk = f"{e['peak']:.1f}" if e.get("peak") is not None else "-"
     lo = f"{e['low']:.0f}" if e.get("low") is not None else "-"
     flag = "" if e["ok"] else " FAIL"
-    return f"{e['s']:>7,} {pk:>6} {lo:>5}{flag}"
+    ran = f"{e['ran']:>7,}" if e.get("ran") is not None else f"{'-':>7}"
+    return f"{e['s']:>7,} {ran} {pk:>6} {lo:>5}{flag}"
 
 
 def main():
@@ -65,11 +91,13 @@ def main():
     runs = [load(r) for r in a.runs[:2]]
     names = list(dict.fromkeys(n for r in runs for n in r))
     key = runs[-1] if len(runs) > 1 else runs[0]
-    names.sort(key=lambda n: -max(r.get(n, {}).get("s", 0) for r in runs))
+    # by the time a step really took: what it ran for, else its summary time
+    names.sort(key=lambda n: -max((r.get(n) or {}).get("ran") or (r.get(n) or {}).get("s", 0)
+                                   for r in runs))
     if a.top:
         names = names[:a.top]
     hdr = f"{'step':<28} {'kind':<4} " + " | ".join(
-        f"{'secs':>7} {'peakGB':>6} {'free':>5}" for _ in runs)
+        f"{'secs':>7} {'ran':>7} {'peakGB':>6} {'free':>5}" for _ in runs)
     print("  ".join(os.path.basename(r.rstrip('/')) for r in a.runs[:2]))
     print(hdr)
     print("-" * len(hdr))
