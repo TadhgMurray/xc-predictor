@@ -2018,6 +2018,16 @@ step 10d2_restamp_units "$PY" -u racecast/build_ranking_results.py --stage resta
 #   stage carries the old table's over); that build then queues behind the
 #   vacuum -- no longer than the old order took -- and blocks no reader.
 bgstep 18_vacuum "$PY" -u scripts/gentle_vacuum.py
+# ★ KAILO'S UPCOMING MEETS, RECORDED BESIDE THE BOARDS (2026-11-10; run
+#   20261109_033652: 16c_kailo_record ran 2,295 s inside the report group,
+#   which waited on it -- 1,266 s longer than the next report). It writes
+#   only engine/data/kailo/<race>.json, which no step of the run reads
+#   (run_report, scoreboard and the watchdog do not), from the ratings and
+#   boards, final from here. XCP_KAILO=0 skips it; the 6-hourly
+#   xcp-kailo-record timer records them too.
+if [ "${XCP_KAILO:-1}" != "0" ]; then
+  bgstep 16c_kailo_record "$PY" -u scripts/kailo_compare.py --record
+fi
 # (10e_meet_units ran in the background beside the pack since 2026-11-07)
 stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
        10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
@@ -2217,9 +2227,8 @@ fi
 #   published and not yet run, once; the comparison scores those as
 #   "recorded" -- neither system saw the result. A few meets, a few dozen
 #   requests. XCP_KAILO=0 skips.
-if [ "${XCP_KAILO:-1}" != "0" ]; then
-  _REPORTS+=(16c_kailo_record "$PY -u scripts/kailo_compare.py --record")
-fi
+# (16c_kailo_record runs in the background from after 10d2 since 2026-11-10;
+#  see there)
 # ★ HOW GOOD THE PREDICTIONS WERE, EVERY RUN (owner, 2026-10-22: "how come no
 #   accuracy numbers show up"): the last two weeks' finished XC races
 #   re-predicted with each runner's history cut the day before, on the new
