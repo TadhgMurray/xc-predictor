@@ -76,6 +76,22 @@ _COPY = """
 """
 
 
+# ★ WHAT THE OUTLIER RULES SEE (data audit, 2026-11-10): the division as
+#   results holds it -- feed, stored rating_pool, person gender -- since the
+#   page reads ranking_results' pool and engine/rating_outliers.py reads
+#   results'. The Beantown "Combined 5k Women" list shows 15 men's pools on
+#   the page and was never called mixed.
+_MIX = """
+    SELECT r.source, split_part(COALESCE(r.rating_pool, '(none)'), '|', 1),
+           COALESCE(pg.gender, '?'), count(*)
+    FROM   results r
+    LEFT   JOIN person_gender pg ON pg.person_id = r.person_id
+    WHERE  r.meet_id = %(m)s AND r.div_id = %(d)s AND sign(r.result_id) = sign(%(r)s::bigint)
+      AND  r.speed_rating > 0
+    GROUP  BY 1, 2, 3 ORDER BY 4 DESC
+"""
+
+
 def _t(s):
     if s is None:
         return "-"
@@ -109,6 +125,15 @@ def main(argv=None):
             print(f"   division: {n} rated rows ({nm} men, {nf} women known), pools {pools},"
                   f" {nogr} with no grade; fastest {_t(tmin)}, median {_t(tmed)},"
                   f" median rating {med and round(med, 1)}")
+            try:
+                cur.execute("SAVEPOINT mix")
+                cur.execute(_MIX, {"m": meet_id, "d": div_id, "r": rid})
+                print("   in results (feed, stored pool, person gender: rows): "
+                      + ", ".join(f"{a} {b} {g}: {n}" for a, b, g, n in cur.fetchall()))
+                cur.execute("RELEASE SAVEPOINT mix")
+            except Exception as exc:                       # noqa: BLE001
+                cur.execute("ROLLBACK TO SAVEPOINT mix")
+                print(f"   (results breakdown unavailable: {type(exc).__name__})")
             cur.execute(_OTHER, {"p": pid, "r": rid})
             k, omed, opools, d0, d1, grades = cur.fetchone()
             print(f"   their other races: {k}, median rating {omed and round(omed, 1)},"

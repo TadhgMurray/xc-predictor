@@ -855,9 +855,17 @@ def dupConvertedSql(table, sport):
 
 
 # a meet name that says the race was run on a track (xcPlaceholderSql)
+# ★ AND "ON THE TRACK" IN ANY WORDS (data audit, 2026-11-10: "Alta Sierra 1
+#   Mile Time Trial on District track", July 2020, 5:09 by two seventh-grade
+#   girls rated as a cross country course at +2.5% with a day term -- #13
+#   and #15 on the middle school girls' all-time board), and a name listing
+#   two track events ("1600/800 Time Trial"). "On Track Club" is a club and
+#   "Back on Track" a comeback.
 TRACK_NAME_RX = (r"\(\s*track\s*\)"
                  r"|\mtrack\s+(5000|5k|3200|1600|mile)"
-                 r"|\m(5000|3200|1600)\s*m?\s+track\M")
+                 r"|\m(5000|3200|1600)\s*m?\s+track\M"
+                 r"|(?<!back\s)(?<!get\s)(?<!stay\s)\mon\s+(the\s+)?([a-z]+\s+)?track\M(?!\s*(club|and|&|xc|cross))"
+                 r"|\m(800|1600|3200)\s*m?\s*/\s*(800|1600|3200)\s*m?\M")
 
 
 # ★ A MEET OF SPLITS (owner, 2026-11-05, /athlete/33511944: "Lou Regions

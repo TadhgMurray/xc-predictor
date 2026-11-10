@@ -192,7 +192,10 @@ CREATE TABLE IF NOT EXISTS rating_outlier_calib (
 
 
 def _tableExists(cur, name):
-    cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
+    # ! BY THE SEARCH PATH, as every query here names its tables: on the box
+    #   that is public; in a test's own schema it is that schema, and a
+    #   leftover table in public must not answer for it
+    cur.execute("SELECT to_regclass(%s)", (name,))
     got = cur.fetchone()
     return bool(got[0] if not isinstance(got, dict) else list(got.values())[0])
 
@@ -728,8 +731,17 @@ EXTRA_SQL = r"""
         SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id,
                left(r.date, 10)::date AS d, r.speed_rating AS s,
                split_part(COALESCE(r.rating_pool, ''), '|', 1) AS pool,
-               (btrim(COALESCE(r.grade, '')) ~ '[0-9A-Za-z]') AS graded
+               (btrim(COALESCE(r.grade, '')) ~ '[0-9A-Za-z]') AS graded,
+               __GENDER__ AS g,
+               -- a graduation year for a grade, read as the grade it means in
+               -- this academic year (July-June): class of 2010 in fall 2008
+               -- is 11th grade
+               CASE WHEN btrim(COALESCE(r.grade, '')) ~ '^(19|20)[0-9]{2}$'
+                    THEN 12 - (btrim(r.grade)::int
+                               - (extract(year FROM left(r.date, 10)::date - 182)::int + 1))
+               END AS grad_grade
         FROM   results r
+        __GENDER_JOIN__
         WHERE  r.speed_rating > 0 AND r.person_id IS NOT NULL
           AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
           AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'),
@@ -738,8 +750,8 @@ EXTRA_SQL = r"""
                count(*) FILTER (WHERE pool LIKE 'college%%') AS n_college,
                count(*) FILTER (WHERE pool LIKE 'college%%' OR pool LIKE 'hs%%'
                                   OR pool LIKE 'pro%%') AS n_older,
-               count(*) FILTER (WHERE right(pool, 2) = '_m') AS n_m,
-               count(*) FILTER (WHERE right(pool, 2) = '_f') AS n_f
+               count(*) FILTER (WHERE g = 'M') AS n_m,
+               count(*) FILTER (WHERE g = 'F') AS n_f
         FROM   x GROUP BY 1, 2, 3),
     -- ! UP TO SIX RACES, NOT THREE (owner's audit, 2026-11-09: Amy Soliz,
     --   Whiteface (TX), 163.6 against three other races at a median of 91,
@@ -762,7 +774,8 @@ EXTRA_SQL = r"""
                 AND least(f.n_m, f.n_f) * %(mixed_share)s >= f.n_m + f.n_f)
            OR  x.person_id IN (SELECT person_id FROM few)
            OR  (x.pool IN ('ms_m', 'ms_f', 'elem_m', 'elem_f')
-                AND (dm.m >= %(level_m)s OR f.n_college * 2 > f.n OR NOT x.graded)))
+                AND (dm.m >= %(level_m)s OR f.n_college * 2 > f.n OR NOT x.graded
+                     OR x.grad_grade BETWEEN 9 AND 12)))
     SELECT c.result_id, c.person_id, extract(year FROM c.d)::int, c.s,
            o.k, o.best, o.med, c.n, c.pool, c.m, c.n_college, c.graded, c.n_older,
            c.n_m, c.n_f,
@@ -773,7 +786,8 @@ EXTRA_SQL = r"""
                 SELECT 1 FROM results z
                 WHERE  z.person_id = c.person_id AND z.result_id <> c.result_id
                   AND  z.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(z.date, 10)::date < c.d
-                  AND  split_part(COALESCE(z.rating_pool, ''), '|', 1) ~ '^(hs|college)_')) AS older_before
+                  AND  split_part(COALESCE(z.rating_pool, ''), '|', 1) ~ '^(hs|college)_')) AS older_before,
+           c.grad_grade
     FROM   cand c
     CROSS  JOIN LATERAL (
         -- ! THE TABLE, NOT x: x is materialised (read three times), and a
@@ -788,7 +802,7 @@ EXTRA_SQL = r"""
 
 
 def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=0,
-              older_before=False, n_m=0, n_f=0):
+              older_before=False, n_m=0, n_f=0, grad_grade=None):
     """The side for one candidate row of EXTRA_SQL, or None. Pure."""
     s = float(s)
     # ★ MEN AND WOMEN IN ONE RESULT LIST (owner's audit, 2026-11-09: the
@@ -820,6 +834,16 @@ def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=
     #   runners ran too, or high school or college races before it, is no
     #   evidence of the youth level. (A one-race ungraded kid in a middle
     #   school race of middle schoolers stays.)
+    # ★ A GRADUATION YEAR THAT SAYS HIGH SCHOOL (data audit, 2026-11-10:
+    #   Scott Compton, Bentonville, grade "2010" on every 2008 row -- class of
+    #   2010, an 11th grader that fall -- rated as a middle schooler, 16:25
+    #   for 5000 m, #6, #15 and #19 on the middle school boys' all-time board
+    #   and #2 by season). grade_sanity nulls a year for a grade (normGrade
+    #   reads 1-12 only), so the season was placed with no grade at all; the
+    #   year itself is the grade, read against the season it was run in.
+    if pool in ("ms_m", "ms_f", "elem_m", "elem_f") and grad_grade is not None \
+            and 9 <= int(grad_grade) <= 12:
+        return "level"
     if pool in ("ms_m", "ms_f", "elem_m", "elem_f") and (
             (metres and float(metres) >= LEVEL_MIN_M) or (n and n_college * 2 > n)
             or (not graded and ((n and n_older * 4 >= n) or (not k and n and n_older * 10 >= n)
@@ -833,17 +857,40 @@ def extraSide(s, k, best, med, n, pool, metres, n_college, graded=True, n_older=
     return None
 
 
+# ★ WHO IS IN A LIST IS THE PERSON'S GENDER, NOT THE ROW'S POOL (data audit,
+#   2026-11-10: the Coast-to-Coast Battle in Beantown "Combined 5k Women",
+#   2022 -- 89 rows rated college_f, among them Boston University's and
+#   Northeastern's men at 15:31-16:00, #9, #15 and #20 on the all-time college
+#   women's board -- was never called mixed). A row's pool follows the
+#   division's gender label wherever the person's own gender does not
+#   overrule it, so a men's field filed under "Women" reads as women by pool.
+#   person_gender is the runner's own (their profiles, all their races); the
+#   pool's suffix speaks only for a person it has nothing on.
+_POOL_GENDER = ("CASE right(split_part(COALESCE(r.rating_pool, ''), '|', 1), 2) "
+                "WHEN '_m' THEN 'M' WHEN '_f' THEN 'F' END")
+
+
+def extraSql(cur):
+    """EXTRA_SQL with the gender each row is counted as: the person's
+    (person_gender) where that table exists and knows them, else the pool's."""
+    if _tableExists(cur, "person_gender"):
+        return (EXTRA_SQL.replace("__GENDER_JOIN__",
+                                  "LEFT JOIN person_gender pg ON pg.person_id = r.person_id")
+                         .replace("__GENDER__", f"COALESCE(pg.gender, {_POOL_GENDER})"))
+    return EXTRA_SQL.replace("__GENDER_JOIN__", "").replace("__GENDER__", _POOL_GENDER)
+
+
 def extraRows(cur):
     """[(result_id, 'XC', person_id, season, rating, med, side)] for the
     rows the neighbourhood cannot judge."""
-    cur.execute(EXTRA_SQL, {"field_min": FIELD_MIN, "level_m": LEVEL_MIN_M,
-                            "days": THIN_DAYS, "mixed_min": MIXED_MIN,
-                            "mixed_share": MIXED_SHARE_INV})
+    cur.execute(extraSql(cur), {"field_min": FIELD_MIN, "level_m": LEVEL_MIN_M,
+                                "days": THIN_DAYS, "mixed_min": MIXED_MIN,
+                                "mixed_share": MIXED_SHARE_INV})
     out = []
     for (rid, pid, yr, s, k, best, med, n, pool, metres, n_col, graded, n_old,
-         n_m, n_f, older) in cur.fetchall():
+         n_m, n_f, older, grad_grade) in cur.fetchall():
         side = extraSide(s, k, best, med, n, pool, metres, n_col, graded, n_old,
-                         bool(older), n_m, n_f)
+                         bool(older), n_m, n_f, grad_grade)
         if side:
             out.append((rid, "XC", pid, yr, float(s), med and float(med), side))
     return out
@@ -943,6 +990,195 @@ def careerRows(cur):
             for rid, pid, yr, s, best, k in cur.fetchall() if careerSide(s, best, k)]
 
 
+# ★ A WHOLE FIELD RATED FAR ABOVE ITSELF (data audit, 2026-11-10: Whitney
+#   Point Invitational 2018, "Modified Boys" and "Modified Girls" at
+#   "3000 m" -- 9:23.6 and 10:24.1 winners, four rows on the middle school
+#   all-time top 25 -- whose runners rated a median +46 and +38 points above
+#   their own other races; a short course under a 3000 m label, which
+#   wrong_distance did not catch because its runners had too few other
+#   races that season to testify one by one). Whatever made it -- a wrong
+#   distance, a short course, a day term the division did not run -- the
+#   evidence is the same and needs no cause: the field's own runners, each
+#   against the mean of their OTHER races that season in the same pool, sit
+#   a median RACE_GAP (log) or more above themselves, RACE_SHARE of them up.
+#   One runner can have the race of their life; a field of RACE_MIN cannot.
+#   Every rated row of the division is 'race': kept on the page, off the
+#   boards. Rank-only, like everything here: the solve never reads it.
+#
+#   ! THE MEAN OF THE OTHER DAYS, IN LOG, BY WINDOW SUMS: one pass and two
+#     sorts over the cross country table instead of a lookup per row. A
+#     runner's one bad reference is one vote among RACE_MIN; the field's
+#     median is what decides.
+#   ! THE SAME POOL ONLY: an 8th grader's ninth-grade races are on another
+#     pool's scale, and a ratio across scales is not a gap.
+#   ! THE SEASON IS JULY TO JUNE, so a February 2021 college race and the
+#     spring high school seasons of that year sit with the fall before.
+#   ! LAST RUN'S FLAGGED ROWS ARE NO ONE'S REFERENCE, but every row is still
+#     judged: a division flagged last night is judged again tonight on the
+#     same evidence and stays flagged, or is cleared.
+RACE_MIN = 8             # runners with a reference before a field is judged
+RACE_GAP = 0.08          # median log(rating / own other races): about 11 points at 140
+RACE_SHARE = 0.75        # ... and this share of them 2% or more up
+RACE_UP = 0.02
+RACE_REF_MIN = 1         # other days that season, same pool, for a reference
+RACE_SQL = """
+    WITH x AS (
+        SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id,
+               left(r.date, 10)::date AS d,
+               extract(year FROM left(r.date, 10)::date - 182)::int AS yr,
+               split_part(COALESCE(r.rating_pool, ''), '|', 1) AS pool,
+               r.speed_rating AS s, ln(r.speed_rating) AS ls,
+               __OK__ AS ok
+        FROM   results r
+        WHERE  r.speed_rating > 0 AND r.person_id IS NOT NULL
+          AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' __NOT_FLAGGED__),
+    w AS (
+        SELECT x.*,
+               sum(ls)  FILTER (WHERE ok) OVER (PARTITION BY person_id, pool, yr)    AS s_all,
+               count(*) FILTER (WHERE ok) OVER (PARTITION BY person_id, pool, yr)    AS n_all,
+               sum(ls)  FILTER (WHERE ok) OVER (PARTITION BY person_id, pool, yr, d) AS s_day,
+               count(*) FILTER (WHERE ok) OVER (PARTITION BY person_id, pool, yr, d) AS n_day
+        FROM   x),
+    g AS (
+        SELECT source, meet_id, div_id,
+               ls - (s_all - COALESCE(s_day, 0)) / (n_all - n_day) AS gap
+        FROM   w
+        WHERE  n_all - n_day >= %(ref_min)s),
+    fld AS (
+        SELECT source, meet_id, div_id, count(*) AS n,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY gap) AS med,
+               avg((gap >= %(up)s)::int) AS share
+        FROM   g GROUP BY 1, 2, 3
+        HAVING count(*) >= %(min)s)
+    SELECT x.result_id, x.person_id, x.yr, x.s, f.n, f.med, f.share
+    FROM   fld f
+    JOIN   x ON x.source = f.source AND x.meet_id = f.meet_id AND x.div_id = f.div_id
+    WHERE  f.med >= %(gap)s AND f.share >= %(share)s
+"""
+
+
+def raceSide(n, med, share, n_min=RACE_MIN, gap=RACE_GAP, share_min=RACE_SHARE):
+    """'race' when a division's n_min+ referenced runners sit a median `gap`
+    (log) or more above their own other races, share_min of them up. Pure."""
+    if (n or 0) < n_min or med is None or share is None:
+        return None
+    return "race" if float(med) >= gap and float(share) >= share_min else None
+
+
+def raceSql(cur):
+    """RACE_SQL with last run's flags (no one's reference) and the rows
+    already excluded everywhere (twins, impossible races) left out."""
+    ok, flagged = "true", ""
+    if _tableExists(cur, "rating_outlier"):
+        ok = ("NOT EXISTS (SELECT 1 FROM rating_outlier po WHERE po.sport = 'XC' "
+              "AND po.result_id = r.result_id)")
+    for t in ("result_twin", "impossible_result"):
+        if _tableExists(cur, t):
+            flagged += (f"\n          AND NOT EXISTS (SELECT 1 FROM {t} q WHERE "
+                        f"q.sport = 'XC' AND q.result_id = r.result_id)")
+    return RACE_SQL.replace("__OK__", ok).replace("__NOT_FLAGGED__", flagged)
+
+
+def raceRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, field median gap, 'race')]."""
+    cur.execute(raceSql(cur), {"ref_min": RACE_REF_MIN, "up": RACE_UP,
+                               "min": RACE_MIN, "gap": RACE_GAP, "share": RACE_SHARE})
+    return [(rid, "XC", pid, yr, float(s), float(med), "race")
+            for rid, pid, yr, s, n, med, share in cur.fetchall()
+            if raceSide(n, med, share)]
+
+
+# ★ A DAY THE DIVISION DID NOT RUN (data audit, 2026-11-10: the Kentucky
+#   state meet, Nov 2 1991, "Day slow 8.3%". Its three girls' races are
+#   stored at 3000 m with winners at 14:44-15:15 and its Boys A at 4000 m
+#   with a 15:54 winner -- longer races under shorter labels, so four of
+#   six divisions read slow, and the venue-day term followed the majority.
+#   The two 5000 m boys' races carry that +8.3% in every rating: Jeremy
+#   Kazlauskas 15:39 rated #2 all time among high school boys, three
+#   teammates of the field in the top 25). The solve's own day guard
+#   (joint_solve.raceDayDivisions) reads each division's day off its rows
+#   and writes the ones far from their venue-day to race_day_suspect_division
+#   -- and those rows still RECEIVE the venue-day in their rating. A
+#   division whose own day ran DAY_GAP (log) or more FASTER than the day it
+#   was credited is rated that much too high: off the boards. One that ran
+#   slower is rated low, which is safe, and stays.
+#   ! READ, NOT REFIT: the table is the last go-live's; nothing in the solve
+#     changes. Absent table, no rows.
+DAY_GAP = 0.05
+DAY_SQL = """
+    SELECT r.result_id, r.person_id,
+           extract(year FROM left(r.date, 10)::date)::int, r.speed_rating,
+           COALESCE(s.log_excess, s.excess)
+    FROM   race_day_suspect_division s
+    JOIN   results r ON r.meet_id = s.meet_id AND r.div_id = s.div_id
+                    AND sign(r.result_id) = sign(COALESCE(s.sample_result_id, r.result_id))
+    WHERE  s.sport = 'XC' AND r.speed_rating > 0 AND r.person_id IS NOT NULL
+      AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+      AND  COALESCE(s.log_excess, s.excess) <= -%(gap)s
+"""
+
+
+def daySide(excess, gap=DAY_GAP):
+    """'day' when a division ran `gap` (log) or more faster than the day term
+    its ratings carry. Pure."""
+    if excess is None:
+        return None
+    return "day" if float(excess) <= -gap else None
+
+
+def dayRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, excess, 'day')]."""
+    if not _tableExists(cur, "race_day_suspect_division"):
+        return []
+    cur.execute(DAY_SQL, {"gap": DAY_GAP})
+    return [(rid, "XC", pid, yr, float(s), float(ex), "day")
+            for rid, pid, yr, s, ex in cur.fetchall() if daySide(ex)]
+
+
+# ★ ABOVE BOTH OF THE RUNNER'S RACES EITHER SIDE OF IT (data audit,
+#   2026-11-10: Adrian Suarez, HEB Zone meet Dec 3 2019, 10:05.3 for 3200 m
+#   in an 8th-grade B race -- second place 13:47.7 -- rated 159.6, his only
+#   other races three weeks either side at 13:59 and 12:54, #1 by season and
+#   #4 by race on the middle school boys' all-time boards). Two other races
+#   is under the neighbourhood's MIN_NEIGHBOURS and the career rule's
+#   CAREER_MIN, and his jump (24%) is under the thin rule's 30%. Two races
+#   within CLOSE_DAYS, in the same pool, BOTH more than CAREER_GAP (log)
+#   below it: a fifth faster than everything they ran within two months is
+#   a wrong time or a wrong course, not a breakthrough -- a breakthrough
+#   holds for the next race. The boards' end only (COPY_MIN), as career.
+CLOSE_DAYS = 60
+CLOSE_MIN = 2
+CLOSE_SQL = """
+    WITH a AS (
+        SELECT result_id, person_id, left(date, 10)::date AS d, speed_rating AS s,
+               split_part(COALESCE(rating_pool, ''), '|', 1) AS pool
+        FROM   results
+        WHERE  speed_rating >= %(min_s)s AND person_id IS NOT NULL
+          AND  date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}')
+    SELECT a.result_id, a.person_id, extract(year FROM a.d)::int, a.s, o.best, o.k
+    FROM   a
+    CROSS  JOIN LATERAL (
+        SELECT max(b.speed_rating) AS best, count(*) AS k
+        FROM   results b
+        WHERE  b.person_id = a.person_id AND b.result_id <> a.result_id
+          AND  b.speed_rating > 0 AND b.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          AND  left(b.date, 10)::date <> a.d
+          AND  split_part(COALESCE(b.rating_pool, ''), '|', 1) = a.pool
+          AND  abs(left(b.date, 10)::date - a.d) <= %(days)s) o
+    WHERE  o.k >= %(k)s AND ln(a.s / o.best) > %(gap)s
+"""
+
+
+def closeRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, best, 'fast')]."""
+    cur.execute(CLOSE_SQL, {"min_s": COPY_MIN, "days": CLOSE_DAYS,
+                            "k": CLOSE_MIN, "gap": CAREER_GAP})
+    return [(rid, "XC", pid, yr, float(s), float(best), "fast")
+            for rid, pid, yr, s, best, k in cur.fetchall()
+            if careerSide(s, best, k, k_min=CLOSE_MIN)]
+
+
 def writeExtra(cur, rows):
     cur.executemany("""
         INSERT INTO rating_outlier (result_id, sport, person_id, season, rating, med, side)
@@ -956,11 +1192,14 @@ def printExtra(rows, show):
     by = Counter(r[6] for r in rows)
     print(f"\n  rows the neighbourhood cannot judge: {len(rows):,} "
           f"({', '.join(f'{k} {v:,}' for k, v in sorted(by.items()))})")
-    for side in ("mixed", "level", "thin", "field"):
+    for side in ("mixed", "level", "thin", "field", "race", "day"):
         top = sorted((r for r in rows if r[6] == side), key=lambda r: -r[4])[:show]
+        what = {"race": "the field's median log gap over itself",
+                "day": "the division's day less the day it carries"}.get(
+                    side, "their other races' median")
         for r in top:
             print(f"    {side:<5} result {r[0]}  /athlete/{r[2]}  {r[3]}  rating {r[4]:.1f}"
-                  f"  (their other races' median {r[5] and round(r[5], 1)})")
+                  f"  ({what} {r[5] if r[5] is None else round(r[5], 3 if side in ('race', 'day') else 1)})")
 
 
 def dropStage(cur, name=STAGE):
@@ -1207,6 +1446,9 @@ def main():
                 extra = extraRows(cur)
                 extra += copyRows(cur)
                 extra += careerRows(cur)
+                extra += closeRows(cur)
+                extra += raceRows(cur)
+                extra += dayRows(cur)
                 printExtra(extra, args.show)
                 if args.write:
                     if args.since:
@@ -1214,7 +1456,8 @@ def main():
                               "the table is replaced with that part")
                     print(f"  wrote {write(cur, rows, cal):,} rows to "
                           f"rating_outlier")
-                    print(f"  wrote {writeExtra(cur, extra):,} more (thin, field, level, same-time copies)")
+                    print(f"  wrote {writeExtra(cur, extra):,} more (thin, field, level, mixed, "
+                          f"same-time copies, career, close, race, day)")
                     dropStage(cur)
                     conn.commit()
                     print("  committed. The boards (step 10) and the season "

@@ -2609,8 +2609,10 @@ def athlete(person_id):
                 race["rank_outlier"] = side
                 # thin = another person's row or a wrong distance, like fast;
                 # mixed = a combined men's and women's list, distance unknown;
-                # field / level rows were really run, so their marks stay
-                if side in ("fast", "thin", "mixed"):
+                # race = a whole field far above itself, most often a short
+                # course: its times are not this distance's either;
+                # field / level / day rows were really run, so their marks stay
+                if side in ("fast", "thin", "mixed", "race"):
                     for k in ("is_pr", "is_sr", "is_course_pr", "is_rating_pr",
                               "is_rating_sr", "is_star_pr",
                               "is_star_course", "is_star_rating"):
@@ -11493,9 +11495,19 @@ def api_rankings():
     #   for "Georgetown" and "Notre Dame" that is a high school; a college
     #   row takes the college directory's state (teamState, the athlete
     #   page's answer since "Amherst (WI)"), anything else the primary.
+    # ★ AN ABILITY ROW'S STATE IS THE SEASON'S HOME (data audit, 2026-11-10:
+    #   "Coronado CA" for a Colorado Springs runner, "Northfield ... MN" for
+    #   a Denver one -- the name's biggest cluster). athlete_season.state is
+    #   now the athlete's career home whenever the season raced there, so a
+    #   school-age season row passes it, and teamState keeps it when the
+    #   name has a school in that state. A performance row's state is the
+    #   venue's -- a travel state -- and is not passed.
+    _season_rows = f.get("board") == "ability"
     for _r in rows:
         _pool = _r.get("pool") or _r.get("rating_pool")
-        _r["school_state"] = (school_identity.teamState(_r.get("school"), _pool, None,
+        _ctx = (_r.get("state") if _season_rows and str(_pool or "").startswith(("hs_", "ms_", "elem_"))
+                else None)
+        _r["school_state"] = (school_identity.teamState(_r.get("school"), _pool, _ctx,
                                                          _r.get("person_id"))
                               if _pool else None) or school_identity.primaryState(_r.get("school"))
     # the crest keys off school_state, not `state`: a result row's state is
