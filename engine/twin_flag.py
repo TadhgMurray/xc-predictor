@@ -945,20 +945,36 @@ def dupCrossGenderSql(table, sport):
     if sport != "XC":
         return f"SELECT result_id FROM {table} WHERE false"
     key = "lower(regexp_replace(r.athlete_name, '[^A-Za-z]+', '', 'g'))"
+    # ★ ONE PASS, NOT TWO (2026-11-10: 927 s of 04c_twins in run
+    #   20261108_155220). The groups used to be found by a GROUP BY over every
+    #   XC row, then joined back to the table -- a second full scan with the
+    #   name regexp run again on all ~40M rows, joined on expressions. Now the
+    #   regexp runs once (base), and a window over the same partition counts
+    #   each (meet, day, name, time)'s divisions in the one sort.
+    #   count(DISTINCT div_id) ignores NULL: dense_rank puts NULL last, so the
+    #   non-NULL ranks are 1..n and the FILTER keeps NULL out of the count.
+    #   The old join could not match a NULL source / meet / day; base drops
+    #   those rows up front. Same rows (tests/test_twin_cross_gender_sql.py).
     return f"""
-        WITH k AS (
-            SELECT r.source, r.meet_id, left(r.date, 10) AS day, {key} AS nk,
+        WITH base AS (
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id,
+                   left(r.date, 10) AS day, {key} AS nk,
                    round(r.time_seconds::numeric, 1) AS rt
             FROM   {table} r
             WHERE  r.time_seconds BETWEEN 60 AND 14400
               AND  NULLIF(btrim(r.athlete_name), '') IS NOT NULL
-            GROUP  BY 1, 2, 3, 4, 5
-            HAVING count(DISTINCT r.div_id) = 2),
+              AND  r.source IS NOT NULL AND r.meet_id IS NOT NULL
+              AND  r.date IS NOT NULL),
+        ranked AS (
+            SELECT b.*, dense_rank() OVER (PARTITION BY source, meet_id, day, nk, rt
+                                           ORDER BY div_id) AS dr
+            FROM   base b),
         rows AS (
-            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id, k.day, k.nk, k.rt
-            FROM   {table} r JOIN k ON k.source = r.source AND k.meet_id = r.meet_id
-                   AND left(r.date, 10) = k.day AND {key} = k.nk
-                   AND round(r.time_seconds::numeric, 1) = k.rt),
+            SELECT result_id, person_id, source, meet_id, div_id, day, nk, rt
+            FROM  (SELECT z.*, max(z.dr) FILTER (WHERE z.div_id IS NOT NULL)
+                                 OVER (PARTITION BY source, meet_id, day, nk, rt) AS nd
+                   FROM ranked z) q
+            WHERE  nd = 2),
         fld AS (
             SELECT f.source, f.meet_id, f.div_id,
                    CASE WHEN count(*) FILTER (WHERE pg.gender = 'M') >= 0.7 * count(pg.gender)
