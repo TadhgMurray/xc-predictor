@@ -249,9 +249,15 @@ def isFallMeet(date):
 
 async def discover(fetcher, since_year, per_run, known, states=None, pages=1, index_max_age=6 * 3600):
     found, failed = {}, []
-    for st in states or STATES:
+    # ★ A THIRD OF THE STATES A NIGHT (sources.rotate): the rest from the store
+    from sources import rotate
+    sts = list(states or STATES)
+    now = rotate.due(getattr(fetcher, "store", None),
+                     [indexUrl(st, p) for st in sts for p in range(1, pages + 1)])
+    for st in sts:
         for p in range(1, pages + 1):
-            got = await _get(fetcher, indexUrl(st, p), index_max_age)
+            u = indexUrl(st, p)
+            got = await _get(fetcher, u, index_max_age if u in now else rotate.FOREVER)
             if not got.body:
                 failed.append(st)
                 break

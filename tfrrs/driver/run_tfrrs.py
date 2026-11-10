@@ -53,7 +53,10 @@ SPORT_TF = "TF"
 # ! FROM THE ENVIRONMENT, like the anet side's NUM_SESSIONS. 24 headful
 #   Chrome pages is a lot of RAM to discover by surprise, and the two scrapers
 #   now run at the same time on one box.
-SESSION_COUNT = int(os.environ.get("TFRRS_SESSIONS", 24))
+# ★ THE NIGHTLY'S PACE BY DEFAULT (owner, 2026-11-10): one session, 10-20 s
+#   between meets, as deploy/nightly_update.sh runs it (was 24 and 3-6 s).
+#   TFRRS_SESSIONS / TFRRS_PER_MEET_DELAY in the env still win.
+SESSION_COUNT = int(os.environ.get("TFRRS_SESSIONS", 1))
 
 # Save gates. Both are False today and flip to True when their blocker clears:
 #   - results: saveTFRRSResultsBulk needs the migration's identity columns
@@ -93,7 +96,7 @@ def _envRange(name, default):
         return default
 
 
-PER_MEET_DELAY = _envRange("TFRRS_PER_MEET_DELAY", (3, 6))
+PER_MEET_DELAY = _envRange("TFRRS_PER_MEET_DELAY", (10, 20))
 
 # _borrowConn / _returnConn
 # Purpose: Borrow a raw connection from the shared pool and return it. These wrap

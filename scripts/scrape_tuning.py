@@ -40,7 +40,12 @@ def _envFloat(name, default):
 #
 # ! CAPPED BY SESSION_CONFIGS. launcher takes SESSION_CONFIGS[:NUM_SESSIONS],
 #   so a number above the configured list silently gets the list's length.
-NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 25))
+# ★ THE NIGHTLY'S PACE BY DEFAULT (owner, 2026-11-10): a hand run with no
+#   NUM_SESSIONS / PER_MEET_DELAY / TARGET_REQUESTS_PER_SEC_PER_IP set goes
+#   as gently as deploy/nightly_update.sh (2 sessions, 5-10 s between meets,
+#   0.5 requests a second) -- it was 25 sessions, 1.5-2.5 s, 3 a second.
+#   The env file's values still win when it sets them.
+NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 2))
 
 # The ONE number you normally tune. Aggregate GetResultsData3 requests/sec
 # allowed against the single shared IP. Start low, raise it while watching
@@ -66,7 +71,7 @@ NUM_SESSIONS = int(_envFloat("NUM_SESSIONS", 25))
 #   (scrape_results._scrapeXCByDivision), and this sets the gap between them.
 #   The overnight update sets it to 0.5 (deploy/nightly_update.sh).
 TARGET_REQUESTS_PER_SEC_PER_IP = _envFloat(
-    "TARGET_REQUESTS_PER_SEC_PER_IP", 3.0)
+    "TARGET_REQUESTS_PER_SEC_PER_IP", 0.5)
 
 # Rough time one GetResultsData3 fetch takes (network + parse). Subtracted
 # from the budget so the sleep we add doesn't double-count the fetch time.
@@ -96,7 +101,7 @@ def _envRange(name, default):
         return default
 
 
-_PER_MEET_DELAY_RANGE = _envRange("PER_MEET_DELAY", (1.5, 2.5))
+_PER_MEET_DELAY_RANGE = _envRange("PER_MEET_DELAY", (5.0, 10.0))
 
 
 # perRequestDelayRange

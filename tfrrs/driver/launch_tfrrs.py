@@ -163,8 +163,10 @@ def _prepareQueue():
         with getConn() as conn:
             seedAll(conn, source="tfrrs", write=True,
                     ahead=int(os.environ.get("TFRRS_SEED_AHEAD", 500)),
+                    # ★ 11 DAYS, AS ATHLETIC.NET (owner, 2026-11-10): every
+                    #   empty meet of the last 120 days was re-loaded nightly
                     recent_days=int(
-                        os.environ.get("TFRRS_RECENT_DAYS", 120)))
+                        os.environ.get("TFRRS_RECENT_DAYS", 11)))
 
     due = _printQueueDue()
     if not due:
