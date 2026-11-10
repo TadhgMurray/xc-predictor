@@ -526,6 +526,9 @@ async def discover(fetcher, source, since_year=None, per_source=10, known=frozen
     return new, "; ".join(x for x in [note] + notes if x) + f"; {len(new)} new"
 
 
+MAX_INDEX_DEPTH = 3          # sub-index levels below a timer's own results page
+
+
 async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age):
     """([(url, kind)], note, meet pages found): the meets the timer's own
     results page links to (found counts the known ones too)."""
@@ -539,6 +542,12 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
     if isAliveTenant(page):
         return [], "AthleticLIVE tenant -- read by sources.athleticlive", 0
     found, subindexes, subpages, verified = [], 0, [0], set()
+    # ! EVERY PAGE READ ONCE, AND A FEW LEVELS AT MOST (2026-11-10: BAYTAF,
+    #   Chuck Score, Platt Systems, ScoreYourRace -- "RecursionError"). A
+    #   link shaped like a MeetPro page that is not one was read as a
+    #   sub-index at any depth, and pages linking to each other went round
+    #   until Python stopped it, losing the timer's whole night.
+    read = {index}
 
     def fresh():
         return [(u, k) for u, k in found if u not in known]
@@ -570,6 +579,9 @@ async def _ownIndex(fetcher, index, since_year, per_source, known, index_max_age
             elif u in known or (kind == "meetpro" and _host(u).endswith("tfmeetpro.com")):
                 found.append((u, kind))
             else:
+                if u in read or depth > MAX_INDEX_DEPTH:
+                    continue
+                read.add(u)
                 if kind == "page":
                     if subpages[0] >= MAX_SUBPAGES:
                         continue

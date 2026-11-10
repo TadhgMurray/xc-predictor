@@ -47,6 +47,13 @@ ADAPTERS = {"meetpro", "hytek"}             # parsers that exist (sources/*.py)
 #   which we already scrape. Still enabled (its parser exists, like TFRRS);
 #   just not counted as independent of athletic.net and FloSports.
 INDEPENDENT = {"hytek", "custom", "arrow", "raceroster"}
+# ★ CUSTOM TIMERS THE GENERIC READER ALREADY PARSES (2026-11-10: a dry run
+#   of all 88 `custom` sources, `python -m sources.timers all --dry
+#   --try-kind custom`): their own pages are Hy-Tek / Hy-Tek-style PDFs and
+#   HTML. Switched on by name; the rest need their own adapters or post
+#   only to a feed. (Arrow and Race Roster timers are read by
+#   sources/arrow.py and sources/raceroster.py, not one by one.)
+CUSTOM_ON = {"heartland-timing", "y-timing", "extra-mile-timing", "crescent-city-timing-corp"}
 FLOSPORTS = {"meetpro", "milesplit"}
 
 # terms that forbid bots and scrapers: never fetched, whatever else they post
@@ -96,7 +103,7 @@ class Source:
 
     @property
     def enabled(self):
-        return self.kind in ADAPTERS
+        return self.kind in ADAPTERS or self.slug in CUSTOM_ON
 
 
 def slugOf(name):
