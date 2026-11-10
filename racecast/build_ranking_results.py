@@ -549,7 +549,7 @@ def _seasonLevelJoin(sport):
       now writes `ay` on this same expression, so writer, engine and this
       join cannot drift again.
     """
-    ay = seasonYearSqlInt(None, "r.date")
+    ay = seasonYearSqlInt(sport, "r.date")      # the row's sport: XC opens Aug 1
     return f"""
         LEFT JOIN athlete_season_level asl_s
                ON asl_s.person_id = r.person_id

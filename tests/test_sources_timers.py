@@ -243,12 +243,11 @@ def test_the_rest_of_the_pipeline_reads_timer_rows_like_uploads():
 
 # ------------------------------------------------------------ the job's guards
 
-def test_off_limits_hosts_are_refused_before_any_request():
+def test_no_host_is_off_limits_by_name_now():
+    # owner, 2026-11-10: these told him scraping is fine (robots.txt is still read by sources.fetch)
     for u in ("https://www.pttiming.com/r/1", "https://results.itsyourrace.com/x", "https://eccathletics.org/r",
-              "https://leonetiming.com/a", "https://timerhub.com/b"):
-        assert registry.offLimits(u), u
-    assert not registry.offLimits("https://results.tfmeetpro.com/Mitchell_Timing/x/")
-    assert not registry.offLimits("https://notpttiming.com.example/")
+              "https://leonetiming.com/a", "https://timerhub.com/b", "https://results.tfmeetpro.com/M/x/"):
+        assert not registry.offLimits(u), u
 
 
 def test_a_bot_challenge_is_reported_not_parsed():

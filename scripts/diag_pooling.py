@@ -170,7 +170,7 @@ class Diag:
             ev = "r.event_id" if (sport == "TF" and "event_id" in c) else "NULL::bigint"
             parts.append(f"""
                 SELECT '{sport}'::text AS sport, r.result_id, r.person_id,
-                       {seasonYearSqlInt(None, 'r.date')} AS ay, r.date,
+                       {seasonYearSqlInt(sport, 'r.date')} AS ay, r.date,
                        NULLIF(btrim(r.grade), '') AS grade, r.source, r.school,
                        {team} AS team_id, {slug} AS team_slug, {name} AS name,
                        r.meet_id, r.div_id, {ev} AS event_id,

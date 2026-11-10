@@ -1033,7 +1033,7 @@ def buildGap(cur, sport, min_own, as_if_wiped=False, tol=0.02,
         else:
             poolexpr, pooljoin = "'all'", ""
         sql = _FORM_SQL.format(table=_TABLE[sport],
-                               season=seasonYearSqlInt(None, "r.date"),
+                               season=seasonYearSqlInt(sport, "r.date"),
                                poolexpr=poolexpr, pooljoin=pooljoin)
         _noBarePercent("_FORM_SQL", sql)
         # The window sort over the whole gap table is the same size as the

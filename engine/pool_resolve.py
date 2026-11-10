@@ -877,7 +877,7 @@ def resolvePool(grade, gender, source, school, sport,
     # ! season IS THE ACADEMIC YEAR every caller already passes; race_date is
     #   the fallback for the one caller (feature_extraction) that passes a
     #   date instead.
-    season_ay = season if season is not None else academicYearOfDate(race_date)
+    season_ay = season if season is not None else academicYearOfDate(race_date, sport)
     first_ay = firstCollegeSeason(college_first)
     season_grade = fixed_grade if (fixed_grade is not None or grade_untrusted) \
         else grade

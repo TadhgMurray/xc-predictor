@@ -127,14 +127,14 @@ OLD_RACE_COUNT_SQL = """
 # grade_sanity._TEAM_LEVEL_SQL before 2026-10-25, `mine` a CTE
 OLD_TEAM_LEVEL_SQL = f"""
     WITH teams AS (
-        SELECT r.person_id, {GS._ACAD_R} AS acad,
+        SELECT r.person_id, {GS._ACAD_R_XC} AS acad,
                COALESCE(t.level = ANY(%(codes)s), false) AS hs
         FROM   results r
         JOIN   tl_cand c ON c.person_id = r.person_id
         LEFT   JOIN anet_team t ON t.team_id = r.team_id
         WHERE  r.date IS NOT NULL
         UNION ALL
-        SELECT r.person_id, {GS._ACAD_R},
+        SELECT r.person_id, {GS._ACAD_R_TF},
                COALESCE(t.level = ANY(%(codes)s), false)
         FROM   results_tf r
         JOIN   tl_cand c ON c.person_id = r.person_id

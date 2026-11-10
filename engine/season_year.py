@@ -74,10 +74,31 @@ ACADEMIC_START_MONTH = 8
 ACADEMIC_START_DAY = 15
 SEASON_START_MMDD = f"{ACADEMIC_START_MONTH:02d}-{ACADEMIC_START_DAY:02d}"   # '08-15'
 
+# ★ CROSS COUNTRY OPENS ON AUGUST 1 (owner, 2026-11-10, Tyler Connelly: the
+#   Kennedale Wildcat Run, Aug 14 2026, a Texas season opener, filed in his
+#   2025 season, whose heading then read "Grade 12" a year early). The 15th
+#   is for TRACK: the summer circuit (Grotenhuis's Aug 1 and Aug 8 meets)
+#   closes the season behind it. No cross country race in early August
+#   closes anything -- it opens the new season -- so XC's seam is the 1st.
+#   A row's sport decides its seam; a caller with no sport (a "which season
+#   is it now?" question) is on the track seam, as before.
+XC_START_DAY = 1
+XC_START_MMDD = f"{ACADEMIC_START_MONTH:02d}-{XC_START_DAY:02d}"            # '08-01'
 
-def seasonStart(year):
-    """The first day of the season named `year`."""
-    return date(int(year), ACADEMIC_START_MONTH, ACADEMIC_START_DAY)
+
+def _startOf(sport):
+    """(month, day) the season opens on for this sport."""
+    return (ACADEMIC_START_MONTH, XC_START_DAY if sport == "XC" else ACADEMIC_START_DAY)
+
+
+def _startMmdd(sport):
+    return XC_START_MMDD if sport == "XC" else SEASON_START_MMDD
+
+
+def seasonStart(year, sport=None):
+    """The first day of the season named `year` (cross country's opens Aug 1)."""
+    m, d = _startOf(sport)
+    return date(int(year), m, d)
 
 
 # ------------------------------------------------------------------ #
@@ -87,13 +108,14 @@ def seasonStart(year):
 def seasonShift(sport, month, day=1):
     """0 or -1: how many years to move a race in this month.
 
-    ⚠ `sport` IS ACCEPTED AND IGNORED, DELIBERATELY. Every caller in the
-      codebase passes it and the parameter is kept so none of them has to
-      change -- but a season boundary that differs by sport is precisely what
-      produced the two-clock bug. If you find yourself wanting to branch on
-      sport here, that is the thing this rewrite removed. Don't.
+    ★ ONE BRANCH ON SPORT, AND ONLY THIS ONE (2026-11-10): cross country
+      opens Aug 1, track (and a caller with no sport) Aug 15. The two-clock
+      bug was a race of one sport keyed two ways by two readers; that stays
+      impossible as long as EVERY reader of a row passes the row's sport --
+      the SQL builders take it too, per table branch
+      (tests/test_season_seam_aug15.py checks no row reader passes None).
     """
-    return 0 if (month, day or 1) >= (ACADEMIC_START_MONTH, ACADEMIC_START_DAY) else -1
+    return 0 if (month, day or 1) >= _startOf(sport) else -1
 
 
 def rollsOver(sport, month):
@@ -229,7 +251,7 @@ def seasonYearSql(sport, date_col="date"):
     """
     year = f"substring({date_col}, 1, 4)"
     mmdd = f"substring({date_col}, 6, 5)"
-    return (f"(CASE WHEN {mmdd} >= '{SEASON_START_MMDD}' "
+    return (f"(CASE WHEN {mmdd} >= '{_startMmdd(sport)}' "
             f"THEN {year} ELSE ({year}::int - 1)::text END)")
 
 
@@ -241,7 +263,7 @@ def seasonYearSqlInt(sport=None, date_col="date"):
     and getting it subtly wrong at one of them.
     """
     return (f"(CASE WHEN substring({date_col}, 6, 5) >= "
-            f"'{SEASON_START_MMDD}' "
+            f"'{_startMmdd(sport)}' "
             f"THEN substring({date_col}, 1, 4)::int "
             f"ELSE substring({date_col}, 1, 4)::int - 1 END)")
 
@@ -405,6 +427,10 @@ def _selfCheck():
         ("XC", date(2025,  3, 12), 2024, "Bosh's spring MS 3000"),
         ("XC", date(2025, 11, 14), 2025, "Bosh's autumn HS 5000 -- DIFFERENT"),
         ("XC", date(2025,  8, 30), 2025, "late-August XC opener"),
+        ("XC", date(2026,  8, 14), 2026, "Kennedale Wildcat Run: XC opens Aug 1"),
+        ("XC", date(2026,  8,  1), 2026, "the first day of XC's season"),
+        ("XC", date(2026,  7, 31), 2025, "a July XC race closes the summer"),
+        ("TF", date(2026,  8, 14), 2025, "a track meet Aug 14 still closes the season"),
     ]
 
     ledger = RolloverLedger()
@@ -416,7 +442,7 @@ def _selfCheck():
     for sport, d, _want, _why in cases:
         assert seasonYearFromIso(sport, d.isoformat()) == seasonYearFor(sport, d), \
             f"wrappers disagree on {sport} {d}"
-        assert academicYear(d) == seasonYearFor(sport, d), \
+        assert academicYear(d) == seasonYearFor("TF", d), \
             f"academicYear disagrees on {d}"
     print("  (all three Python forms agree)")
 
@@ -424,8 +450,7 @@ def _selfCheck():
     # evaluate it in Python and demand identical answers.
     for sport, d, _want, _why in cases:
         iso = d.isoformat()
-        sql = int(iso[:4]) if iso[5:7] >= f"{ACADEMIC_START_MONTH:02d}" \
-            else int(iso[:4]) - 1
+        sql = int(iso[:4]) if iso[5:10] >= _startMmdd(sport) else int(iso[:4]) - 1
         assert sql == seasonYearFor(sport, d), f"SQL disagrees on {sport} {d}"
     print("  (the SQL expression agrees too)\n")
     print("  SQL text:", seasonYearSql(None, "r.date"))

@@ -108,7 +108,7 @@ def faultA(cur, show, person, levels, pro_teams):
     n_school, n_class, n_team, n_rows = (Counter(), Counter(), Counter(),
                                          Counter())
     for _sport, table, _meets in _TABLES:
-        ay = seasonYearSqlInt(None, "r.date")
+        ay = seasonYearSqlInt(_sport, "r.date")
         tid = "r.team_id" if _col(cur, table, "team_id") else "NULL::bigint"
         slug = "r.team_slug" if _col(cur, table, "team_slug") else "NULL::text"
         cur.execute(f"""
@@ -186,7 +186,7 @@ def faultB(cur, show):
     ays = [s for _p, s in seeded]
     once = Counter()
     for _sport, table, meets in _TABLES:
-        ay = seasonYearSqlInt(None, "r.date")
+        ay = seasonYearSqlInt(_sport, "r.date")
         cur.execute(f"""
             SELECT r.person_id, {ay}, count(*)
             FROM   {table} r
@@ -213,7 +213,7 @@ def faultB(cur, show):
 
 def factor(cur):
     """(c): the pro factor the athletes' own marks imply, per gender."""
-    ay = seasonYearSqlInt(None, "r.date")
+    ay = seasonYearSqlInt("TF", "r.date")      # results_tf rows
     scale = {}
     if _exists(cur, "engine_scale"):
         cur.execute("SELECT pool, sport, pool_mean FROM engine_scale")

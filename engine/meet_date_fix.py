@@ -500,10 +500,9 @@ def buildVotes(cur, sports=tuple(TABLES)):
               meets (a unique mode, or no vote), minus the class this meet
               implies = k; counted per (sport, meet, k).
     """
-    acad = seasonYearSqlInt(None, "date")
     parts = [f"""
         SELECT '{sp}'::text AS sport, meet_id, person_id,
-               {acad} + 13 - btrim(grade)::int AS class_of,
+               {seasonYearSqlInt(sp, "date")} + 13 - btrim(grade)::int AS class_of,
                (substr(date, 1, 4) || substr(date, 6, 2)
                 || substr(date, 9, 2))::int AS day
         FROM   {tb}

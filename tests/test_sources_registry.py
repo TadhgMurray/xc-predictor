@@ -24,8 +24,9 @@ from sources import registry as R                                 # noqa: E402
     ("AthleticLIVE", "Some Timing", "https://x.anet.live", "athleticlive"),
     ("MileSplit timer profile (results posted to MileSplit / milesplit.live); own site unconfirmed",
      "Acme Timing", "", "milesplit"),
-    ("PTTiming platform (own JS app + Firebase)", "PrimeTime Timing", "", "blocked"),
-    ("white label", "Leone Timing and Results Services", "", "blocked"),
+    # owner, 2026-11-10: PTTiming and Leone told him scraping is fine -- not blocked by name now
+    ("PTTiming platform (own JS app + Firebase)", "PrimeTime Timing", "", "custom"),
+    ("white label", "Leone Timing and Results Services", "", "unknown"),
     ("RunSignup timer site", "Road Co", "", "road"),
     ("dead (domain now unrelated blog)", "Gone Timing", "", "dead"),
     ("unconfirmed", "Mystery Timing", "", "unknown"),
