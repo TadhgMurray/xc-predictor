@@ -344,6 +344,9 @@ def _oneGenderName(name):
 
 def sectionRows(cur, a, lo, hi):
     print(f"\n== ROWS: places the race printed that we have no row for ==")
+    print("   ! mostly the SOURCE's own partial posting (owner, 2026-11-10: meet 281168, places"
+          " to 295, one team's 25 runners on the page) -- not rows we dropped. A race here is"
+          " worth another source's copy (AthleticLIVE, a timer), not a re-scrape.")
     print("   one race = a meet's divisions at one distance (the main feed places boys and girls,"
           " or varsity and JV, run together in one sequence); a race whose highest place is 3+"
           " more than the distinct places any of its divisions holds, and 5%+ of the field")
