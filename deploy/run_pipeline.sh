@@ -773,7 +773,19 @@ if [ -x "$WXPY" ]; then
   #   waited for it at bgwait, held .pipeline.lock all that time, and the
   #   nightly skipped two nights). Whatever it fetched in time is kept; the
   #   next run asks for the rest.
-  bgstep 04e2_weather_recent timeout -k 60 "${XCP_WX_RECENT_MIN:-90}m" "$WXPY" -u backfill/era5_cds_recent.py
+  # ★ ITS BOUND IS NOT A FAILURE (2026-11-10; run 20261109_033652 marked it
+  #   FAILED: month 1 of 5 came at 03:53, month 2 sat in the CDS queue until
+  #   the 90 minutes ran out -- timeout's 124, by design, with the month kept
+  #   for the next run). Stopped at the bound, the step says so and passes;
+  #   any other exit is still a failure. (Each run asks for the same next
+  #   month first, so a queue longer than the bound never gets past it --
+  #   noted for the scrapers: submit and collect later, not wait.)
+  bgstep 04e2_weather_recent sh -c 'timeout -k 60 "$1m" "$2" -u backfill/era5_cds_recent.py; rc=$?
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      echo "04e2: stopped at its $1-minute bound (exit $rc) -- what it fetched is in the grid; the rest waits for the next run"
+      exit 0
+    fi
+    exit "$rc"' sh "${XCP_WX_RECENT_MIN:-90}" "$WXPY"
 else
   echo "  04e_weather_grid skipped ($WXPY not found; see deploy/run_pipeline.sh)" | tee -a "$SUMMARY"
 fi
