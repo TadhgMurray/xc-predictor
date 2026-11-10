@@ -281,18 +281,29 @@ def checkWheelchairPeople(cur):
             WHERE  NOT EXISTS (SELECT 1 FROM _ck_wcp c
                                WHERE c.person_id = w.person_id)""")
         n_wcp = cur.rowcount
+    # ★ TWO LOOKUPS FROM THE SHORT LIST, NOT A PROBE OF EVERY ROW (2026-11-10;
+    #   run 20261109_033652: this check took 845 s of 17_checklist). The rows
+    #   wanted were "rated, AND (the person is listed OR, with no person, the
+    #   feed's athlete is)" -- an OR of two EXISTS, which Postgres runs as a
+    #   probe of all ~211M result rows, on one core (the list is a TEMP
+    #   table). The two halves cannot both hold for one row (a person, or
+    #   none), so the rows are exactly the two halves added: each a join from
+    #   the de-duplicated list through the person_id / athlete_id index. The
+    #   same rows, the same count, the same five shown.
+    cur.execute("ANALYZE _ck_wcp")
     bad, shown = [], []
     for t in ("results", "results_tf"):
-        where = f"""
-            WHERE {t}.speed_rating IS NOT NULL
-              AND (EXISTS (SELECT 1 FROM _ck_wcp w
-                           WHERE w.person_id IS NOT NULL
-                             AND w.person_id = {t}.person_id)
-                OR ({t}.person_id IS NULL AND EXISTS (
-                     SELECT 1 FROM _ck_wcp w
-                     WHERE w.person_id IS NULL AND w.source = {t}.source
-                       AND w.athlete_id = {t}.athlete_id)))"""
-        cur.execute(f"SELECT count(*) FROM {t} {where}")
+        rows = f"""
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.speed_rating
+            FROM   (SELECT DISTINCT person_id FROM _ck_wcp WHERE person_id IS NOT NULL) w
+            JOIN   {t} r ON r.person_id = w.person_id
+            WHERE  r.speed_rating IS NOT NULL
+            UNION ALL
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.speed_rating
+            FROM   (SELECT DISTINCT source, athlete_id FROM _ck_wcp WHERE person_id IS NULL) w
+            JOIN   {t} r ON r.source = w.source AND r.athlete_id = w.athlete_id
+            WHERE  r.person_id IS NULL AND r.speed_rating IS NOT NULL"""
+        cur.execute(f"SELECT count(*) FROM ({rows}) x")
         n = cur.fetchone()[0]
         if n:
             bad.append(f"{t}: {n:,}")
@@ -301,10 +312,9 @@ def checkWheelchairPeople(cur):
             #   Enough to open the athlete page and the race, and to see
             #   whether the row came back through a merge or a pin.
             cur.execute(f"""
-                SELECT {t}.result_id, {t}.person_id, {t}.source, {t}.meet_id,
-                       {t}.speed_rating
-                FROM {t} {where}
-                ORDER BY {t}.result_id LIMIT 5""")
+                SELECT result_id, person_id, source, meet_id, speed_rating
+                FROM ({rows}) x
+                ORDER BY result_id LIMIT 5""")
             shown += [f"{t} result {rid} person {pid} ({src} meet {mid}) "
                       f"rated {float(sr):.1f}" for rid, pid, src, mid, sr in cur.fetchall()]
     via = (f" (labels + {n_wcp:,} more from wheelchair_person)" if n_wcp
