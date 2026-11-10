@@ -2115,7 +2115,11 @@ if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_s
 #   state_odds_* (racecast/build_state_odds.py). After the boards and units
 #   it reads; its own line, not chained, so a failure costs nothing else. OFF until
 #   XCP_STATE_ODDS=1: time a first build by hand (it simulates every state).
-if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then step 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
+# ★ IN THE BACKGROUND SINCE 2026-11-10 (run 20261109_033652: 810 s in line).
+#   Only the pages read state_odds_* -- 13g_social above reads the LAST
+#   run's tables, as it did when this ran after it in line -- so bgwait
+#   collects it at the end.
+if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then bgstep 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone
