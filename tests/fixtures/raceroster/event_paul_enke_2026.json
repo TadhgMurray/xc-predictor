@@ -1,0 +1,120 @@
+{
+ "data": {
+  "event": {
+   "id": 127906,
+   "eid": 141714,
+   "uniqueCode": "weqpcfuabssbbxws",
+   "name": "Paul Enke XC Invitational",
+   "eventDate": "2026-09-19T21:00:00.000Z",
+   "timezone": "America/Chicago",
+   "locality": "Florissant",
+   "administrativeArea": "MO",
+   "countryCode": "US",
+   "associationId": 147,
+   "providerId": 375,
+   "provider": null,
+   "subEvents": [
+    {
+     "id": 306146,
+     "name": "Boys Varsity",
+     "sortOrder": 10,
+     "resultsType": "STRUCTURED",
+     "resultCount": 75,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 5000
+    },
+    {
+     "id": 306147,
+     "name": "Girls Varsity",
+     "sortOrder": 20,
+     "resultsType": "STRUCTURED",
+     "resultCount": 54,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 5000
+    },
+    {
+     "id": 306148,
+     "name": "Boys JV",
+     "sortOrder": 30,
+     "resultsType": "STRUCTURED",
+     "resultCount": 137,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 5000
+    },
+    {
+     "id": 306149,
+     "name": "Girls JV",
+     "sortOrder": 40,
+     "resultsType": "STRUCTURED",
+     "resultCount": 100,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 5000
+    },
+    {
+     "id": 306150,
+     "name": "Boys Freshman",
+     "sortOrder": 50,
+     "resultsType": "STRUCTURED",
+     "resultCount": 34,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 5000
+    },
+    {
+     "id": 306151,
+     "name": "Girls Freshman",
+     "sortOrder": 60,
+     "resultsType": "STRUCTURED",
+     "resultCount": 2,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 5000
+    },
+    {
+     "id": 306152,
+     "name": "Boys Varsity Team Scores",
+     "sortOrder": 70,
+     "resultsType": "UNSTRUCTURED",
+     "resultCount": 0,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 1000
+    },
+    {
+     "id": 306153,
+     "name": "Girls Varsity Team Scores",
+     "sortOrder": 80,
+     "resultsType": "UNSTRUCTURED",
+     "resultCount": 0,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 1000
+    },
+    {
+     "id": 306154,
+     "name": "Boys JV Team Scores",
+     "sortOrder": 90,
+     "resultsType": "UNSTRUCTURED",
+     "resultCount": 0,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 1000
+    },
+    {
+     "id": 306155,
+     "name": "Girls JV Team Scores",
+     "sortOrder": 100,
+     "resultsType": "UNSTRUCTURED",
+     "resultCount": 0,
+     "hasResults": true,
+     "isPublic": true,
+     "distanceMeters": 1000
+    }
+   ]
+  }
+ }
+}
