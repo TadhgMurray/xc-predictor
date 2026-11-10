@@ -902,11 +902,39 @@ def byRating():
     return os.environ.get("XCP_QUALIFY_BY", "rating") != "model"
 
 
-def ratedRows(teams, extra=()):
+# ★ ONE SCHOOL UNDER EACH FEED'S SPELLING (owner, 2026-11-10: Dylan Cote,
+#   Wesleyan, in no D3 regional; "too few NESCAC teams"). A college round is
+#   the college feed's meet, its schools spelled "Wesleyan"; a runner whose
+#   season row came from the high-school feed's copy of the same races is
+#   under "Wesleyan (Conn.)", and a squad read by school name never holds
+#   them. spellingExtras puts every such runner -- same school by
+#   search_index.schoolFold, SAME STATE ("Trinity (Conn.)" is not
+#   "Trinity (Texas)") -- under the round's spelling; ratedRows then keeps
+#   each school's best seven (or as many as it brought).
+def spellingExtras(teams, candidates):
+    """[(person_id, round school, rating, pool)] for season rows filed
+    under another spelling of a round's school in its state, not already
+    in the field. candidates: [(person_id, school, state, rating, pool)].
+    Pure but for search_index.schoolFold."""
+    from search_index import schoolFold
+    have = {int(r["person_id"]) for t in teams or [] for r in t.get("runners") or []
+            if r.get("person_id") is not None}
+    by = {(schoolFold(t["school"]), t["state"]): t["school"]
+          for t in teams or [] if t.get("school") and t.get("state")}
+    out = []
+    for pid, school, state, rating, pool in candidates:
+        own = by.get((schoolFold(school), state))
+        if own and own != school and int(pid) not in have:
+            out.append((int(pid), own, rating, pool))
+    return out
+
+
+def ratedRows(teams, extra=(), cap=7):
     """Qualifying rows [(person_id, school, seconds, rating)] from a field's
     teams (meetField's) and extra (person_id, school, rating, pool) rows,
-    fastest first. `seconds` is 10000 / the HS-equivalent rating: only its
-    order is read (qualifying sorts a round by it). Pure but for pool_view."""
+    fastest first, each school at most max(cap, the runners its team had).
+    `seconds` is 10000 / the HS-equivalent rating: only its order is read
+    (qualifying sorts a round by it). Pure but for pool_view."""
     import pool_view as PV
     seen = {}
 
@@ -927,7 +955,16 @@ def ratedRows(teams, extra=()):
             seen[int(pid)] = (school, v)
     rows = [(pid, school, 10000.0 / v, v) for pid, (school, v) in seen.items()]
     rows.sort(key=lambda r: (r[2], r[0]))
-    return rows
+    room = {t.get("school"): max(cap, len(t.get("runners") or [])) for t in teams or []}
+    per = collections.Counter()
+    out = []
+    for r in rows:
+        if r[1] in room:
+            if per[r[1]] >= room[r[1]]:
+                continue
+            per[r[1]] += 1
+        out.append(r)
+    return out
 
 
 def ratedDiv(cur, meet_id, div_id, source, add=None):
@@ -939,15 +976,29 @@ def ratedDiv(cur, meet_id, div_id, source, add=None):
             cur.execute("SAVEPOINT up_rated")
             f = P.meetField(cur, int(meet_id), int(div_id), "XC", when="thisyear",
                             source=source) or {}
+            teams = f.get("teams") or []
+            # the round's schools under the other feed's spelling (spellingExtras)
+            states = sorted({t["state"] for t in teams if t.get("state")})
+            pools = collections.Counter((r.get("pool") or "").split("|")[0]
+                                        for t in teams for r in t.get("runners") or [])
+            pool = pools.most_common(1)[0][0] if pools else None
             extra = []
+            if states and pool:
+                cur.execute("""SELECT person_id, school, state, mean_rating, pool FROM athlete_season
+                               WHERE sport = 'XC' AND year = %s AND state = ANY(%s)
+                                 AND split_part(pool, '|', 1) = %s AND mean_rating IS NOT NULL""",
+                            (f.get("season_year"), states, pool))
+                extra = spellingExtras(teams, [(r["person_id"], r["school"], r["state"],
+                                                r["mean_rating"], r["pool"])
+                                               for r in _dictRows(cur)])
             missing = sorted(set(add or ()))
             if missing:
                 cur.execute("""SELECT person_id, school, mean_rating, pool FROM athlete_season
                                WHERE sport = 'XC' AND year = %s AND person_id = ANY(%s)
                                  AND mean_rating IS NOT NULL""",
                             (f.get("season_year"), missing))
-                extra = [(r["person_id"], r["school"], r["mean_rating"], r["pool"])
-                         for r in _dictRows(cur)]
+                extra += [(r["person_id"], r["school"], r["mean_rating"], r["pool"])
+                          for r in _dictRows(cur)]
             _release(cur, "up_rated")
         except Exception as exc:                        # noqa: BLE001
             _undo(cur, "up_rated")
