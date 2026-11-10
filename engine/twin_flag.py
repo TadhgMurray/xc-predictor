@@ -57,8 +57,12 @@ Pipeline step 04c, before the pack. Issues 15 and 94.
     dup_converted a track race stored as run and again converted to the
                   neighbouring distance, 2 mile / 3200 (dupConvertedSql).
     xc_placeholder a track race on the XC calendar (xcPlaceholderSql).
-    xc_track_copy an XC row whose person has a track row the same day at
-                  the same time: the track race's copy (xcTrackCopySql).
+    xc_track_copy an XC row whose person has a track row the same day (or
+                  up to three days apart) at the same time: the track race's
+                  copy (xcTrackCopySql).
+    xc_track_meet an XC row from a track meet filed in both tables (same
+                  name and date), whose runner is at the track meet that day
+                  (xcTrackMeetSql, 2026-11-10).
     level_conflict a high school row inside a college athlete's season, or
                   the reverse: one person_id, one sport, one academic year,
                   rows that can only be college AND rows that can only be
@@ -886,6 +890,17 @@ TRACK_NAME_RX = (r"\(\s*track\s*\)"
 SPLITS_NAME_RX = r"\msplits\M|\msplit\s+times\M"
 
 
+# ★ A LIST OF MARKS IS NOT A RACE (owner's server read, 2026-11-10,
+#   scripts/diag_track_as_xc.py: "HS Best Marks B - Ntl Ekiden Qualifying
+#   Teams 2010", rated 150-162 on rows that are each runner's season best
+#   from somewhere else; "Best HS 3k Team Marks Through September"; "Season's
+#   Best", filed on March 1 of 2000, 2001, 2003 and 2004). A compiled list
+#   carries no course, no day and often no distance of its own.
+MARKS_NAME_RX = (r"\mbest\s+((hs|high\s+school|\d+k|team|season)\s+)*marks\M"
+                 r"|\mseason.?s\s+bests?\M"      # no quote: it is pasted into SQL
+                 r"|\mmarks\s+(list|through)\M")
+
+
 def xcPlaceholderSql(table, sport):
     """A TRACK race put on the cross country calendar (owner's page,
     2026-09-28: "Mid-Season Mania 1600m Invitational (XC Calendar
@@ -908,7 +923,8 @@ def xcPlaceholderSql(table, sport):
         WHERE  r.meet_id IN (SELECT DISTINCT meet_id FROM meets
                              WHERE  (meet_name ILIKE '%%placeholder%%'
                                      OR meet_name ~* '{TRACK_NAME_RX}'
-                                     OR meet_name ~* '{SPLITS_NAME_RX}')
+                                     OR meet_name ~* '{SPLITS_NAME_RX}'
+                                     OR meet_name ~* '{MARKS_NAME_RX}')
                                AND  meet_id IS NOT NULL)
     """
 
@@ -932,8 +948,58 @@ def xcTrackCopySql(table, sport):
           AND  r.time_seconds > 0 AND r.time_seconds < 100000
           AND  EXISTS (SELECT 1 FROM results_tf t
                        WHERE t.person_id = r.person_id
-                         AND substr(t.date, 1, 10) = substr(r.date, 1, 10)
-                         AND abs(t.time_seconds - r.time_seconds) < 0.15)
+                         AND abs(t.time_seconds - r.time_seconds) < 0.15
+                         AND (substr(t.date, 1, 10) = substr(r.date, 1, 10)
+                              OR (t.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                                  AND r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                                  AND abs(left(t.date, 10)::date
+                                          - left(r.date, 10)::date) <= 3)))
+    """
+
+
+def xcTrackMeetSql(table, sport):
+    """A cross country row from a TRACK MEET filed in both tables: an XC meet
+    whose name (letters and digits) and date are a track meet's, and whose
+    runner has a track row at that track meet that day.
+
+    ★ (owner's server read, 2026-11-10, scripts/diag_track_as_xc.py): "CT
+      1600m Virtual Time Trials" (581 XC rows), "2026 Mid-Season Mania 1600m
+      Invitational" (556), "Moorpark King of the Track Classic", "Ayala 3200m
+      Time Trial", "Boot Camp Mile", "Crater Track Twilight 2022", "YMCA Run
+      Club Meet #2" -- each in the track table under the same name the same
+      day. ! THE RUNNER MUST BE AT THE TRACK MEET TOO: a meet that holds a
+      real XC race beside track events ("Harriers & Thinclads") keeps the XC
+      rows of everyone who ran no track that day.
+    ★ AND UP TO THREE DAYS APART (xc_track_copy, above, now reads +-3 days to
+      the tenth: "Quick TC 3000m Time Trial", dated a day apart by the two
+      tables)."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return f"""
+        WITH xn AS (
+            SELECT k.meet_id, k.d,
+                   lower(regexp_replace(m.meet_name, '[^a-zA-Z0-9]', '', 'g')) AS nk
+            FROM  (SELECT DISTINCT meet_id, substr(date, 1, 10) AS d FROM {table}
+                   WHERE source = 'anet' AND person_id IS NOT NULL) k
+            JOIN  (SELECT DISTINCT ON (meet_id) meet_id, meet_name FROM meets
+                   WHERE meet_name IS NOT NULL) m ON m.meet_id = k.meet_id),
+        tn AS (
+            SELECT k.meet_id, k.d,
+                   lower(regexp_replace(m.meet_name, '[^a-zA-Z0-9]', '', 'g')) AS nk
+            FROM  (SELECT DISTINCT meet_id, substr(date, 1, 10) AS d FROM results_tf
+                   WHERE source = 'anet') k
+            JOIN  (SELECT DISTINCT ON (meet_id) meet_id, meet_name FROM meets_tf
+                   WHERE meet_name IS NOT NULL) m ON m.meet_id = k.meet_id),
+        pair AS (
+            SELECT xn.meet_id AS xm, tn.meet_id AS tm, xn.d
+            FROM   xn JOIN tn ON tn.d = xn.d AND tn.nk = xn.nk AND xn.nk <> '')
+        SELECT r.result_id
+        FROM   {table} r
+        JOIN   pair p ON p.xm = r.meet_id AND substr(r.date, 1, 10) = p.d
+        WHERE  r.source = 'anet' AND r.person_id IS NOT NULL
+          AND  EXISTS (SELECT 1 FROM results_tf t
+                       WHERE t.meet_id = p.tm AND t.person_id = r.person_id
+                         AND substr(t.date, 1, 10) = p.d)
     """
 
 
@@ -1097,6 +1163,7 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          ("dup_converted", dupConvertedSql),
          ("xc_placeholder", xcPlaceholderSql),
          ("xc_track_copy", xcTrackCopySql),
+         ("xc_track_meet", xcTrackMeetSql),
          ("xc_split_copy", xcSplitCopySql),
          ("dup_cross_gender", dupCrossGenderSql),
          ("dup_cross_div", dupCrossDivSql),

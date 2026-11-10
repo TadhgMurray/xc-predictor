@@ -45,7 +45,8 @@ def test_rules_key_on_the_right_things():
                                         "dup_cross_date", "dup_race_copy",
                                         "dup_same_day", "dup_adjacent_day",
                                         "dup_converted", "xc_placeholder",
-                                        "xc_track_copy", "xc_split_copy",
+                                        "xc_track_copy", "xc_track_meet",
+                                        "xc_split_copy",
                                         "dup_cross_gender", "dup_cross_div",
                                         "level_conflict"], \
         "cross-feed reasons file first; the primary key keeps the first"
@@ -111,15 +112,17 @@ _EXPECTED = {
     ("XC", "dup_adjacent_day"): [1202],
     ("TF", "dup_adjacent_day"): [],
     # 1131 "on District track"; 1133-1135 a road race, ": Road", a beach run (2026-11-10)
-    ("XC", "xc_placeholder"): [1111, 1112, 1131, 1133, 1134, 1135],
+    ("XC", "xc_placeholder"): [1111, 1112, 1131, 1133, 1134, 1135, 1137, 1138],
     ("TF", "dup_same_day"):   [1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108],
     ("TF", "dup_converted"):  [1802],
     ("TF", "xc_placeholder"): [],
     # 2026-10-18: the 2026 Mid-Season Mania, no "placeholder" in its name;
     # 1121's XC 1600 is its person's track 1600 to the tenth (1122 is a real
     # XC race the same person ran another day)
-    ("XC", "xc_track_copy"): [1121],
+    ("XC", "xc_track_copy"): [1121, 1143],      # 1143: two days apart (2026-11-10)
     ("TF", "xc_track_copy"): [],
+    ("XC", "xc_track_meet"): [1141],            # 2026-11-10: a track meet in both tables
+    ("TF", "xc_track_meet"): [],
     ("XC", "xc_split_copy"): [],        # tests/test_twin_split_copy.py holds its case
     ("TF", "xc_split_copy"): [],
     ("XC", "dup_cross_gender"): [],     # tests/test_twin_cross_gender.py holds its case

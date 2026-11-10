@@ -106,6 +106,22 @@ INSERT INTO results VALUES (1133, 6122, 'anet', 18, 118, 18, 1, 954.4, '2021-06-
   (1134, 6123, 'anet', 19, 119, 19, 1, 600.0, '2023-02-25'),
   (1135, 6124, 'anet', 20, 120, 20, 1, 900.0, '2023-09-08'),
   (1136, 6125, 'anet', 21, 121, 21, 1, 700.0, '2020-09-26');
+-- marks lists (2026-11-10): 1137, 1138 go; 1139 ("Best Ball Golf Course XC") stays
+INSERT INTO meets VALUES (22,122,'HS Best Marks B - Ntl Ekiden Qualifying Teams 2010'),
+  (23,123,'Season''s Best'), (24,124,'Best Ball Golf Course XC');
+INSERT INTO results VALUES (1137, 6126, 'anet', 22, 122, 22, 1, 953.0, '2010-12-06'),
+  (1138, 6127, 'anet', 23, 123, 23, 1, 900.0, '2004-03-01'),
+  (1139, 6128, 'anet', 24, 124, 24, 1, 1000.0, '2010-10-02');
+-- xc_track_meet (2026-11-10): "Harriers & Thinclads" in both tables on one
+-- day; 1141's runner is at the track meet (goes), 1142's is not (stays);
+-- 1143 a track row's copy two days apart to the tenth (xc_track_copy)
+INSERT INTO meets VALUES (25,125,'JERRY YOUNG: HARRIERS & THINCLADS');
+INSERT INTO meets_tf VALUES (95,195,1,'anet','Jerry Young: Harriers & Thinclads','KY');
+INSERT INTO results VALUES (1141, 6130, 'anet', 25, 125, 25, 1, 960.0, '2025-11-06'),
+  (1142, 6131, 'anet', 25, 125, 25, 2, 980.0, '2025-11-06'),
+  (1143, 6132, 'anet', 26, 126, 26, 1, 653.0, '2024-12-05');
+INSERT INTO results_tf VALUES (1951, 6130, 'anet', 95, 195, 1, 95, 3, 290.0, '2025-11-06', NULL, NULL, NULL, '1600m', 0, 0),
+  (1952, 6132, 'anet', 96, 196, 1, 96, 1, 653.0, '2024-12-03', NULL, NULL, NULL, '3000m', 0, 0);
 -- xc_track_copy (2026-10-18): the 2026 Mid-Season Mania, no "placeholder";
 -- 1121 is the track row 1921 to the tenth; 1122 a real XC race another day
 INSERT INTO meets VALUES (14,114,'2026 Mid-Season Mania 1600m Invitational');
