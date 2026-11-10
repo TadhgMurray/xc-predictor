@@ -571,8 +571,37 @@ def _all(a, conn):
             conn.commit()
         meets.extend(mine)
 
+    # ★ ARROW LIVE RESULTS, ONE JOB FOR EVERY TIMER ON IT (2026-11-10;
+    #   sources/arrow.py): 34 timers in the research file post there, none
+    #   was read. Same budget, store, rests and fresh re-reads as the timers
+    #   above. XCP_ARROW=0 leaves it out; XCP_ARROW_PER_RUN meets a night.
+    async def arrowJob():
+        from types import SimpleNamespace
+        from sources import arrow
+        src = SimpleNamespace(slug=arrow.SLUG)
+        if os.environ.get("XCP_ARROW", "1") == "0" or (a.only and arrow.SLUG not in set(a.only)):
+            return src, [], "off"
+        try:
+            meets, note = await arrow.discover(fetcher, since, int(os.environ.get("XCP_ARROW_PER_RUN", "12")),
+                                               known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for meet in meets:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(meets) - len(got)} meets wait for the next run"
+                break
+            try:
+                lm, why = await arrow.readMeet(fetcher, meet, RETRY_AGE if meet["url"] in retry else MAX_AGE)
+                if lm is not None and _recent(lm.date) and meet["url"] not in retry:
+                    lm, why = await arrow.readMeet(fetcher, meet, RECENT_AGE)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((meet["url"], lm, why))
+        return src, got, note
+
     async def go(f):
-        for fut in asyncio.as_completed([one(s) for s in srcs]):
+        for fut in asyncio.as_completed([one(s) for s in srcs] + [arrowJob()]):
             report(*(await fut), f)
 
     with open(out, "w", encoding="utf-8") as f:

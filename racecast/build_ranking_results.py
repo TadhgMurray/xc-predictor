@@ -52,6 +52,7 @@ import person_gender as _pg      # gender by the rows (issue 164)
 # engine disagree about which season a race is in, every board silently splits
 # the athletes the engine deliberately joined.
 from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
+from season_year import seasonYearForPerson, loadProSeasons as _loadProSummer
 
 try:
     from normalize_distance import poolFor, poolBandFor
@@ -1166,7 +1167,7 @@ def pinnedSchool(person_id, sport, date):
     """The owner's school for this row's season, or None."""
     if person_id not in _SCHOOL_PIN_PEOPLE:
         return None
-    season = seasonYearFromIso(sport, date)
+    season = seasonYearForPerson(sport, date, person_id)
     return (_SCHOOL_PIN.get((person_id, season, sport))
             or _SCHOOL_PIN.get((person_id, season, "")))
 
@@ -1473,7 +1474,9 @@ def prepareRow(row, sport):
     #   athlete-season now, not per person), and the row's own `year` column
     #   is the same number. seasonYearFromIso is memoised, so this is a dict
     #   hit rather than a second parse.
-    season = seasonYearFromIso(sport, row.date)
+    # ★ AND A PROFESSIONAL'S LATE-SUMMER TRACK RACE CLOSES THE SEASON BEHIND
+    #   IT (season_year 3b: Grant Fisher's Diamond League finals).
+    season = seasonYearForPerson(sport, row.date, row.person_id)
 
     # ★ THE POOL THE ENGINE RATED THE ROW IN, OFF THE ROW (issue 171, and
     #   the owner, 2026-09-14: "the rating compares to the wrong pool mean
@@ -4070,6 +4073,9 @@ def main():
             with conn.cursor() as _cur:
                 _n = loadNameAliases(_cur)
                 _np = loadSchoolPins(_cur)
+                _npro = _loadProSummer(_cur)
+            print(f"  {_npro:,} professional athlete-seasons: their Aug 15 - Sep 30 "
+                  f"track races close that season (season_year 3b)", flush=True)
             print(f"  {_np:,} athlete-seasons pinned to a school by the owner "
                   f"(school_pin; scripts/person_pins.py)", flush=True)
             print(f"  {_n:,} school spellings fold onto another team's name "

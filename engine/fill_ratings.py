@@ -50,7 +50,7 @@ import psycopg2.extras                                    # noqa: E402
 from database import getConn                              # noqa: E402
 import build_ranking_results as B                         # noqa: E402
 from pool_resolve import resolvePool                      # noqa: E402
-from season_year import seasonYearFromIso
+from season_year import seasonYearFromIso, seasonYearForPerson, loadProSeasons as _loadProSummer
 from pro_ability import proAbilityFor                 # noqa: E402
 from speed_ratings_db import saveResultSpeedRatings       # noqa: E402
 
@@ -210,7 +210,7 @@ def _rowPool(row, sport):
     the engine's team facts (_teamFacts). The non-school/DODEA guards are
     deliberately NOT applied: those exclude rows from RANKINGS, and this
     file only prices rows for display."""
-    season = seasonYearFromIso(sport, row.date)
+    season = seasonYearForPerson(sport, row.date, row.person_id)   # season_year 3b
     team_level, has_pros, no_team, team_pro, race_top = _teamFacts(row, sport)
     return resolvePool(row.grade, row.gender, row.source, row.school,
                        sport,
@@ -788,6 +788,9 @@ def main():
                 checkVenue(conn, sport, args.check)
         return
     with getConn() as conn:
+        # the professionals' summer (season_year 3b): the boards' seasons
+        with conn.cursor() as _pcur:
+            _loadProSummer(_pcur)
         # ★ THE INVARIANT, ENFORCED EVERY RUN (2026-08-27): no normalized
         #   time => no rating. The backfill's merge NULLs nt for skipped
         #   rows (wheelchair, nuked divisions, drops) but carries the old

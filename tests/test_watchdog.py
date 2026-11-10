@@ -520,7 +520,7 @@ def test_the_pipelines_run_it_off_the_chain_and_after_the_boards():
     assert nightly.index("step 13k_watchdog") > nightly.index("step 13c0_person_redirects")
     assert nightly.index("step 13k_watchdog") < nightly.index("# ---- summary")
     assert full.index("step 17d_watchdog") > full.index("step 10_rankings_finish")
-    assert full.index("step 17d_watchdog") < full.index("step 18_vacuum")
+    assert full.index("step 17d_watchdog") < full.index("bgjoin 18_vacuum")
     for sh in (nightly, full):
         line = sh[sh.index("racecast/watchdog.py"):].split("\n")[0]
         assert "&&" not in line

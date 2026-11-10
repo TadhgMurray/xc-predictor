@@ -71,3 +71,13 @@ def test_a_skipped_shard_step_skips_its_prepare_and_finish():
     assert run(",12b_course_pages,", 0) == "no"
     assert run("", 13) == "no"
     assert run("", 12) == "yes"
+
+
+def test_the_search_index_runs_beside_the_tail_and_is_joined_before_its_reader():
+    # 2026-11-10: 729 s in line; nothing reads search_index until the
+    # watchdog (17d) and the prewarm (19b)
+    sh = read("deploy", "run_pipeline.sh")
+    assert (sh.index("bgstep 13c_search_index") < sh.index("bgjoin 13c_search_index")
+            < sh.index("bgstep 17d_watchdog") < sh.index("step 19b_prewarm"))
+    sm = read("racecast", "build_sitemap.py")
+    assert "search_index " not in sm.replace("from search_index import", "")

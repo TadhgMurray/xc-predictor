@@ -26,7 +26,7 @@ from database import getConn
 #   disagreed with the season rating the rankings page shows for the same
 #   athlete. See engine/season_year.py.
 sys.path.insert(0, "engine")
-from season_year import seasonYearFromIso
+from season_year import seasonYearFromIso, seasonYearForPerson
 import psycopg2.extras
 # ! EXPLICIT, NOT RELIED ON. `import psycopg2.extras` binds the package, and
 #   psycopg2 does import .errors itself -- but depending on another module's
@@ -2490,8 +2490,9 @@ def athlete(person_id):
     # 0b. stamp each race with its season -- the academic year, labelled the
     #     way the boards label it. Stamped ONCE here so the season tables, the
     #     record flags and the sidebar bests all group on the same value.
+    _proSummerFresh()
     for race in races:
-        race["season_label"] = season_label(race["sport"], race["date"])
+        race["season_label"] = season_label(race["sport"], race["date"], person_id)
 
     # 0c. the HS-equivalent view: stamp race["pool"] and race["hs_rating"].
     #     AFTER season_label (the fallback pools by season), BEFORE the
@@ -3683,7 +3684,29 @@ from time_format import format_time                              # noqa: E402
 app.template_filter("clock")(format_time)
 
 
-def season_label(sport, date_text):
+_PRO_SUMMER = {"until": 0.0}
+
+
+def _proSummerFresh():
+    """The professional seasons season_year 3b shifts by, read at most once
+    an hour per worker (pro_athlete_season changes once a night). A failure
+    leaves the last set -- or none, the plain rule -- and is retried in five
+    minutes; the page never fails on it."""
+    if time.time() < _PRO_SUMMER["until"]:
+        return
+    from season_year import loadProSeasons
+    try:
+        with getConn() as _c:
+            with _c.cursor() as _cur:
+                loadProSeasons(_cur)
+                _c.rollback()
+        _PRO_SUMMER["until"] = time.time() + 3600
+    except Exception as exc:                          # noqa: BLE001
+        print(f"pro summer seasons not loaded: {type(exc).__name__}: {exc}", flush=True)
+        _PRO_SUMMER["until"] = time.time() + 300
+
+
+def season_label(sport, date_text, person_id=None):
     """The season a race belongs to, as the string the page displays.
 
     ★ ACADEMIC YEAR IN, BOARD LABEL OUT. seasonYearFromIso gives the stored
@@ -3702,7 +3725,9 @@ def season_label(sport, date_text):
       race got before this function existed.
     """
     try:
-        year = seasonYearFromIso(sport, date_text)
+        # ★ A PROFESSIONAL'S LATE-SUMMER TRACK RACE CLOSES THE SEASON BEHIND
+        #   IT (season_year 3b, Grant Fisher): the boards' rule, by person
+        year = seasonYearForPerson(sport, date_text, person_id)
     except (TypeError, ValueError, IndexError):
         return (date_text or "")[:4]
     return str(year + 1) if sport == "TF" else str(year)

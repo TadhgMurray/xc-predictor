@@ -161,7 +161,7 @@ def test_the_build_is_a_pipeline_step_that_does_not_need_a_model_to_pass():
     assert sh.index("step 10_rankings_finish") < sh.index("bgstep 10f2_projection") \
         < sh.index("stepsN 10a_board_sanity")
     # and is collected at the very end: nothing in 17-18 reads its table
-    assert sh.index("bgstep 10f2_projection") < sh.index("step 18_vacuum") \
+    assert sh.index("bgstep 10f2_projection") < sh.index("bgjoin 18_vacuum") \
         < sh.index("\nbgwait\n") < sh.index("\nsummarise\n")
     src = open(os.path.join(_ROOT, "racecast",
                             "build_recruit_projection.py")).read()
