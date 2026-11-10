@@ -34,3 +34,24 @@ def test_tallies_split_have_elsewhere_and_missing():
 def test_the_nightly_step_runs_it():
     with open(os.path.join(_ROOT, "deploy", "nightly_update.sh"), encoding="utf-8") as fh:
         assert "scripts/coverage_report.py --nightly" in fh.read()
+
+
+class _Cur:
+    def __init__(self):
+        self.sql, self.args = None, None
+
+    def execute(self, sql, args=()):
+        self.sql, self.args = sql, args
+
+    def fetchall(self):
+        return []
+
+
+def test_alive_xc_rests_a_meet_it_tried_and_could_not_land():
+    # 2026-11-10: held meets were never marked and took the night's slots again
+    sys.path.insert(0, _ROOT)
+    from sources import athleticlive_xc as X
+    cur = _Cur()
+    X.candidates(cur, 100)
+    assert "tried_at IS NULL OR am.tried_at < now() - make_interval(days => %s)" in cur.sql
+    assert "u.fresh DESC" in cur.sql and cur.args[0] == X.TRY_REST_DAYS

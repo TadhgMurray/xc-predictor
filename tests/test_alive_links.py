@@ -24,7 +24,7 @@ def test_athleticlive_links_on_any_domain():
 
 def test_the_lander_takes_a_wanted_meet_first():
     src = open(os.path.join(ROOT, "sources", "athleticlive_xc.py"), encoding="utf-8").read()
-    assert "COALESCE(am.wanted, false)" in src and "ORDER BY 3 DESC, am.meet_date DESC" in src
+    assert "COALESCE(am.wanted, false)" in src and "ORDER BY u.wanted DESC, u.fresh DESC, u.meet_date DESC" in src
     sh = open(os.path.join(ROOT, "deploy", "scrape_local.sh"), encoding="utf-8").read()
     assert sh.index("sources.athleticlive_xc land") < sh.index("sources.athleticlive land")
 
