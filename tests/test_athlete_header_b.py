@@ -271,7 +271,7 @@ def test_the_record_badges_and_the_legend():
     # 2026-10-16: "remove course season records"
     out = _season_block(_race(is_pr=True, is_sr=True, is_course_pr=True,
                               is_rating_pr=True, is_rating_sr=True, is_course_sr=True))
-    assert "<th>Records</th>" in out and "<th>Course</th>" in out
+    assert '<th class="c-rec">Records</th>' in out and '<th class="c-co">Course</th>' in out
     for css in ("flag--pr", "flag--sr", "flag--cpr", "flag--rpr", "flag--rsr"):
         assert css in out
     assert "flag--csr" not in out and "CSR" not in out

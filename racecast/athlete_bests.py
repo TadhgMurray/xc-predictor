@@ -254,9 +254,11 @@ def _avgFiveK(bucket, races, sport):
     pools = {r.get("pool") for r in races
              if r.get("sport") == sport and r.get("speed_rating") is not None}
     try:
-        from conversions import fiveK
+        from conversions import fiveK, fiveKHs
         if len(pools) == 1 and None not in pools and bucket.get("avg_rating"):
-            got = fiveK(bucket["avg_rating"], next(iter(pools)), sport)
+            # a 5K for middle school too (owner, 2026-11-10; fiveKHs)
+            got = fiveKHs(bucket["avg_rating"], next(iter(pools)), sport,
+                          bucket.get("avg_rating_hs"))
             if got:
                 return got
         genders = {str(p).partition("_")[2][:1] for p in pools if p}

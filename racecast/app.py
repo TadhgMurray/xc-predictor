@@ -587,6 +587,7 @@ app.jinja_env.globals["race_title"] = raceTitle
 #   cell and header macros are _scale.html's fk_th / fk_td / fk_inline.
 import conversions as _conv_fk
 app.jinja_env.globals["five_k"] = _conv_fk.fiveK
+app.jinja_env.globals["five_k_hs"] = _conv_fk.fiveKHs
 
 
 # ★ EVERY RATING ON THE PUBLIC SCALE (owner, 2026-11-02: "make everything
@@ -2755,7 +2756,17 @@ def athlete(person_id):
             _pool, _sport = season_rating["pool"], season_rating["sport"]
             _dist = (_mainTrackDistance(races, label) if _sport == "TF"
                      else None)
-            _clk = ratingClock(athlete["rating"], _pool, _sport, _dist)
+            _rt = athlete["rating"]
+            # ★ MIDDLE SCHOOL AS A 5K TOO (owner, 2026-11-10: "make
+            #   everything 5k equivalent"): the HS-equivalent on the HS pool,
+            #   so the header and every table on the page name one distance
+            _lv, _, _g = (str(_pool or "")).partition("_")
+            if _lv == "ms" and _g in ("m", "f") and _sport == "XC":
+                from pool_view import toHs as _toHsClk
+                _hs_rt = _toHsClk(_rt, _pool, _sport)
+                if _hs_rt:
+                    _rt, _pool = _hs_rt, "hs_" + _g
+            _clk = ratingClock(_rt, _pool, _sport, _dist)
             athlete["equiv_time"] = _clk["time"] if _clk else None
             athlete["equiv_dist"] = _clk["dist"] if _clk else None
             athlete["equiv_where"] = _clk["where"] if _clk else None
@@ -3724,6 +3735,11 @@ def round_label(rnd):
     return text
 
 
+_MILE_WORDS = {"1mile": "Mile", "1 mile": "Mile", "mile": "Mile",
+               "2mile": "2 Mile", "2miles": "2 Mile", "2 mile": "2 Mile",
+               "2 miles": "2 Mile"}
+
+
 @app.template_filter("event_label")
 def event_label(event):
     """A bare number is a distance in metres, so give it its unit.
@@ -3749,7 +3765,24 @@ def event_label(event):
     try:
         return f"{round(float(text))}m"
     except (TypeError, ValueError):
-        return text
+        # ★ "Mile" AND "2 Mile", AS THE SIDE CARDS SAY THEM (owner,
+        #   2026-11-10): the feed's own "1mile" / "2miles" read like keys
+        return _MILE_WORDS.get(text.lower(), text)
+
+
+# ★ A MEET'S NAME WITHOUT ITS FEED'S SEASON TAG (owner, 2026-11-10): one feed
+#   ends track meet names in " TF26" (its season code), and the athlete page
+#   printed "UIL 6A District 05 TF26". Display only; the stored name and the
+#   link's title keep it.
+_MEET_SEASON_TAG = re.compile(r"\s+(?:TF|XC|IN|OT)\d{2}\s*$")
+
+
+@app.template_filter("meet_clean")
+def meet_clean(name):
+    """'UIL 6A District 05 TF26' -> 'UIL 6A District 05'; None stays None."""
+    if not name:
+        return name
+    return _MEET_SEASON_TAG.sub("", str(name))
 
 
 def _proHeaderSeason(ordered, season_rating):
