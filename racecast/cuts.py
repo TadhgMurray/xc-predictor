@@ -1431,6 +1431,47 @@ def _lineTimes(cur, person_id, year, line, data):
         return []
 
 
+# ★ AFTER THE STATE MEET, NO "IF THEY MAKE STATE" (audit 2026-11-10: Ruel
+#   Newberry won the UIL final on Nov 6 and his page still read "64% to
+#   finish top 8 if Ruel makes state"; Denton Guyer's school page listed
+#   four "<1% to win" lines for a meet already run). A state's final for a
+#   season is run once its results are on record: the stored marks carry the
+#   newest state-final season per division. The athlete line, the athlete's
+#   odds line and the school's odds lines read this and stand down.
+def stateFinalRun(cur, state, year, gender, division=None):
+    """True when this state's final for `year` (the division's, else any
+    division of the gender) has results on record. False when unknown."""
+    return stateFinalFor(cur, state, year, gender, division) is not None
+
+
+def stateFinalFor(cur, state, year, gender, division=None):
+    """The newest state-final season on record ({year, meet_id, div_id,
+    meet_name, ...}) when it is `year`'s, else None. Never raises."""
+    try:
+        state = (state or "").upper()
+        data = ttlcache.peek(("wit", state))
+        if data is None:
+            hit = _fromStore(cur, state)
+            data = hit
+        if not data or year is None:
+            return None
+        g = (data.get("genders") or {}).get(gender) or {}
+        slug = _slug(str(division).upper()) if division else None
+        cells = g.get("divisions", [])
+        mine = [c for c in cells if slug and c.get("slug") == slug] or cells
+        for c in mine:
+            latest = c.get("latest") or {}
+            if (latest.get("year") or 0) >= int(year):
+                return latest
+        return None
+    except Exception:                                   # noqa: BLE001
+        try:
+            cur.connection.rollback()
+        except Exception:                               # noqa: BLE001
+            pass
+        return None
+
+
 def athleteLine(cur, person_id):
     """The line for the athlete page, or None. Never raises, never waits on
     a cold state: see _warm."""
@@ -1451,6 +1492,10 @@ def athleteLine(cur, person_id):
                                          ttl=_TTL, ttl_of=_ttlOf)
         if data is None:
             _warm(state)
+            return None
+        gender = _POOL_GENDER.get(season.get("pool"))
+        if gender and stateFinalRun(cur, state, year, gender,
+                                    season.get("state_div") or season.get("class")):
             return None
         line = lineFor(season, data, year)
         if line:

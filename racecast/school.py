@@ -689,11 +689,16 @@ def schoolTopAthletes(cur, school, sport, limit=12,
         FROM (SELECT y.*, row_number() OVER (PARTITION BY y.pool
                                              ORDER BY y.best DESC) AS rn_pool
               FROM (
+            -- ★ ONE ROW PER PERSON PER POOL (audit 2026-11-10: Denton
+            --   Guyer's best boys list left out Ruel Newberry, the national
+            --   #2: his one row took max(best_rating) across pools, his
+            --   middle-school 153.8 on the MS scale beat his HS 148.5, and
+            --   the row went to the ms_m list, which the HS page filters
+            --   out). Own-pool numbers are not comparable across pools; each
+            --   pool's list now has each person's best IN that pool.
             SELECT s.person_id,
                    max(s.best_rating)                 AS best,
-                   -- the pool of the season holding that best, for the
-                   -- HS-equivalent view (an athlete can span pools).
-                   (array_agg(s.pool ORDER BY s.best_rating DESC))[1] AS pool,
+                   s.pool                             AS pool,
                    count(*)                           AS seasons,
                    min(CASE WHEN s.sport = 'TF' THEN s.year + 1
                             ELSE s.year END)          AS first_year,
@@ -704,7 +709,7 @@ def schoolTopAthletes(cur, school, sport, limit=12,
               AND  s.sport  = %(sport)s
               AND  s.best_rating IS NOT NULL
               {sf}
-            GROUP  BY s.person_id
+            GROUP  BY s.person_id, s.pool
               ) y
         ) x
         LEFT JOIN LATERAL (

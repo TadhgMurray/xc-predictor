@@ -12604,6 +12604,24 @@ def _upcomingChampsCached():
                 app.logger.exception("upcoming championships failed")
                 return None
         out = [dict(m) for m in out]
+        # ★ THIS YEAR'S HOST COURSE ON THE NCAA CHAMPIONSHIPS (owner,
+        #   2026-11-10; upcoming_preview.HOST_COURSES): the link opens the
+        #   race on it, the course box says so, and it can be changed
+        try:
+            import upcoming_preview as _UP
+            want = {m["meet_id"]: _UP.hostPattern(m.get("name"), m.get("source"), m.get("date"))
+                    for m in out}
+            if any(want.values()):
+                with getConn() as conn:
+                    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                        cur.execute("SET statement_timeout = '20s'")
+                        found = {p: _UP.hostCourse(cur, p) for p in set(want.values()) if p}
+                        conn.rollback()
+                for m in out:
+                    if want.get(m["meet_id"]):
+                        m["course"] = found.get(want[m["meet_id"]])
+        except Exception:                               # noqa: BLE001 -- last year's course then
+            app.logger.exception("host courses failed")
         for m in out:
             day = _dt.date.fromisoformat(m["date"])
             m["when"] = day.strftime("%a %b ") + str(day.day)
@@ -12611,7 +12629,7 @@ def _upcomingChampsCached():
                                                     m["name"] or "")).strip(" -")
             m["href"] = "/predictions?" + urllib.parse.urlencode(
                 {"meet_id": m["meet_id"], "src": m["source"], "date": m["date"],
-                 "pick": "predicted"})
+                 "pick": "predicted", **({"course": m["course"]} if m.get("course") else {})})
         return out
     try:
         rows, _ = ttlcache.get(("predict_upcoming", _dt.date.today().isoformat()),
