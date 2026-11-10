@@ -119,11 +119,13 @@ def folderDate(url, page_date, slack_days=3):
     return page_date
 
 
-async def fetchMeet(fetcher, slug, url, kind=None):
-    """(LandedMeet | None, note) for one meet url."""
+async def fetchMeet(fetcher, slug, url, kind=None, max_age=None):
+    """(LandedMeet | None, note) for one meet url. max_age: how old a stored
+    page may be and still be used (MAX_AGE when None)."""
+    max_age = MAX_AGE if max_age is None else max_age
     if registry.offLimits(url):
         return None, "off limits (terms or robots.txt)"
-    got = await fetcher.fetch(url, MAX_AGE)
+    got = await fetcher.fetch(url, max_age)
     if not got.body:
         return None, got.note or f"HTTP {got.status}"
     if _isChallenge(got.body):
@@ -140,27 +142,27 @@ async def fetchMeet(fetcher, slug, url, kind=None):
         for e in idx.events:
             if not e.results_href or e.relay:
                 continue
-            r = await fetcher.fetch(urllib.parse.urljoin(url, e.results_href), MAX_AGE)
+            r = await fetcher.fetch(urllib.parse.urljoin(url, e.results_href), max_age)
             if r.body:
                 results[e.number] = meetpro.parseRounds(r.body.decode("utf-8", "replace"))
         return land.fromMeetPro(idx, results, slug, url), "meetpro"
     if got.body[:5] != b"%PDF-" and flashresults.isMeetIndex(got.body.decode("utf-8", "replace")):
-        return await flashMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "flash results"
+        return await flashMeet(fetcher, slug, url, got.body.decode("utf-8", "replace"), max_age), "flash results"
     if got.body[:5] != b"%PDF-" and datarows.isDataPage(got.body.decode("utf-8", "replace")):
-        return await dataRowsMeet(fetcher, slug, url, got.body.decode("utf-8", "replace")), "data rows"
+        return await dataRowsMeet(fetcher, slug, url, got.body.decode("utf-8", "replace"), max_age), "data rows"
     listing = directoryReports(got.body.decode("utf-8", "replace"), url) if got.body[:5] != b"%PDF-" else []
     if listing:
-        return await mergeReports(fetcher, slug, url, listing)
-    return await _hytekReport(fetcher, slug, url, got.body), "hytek"
+        return await mergeReports(fetcher, slug, url, listing, max_age)
+    return await _hytekReport(fetcher, slug, url, got.body, max_age), "hytek"
 
 
-async def flashMeet(fetcher, slug, url, page):
+async def flashMeet(fetcher, slug, url, page, max_age=MAX_AGE):
     """A Flash Results meet index and its races' result pages -> LandedMeet."""
     name, date, place = flashresults.parseIndex(page)
     meet = hytek.Meet(name=name, date=date, venue=place)
     xc = bool(re.search(r"/xc/", url, re.I))
     for k, (rurl, title) in enumerate(flashresults.raceLinks(page, url)[:MAX_PAGES], 1):
-        r = await fetcher.fetch(rurl, MAX_AGE)
+        r = await fetcher.fetch(rurl, max_age)
         if not r.body or _isChallenge(r.body):
             continue
         e = hytek.Event(number=k, gender=meetpro._gender(title), title=title, meters=hytek.metersOf(title))
@@ -173,12 +175,12 @@ async def flashMeet(fetcher, slug, url, page):
     return lm
 
 
-async def dataRowsMeet(fetcher, slug, url, page):
+async def dataRowsMeet(fetcher, slug, url, page, max_age=MAX_AGE):
     """A data-rows results page (sources.datarows: EliteFeats) and the pages
     of its other divisions -> one LandedMeet."""
     meet = datarows.parsePage(page, url)
     for k, durl in enumerate(datarows.divisionUrls(page, url)[:MAX_PAGES], 1):
-        r = await fetcher.fetch(durl, MAX_AGE)
+        r = await fetcher.fetch(durl, max_age)
         if not r.body or _isChallenge(r.body):
             continue
         other = datarows.parsePage(r.body.decode("utf-8", "replace"), durl)
@@ -190,16 +192,16 @@ async def dataRowsMeet(fetcher, slug, url, page):
     return land.fromHytek(meet, slug, url)
 
 
-async def mergeReports(fetcher, slug, url, listing):
+async def mergeReports(fetcher, slug, url, listing, max_age=MAX_AGE):
     """Several report files that are one meet (a directory's per-race
     reports, Ticker Timing's Results1.htm, Results2.htm ...) -> one
     LandedMeet under `url`."""
     merged = None
     for k, rurl in enumerate(listing[:MAX_PAGES], 1):
-        r = await fetcher.fetch(rurl, MAX_AGE)
+        r = await fetcher.fetch(rurl, max_age)
         if not r.body or _isChallenge(r.body):
             continue
-        lm = await _hytekReport(fetcher, slug, rurl, r.body)
+        lm = await _hytekReport(fetcher, slug, rurl, r.body, max_age)
         if merged is None:
             merged = land.LandedMeet(slug=slug, url=url, name=lm.name, date=lm.date, venue=lm.venue,
                                      place=lm.place, state=lm.state, licensee=lm.licensee)
@@ -210,7 +212,7 @@ async def mergeReports(fetcher, slug, url, listing):
     return merged, f"hytek directory ({len(listing)} reports)"
 
 
-async def _hytekReport(fetcher, slug, url, body):
+async def _hytekReport(fetcher, slug, url, body, max_age=MAX_AGE):
     """One Hy-Tek report: its first page, then its page files."""
     texts, seen, cur = [], {url}, url
     meta = fetcher.store.meta(url) or {}
@@ -223,7 +225,7 @@ async def _hytekReport(fetcher, slug, url, body):
             break
         cur = nxt[0]
         seen.add(cur)
-        r = await fetcher.fetch(cur, MAX_AGE)
+        r = await fetcher.fetch(cur, max_age)
         body = r.body
         meta = fetcher.store.meta(cur) or {}
     text = "\n".join(texts)
@@ -370,6 +372,81 @@ def cmdStatus(a):
     return 0
 
 
+REJECT_REST_DAYS = 3         # a page that did not land is not offered again for this long
+REJECT_TRIES = 5             # ... and after this many looks, not at all
+RETRY_AGE = 2 * 86400        # a rejected page, asked again, is read from the store only if this fresh
+RECENT_DAYS = 10             # a meet this many days old or newer ...
+RECENT_AGE = 18 * 3600       # ... is read again when its stored copy is older than this
+
+
+def _recent(date, today=None):
+    """True for an ISO date within the last RECENT_DAYS (or later). Pure."""
+    import datetime as _dt
+    try:
+        d = _dt.date.fromisoformat(str(date)[:10])
+    except (TypeError, ValueError):
+        return False
+    return (d - (today or _dt.date.today())).days >= -RECENT_DAYS
+
+
+async def readMeet(fetcher, slug, url, kind=None, retried=False):
+    """(LandedMeet | None, note) for one meet page off a timer's index.
+
+    ★ A MEET OF THE LAST FEW DAYS IS READ FRESH (2026-11-10). A page stored on
+      the meet's own day ("dated today, lands tomorrow") came back from the
+      30-day store the next night, and the meet landed -- for good, promoted
+      is final -- with only the races posted on day one. A meet RECENT_DAYS
+      old or newer is read again when its stored copy is older than
+      RECENT_AGE: a conditional request, so an unchanged page costs the timer
+      a 304. A page asked again after it did not land (retried) is read
+      fresh too (RETRY_AGE), or the store would give the same answer."""
+    if retried:
+        return await _meet(fetcher, slug, url, kind, RETRY_AGE)
+    lm, why = await _meet(fetcher, slug, url, kind, None)
+    if lm is not None and _recent(lm.date):
+        lm, why = await _meet(fetcher, slug, url, kind, RECENT_AGE)
+    return lm, why
+
+
+async def _meet(fetcher, slug, url, kind, max_age):
+    if isinstance(kind, tuple):          # ('group', [report files]) -- one meet
+        return await mergeReports(fetcher, slug, url, kind[1], MAX_AGE if max_age is None else max_age)
+    return await fetchMeet(fetcher, slug, url, kind if kind == "meetpro" else None, max_age)
+
+
+def _outcome(lm, why, today=None):
+    """What became of one meet page, as report() decides it below. Pure."""
+    import datetime as _dt
+    today = (today or _dt.date.today()).isoformat()
+    if lm is not None and lm.races and lm.date and lm.date >= today:
+        return "waits a day"
+    if lm is None or not lm.races:
+        return f"not parsed: {why if lm is None else 'no individual races'}"[:200]
+    if not lm.date:
+        return "no date"
+    if land.stateOf(lm.place, lm.venue) in land.CANADA:
+        return "outside the US"
+    return "landed"
+
+
+def noteSeen(cur, url, slug, lm, outcome):
+    """One meet page's outcome into ext_seen (tries counts the looks)."""
+    races = len(lm.races) if lm is not None else None
+    cur.execute("""INSERT INTO ext_seen (url, source, last_tried, tries, outcome, meet_name, meet_date,
+                                         sport, n_races, n_rows)
+                   VALUES (%s, %s, now(), 1, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (url) DO UPDATE SET last_tried = now(), tries = ext_seen.tries + 1,
+                     outcome = EXCLUDED.outcome,
+                     meet_name = COALESCE(EXCLUDED.meet_name, ext_seen.meet_name),
+                     meet_date = COALESCE(EXCLUDED.meet_date, ext_seen.meet_date),
+                     sport = COALESCE(EXCLUDED.sport, ext_seen.sport),
+                     n_races = EXCLUDED.n_races, n_rows = EXCLUDED.n_rows""",
+                (url, land.EXT_PREFIX + slug, outcome,
+                 getattr(lm, "name", None), getattr(lm, "date", None) or None,
+                 lm.sport if lm is not None and lm.races else None,
+                 races, lm.rowCount() if lm is not None else None))
+
+
 def cmdAll(a):
     """discover -> fetch -> land -> dedup -> promote, every enabled timer."""
     if a.dry:
@@ -389,12 +466,26 @@ def _all(a, conn):
     srcs = [s for s in registry.load() if s.enabled and s.kind != "blocked"]
     if a.only:
         srcs = [s for s in srcs if s.slug in set(a.only)]
-    known = set()
+    known, retry = set(), set()
     if conn is not None:
         with conn.cursor() as cur:
             land.initTables(cur)
             cur.execute("SELECT url FROM meets_ext")
             known = {r[0] for r in cur.fetchall()}
+            # ★ A PAGE THAT DID NOT LAND RESTS, THEN IS ASKED AGAIN, THEN IS
+            #   LEFT (2026-11-10). Before, it was never remembered: Trey
+            #   Jackson's empty 2026 templates and Jeff Offringa's relays meets
+            #   sat at the top of their indexes and took every one of the
+            #   timer's --per-source slots each night, so the meets under them
+            #   ("wait for later nights") never came. Now it is out of the
+            #   running for REJECT_REST_DAYS, back for another look after that
+            #   (read fresh, see RETRY_AGE), and dropped after REJECT_TRIES.
+            cur.execute("""SELECT url, last_tried > now() - make_interval(days => %s) OR tries >= %s
+                           FROM ext_seen WHERE outcome IS DISTINCT FROM 'landed'
+                             AND outcome IS DISTINCT FROM 'waits a day'""",
+                        (REJECT_REST_DAYS, REJECT_TRIES))
+            for url, resting in cur.fetchall():
+                (known if resting else retry).add(url)
         conn.commit()
     # ★ A BUDGET, AND LANDED AS IT GOES (2026-11-09). The nightly kills this
     #   step at its bound (01_local_timers, 40 minutes); everything used to be
@@ -420,10 +511,7 @@ def _all(a, conn):
                 note += f"; budget spent, {len(urls) - len(got)} meets wait for the next run"
                 break
             try:
-                if isinstance(kind, tuple):          # ('group', [report files]) -- one meet
-                    lm, why = await mergeReports(fetcher, src.slug, u, kind[1])
-                else:
-                    lm, why = await fetchMeet(fetcher, src.slug, u, kind if kind == "meetpro" else None)
+                lm, why = await readMeet(fetcher, src.slug, u, kind, u in retry)
             except Exception as exc:                                # noqa: BLE001
                 lm, why = None, f"{type(exc).__name__}: {exc}"
             got.append((u, lm, why))
@@ -435,7 +523,9 @@ def _all(a, conn):
 
     def report(src, got, note, f):
         ok, mine = 0, []
+        seen = []
         for u, lm, why in got:
+            seen.append((u, src.slug, lm, _outcome(lm, why)))
             if lm is not None and lm.races and lm.date and lm.date >= _dt.date.today().isoformat():
                 # ★ NOT ON ITS OWN DAY (2026-11-01): promoted is final, so a
                 #   meet still being posted would stay short; it is not
@@ -461,10 +551,12 @@ def _all(a, conn):
             print(f"  ✓ {src.slug}: {land.summary(lm)}")
         tally["timers with a new meet"] += int(ok > 0)
         print(f"[all] {src.slug:<44} {note}; parsed {ok}", flush=True)
-        if conn is not None and mine:
+        if conn is not None and (mine or seen):
             with conn.cursor() as cur:
                 for lm in mine:
                     what[land.landMeet(cur, lm)[1]] += 1
+                for row in seen:
+                    noteSeen(cur, *row)
             conn.commit()
         meets.extend(mine)
 

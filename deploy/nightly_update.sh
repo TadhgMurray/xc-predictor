@@ -283,6 +283,7 @@ if [ "$SCRAPE" -eq 1 ]; then
   done
 fi
 
+step 01z_coverage "$PY" -u scripts/coverage_report.py --nightly || true  # meets found vs expected, per source
 # ---- 2. who each new row is, and what it is (the pipeline's own steps) --- #
 step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
 # the ids alive now, so 13c0 can 301 any a link below merges away
