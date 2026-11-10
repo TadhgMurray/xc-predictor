@@ -111,3 +111,18 @@ distances run February to July, and course cells at a track distance rating
   real cross country; the fast short venues (Bear Valley Park, Dunbar Park,
   school campuses at 1600-3200 m) are consistent short courses whose own
   difficulty absorbs them.
+
+## Generated distance overrides filed as hand-typed (2026-11-10)
+
+Calvin Seitz, IN Middle School Championship 2021, "Boys Small School Open"
+(221 runners, run at 3000 m) is rated at "2253 m": 10:13.4 rates 103 against
+his 121-122 that season and shows as a "2253m" PR. The same meet's girls
+are at "2092 m" and "2655 m". These are downward overrides that tools
+appended to `_DISTANCE_OVERRIDES_XC` (merged-division floors, distance_repair,
+distance_pin). Under the hand dict's name, `wrong_distance` judged a short
+override as hand-typed and only "listed" it, so it was never vetoed however
+plainly the times rejected it. `wrong_distance` now reads corrections.py's
+generated-line markers ("# was/used N, inferred ..." and "small side ran")
+and judges those entries as generated: a generated override shorter than the
+times say is replaced by the listed distance (a veto), 300 a run under the
+circuit breaker. `tests/test_wrong_distance.py`.
