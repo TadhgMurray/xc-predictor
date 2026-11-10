@@ -14,6 +14,8 @@
 #   voted. Hiding it would quietly answer a question we said we could
 #   not answer.
 
+import re
+
 _SHORT_TO_LONG = {
     "NCS": "North Coast Section", "CCS": "Central Coast Section",
     "SJS": "Sac-Joaquin Section", "SDS": "San Diego Section",
@@ -66,8 +68,33 @@ _LONG_SUFFIX = {"section": "Section", "region": "Region",
                 "county": "County"}
 
 
+# ★ ONE STATE CLASSIFICATION ON THE HEADER (owner, 2026-11-10: "just fix
+#   the contradictions"). Ruel Newberry read "TX D6A · Class 5A": the class
+#   was parsed off "UIL 6A Region I & II-5A", a meet that names both. The
+#   state division is what the boards rank by and what the STATE line says,
+#   so a class that is a classification word (6A, 2, AA, Class D) never
+#   stands beside one -- it either repeats it or contradicts it.
+_CLASS_WORD = re.compile(r"^(?:class\s*)?(?:\d{1,2}A?|[A-D]{1,4})$", re.I)
+
+
+def _classShadowed(value, row):
+    """True when a class chip would repeat or contradict the state (or
+    section) division already on the row."""
+    if not (row.get("state_div") or row.get("section_div")):
+        return False
+    return bool(_CLASS_WORD.match(str(value or "").strip()))
+
+
+# ! A LEAGUE NAMED FOR ONE GENDER ("IHSAA GIRLS" on a boy, Josh Bodach): the
+#   mode over a season's rows can land on the other team's league name. The
+#   gender word is dropped from the label; the page already says whose it is.
+_GENDER_TAIL = re.compile(r"\s+(?:boys|girls|men|women|mens|womens)$", re.I)
+
+
 def _label(kind, value, long, row=None):
     row = row or {}
+    if kind == "league" and isinstance(value, str):
+        value = _GENDER_TAIL.sub("", value.strip()) or value
     if kind in ("section_div", "state_div"):
         parent = (row.get("section") if kind == "section_div"
                   else (row.get("state_unit") or row.get("state")))
@@ -213,10 +240,7 @@ def unitsFor(cur, school, state=None, sport="XC", long=False,
         #   neither its section nor its state as a class; when the number
         #   is already the school's section or state division, showing
         #   "Class 2" beside "NCS D2" says D2 twice (issue 134).
-        if (col == "class" and value is not None
-                and str(value).strip().isdigit()
-                and str(value).strip() in (str(row.get("section_div") or ""),
-                                           str(row.get("state_div") or ""))):
+        if col == "class" and value is not None and _classShadowed(value, row):
             continue
         if collapse and col == "section" and row.get("section_div"):
             continue
@@ -386,9 +410,7 @@ def unitsForPerson(cur, person_id, sport="XC", long=False, fallback=None,
         # same collapse as unitsFor: "NCS D2" already says NCS
         if col == "section" and row.get("section_div"):
             continue
-        if (col == "class" and str(value).strip().isdigit()
-                and str(value).strip() in (str(row.get("section_div") or ""),
-                                           str(row.get("state_div") or ""))):
+        if col == "class" and _classShadowed(value, row):
             continue
         out.append({"kind": col, "raw": value,
                     "label": _label(col, value, long, row),

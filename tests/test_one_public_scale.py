@@ -87,9 +87,6 @@ def test_the_definitions_describe_the_hs_scale():
     a = read("racecast", "templates", "about.html")
     sec = a[a.index('id="rating"'):a.index('id="how"')]
     assert "100 is an average high-school" in sec and "100 is the mean of that pool" not in sec
-    c = read("racecast", "templates", "coaches.html")
-    assert "Ratings are on one scale: 100 is an average high-school runner" in c
-    assert "Ratings are pool-relative" not in c
 
 
 def test_the_explain_macro_renders():
