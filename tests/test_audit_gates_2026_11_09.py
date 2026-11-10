@@ -174,3 +174,15 @@ def test_meets_pick_by_date_once_dates_are_indexed(monkeypatch):
     sql, params = cur.sql[-1], cur.params[-1]
     assert "m.meet_date >= %(pick_lo)s" in sql and "ORDER  BY max(m.meet_date) DESC" in sql
     assert params["pick_lo"] == "2025-08-15" and params["pick_hi"] == "2026-08-15"
+
+
+def test_a_state_final_on_record_stands_the_odds_down(monkeypatch):
+    import cuts
+    data = {"genders": {"boys": {"divisions": [
+        {"slug": "1", "latest": {"year": 2026, "meet_id": 5, "div_id": 6}},
+        {"slug": "2", "latest": {"year": 2025, "meet_id": 3, "div_id": 4}}]}}}
+    monkeypatch.setattr(cuts.ttlcache, "peek", lambda key: data)
+    assert cuts.stateFinalFor(None, "MI", 2026, "boys", "1")["meet_id"] == 5
+    assert cuts.stateFinalFor(None, "MI", 2026, "boys", "2") is None
+    assert cuts.stateFinalRun(None, "MI", 2026, "boys") is True
+    assert cuts.stateFinalRun(None, "MI", 2026, "girls") is False

@@ -105,13 +105,19 @@ def projections_page(state, division):
                     #   division, and a crawler should not index one.
                     abort(404)
             proj = P.project(cur, st, div, gender)
+            # ★ THE MEET HAS BEEN RUN (audit 2026-11-10: /projections/mi/1
+            #   still projected Jenison 156 pts three days after Jenison won
+            #   the final with 100): the page says so and links the result
+            import cuts
+            final = cuts.stateFinalFor(cur, st, P.currentYear(cur), gender,
+                                       div["value"] if div else None)
     label = div["label"] if div else f"{st} all divisions"
     return render_template("projections.html", mode="projection",
                            state=st, state_name=names[st], states=states,
                            divisions=divisions, division=div,
                            division_slug=want, division_label=label,
                            gender=gender, gender_words=P.GENDERS[gender][1],
-                           proj=proj, thin_races=P.THIN_RACES,
+                           proj=proj, final=final, thin_races=P.THIN_RACES,
                            per_school=P.PER_SCHOOL)
 
 
