@@ -188,6 +188,28 @@ async def readMeet(fetcher, ev, max_age):
     return lm, "iresultslive"
 
 
+def eventFromPage(page, eid):
+    """An event page (an uploaded link) -> the event as parseIndex gives it:
+    its name is the text just before its date in the page's header. Pure."""
+    body = re.sub(r"<script.*?</script>|<style.*?</style>", " ", page or "", flags=re.S | re.I)
+    d = re.search(r">\s*([^<>]{3,160}?)\s*(?:<[^>]*>\s*)+((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*\s+"
+                  r"(\w{3})\w*\s+(\d{1,2}),\s+(\d{4}))", body)
+    name, date = "", None
+    if d:
+        name = _text(d.group(1))
+        try:
+            date = datetime.datetime.strptime(f"{d.group(3)} {d.group(4)} {d.group(5)}",
+                                              "%b %d %Y").date().isoformat()
+        except ValueError:
+            date = None
+    races = []
+    for r in re.findall(r"op=overall&(?:amp;)?racename=([^&'\"]+)", page or ""):
+        if r not in races:
+            races.append(r)
+    return {"eid": int(eid), "name": name, "date": date, "place": "", "state": None,
+            "races": [(r, 1) for r in races]}
+
+
 def eventKey(eid):
     return f"{BASE}/results/?eid={eid}"
 

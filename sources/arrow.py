@@ -264,6 +264,30 @@ def _event(number, gender, title, meters, rows):
     return e
 
 
+_LONG_DATE = re.compile(r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+"
+                        r"([A-Z][a-z]+\s+\d{1,2},\s+\d{4})")
+
+
+def meetFromPage(page, url):
+    """One race page (an uploaded link) -> a meet of that race, as group()
+    gives them. Pure."""
+    title = _text((re.search(r"<title>(.*?)</title>", page or "", re.S) or [None, ""])[1])
+    text = _text(re.sub(r"<script.*?</script>", " ", page or "", flags=re.S))
+    d = _LONG_DATE.search(text)
+    date = None
+    if d:
+        try:
+            date = datetime.datetime.strptime(d.group(1), "%B %d, %Y").date().isoformat()
+        except ValueError:
+            date = None
+    st = re.search(r"\b([A-Z]{2})\s+\d{5}\b", text)
+    addr = re.search(r"Presented By\s+(.*?)\s+United States", text)
+    race = {"url": url, "name": title, "date": date, "timer": "", "address": addr.group(1) if addr else "",
+            "state": st.group(1) if st else None}
+    return {"url": url, "date": date, "timer": "", "address": race["address"], "state": race["state"],
+            "name": meetName([title]), "races": [race]}
+
+
 async def readMeet(fetcher, meet, max_age):
     """One grouped meet: each race's page (for its EventId) and results ->
     (LandedMeet | None, note)."""

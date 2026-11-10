@@ -147,11 +147,104 @@ def _rawLinks(page, base):
     return out
 
 
+# ★ THE SCRAPERS' OWN READERS FIRST (owner, 2026-11-10: "please fix" --
+#   uploaded links went through results_parse alone, so none of the timer
+#   readers' fixes reached them: a class year read as the grade, a combined
+#   race's runners twice, "5 Kilometers (3.11 Miles)" as 5005 m, and no way
+#   to read an Arrow, Race Roster or iResultsLIVE link at all). A link the
+#   shared readers know (sources/arrow, raceroster, iresults, or a timer's
+#   report through sources/timers) is read by them and landed by
+#   sources/land's rules, then handed on as the upload CSV. Anything else, or
+#   a read that finds nothing, goes the old way below.
+# ! THE SCRAPERS' FETCHER AND ITS SETTINGS (CLAUDE.md: scraper privacy
+#   settings stay as they are), only 1 s between one host's requests rather
+#   than 10: the owner is waiting on the button, and the old path here asked
+#   with no gap at all. SHARED_SECONDS bounds it; past that, the old way.
+SHARED_SECONDS = 20
+
+
+def landedToCsv(lm):
+    """A sources.land.LandedMeet -> the upload CSV (results_parse.parseCsv's
+    columns). Pure."""
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["meet_name", "meet_date", "location", "event", "gender", "distance", "sport",
+                "place", "first_name", "last_name", "grade", "school", "time"])
+    for race in lm.races:
+        for r in race.rows:
+            t = r.mark if r.seconds is None else _clock(r.seconds)
+            w.writerow([lm.name or "", lm.date or "", lm.place or lm.venue or "", race.title or "",
+                        race.gender or "", f"{race.meters:g}" if race.meters else "", race.sport or "",
+                        r.place or "", r.first, r.last, r.grade, r.school, t])
+    return buf.getvalue().encode("utf-8")
+
+
+def _clock(secs):
+    m, s = divmod(round(float(secs), 2), 60)
+    h, m = divmod(int(m), 60)
+    return (f"{h}:{m:02d}:{s:05.2f}" if h else f"{m}:{s:05.2f}")
+
+
+async def _sharedLanded(url):
+    """The LandedMeet the scrapers' readers make of this link, or None."""
+    import tempfile
+    from sources import arrow, iresults, land, raceroster, timers
+    from sources.fetch import Fetcher, HostLimiter, RawStore
+    fetcher = Fetcher(RawStore(tempfile.mkdtemp(prefix="upload_raw_")), limiter=HostLimiter(interval=1))
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    if host.endswith("arrowliveresults.com"):
+        got = await fetcher.fetch(url, None)
+        if not got.body:
+            return None
+        meet = arrow.meetFromPage(got.body.decode("utf-8", "replace"), url)
+        return (await arrow.readMeet(fetcher, meet, None))[0]
+    if host.endswith("iresultslive.com"):
+        m = re.search(r"[?&]eid=(\d+)", url)
+        if not m:
+            return None
+        got = await fetcher.fetch(iresults.eventKey(m.group(1)), None)
+        if not got.body:
+            return None
+        ev = iresults.eventFromPage(got.body.decode("utf-8", "replace"), m.group(1))
+        return (await iresults.readMeet(fetcher, ev, None))[0]
+    if host.endswith("raceroster.com"):
+        code = re.search(r"/v3/events/([A-Za-z0-9]+)", url)
+        eid = re.search(r"raceroster\.com/events/\d{4}/(\d+)", url)
+        code = code.group(1) if code else (await raceroster.resolveCode(fetcher, eid.group(1)) if eid else None)
+        if not code:
+            return None
+        return (await raceroster.readMeet(fetcher, code, url, None))[0]
+    lm, _why = await timers.fetchMeet(fetcher, "upload", url, None, 0)
+    return lm if isinstance(lm, land.LandedMeet) else None
+
+
+def sharedRead(url):
+    """(filename, data) from the scrapers' readers, or None (then the old
+    way). Never raises: a reader's failure is not the upload's."""
+    import asyncio
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    try:
+        checkUrl(url)
+        lm = asyncio.run(asyncio.wait_for(_sharedLanded(url), SHARED_SECONDS))
+    except Exception:                                               # noqa: BLE001
+        return None
+    if lm is None or not lm.races or not lm.rowCount():
+        return None
+    return "fetched.csv", landedToCsv(lm)
+
+
 def fetchResults(url, getter=None):
     """A results link -> (filename, data) for results_parse.parse."""
     if _ROOT not in sys.path:
         sys.path.insert(0, _ROOT)
     from sources import hytek
+    if getter is None:                          # (tests hand in a getter: the old path only)
+        got = sharedRead(url)
+        if got is not None:
+            return got
     final, data, ctype = _get(url, getter)
     path = urllib.parse.urlsplit(final).path.lower()
     if data[:5] == b"%PDF-" or "pdf" in ctype:
