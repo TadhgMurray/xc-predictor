@@ -179,3 +179,15 @@ def test_badges_a_race_earns_by_default_are_not_shown():
     assert not second["is_sr"] and not second["is_rating_sr"]
     # a first run on course B is not a course record worth a badge
     assert not third["is_course_pr"]
+
+
+def test_team_place_only_for_a_scored_cross_country_team():
+    # owner, 2026-11-10: "1st on team" on a club, JO or track row means nothing
+    scored = _render("XC", [_race(team_place=1, team_n=5)])
+    small = _render("XC", [_race(team_place=1, team_n=3)])
+    track = _render("TF", [_race(sport="TF", event="1600m", team_place=1, team_n=9)])
+    assert "1st on team" in scored
+    assert "on team" not in small and "on team" not in track
+    src = _src(os.path.join(ROOT, "racecast", "app.py"))
+    assert "pl.place, pl.team_place, pl.team_n," in src       # XC half
+    assert "NULL::bigint                  AS team_n" in src     # track half
