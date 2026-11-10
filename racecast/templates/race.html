@@ -99,7 +99,13 @@
     {# ★ THE WAY INTO PREDICTIONS FROM THE RACE ITSELF (sweep, 2026-09-26),
        with ?alt= when this id holds two meets (owner, 2026-10-05). It leaves
        the page, so it is a link with an arrow, not a tab. #}
-    <a class="rc-out" href="/predictions?meet_id={{ header.meet_id }}&amp;div_id={{ header.div_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}">Predict next year →</a>
+    <a class="rc-out" href="/predictions?meet_id={{ header.meet_id }}&amp;div_id={{ header.div_id }}&amp;sport=XC{% if other_sources %}&amp;alt={{ alt_idx }}{% endif %}{% if race_date and (race_date|string)[:4]|int > 0 %}&amp;date={{ ((race_date|string)[:4]|int + 1) ~ (race_date|string)[4:10] }}{% endif %}">Predict next year →</a>
+    {# ★ NEXT YEAR'S DATE, SO NEXT YEAR'S SQUADS (owner, 2026-11-10: "the
+       issue is if it doesn't take seniors off"). The page proposed this
+       year's running, which in the same season keeps the seniors; a date one
+       year on is a later season, and predict._currentSquads ages each squad
+       forward to it (seasonsAhead/_ageForward: the graduating class out,
+       everyone a grade older). #}
     <input class="rc-find" type="search" placeholder="Find a runner or school" aria-label="Find a runner or school">
   </div>
 

@@ -13678,42 +13678,17 @@ def recruiting_page():
                            prefill_athlete=request.args.get("athlete", type=int))
 
 
+# ★ THE COACHES PAGES ARE CUT (owner, 2026-11-10: "maybe just cut it all,
+#   but log for the feature chat that a coaches racecast would be nice").
+#   /coaches had 0 views in 14 days and no link in; /coaches/recruits had 3,
+#   with sorts that led on nonsense. Every old URL goes to /recruiting.
+#   The recruit search API (/api/recruiting/search, recruiting-search.js)
+#   is left in place for whoever builds the coaches' version.
 @app.route("/coaches")
-def coaches_page():
-    """The coach edition's home (282/283).
-
-    ★ ITS OWN PRODUCT, UNDER ITS OWN PREFIX. The topbar switches editions on
-      request.path (see _topbar.html), which is what keeps every page
-      edge-cacheable -- a cookie-varying bar would key the cache on the
-      reader instead of the URL. Nothing here is gated: the only per-reader
-      block is "your teams", and coaches.js fills that from /api/me after
-      load, so this page caches like any other.
-    """
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            years = _seasonYears(cur)
-    return render_template("coaches.html", season_years=years)
-
-
 @app.route("/coaches/recruits")
-def coaches_recruits_page():
-    """The coach edition (282): the search over every high-school season."""
-    import recruiting as R
-    from rankings import US_STATES
-    with getConn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            years = _seasonYears(cur)
-    return render_template("recruiting_search.html", season_years=years,
-                           states=sorted(US_STATES),
-                           sorts=list(R.SORTS), default_floor=R.DEFAULT_FLOOR)
-
-
 @app.route("/recruiting/search")
-def recruiting_search_page():
-    """Where the coach search used to live, before it became its own
-    edition. 301 rather than a second copy: the URL is in the wild, and two
-    routes rendering one page is how they drift apart."""
-    return redirect("/coaches/recruits", code=301)
+def coaches_page():
+    return redirect("/recruiting", code=301)
 
 
 @app.route("/api/recruiting/schools")

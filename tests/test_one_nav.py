@@ -121,11 +121,6 @@ def test_the_edition_memory_is_gone_and_sign_in_next_stays():
     assert js.index("rc_si=0") < js.index("fetch('/api/me'")
 
 
-def test_coaches_page_says_recruit_search():
-    page = read("racecast", "templates", "coaches.html")
-    assert "Recruit search" in page and "Find recruits" not in page
-    assert "Find recruits" not in read("racecast", "templates", "recruiting_search.html")
-
 
 def test_phone_css_has_the_two_rows_and_the_panel():
     css = read("racecast", "static", "style.css")
