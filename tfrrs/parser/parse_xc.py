@@ -164,14 +164,6 @@ def parseXCRow(row, colmap=None):
     #   no evidence about the athlete and the other is -- and after the scrape
     #   the page is gone, so this is the only moment the distinction exists.
     status = _statusText(_textAt("time"))
-    # ⚠ "0:00.0" IS NO TIME (fl.tfrrs.org, Bronco's Ranch 28712, 2026-10-25:
-    #   nine runners at place 0, "0:00.0" in both the pace and time cells --
-    #   entered, no finish). It parsed as 0.0 seconds with no status, a row
-    #   every reader had to know to drop. It is stored as what it is: no
-    #   time, "NT".
-    if time_seconds is not None and time_seconds <= 0:
-        time_seconds = None
-        status = status or "NT"
 
     # score — blank for non-scoring (displaced) runners.
     score = _toIntOrNone(_textAt("score"))

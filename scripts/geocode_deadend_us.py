@@ -241,7 +241,7 @@ def _buildQuery(guess, stateRaw):
 
 _CENSUS_URL = "https://geocoding.geo.census.gov/geocoder/locations/onelineaddress"
 _NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-_UA = "xc-predictor-deadend-geocoder/1.0 (contact: racecast@racecast.co)"
+_UA = "xc-predictor-deadend-geocoder/1.0"
 
 def _httpJson(url, params, headers=None, timeout=20):
     """

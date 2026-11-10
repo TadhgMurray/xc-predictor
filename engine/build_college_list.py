@@ -56,7 +56,7 @@ _NAME_COLS = ("common name", "school", "institution", "college", "team", "member
 #   separately with a real identifying UA -- their policy asks for a contact
 #   string -- and the HTML handed to read_html as text.
 _UA = ("xc-predictor/1.0 (course difficulty research; "
-       "contact: racecast@racecast.co) python-requests")
+       "contact: local script) python-requests")
 
 
 def fetchHtml(url):

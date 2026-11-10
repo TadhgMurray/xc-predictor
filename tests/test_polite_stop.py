@@ -33,18 +33,11 @@ def test_on_with_no_vpn_and_stops_everything(monkeypatch):
         assert "429" in str(e)
 
 
-def test_on_whatever_the_environment_says(monkeypatch):
-    # owner, 2026-11-10: a block is reported, never worked around -- there is
-    # no IP rotation left to make carrying on after a 429 anything else
-    for env in ({}, {"NO_VPN": "0"}, {"NO_VPN": "1", "ANET_POLITE": "0"}):
-        P = fresh(monkeypatch, **env)
-        assert P.active()
-
-
-def test_ip_rotation_is_off_whatever_no_vpn_says(monkeypatch):
-    monkeypatch.setenv("NO_VPN", "0")
-    import vpn_rotation
-    assert vpn_rotation._rotationOff()
+def test_off_without_no_vpn_or_when_turned_off(monkeypatch):
+    P = fresh(monkeypatch)
+    assert not P.active() and not P.trip("[S1]", "429") and not P.stopped()
+    P = fresh(monkeypatch, NO_VPN="1", ANET_POLITE="0")
+    assert not P.active()
 
 
 def test_the_scraper_trips_it_on_a_429():

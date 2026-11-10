@@ -163,70 +163,22 @@ def _parseRaceTable(table, meet_id, event_id, event_name):
         #   thing to infer from the ratings a month later.
         print(f"[tfrrs] meet {meet_id} event {event_id}: {note}", flush=True)
 
-    # ★ A RACE THAT NAMES BOTH GENDERS, OR NEITHER, IS NOT ONE GENDER
-    #   (fl.tfrrs.org, Bronco's Ranch 28712, 2026-10-25: one table, "Boys' &
-    #   Girls' 5000 Meters", Discovery_m's boys and Ridgeview_f's girls in one
-    #   field). The title rule read "girls" and stamped every boy F; the
-    #   division took the title as its name, and the normaliser reads gender
-    #   off that name -- so every boy was rated as a girl. Here each runner
-    #   keeps the gender their team slug gives, and each gender gets its own
-    #   division name ("Boys' 5000 Meters (mixed race)"), which
-    #   tfrrs_xc_divisions numbers apart. A runner with no team link has no
-    #   gender to give: their name says neither ("5000 Meters (mixed race)").
-    mixed = gender is None or _namesBothGenders(event_name)
     out = []
     for tr in rows:
         row = parseXCRow(tr, colmap)
         # Attach race context to EVERY row (parsed or not) so nothing floats free.
-        # A one-gender title overrides parseXCRow's per-row slug guess (the
-        # race defines it, and it is there even when a row is name-only).
-        row_gender = row.get("gender") if mixed else gender
+        # gender is overridden from the title because the race defines it - more
+        # reliable than parseXCRow's per-row slug guess (and present even when a
+        # row is name-only).
         row.update({
             "meet_id":         meet_id,
             "event_id":        event_id,
-            "event_name":      (_mixedRaceName(event_name, row_gender, gender is None,
-                                               row.get("team_slug"))
-                                if mixed else event_name),
-            "gender":          row_gender,
+            "event_name":      event_name,
+            "gender":          gender,
             "distance_meters": distance,
         })
         out.append(row)
     return out
-
-
-_MEN_WORD = re.compile(r"\b(men|boys?)\b", re.I)
-_WOMEN_WORD = re.compile(r"\b(women|girls?)\b", re.I)
-_GENDER_WORDS = re.compile(r"\b(?:men|women|boys?|girls?)(?:'s|s'|')?(?=\W|$)", re.I)
-
-
-def _namesBothGenders(title):
-    """True when a race title names men/boys AND women/girls ("Boys' & Girls'
-    5000 Meters", "Men's and Women's 4 Mile"). Pure."""
-    return bool(title) and bool(_MEN_WORD.search(title)) and bool(_WOMEN_WORD.search(title))
-
-
-def _mixedRaceName(title, gender, untitled, slug=None):
-    """The division name for one gender's runners in a mixed race. Its gender
-    words are replaced by the runner's, so backfill_normalize's
-    _genderFromDivName reads it right: Boys'/Girls' when the title says
-    boys/girls, Men's/Women's when it says men/women, and for a title that
-    names neither ("Class 1A") by the runner's team slug's level. A title
-    that named no gender only gains the runner's: it was not a mixed race by
-    its name, just one whose page did not say. Pure."""
-    title = title or ""
-    if re.search(r"\b(boys?|girls?)\b", title, re.I):
-        youth = True
-    elif _MEN_WORD.search(title) or _WOMEN_WORD.search(title):
-        youth = False
-    else:
-        youth = "_college_" not in (slug or "")
-    word = {"M": "Boys'" if youth else "Men's", "F": "Girls'" if youth else "Women's"}.get(gender)
-    if untitled:
-        return f"{word} {title}".strip() if word else title
-    rest = " ".join(_GENDER_WORDS.sub(" ", title).split())
-    rest = re.sub(r"^(?:(?:&|and|\+|/)\s*)+", "", rest, flags=re.I)
-    rest = re.sub(r"\s+(?:&|and|\+|/)(?=\s|$)", "", rest, flags=re.I).strip()
-    return f"{word + ' ' if word else ''}{rest} (mixed race)"
  
  
 # ------------------------------------------------------------------ #

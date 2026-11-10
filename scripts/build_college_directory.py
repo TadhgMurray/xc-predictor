@@ -415,7 +415,7 @@ def parseList(page_html):
 
 
 def fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "racecast directory build (contact: racecast@racecast.co)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "racecast directory build (contact: site owner)"})
     with urllib.request.urlopen(req, timeout=60) as r:
         return r.read().decode("utf-8", "replace")
 

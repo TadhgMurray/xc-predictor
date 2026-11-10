@@ -110,26 +110,6 @@ CREATE TABLE IF NOT EXISTS results_ext (
     UNIQUE (ext_meet_id, race_n, n)
 );
 CREATE INDEX IF NOT EXISTS results_ext_result ON results_ext (result_id);
--- ★ EVERY MEET PAGE A TIMER'S INDEX OFFERED, AND WHAT BECAME OF IT
---   (2026-11-10). Only landed pages were remembered, so a page that did not
---   parse (an empty template, a relays meet, no date) was "new" every night
---   and took one of the timer's few nightly slots for good; and nothing could
---   say how many meets a timer listed against how many we have
---   (scripts/coverage_report.py reads this as the timers' "expected").
-CREATE TABLE IF NOT EXISTS ext_seen (
-    url          TEXT PRIMARY KEY,
-    source       TEXT NOT NULL,          -- 'timer:<slug>'
-    first_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_tried   TIMESTAMPTZ,
-    tries        INTEGER NOT NULL DEFAULT 0,
-    outcome      TEXT,                   -- 'landed' | 'waits a day' | 'not parsed: ...' | 'no date' | 'outside the US'
-    meet_name    TEXT,
-    meet_date    TEXT,                   -- ISO, when the page gave one
-    sport        TEXT,
-    n_races      INTEGER,
-    n_rows       INTEGER
-);
-CREATE INDEX IF NOT EXISTS ext_seen_source ON ext_seen (source);
 """
 
 

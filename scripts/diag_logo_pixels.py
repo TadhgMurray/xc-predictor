@@ -146,7 +146,7 @@ def main():
 
     if a.url:
         import urllib.request
-        req = urllib.request.Request(a.url, headers={"User-Agent": "racecast-diag/1.0 (racecast@racecast.co)"})
+        req = urllib.request.Request(a.url, headers={"User-Agent": "xcp/1.0"})
         describe(urllib.request.urlopen(req, timeout=20).read(), a.url[:70])
         return 0
 

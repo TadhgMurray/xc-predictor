@@ -67,7 +67,7 @@ from database import getConn                                   # noqa: E402
 
 API = "https://api.lacctic.com/api_ranking"
 _S = requests.Session()
-_S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research; racecast@racecast.co)",
+_S.headers.update({"User-Agent": "racecast-compare/1.0 (read-only research)",
                    "Accept": "application/json"})
 
 
