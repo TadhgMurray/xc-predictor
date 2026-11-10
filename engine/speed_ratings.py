@@ -56,7 +56,7 @@ from datetime import date, datetime
 import numpy as np
 
 from normalize_distance import poolFor, ratedScalePool
-from season_year import seasonYearFor, RolloverLedger
+from season_year import seasonYearFor, RolloverLedger, seasonYearForPersonDate
 import speed_ratings_kernels as K
 from speed_ratings_db import (streamResults, saveCourseDifficulties,
                               saveAthleteRatings, saveResultSpeedRatings)
@@ -917,6 +917,9 @@ def loadProSeasons():
                 return _PRO_SEASONS
             cur.execute("SELECT person_id, season FROM pro_athlete_season")
             _PRO_SEASONS = {(int(p), int(s)) for p, s in cur.fetchall()}
+        # the professionals' summer (season_year 3b) reads the same seasons
+        from season_year import setProSeasons
+        setProSeasons(_PRO_SEASONS)
         print(f"[engine] pro repooling: {len(_PRO_SEASONS):,} "
               f"professional athlete-seasons")
     except Exception as exc:
@@ -1667,7 +1670,10 @@ def _packLoop(batches, today, merge=False):
             #    to look up pro_athlete_season, which is calendar-keyed. That
             #    is the last table on the old clock.
             # ============================================================ #
-            yrs.append(seasonYearFor(r[_SPORT], d, _rollover))
+            # ★ A PROFESSIONAL'S LATE-SUMMER TRACK RACE CLOSES THE SEASON
+            #   BEHIND IT (season_year 3b) -- the boards' rule, same table
+            loadProSeasons()
+            yrs.append(seasonYearForPersonDate(r[_SPORT], d, r[_PID], _rollover))
             # the row's distance in metres, 0 when the loader had none
             dm = r[_DIST] if len(r) > _DIST else None
             dists.append(float(dm) if dm is not None and dm > 0 else 0.0)
