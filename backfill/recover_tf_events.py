@@ -151,7 +151,7 @@ async def _runSession(playwright, grouped: dict, meet_ids: list, session_index: 
     # identical to main scraper sessions to Cloudflare.
     config = SESSION_CONFIGS[session_index % len(SESSION_CONFIGS)]
 
-    # restartBrowser handles Chrome launch (our own user agent, nothing hidden),
+    # restartBrowser handles Chrome launch, stealth, webdriver patch,
     # and initial navigation to athletic.net.
     browser, page = await restartBrowser(playwright, None, config, proxy_index=0)
  

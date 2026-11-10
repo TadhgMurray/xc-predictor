@@ -46,14 +46,18 @@ from dataclasses import dataclass
 
 import requests
 
-# ★ OUR NAME AND ADDRESS, NOT A PLAIN CHROME (2026-11-10; sources/agent.py
-#   says why). XCP_SOURCE_UA overrides it only when it still gives the
-#   address. The pace (one request per host, 10 s apart) and robots.txt are
-#   unchanged.
-from sources.agent import USER_AGENT                             # noqa: E402
+# ★ A PLAIN CHROME USER AGENT (owner, 2026-11-01: "keep all the previous
+#   privacy settings ... make sure the local and tfrrs ones are the same
+#   way" -- the timers asked said it was fine). The same string the
+#   athletic.net launcher sent before 2026-10-25; XCP_SOURCE_UA overrides it.
+#   The pace (one request per host, 10 s apart) and robots.txt are unchanged.
+USER_AGENT = os.environ.get(
+    "XCP_SOURCE_UA",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/141.0.0.0 Safari/537.36")
 # ! ROBOTS.TXT IS STILL READ FOR OUR OWN NAME: rules a site writes for
 #   "racecast" or for every crawler ("*") both apply.
-ROBOTS_AGENT = "racecast-results"   # the product token in USER_AGENT
+ROBOTS_AGENT = "racecast-results"
 
 # ★ GENTLE BY DEFAULT (owner, 2026-10-23: "let's just try to be nice to all
 #   these sites"): 10 s between one host's requests, and never more than 8

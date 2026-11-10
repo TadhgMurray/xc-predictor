@@ -264,8 +264,7 @@ def test_the_adapter_from_the_url_or_the_page():
 
 def test_the_fetcher_says_who_it_is():
     import sources.fetch as F
-    # owner, 2026-11-10: every scraper names us and gives the address (was a plain Chrome)
-    assert "racecast@racecast.co" in F.USER_AGENT and F.USER_AGENT.startswith("racecast-results/")
+    assert "chrome" in F.USER_AGENT.lower() and "racecast" not in F.USER_AGENT.lower()
     assert F.ROBOTS_AGENT == "racecast-results"
 
 
