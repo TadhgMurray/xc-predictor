@@ -361,13 +361,14 @@ def test_the_pages_are_wired():
                   '@app.route("/api/recruiting")', '@app.route("/recruit/<int:person_id>")'):
         assert route in app, route
     assert 'render_template("recruiting.html"' in app
-    assert 'render_template("recruiting_search.html"' in app
+    # /recruiting/search and /coaches/recruits redirect to /recruiting now
+    # (owner, 2026-11-10)
     assert 'render_template("recruiting_school.html"' in app
     assert 'href="/recruiting"' in read("racecast", "templates", "_topbar.html")
-    assert "/recruiting?athlete={{ athlete.person_id }}" in read("racecast", "templates", "athlete.html")
+    # one Recruiting link (owner, 2026-11-10): a college runner's goes here
+    assert "'/recruiting?athlete=' ~ athlete.person_id" in read("racecast", "templates", "athlete.html")
     assert "/recruiting/school/{{ school|urlencode }}" in read("racecast", "templates", "school.html")
     assert "recruiting.js" in read("racecast", "templates", "recruiting.html")
-    assert "recruiting-search.js" in read("racecast", "templates", "recruiting_search.html")
     assert "/api/recruiting/schools" in read("racecast", "static", "recruiting.js")
     assert "/api/recruiting?" in read("racecast", "static", "recruiting-search.js")
     assert 'stepsN 10f_recruits "$PY -u racecast/build_recruiting.py"' in read("deploy", "run_pipeline.sh")

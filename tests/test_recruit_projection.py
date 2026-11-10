@@ -145,10 +145,8 @@ def test_the_page_shows_the_band_and_the_caveat_not_a_bare_number():
     # the column only appears when the sort asked for it
     assert "const anyProj = rows.some((r) => r.proj_rating != null);" in js
     assert "anyProj ? projCell(r)" in js
-    html = open(os.path.join(_ROOT, "racecast", "templates",
-                             "recruiting_search.html")).read()
-    assert 'value="proj"' in html and 'value="proj_gain"' in html
-    assert "Most room left (model)" in html
+    # the search page itself is cut (owner, 2026-11-10); its script and
+    # API stay for the coaches' version
 
 
 def test_the_build_is_a_pipeline_step_that_does_not_need_a_model_to_pass():

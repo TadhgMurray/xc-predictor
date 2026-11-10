@@ -42,7 +42,7 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 #   sitemap). /movers is cut (a redirect to /breakouts); /projections' bare
 #   index is left out, its state pages are listed by state below.
 FIXED_PAGES = ("/", "/rankings", "/meets", "/conversions", "/predictions",
-               "/recruiting", "/coaches", "/coaches/recruits", "/about",
+               "/recruiting", "/about",
                "/what-it-takes", "/ncaa", "/breakouts", "/scale", "/goal",
                "/data", "/updates", "/compare")
 
