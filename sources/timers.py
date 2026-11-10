@@ -464,6 +464,13 @@ def _all(a, conn):
     from sources.fetch import Fetcher, RawStore
     since = a.since_year or _dt.date.today().year
     srcs = [s for s in registry.load() if s.enabled and s.kind != "blocked"]
+    # ! --try-kind (dry runs only): sources of a kind not switched on yet,
+    #   through the same reader, to see which already parse
+    if getattr(a, "try_kind", None):
+        if not a.dry:
+            raise SystemExit("--try-kind is for --dry runs only")
+        srcs = [s for s in registry.load() if s.kind in set(a.try_kind) and s.kind != "blocked"
+                and not registry.offLimits(s.results_url or s.website or "")]
     if a.only:
         srcs = [s for s in srcs if s.slug in set(a.only)]
     known, retry = set(), set()
@@ -600,8 +607,41 @@ def _all(a, conn):
             got.append((meet["url"], lm, why))
         return src, got, note
 
+    # ★ RACE ROSTER, THE SAME WAY (2026-11-10; sources/raceroster.py): the
+    #   school meets a dozen timers post there (NE, IA, MO, OH, NH, SC, WI
+    #   ...). XCP_RACEROSTER=0 leaves it out; XCP_RACEROSTER_PER_RUN a night.
+    async def raceRosterJob():
+        from types import SimpleNamespace
+        from sources import raceroster
+        src = SimpleNamespace(slug=raceroster.SLUG)
+        if os.environ.get("XCP_RACEROSTER", "1") == "0" or (a.only and raceroster.SLUG not in set(a.only)):
+            return src, [], "off"
+        try:
+            todo, note = await raceroster.discover(
+                fetcher, f"{since}-08-01", int(os.environ.get("XCP_RACEROSTER_PER_RUN", "15")), known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for key, code, eid, name, _date in todo:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(todo) - len(got)} meets wait for the next run"
+                break
+            try:
+                code = code or await raceroster.resolveCode(fetcher, eid)
+                if not code:
+                    lm, why = None, "no results code"
+                else:
+                    lm, why = await raceroster.readMeet(fetcher, code, key,
+                                                        RETRY_AGE if key in retry else MAX_AGE)
+                    if lm is not None and _recent(lm.date) and key not in retry:
+                        lm, why = await raceroster.readMeet(fetcher, code, key, RECENT_AGE)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((key, lm, why))
+        return src, got, note
+
     async def go(f):
-        for fut in asyncio.as_completed([one(s) for s in srcs] + [arrowJob()]):
+        for fut in asyncio.as_completed([one(s) for s in srcs] + [arrowJob(), raceRosterJob()]):
             report(*(await fut), f)
 
     with open(out, "w", encoding="utf-8") as f:
@@ -662,6 +702,8 @@ def main(argv=None):
     al.add_argument("--out")
     al.add_argument("--show", type=int, default=20)
     al.add_argument("--minutes", type=float, help="start no new meet after this long (XCP_TIMERS_MINUTES)")
+    al.add_argument("--try-kind", action="append",
+                    help="(--dry only) the sources of this registry kind, switched on or not")
     a = ap.parse_args(argv)
     return {"all": cmdAll, "init": cmdInit, "fetch": cmdFetch, "land": cmdLand, "dedup": cmdDedup,
             "promote": cmdPromote, "status": cmdStatus}[a.cmd](a)
