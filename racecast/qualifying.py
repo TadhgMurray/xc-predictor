@@ -254,11 +254,14 @@ def atLargeIndividuals(queues, n, n_teams):
     return out
 
 
-def selectField(rule, rounds, pools=None, labels=None):
+def selectField(rule, rounds, pools=None, labels=None, explain=None):
     """{person_id: school}: the championship's field from its rounds by the
     rule. rounds: {round key: [(pid, school, seconds, rating)]}; pools: other
     races at-large teams may also come from (rule["at_large_from"]), same
-    shape -- no automatic places and no individuals from them."""
+    shape -- no automatic places and no individuals from them. explain, a
+    dict, is told how each team got in (owner, 2026-11-10: "can it tell
+    at-larges?"): {"auto": {round: [school]}, "at_large": [(round, school)]
+    in pick order}."""
     size = rule.get("team_size", 7)
     rounds, pools = _oneSpelling(rounds, pools or {})
     orders = {k: teamOrder(v) for k, v in rounds.items()}
@@ -268,9 +271,14 @@ def selectField(rule, rounds, pools=None, labels=None):
     rows_of = dict(rounds)
     rows_of.update({("pool", k): v for k, v in pools.items()})
     auto = {s for v in qualified.values() for s in v}
+    if explain is not None:
+        explain["auto"] = {k: list(v) for k, v in qualified.items()}
+        explain["at_large"] = []
     field = {}
     for k, school in atLargeTeams(queues, rule.get("teams_at_large", 0),
                                   lambda k, s: teamStrength(rows_of[k], s), taken=auto):
+        if explain is not None:
+            explain["at_large"].append((k, school))
         if k in qualified:
             qualified[k].append(school)
         else:
@@ -587,7 +595,10 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
                                                   int(str(day)[:4]), every=True)):
                 if len(rows) >= 10:
                     pools[(mid, i)] = rows
-    return selectField(rule, rounds, pools, labels), n_pred
+    explain = None
+    if info is not None:
+        explain = info.setdefault("picks", {})
+    return selectField(rule, rounds, pools, labels, explain), n_pred
 
 
 # ★ LAST YEAR'S ROUNDS, RUN THIS YEAR (owner's nightly, 2026-11-04: the

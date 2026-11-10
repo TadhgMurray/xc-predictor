@@ -190,6 +190,19 @@ def main():
             team = (f", team {teams.index(r[1]) + 1} of {len(teams)}" if r[1] in teams else "")
             where = f"place {i} of {len(order)} for {r[1]!r}{team}"
         print(f"  {names.get(mid, mid)!s:50.50} {kind}: {len(order)} runners; {a.name} {where}")
+    # ★ HOW EACH TEAM GOT IN (owner, 2026-11-10: "can it tell at-larges?"):
+    #   each round's automatic teams, then the at-large picks in the order the
+    #   pecking order made them (qualifying.selectField's explain)
+    picks = info.get("picks") or {}
+    if picks.get("auto"):
+        print("\nteams in automatically, by round:")
+        for k, schools in picks["auto"].items():
+            print(f"  {names.get(k, k)!s:50.50} {', '.join(map(str, schools)) or '-'}")
+    if picks.get("at_large") is not None:
+        print(f"\nat-large teams, in pick order ({len(picks['at_large'])}):")
+        for i, (k, school) in enumerate(picks["at_large"], 1):
+            kk = k[1] if isinstance(k, tuple) else k
+            print(f"  {i:>2}. {school}  (from {names.get(kk, kk)})")
     inn = sorted(ids & set(field or {}))
     print(f"\n{a.name} {'IS' if inn else 'is NOT'} in the field"
           + (f" (for {field[inn[0]]!r})" if inn else ""))
