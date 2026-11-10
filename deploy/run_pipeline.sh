@@ -374,6 +374,10 @@ beforeFrom() {
   [ "${_n:-0}" -lt "$FROM" ]
 }
 
+# willRun NAME: would a step of this name run (not before --from, not on
+# --skip)? For a group whose parts must run or skip together (12b, 12c).
+willRun() { ! beforeFrom "$1" && ! skipped "$1"; }
+
 step() {
   name="$1"; shift
   num=$(echo "$name" | sed 's/^0*\([0-9]*\).*/\1/')
@@ -1849,6 +1853,22 @@ step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
                       ${XCP_OUTLIER_SLOW_SIGMA:+--slow-sigma "$XCP_OUTLIER_SLOW_SIGMA"} \
                       ${XCP_OUTLIER_FLOOR:+--floor "$XCP_OUTLIER_FLOOR"} \
                       ${XCP_OUTLIER_K:+--k "$XCP_OUTLIER_K"}
+# ★ THE RESULTS VACUUM BESIDE THE BOARDS, NOT AFTER EVERYTHING (2026-11-10;
+#   run 20261108_155220: 18c_vacuum_results was 3,792 s IN LINE at the very
+#   end, 15% of the run's in-line time). Its job is the visibility map the
+#   athlete and race pages' index-only scans need after the go-live and the
+#   fill rewrote results (see 18c below for the history). 09b/09c/09d are
+#   the last bulk writers of results* -- nothing rewrites them until 16 (the
+#   rowguard note below) -- so it starts here, at the same trickle
+#   (gentle_vacuum's cost delay), and runs beside the hours of board steps.
+#   bgwait collects it at the end. Nothing waits on it: a lazy VACUUM is
+#   ignored by CREATE INDEX CONCURRENTLY's wait for old transactions, and
+#   11b builds an index on results only when one is missing (then it waits
+#   for the vacuum, and says so). 16's few changed pages wait for autovacuum.
+#   XCP_VACUUM_RESULTS=0 skips.
+if [ "${XCP_VACUUM_RESULTS:-1}" != "0" ]; then
+  bgstep 18c_vacuum_results "$PY" -u scripts/gentle_vacuum.py --table results --table results_tf
+fi
 # ★★ THE ROWGUARD BESIDE THE BOARDS (2026-11-07, owner-approved). The two
 #    diagnostics read results*.normalized_time / speed_rating (final once
 #    09b, and 09c2 when on, are done), meets and engine/corrections.py, and
@@ -2013,13 +2033,26 @@ step 12_courses       "$PY" -u racecast/build_course_rank.py
 #   courses in a row was mostly waiting on the database; three workers on
 #   every third course cut the wall time to about a third. --prepare and
 #   --finish bracket them so the swap happens once, after all three.
-step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
-XCP_DB_MIN_CONN=1 shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
-step 12b_finish       "$PY" -u racecast/build_course_boards.py --finish
+# ! PREPARE, SHARDS AND FINISH ARE ONE UNIT (2026-11-10). --fast skips
+#   12b_course_pages; 12b_prepare still emptied course_boards_new and
+#   12b_finish then refused to swap an empty table -- FAILED in run
+#   20261108_155220 with no shard log at all. The three now run or skip
+#   together, on the shard step's own --from / --skip.
+if willRun 12b_course_pages; then
+  step 12b_prepare      "$PY" -u racecast/build_course_boards.py --prepare
+  XCP_DB_MIN_CONN=1 shards 12b_course_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_course_boards.py --limit 1200
+  failed 12b_course_pages || step 12b_finish "$PY" -u racecast/build_course_boards.py --finish
+else
+  echo "  12b_prepare, 12b_course_pages, 12b_finish skipped (the course pages keep the last build; app._boardFresh re-reads their ratings)"
+fi
 # ★ TRACK VENUE PAGES, THE SAME WAY (racecast/build_venue_tf_boards.py)
-step 12c_prepare      "$PY" -u racecast/build_venue_tf_boards.py --prepare
-XCP_DB_MIN_CONN=1 shards 12c_venue_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_venue_tf_boards.py --limit 2000
-step 12c_finish       "$PY" -u racecast/build_venue_tf_boards.py --finish
+if willRun 12c_venue_pages; then
+  step 12c_prepare      "$PY" -u racecast/build_venue_tf_boards.py --prepare
+  XCP_DB_MIN_CONN=1 shards 12c_venue_pages "$XCP_COURSE_SHARDS" "$PY" -u racecast/build_venue_tf_boards.py --limit 2000
+  failed 12c_venue_pages || step 12c_finish "$PY" -u racecast/build_venue_tf_boards.py --finish
+else
+  echo "  12c_prepare, 12c_venue_pages, 12c_finish skipped (the venue pages keep the last build)"
+fi
 # ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
 #   course records by era, "on this day" (racecast/build_record_books.py).
 #   IN THE BACKGROUND, off the main chain: only the record pages read
@@ -2229,9 +2262,8 @@ step 18b_integrity_boards "$PY" -u scripts/integrity_check.py --tables ranking_r
 #   competitor of every race was a heap read again until autovacuum came by.
 #   VACUUM skips pages already all-visible, so a night that changed little
 #   costs little. Same trickle as 18. XCP_VACUUM_RESULTS=0 skips.
-if [ "${XCP_VACUUM_RESULTS:-1}" != "0" ]; then
-  step 18c_vacuum_results "$PY" -u scripts/gentle_vacuum.py --table results --table results_tf || true
-fi
+# (18c_vacuum_results starts in the background after 09d since 2026-11-10;
+#  collected by bgwait below)
 
 # the background steps (10f2, 13j, 17d): collected last
 bgwait
