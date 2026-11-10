@@ -832,7 +832,10 @@ def _raceCopyParts(table, sport):
                       AND l.mb = m.mb AND l.db = m.db AND l.rb = m.rb
                       {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if tf else ""}"""
     return [("rows", rows, False), ("matched", matched, False), ("divs", divs, False),
-            ("size", size, True), ("loser", loser, True), ("flag", flag, True)]
+            # loser joins only small analysed tables: hash joins, nested
+            # loops back off (with them on, the server's plan crossed size
+            # with itself -- fine empty, thousands x thousands on real data)
+            ("size", size, True), ("loser", loser, False), ("flag", flag, True)]
 
 
 def prepareRaceCopy(cur, table, sport, explain=False):
