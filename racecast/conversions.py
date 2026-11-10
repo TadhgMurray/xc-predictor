@@ -1712,6 +1712,24 @@ def fiveK(rating, pool, sport="XC", hs=None):
     return {"time": c["time"], "dist": c["dist"]} if c else None
 
 
+def fiveKHs(rating, pool, sport="XC", hs=None):
+    """fiveK, but a 5K for every level: a middle school rating reads its
+    HS-equivalent on the same-gender HS pool, at 5000 m, instead of the
+    3200 m fiveK gives it.
+
+    ★ ONE DISTANCE ON THE ATHLETE PAGE (owner, 2026-11-10: "should we just
+      make everything 5k equivalent?" -- yes). Every rating that page shows
+      is the HS-equivalent, so the time beside it is the high school 5K: a
+      career that starts in middle school no longer switches from "≈ 10:14
+      3200m" to "≈ 15:02" halfway down the page. High school and college
+      already read a 5K and go through fiveK unchanged. With no HS value a
+      middle school row keeps its 3200 m rather than showing nothing."""
+    level, _, g = (_bare(pool) or "").partition("_")
+    if level == "ms" and g in ("m", "f") and hs is not None:
+        return fiveK(hs, "hs_" + g, sport)
+    return fiveK(rating, pool, sport, hs)
+
+
 def fiveKLabel(pools):
     """The column's header for the pools on a page: '5K' when every row is
     a 5K, '3200m' when every row is middle school, 'Track ≈' for a mix

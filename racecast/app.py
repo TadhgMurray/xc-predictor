@@ -587,6 +587,7 @@ app.jinja_env.globals["race_title"] = raceTitle
 #   cell and header macros are _scale.html's fk_th / fk_td / fk_inline.
 import conversions as _conv_fk
 app.jinja_env.globals["five_k"] = _conv_fk.fiveK
+app.jinja_env.globals["five_k_hs"] = _conv_fk.fiveKHs
 
 
 # ★ EVERY RATING ON THE PUBLIC SCALE (owner, 2026-11-02: "make everything
@@ -2621,6 +2622,14 @@ def athlete(person_id):
         print(f"athlete {person_id}: outlier marks skipped: "
               f"{type(exc).__name__}: {exc}", flush=True)
 
+    # ★ ONLY THE BADGES THAT SAY SOMETHING (owner, 2026-11-10: "sure"). A
+    #   freshman's first two races wore five badges each, because a first
+    #   race at a distance is a PR and an SR by definition, a first run on a
+    #   course a CR, a first rated race an R and an RSR. The page shows a
+    #   badge only when it adds something (quietAutomaticFlags).
+    quietAutomaticFlags(races, by_distance, by_course, by_season_d, by_season,
+                        time_of, rating_of)
+
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
     # ★ THE SEASON NUMBER IS THE BOARD'S (owner, 2026-09-05): athlete_season
@@ -2755,7 +2764,17 @@ def athlete(person_id):
             _pool, _sport = season_rating["pool"], season_rating["sport"]
             _dist = (_mainTrackDistance(races, label) if _sport == "TF"
                      else None)
-            _clk = ratingClock(athlete["rating"], _pool, _sport, _dist)
+            _rt = athlete["rating"]
+            # ★ MIDDLE SCHOOL AS A 5K TOO (owner, 2026-11-10: "make
+            #   everything 5k equivalent"): the HS-equivalent on the HS pool,
+            #   so the header and every table on the page name one distance
+            _lv, _, _g = (str(_pool or "")).partition("_")
+            if _lv == "ms" and _g in ("m", "f") and _sport == "XC":
+                from pool_view import toHs as _toHsClk
+                _hs_rt = _toHsClk(_rt, _pool, _sport)
+                if _hs_rt:
+                    _rt, _pool = _hs_rt, "hs_" + _g
+            _clk = ratingClock(_rt, _pool, _sport, _dist)
             athlete["equiv_time"] = _clk["time"] if _clk else None
             athlete["equiv_dist"] = _clk["dist"] if _clk else None
             athlete["equiv_where"] = _clk["where"] if _clk else None
@@ -3724,6 +3743,11 @@ def round_label(rnd):
     return text
 
 
+_MILE_WORDS = {"1mile": "Mile", "1 mile": "Mile", "mile": "Mile",
+               "2mile": "2 Mile", "2miles": "2 Mile", "2 mile": "2 Mile",
+               "2 miles": "2 Mile"}
+
+
 @app.template_filter("event_label")
 def event_label(event):
     """A bare number is a distance in metres, so give it its unit.
@@ -3749,7 +3773,24 @@ def event_label(event):
     try:
         return f"{round(float(text))}m"
     except (TypeError, ValueError):
-        return text
+        # ★ "Mile" AND "2 Mile", AS THE SIDE CARDS SAY THEM (owner,
+        #   2026-11-10): the feed's own "1mile" / "2miles" read like keys
+        return _MILE_WORDS.get(text.lower(), text)
+
+
+# ★ A MEET'S NAME WITHOUT ITS FEED'S SEASON TAG (owner, 2026-11-10): one feed
+#   ends track meet names in " TF26" (its season code), and the athlete page
+#   printed "UIL 6A District 05 TF26". Display only; the stored name and the
+#   link's title keep it.
+_MEET_SEASON_TAG = re.compile(r"\s+(?:TF|XC|IN|OT)\d{2}\s*$")
+
+
+@app.template_filter("meet_clean")
+def meet_clean(name):
+    """'UIL 6A District 05 TF26' -> 'UIL 6A District 05'; None stays None."""
+    if not name:
+        return name
+    return _MEET_SEASON_TAG.sub("", str(name))
 
 
 def _proHeaderSeason(ordered, season_rating):
@@ -4244,6 +4285,57 @@ def _courseKey(r):
       prints under the meet is the venue; a row without one keeps its meet."""
     course = " ".join(str(r.get("course") or "").split()).lower()
     return (course or r.get("meet"), r.get("event"))
+
+
+def _firstIds(races, key_fn, value_fn):
+    """The earliest race with a value in each group: its record is automatic."""
+    seen, first = set(), set()
+    for race in sorted(races, key=lambda r: (r["date"], r["result_id"])):
+        if value_fn(race) is None:
+            continue
+        k = key_fn(race)
+        if k not in seen:
+            seen.add(k)
+            first.add(race["result_id"])
+    return first
+
+
+def quietAutomaticFlags(races, by_distance, by_course, by_season_d, by_season,
+                        time_of, rating_of):
+    """Turn off the record badges a race earns by default (owner, 2026-11-10).
+
+      * the first race at a distance:     no PR, no SR
+      * the first race at a distance in a season:  no SR
+      * the first run on a course:        no CR
+      * the first rated race:             no R
+      * the first rated race of a season: no RSR
+      * a PR already says SR, an R already says RSR: no SR beside a PR,
+        no RSR beside an R
+
+    Display only: the race's records are unchanged (the header's best race,
+    the side cards and the boards read their own); this clears the is_*
+    keys the season tables print, after every other reader of them."""
+    first_dist = _firstIds(races, by_distance, time_of)
+    first_season_d = _firstIds(races, by_season_d, time_of)
+    first_course = _firstIds(races, by_course, time_of)
+    first_rated = _firstIds(races, lambda r: "ALL", rating_of)
+    first_season_r = _firstIds(races, by_season, rating_of)
+    for race in races:
+        rid = race["result_id"]
+        if rid in first_dist:
+            race["is_pr"] = race["is_star_pr"] = False
+        if rid in first_season_d:
+            race["is_sr"] = False
+        if rid in first_course:
+            race["is_course_pr"] = race["is_star_course"] = False
+        if rid in first_rated:
+            race["is_rating_pr"] = race["is_star_rating"] = False
+        if rid in first_season_r:
+            race["is_rating_sr"] = False
+        if race.get("is_pr"):
+            race["is_sr"] = False
+        if race.get("is_rating_pr"):
+            race["is_rating_sr"] = False
 
 
 def flag_records(races, key_fn, value_fn, better):

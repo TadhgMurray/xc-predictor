@@ -71,7 +71,11 @@
     // ! THE FIRST TAB IS THE DEFAULT, not "results": the meet page's first
     //   tab is "races", and an unknown name used to hide every panel. The
     //   tab bar's order, not the panels' order in the source, says which.
-    var firstTab = root.querySelector(".rc-tabs [data-tab]");
+    // ★ A TAB MARKED data-default WINS (owner, 2026-11-10: an athlete page
+    //   opens on the sport they raced last -- a pro on track, not on the
+    //   cross country they ran years ago), and with no mark, the first.
+    var firstTab = root.querySelector(".rc-tabs [data-tab][data-default]") ||
+                   root.querySelector(".rc-tabs [data-tab]");
     var first = firstTab ? firstTab.dataset.tab
               : (panels.length ? panels[0].dataset.panel : "results");
     /* ★ THE TAB ROLES, DONE PROPERLY (sweep 2026-10-10, B9). The strips
@@ -167,6 +171,7 @@
     var offered = want && root.querySelector('.rc-tabs [data-tab="' + want + '"]');
     show(offered && offered.hidden ? first
          : (want && has(want) ? want : (panelOf(target()) || first)));
+    openFolds(target());
     return entry;
   }
 
@@ -200,9 +205,22 @@
     }
     return "";
   }
+  // ★ AND EVERY CLOSED SEASON ON THE WAY (owner, 2026-11-10: an athlete's
+  //   older seasons are <details> that start closed). A link to a row, a
+  //   #2024-XC season anchor or a ?r= arrival opens the season holding it;
+  //   true when one opened.
+  function openFolds(el) {
+    var opened = false;
+    var d = el && el.closest && el.closest("details");
+    while (d) {
+      if (!d.open) { d.open = true; opened = true; }
+      d = d.parentElement && d.parentElement.closest("details");
+    }
+    return opened;
+  }
   // open every hidden panel on the way to el; true when one opened
   function reveal(el) {
-    var opened = false;
+    var opened = openFolds(el);
     var p = el && el.closest && el.closest("[data-panel]");
     while (p) {
       for (var i = 0; i < roots.length; i++) {

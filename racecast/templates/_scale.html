@@ -62,6 +62,13 @@
     {{ fk_td(five_k(r, pool, sport, hs), label, cls) }}
 {%- endmacro %}
 
+{# The 5K as the small line under a race's rating (athlete page, owner
+   2026-11-10: the rating moved beside the time and its 5K column became
+   this line, the way the distance sits under the result). #}
+{% macro fk_sub(c) -%}
+    {%- if c %}<span class="fk-sub" title="The track 5K this rating is worth">&asymp;&nbsp;{{ c.time }}{% if c.dist != "5K" %}&nbsp;{{ c.dist }}{% endif %}</span>{% endif -%}
+{%- endmacro %}
+
 {% macro fk_inline(c) -%}
     {%- if c %}<span class="fk-i" title="The track 5K this rating is worth">&asymp;&nbsp;{{ c.time }}{% if c.dist != "5K" %}&nbsp;{{ c.dist }}{% endif %}</span>{% endif -%}
 {%- endmacro %}
