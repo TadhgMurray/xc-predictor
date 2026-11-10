@@ -459,3 +459,21 @@ def test_a_split_nothing_explains_is_pinned_runner_by_runner():
     old = WD.mixVerdict([r[:3] for r in rows], 7000.0, 0.0, WD.candidates())
     assert old["fast_ids"] == [] and WD.wants(_v(listed=7000.0, action="split",
                                                    kind="combined", mix=old)) == [("", "novote", None)]
+
+
+def test_generated_lines_in_the_hand_dict_are_judged_as_generated():
+    """data audit, 2026-11-10: IN Middle School Championship 2021, a 3000 m
+    floored to 2253 m by a merged-division floor appended into the hand dict,
+    and never vetoed because a hand-typed short override only 'lists'."""
+    import wrong_distance as WD
+    lines = [
+        "    (283954, 1129465): 2253,  # was 3000, small side ran ~2190, n=41  IN Middle School",
+        "    (9640, 2): 5150,           # was 3200, inferred 5100 (err 3%, tier A), gap +12.0, n=40",
+        "    (9756, 1): 5000,           # used 3200, inferred 4980 (err 1%), gap +11.0, n=33",
+        "    (1234, 5): 6000,  # owner: the Mt. SAC 6K, not 5K",
+        "    (777, 7): 4000,",
+    ]
+    assert WD.generatedKeys(lines) == {(283954, 1129465), (9640, 2), (9756, 1)}
+    # and a generated one shorter than the times say is replaced, not listed
+    assert WD.overrideVerdict(3000, 2253, 3000, 40, hand=False)[0] == "replace"
+    assert WD.overrideVerdict(3000, 2253, 3000, 40, hand=True)[0] == "list"

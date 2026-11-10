@@ -109,7 +109,7 @@ def test_a_run_holding_it_is_still_fatal(tmp_path):
     p = subprocess.Popen(["bash", "-c", f'ROOT="{tmp_path}"; . "{LOCKCTL}"; '
                           'lock_take pipeline exclusive 0 "run"; sleep 3'])
     time.sleep(1)
-    r = _bash(tmp_path, 'lock_take nightly exclusive 30 "night" && echo GOT')
+    r = _bash(tmp_path, 'lock_take pipeline exclusive 30 "second run" && echo GOT')
     p.wait(timeout=30)
     assert "GOT" not in r.stdout and "FATAL" in r.stderr and "job=pipeline" in r.stderr
 
@@ -217,3 +217,53 @@ def test_wants_says_when_a_pipeline_solve_is_ahead(tmp_path):
 def test_the_replay_waits_out_the_pipeline_and_counts_its_stops():
     rp = open(os.path.join(ROOT, "deploy", "engine_replay.sh")).read()
     assert "! pipelineSolving" in rp and "STOPPED after" in rp and ".tmp.npz" in rp
+
+
+# ---- the nightly is queued, never dropped (2026-11-10) -------------------- #
+
+def test_a_nightly_queues_behind_a_run_scrapes_once_stable_and_goes_before_a_backup(tmp_path):
+    log = tmp_path / "nightly.log"
+    script = f'''
+      ROOT="{tmp_path}"; . "{LOCKCTL}"; export LOCK_POLL_S=0.2
+      ( lock_take pipeline exclusive 0 run; sleep 1.5; lock_note "results_stable=1"; sleep 2;
+        echo "run-done $(date +%s%N)"; lock_release ) &
+      sleep 0.5
+      ( scrape() {{ echo "scraped $(date +%s%N) stable=$(grep -c results_stable "$LOCK_HOLDER")"; }}
+        lock_take nightly exclusive 0 night 2>/dev/null ||
+          lock_queue_behind_run nightly 30 "{log}" scrape night && echo "nightly $(date +%s%N)" ) &
+      sleep 1
+      ( lock_take backup queued 30 dump && echo "backup $(date +%s%N)" ) &
+      wait
+    '''
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+    lines = [ln.split() for ln in r.stdout.splitlines()
+             if len(ln.split()) >= 2 and ln.split()[1].isdigit()]
+    order = [ln[0] for ln in sorted(lines, key=lambda x: int(x[1]))]
+    assert order == ["scraped", "run-done", "nightly", "backup"], (r.stdout, r.stderr)
+    assert "stable=1" in r.stdout                       # scraped only once the run said so
+    assert "NIGHTLY QUEUED" in log.read_text() and "FATAL" not in r.stderr
+
+
+def test_a_queued_nightly_that_runs_out_of_time_says_so(tmp_path):
+    log = tmp_path / "n.log"
+    script = f'''
+      ROOT="{tmp_path}"; . "{LOCKCTL}"; export LOCK_POLL_S=0.2
+      ( lock_take pipeline exclusive 0 run; sleep 4 ) &
+      sleep 0.5
+      lock_queue_behind_run nightly 1 "{log}" "" night; echo "rc=$?"
+      wait
+    '''
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=60)
+    assert "rc=1" in r.stdout
+    assert not (tmp_path / ".pipeline.lock.want").exists()     # the want is taken down
+
+
+def test_the_nightly_never_skips_on_a_held_lock_and_the_run_marks_stable_results():
+    nu = open(os.path.join(ROOT, "deploy", "nightly_update.sh")).read()
+    assert "skipping tonight" not in nu
+    assert "lock_queue_behind_run nightly" in nu
+    assert nu.index("lock_queue_behind_run") < nu.index("\n_scrapeAll\nstep 01z_coverage")
+    pl = open(os.path.join(ROOT, "deploy", "run_pipeline.sh")).read()
+    # after the go-live block (its abort included), before 09b
+    i = pl.rindex('lock_note "results_stable=1"')
+    assert pl.index("if failed 08_golive; then") < i < pl.index("stepsN 09b_fill")

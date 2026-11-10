@@ -58,6 +58,7 @@ import csv
 import math
 import os
 import statistics
+import re
 import sys
 import time
 
@@ -137,6 +138,50 @@ PACE_FAST, PACE_SLOW = 0.03, 0.97   # division-median percentile within its pool
 ACTION_ORDER = ("pin", "split", "replace", "pin-up?", "novote", "list", "review",
                 "keep", "unjudged", "ignore")
 HAND_DICT = "_DISTANCE_OVERRIDES_XC"     # the hand-typed overrides in corrections.py
+
+# ★ NOT EVERYTHING IN THE HAND DICT WAS TYPED BY HAND (data audit, 2026-11-10:
+#   Calvin Seitz's IN Middle School Championship 2021, "Boys Small School
+#   Open", a 221-runner 3000 m rated at "2253 m" -- 10:13.4 rated 103 against
+#   his 121-122 that season, and a "2253m" PR on his page -- beside the same
+#   meet's girls at "2092 m" and "2655 m"). Three tools append to
+#   _DISTANCE_OVERRIDES_XC by .update(): distance_repair ("# was N, inferred
+#   ..."), distance_pin ("# used N, inferred ...") and propose_distances'
+#   merged-division floors ("# was N, small side ran ~..."). Under the hand
+#   dict's name a generated entry SHORTER than the times say was only ever
+#   "list"ed, never vetoed: "a hand-typed one only underrates, so it stays".
+#   A generated one is judged as generated: the times reject it, it goes.
+GENERATED_DICT = "generated:_DISTANCE_OVERRIDES_XC"
+_GEN_LINE = re.compile(r"^\s*\((-?\d+),\s*(-?\d+)\):\s*[\d.]+,\s*#\s*(?:was|used)\s+\d+,"
+                       r"\s*(?:inferred|small side ran)")
+
+
+def generatedKeys(lines):
+    """{(meet_id, div_id)} of the lines a tool wrote into the hand dict.
+    Pure over an iterable of corrections.py lines."""
+    out = set()
+    for line in lines:
+        if "inferred" not in line and "small side ran" not in line:
+            continue
+        m = _GEN_LINE.match(line)
+        if m:
+            out.add((int(m.group(1)), int(m.group(2))))
+    return out
+
+
+def generatedOverrideKeys(path=None):
+    """generatedKeys of engine/corrections.py, read once per process; empty
+    when the file is not there (a test database, a fresh checkout)."""
+    if "keys" not in _GEN_CACHE:
+        path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "corrections.py")
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                _GEN_CACHE["keys"] = generatedKeys(fh)
+        except OSError:
+            _GEN_CACHE["keys"] = set()
+    return _GEN_CACHE["keys"]
+
+
+_GEN_CACHE = {}
 
 # ---- the writer (docs/WRONG-DISTANCE-2026-10-25.md sections 5-6) ----
 # ★ A PIN STAYS ON LESS THAN IT TAKES TO MAKE ONE. CAND (8%) to be looked
@@ -812,7 +857,11 @@ def gather(cur, pools, has_ovr):
                                WHERE dict_name NOT IN ('distance_pin', 'novote') {vetoed}) o
                         JOIN wd_div d ON d.meet_id = o.meet_id AND d.div_id = o.div_id
                         JOIN wd_cand c ON c.dk = d.dk""")
-        ovr = {(int(m), int(dv)): (float(dist), name) for m, dv, dist, name in cur.fetchall()}
+        gen = generatedOverrideKeys()
+        ovr = {(int(m), int(dv)): (float(dist),
+                                   GENERATED_DICT if name == HAND_DICT and (int(m), int(dv)) in gen
+                                   else name)
+               for m, dv, dist, name in cur.fetchall()}
     # per-runner residuals for the ones spread like two races
     mixc = [c for c in cand if (c["n_ref"] or 0) >= MIX_MIN and c["q"] and c["res"] is not None
             and (c["q"][2] - c["q"][1] >= 0.10 or c["res"] - c["q"][0] >= MIX_SEP
