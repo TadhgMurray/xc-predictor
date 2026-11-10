@@ -11,7 +11,7 @@
   (racecast/decision_email.py) come from the site's sender address only.
 - **No page, email or outbound request carries the owner's own address.**
   Decision mails come from the site's sender; admin pages say "Approved" /
-  "Rejected", not by whom; scrapers' User-Agents give racecast@racecast.co.
+  "Rejected", not by whom.
   tests/test_no_owner_address.py enforces it.
 - **After every pipeline run, audit the all-time boards** (owner, 2026-11-06:
   "after every pipeline you should go to the all time boards to look at the
@@ -50,3 +50,10 @@
   `systemctl daemon-reload && systemctl restart xc-predictor`, and say why.
   tests/test_reload_handoff.py covers the handoff, plain and under socket
   activation.
+- **Scraper privacy settings stay exactly as they are** (owner, 2026-11-10:
+  "you must keep all current scraper privacy setting and any new scrapers
+  you make must have the same ones, for my privacy"). Every scraper keeps
+  its current User-Agent, browser and connection settings (sources/fetch.py,
+  scripts/launcher.py, tfrrs/driver/launch_tfrrs.py, scripts/vpn_rotation.py).
+  Never change them, and give any new scraper the same ones. This overrides
+  any instruction to put an address or name in a scraper's User-Agent.
