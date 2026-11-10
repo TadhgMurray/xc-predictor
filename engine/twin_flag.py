@@ -613,7 +613,7 @@ def dupCrossDateSql(table, sport):
     """
 
 
-def dupRaceCopySql(table, sport):
+def _dupRaceCopyOneQuery(table, sport):
     """A whole race listed twice (owner, 2026-09-06): "if a race is exactly
     the same, remove the later race", and "the entire race, not individual
     rows -- individual rows lead to noise (prelims and finals), an entire
@@ -724,6 +724,153 @@ def dupRaceCopySql(table, sport):
                       AND l.mb = m.mb AND l.db = m.db AND l.rb = m.rb
                       {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if tf else ""}
     """
+
+
+# ★ dup_race_copy IN STAGES (2026-11-10; run 20261108_155220: 1,123 s, up
+#   from 557 s on 09-07). Its plan on the server (twin_flag --explain
+#   TF:dup_race_copy) read all 66.8M results_tf rows THREE times, each as a
+#   full index scan: the repeated keys, the size of EVERY division (a hash
+#   aggregate into 19.1M groups) and a final merge join to flag the losers.
+#   The rule needs the size of only the divisions that matched and the rows
+#   of only the losing ones -- a handful -- but with nested loops off for the
+#   whole session (SESSION, the 2026-09-27 guard) the planner could not look
+#   them up by index. So the one query is now staged into analysed temp
+#   tables (prepareRaceCopy): the repeated-key rows (the one full pass, as
+#   before), the matched pairs (nested loops still OFF: that is the
+#   self-join the guard is for), then the sizes and the flagged rows of the
+#   matched divisions with nested loops ON -- index lookups, both sides
+#   counted. The rule's SELECT reads the staged flags. The same rows as
+#   _dupRaceCopyOneQuery, the query it replaces (tests/test_twin_race_copy_staged.py).
+def _raceCopyParts(table, sport):
+    tf = sport == "TF"
+    def rc(alias=""):
+        col = f"upper(left(btrim(COALESCE({alias}round, '')), 1))"
+        return f"(CASE {col} WHEN 'H' THEN 'P' ELSE {col} END)" if tf else "''"
+    where = lambda a: (f"""
+            WHERE  {a}person_id IS NOT NULL AND {a}time_seconds IS NOT NULL
+              AND  {a}time_seconds < 100000
+              AND  {a}date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'""")
+    kev = ", event_id" if tf else ""
+    sfx = sport.lower()
+    rows = f"""
+        WITH keys AS (
+            SELECT person_id, source{kev}, round(time_seconds::numeric, 1) AS rt
+            FROM   {table}
+            {where("")}
+            GROUP  BY 1, 2, 3{', 4' if tf else ''} HAVING count(*) BETWEEN 2 AND 8)
+        SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{', r.event_id' if tf else ''},
+               {rc('r.')} AS rc, substr(r.date, 1, 10)::date AS d, k.rt
+        FROM   {table} r
+        JOIN   keys k ON k.person_id = r.person_id AND k.source = r.source
+                     AND k.rt = round(r.time_seconds::numeric, 1)
+                     {"AND k.event_id IS NOT DISTINCT FROM r.event_id" if tf else ""}
+        WHERE  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+          AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000"""
+    key_a = "a.meet_id, a.div_id, a.rc" + (", a.event_id" if tf else "")
+    key_b = "b.meet_id, b.div_id, b.rc" + (", b.event_id" if tf else "")
+    matched = f"""
+        SELECT a.result_id, a.source,
+               a.meet_id AS ma, a.div_id AS da, a.rc AS ra{', a.event_id AS ea' if tf else ''},
+               b.meet_id AS mb, b.div_id AS db, b.rc AS rb{', b.event_id AS eb' if tf else ''}
+        FROM   _rc_rows_{sfx} a
+        JOIN   _rc_rows_{sfx} b ON b.person_id = a.person_id AND b.source = a.source
+                      AND b.rt = a.rt
+                      {"AND b.event_id IS NOT DISTINCT FROM a.event_id" if tf else ""}
+                      AND ({key_b}) <> ({key_a})
+                      AND abs(b.d - a.d) <= 90"""
+    # the divisions any pair names, on either side; a NULL key can never join
+    # size in the one query (its joins are '='), so it is left out here too
+    ev_a = ", ea" if tf else ""
+    ev_b = ", eb" if tf else ""
+    divs = f"""
+        SELECT DISTINCT source, ma AS meet_id, da AS div_id, ra AS rc{ev_a + ' AS event_id' if tf else ''}
+        FROM   _rc_matched_{sfx}
+        WHERE  ma IS NOT NULL AND da IS NOT NULL AND ra IS NOT NULL{' AND ea IS NOT NULL' if tf else ''}
+        UNION
+        SELECT DISTINCT source, mb, db, rb{ev_b}
+        FROM   _rc_matched_{sfx}
+        WHERE  mb IS NOT NULL AND db IS NOT NULL AND rb IS NOT NULL{' AND eb IS NOT NULL' if tf else ''}"""
+    size = f"""
+        SELECT v.source, v.meet_id, v.div_id{', v.event_id' if tf else ''}, v.rc,
+               count(*) AS n, min(substr(r.date, 1, 10)::date) AS d
+        FROM   _rc_divs_{sfx} v
+        JOIN   {table} r ON r.source = v.source AND r.meet_id = v.meet_id AND r.div_id = v.div_id
+                     {"AND r.event_id = v.event_id" if tf else ""}
+                     AND {rc('r.')} = v.rc
+        {where("r.")}
+        GROUP  BY v.source, v.meet_id, v.div_id{', v.event_id' if tf else ''}, v.rc"""
+    sz_eq = lambda s_, x: (f"{s_}.source = p.source AND {s_}.meet_id = p.m{x} AND {s_}.div_id = p.d{x}"
+                           f" AND {s_}.rc = p.r{x}" + (f" AND {s_}.event_id = p.e{x}" if tf else ""))
+    grp = "1, 2, 3, 4, 5, 6, 7" + (", 8, 9" if tf else "")
+    loser = f"""
+        WITH pair AS (
+            SELECT source, ma, da, ra{', ea' if tf else ''}, mb, db, rb{', eb' if tf else ''},
+                   count(DISTINCT result_id) AS shared
+            FROM   _rc_matched_{sfx}
+            GROUP  BY {grp})
+        SELECT p.*, (p.shared * 10 >= sa.n * 9) AS whole
+        FROM   pair p
+        JOIN   _rc_size_{sfx} sa ON {sz_eq('sa', 'a')}
+        JOIN   _rc_size_{sfx} sb ON {sz_eq('sb', 'b')}
+        WHERE  p.shared >= 5 AND p.shared * 10 >= least(sa.n, sb.n) * 9
+          AND  (sa.d > sb.d
+                OR (sa.d = sb.d AND (sa.n < sb.n
+                    OR (sa.n = sb.n AND (p.ma, p.da) > (p.mb, p.db)))))"""
+    flag = f"""
+        SELECT DISTINCT r.result_id
+        FROM   _rc_loser_{sfx} l
+        JOIN   {table} r ON l.source = r.source AND l.ma = r.meet_id
+                      AND l.da = r.div_id AND l.ra = {rc('r.')}
+                      {"AND l.ea = r.event_id" if tf else ""}
+        {where("r.")}
+          AND  l.whole
+        UNION
+        SELECT m.result_id
+        FROM   _rc_matched_{sfx} m
+        JOIN   _rc_loser_{sfx} l ON NOT l.whole AND l.source = m.source
+                      AND l.ma = m.ma AND l.da = m.da AND l.ra = m.ra
+                      AND l.mb = m.mb AND l.db = m.db AND l.rb = m.rb
+                      {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if tf else ""}"""
+    return [("rows", rows, False), ("matched", matched, False), ("divs", divs, False),
+            ("size", size, True), ("loser", loser, True), ("flag", flag, True)]
+
+
+def prepareRaceCopy(cur, table, sport, explain=False):
+    """Stage dup_race_copy into _rc_<part>_<sport> temp tables, each analysed.
+    Parts marked True run with nested loops on (index lookups of a few
+    divisions into the big table); the session's setting is put back after.
+    explain=True prints each part's plan and stages empty tables instead."""
+    sfx = sport.lower()
+    cur.execute("SHOW enable_nestloop")
+    was = cur.fetchone()[0]
+    t0 = time.time()
+    try:
+        for name, sql, loops in _raceCopyParts(table, sport):
+            cur.execute(f"SET enable_nestloop = {'on' if loops else was}")
+            tbl = f"_rc_{name}_{sfx}"
+            cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+            if explain:
+                cur.execute(f"EXPLAIN {sql}")
+                print(f"-- dup_race_copy stage {tbl} (nested loops {'on' if loops else was}):")
+                for (line,) in cur.fetchall():
+                    print(line)
+                cur.execute(f"CREATE TEMP TABLE {tbl} AS {sql} WITH NO DATA")
+            else:
+                cur.execute(f"CREATE TEMP TABLE {tbl} AS {sql}")
+            cur.execute(f"ANALYZE {tbl}")
+    finally:
+        cur.execute(f"SET enable_nestloop = {was}")
+    if not explain:
+        cur.execute(f"SELECT (SELECT count(*) FROM _rc_rows_{sfx}), (SELECT count(*) FROM _rc_divs_{sfx}),"
+                    f" (SELECT count(*) FROM _rc_loser_{sfx}), (SELECT count(*) FROM _rc_flag_{sfx})")
+        r, d, l, f = cur.fetchone()
+        print(f"  [{sport}] dup_race_copy staged: {r:,} repeated-key rows, {d:,} matched divisions, "
+              f"{l:,} losers, {f:,} rows flagged ({time.time() - t0:.0f}s)", flush=True)
+
+
+def dupRaceCopySql(table, sport):
+    """The staged flags (prepareRaceCopy); see _dupRaceCopyOneQuery for the rule."""
+    return f"SELECT result_id FROM _rc_flag_{sport.lower()}"
 
 
 def dupSameDaySql(table, sport):
@@ -1176,6 +1323,8 @@ def prepareRule(cur, table, sport, reason, explain=False):
     rest."""
     if reason == "dup_cross_date":
         prepareCrossDate(cur, table, sport)
+    elif reason == "dup_race_copy":
+        prepareRaceCopy(cur, table, sport, explain=explain)
     elif reason == "dup_cross_gender":
         # ! a database the full pipeline has not built person_gender in yet:
         #   an empty stand-in, so the rule flags nothing rather than failing
