@@ -156,7 +156,11 @@ def main():
             return rows
 
         def past(mid, div, on):
-            rows = U.predictedPast(cur, mid, div, src, on, region=True)
+            # ! AS THE SITE DOES (upcoming_preview.qualifiedFieldInfo): the region's
+            #   best runners join a round only for an open qualifier (NXN, Brooks).
+            #   Hard-wired on, a D3 regional took each state's 40 best college
+            #   runners -- Syracuse, Oregon, Stanford (owner's run, 2026-11-10)
+            rows = U.predictedPast(cur, mid, div, src, on, region=bool(rule.get("region_adds")))
             seen.append((f"last season's run again on {on}", mid, div, rows))
             return rows
 
