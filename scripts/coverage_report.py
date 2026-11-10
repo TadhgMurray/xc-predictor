@@ -173,7 +173,10 @@ def _aliveSql(cur):
                              WHERE r.meet_id = ANY(COALESCE(a.anet_ids, '{{}}'::bigint[]))
                                AND r.source = 'anet') THEN 'elsewhere'
                 ELSE 'missing' END,
-           CASE WHEN a.landed_at IS NULL THEN 'not landed yet'
+           CASE WHEN a.landed_at IS NULL AND a.state IS NULL THEN 'no state on the index (never picked)'
+                WHEN a.landed_at IS NULL AND a.landed_note IS NOT NULL
+                     THEN 'tried: ' || left(a.landed_note, 50)
+                WHEN a.landed_at IS NULL THEN 'not landed yet'
                 ELSE 'landed: ' || left(COALESCE(a.landed_note, '0 rows'), 60) END
     FROM alive_meets a
     WHERE a.sport = 'XC' AND a.meet_date ~ '{ISO}' AND left(a.meet_date, 10) BETWEEN %(lo)s AND %(hi)s
@@ -341,23 +344,32 @@ def _oneGenderName(name):
 
 def sectionRows(cur, a, lo, hi):
     print(f"\n== ROWS: places the race printed that we have no row for ==")
-    print("   a division whose highest place is 3+ more than its placed rows, and 5%+ of the field")
+    print("   ! mostly the SOURCE's own partial posting (owner, 2026-11-10: meet 281168, places"
+          " to 295, one team's 25 runners on the page) -- not rows we dropped. A race here is"
+          " worth another source's copy (AthleticLIVE, a timer), not a re-scrape.")
+    print("   one race = a meet's divisions at one distance (the main feed places boys and girls,"
+          " or varsity and JV, run together in one sequence); a race whose highest place is 3+"
+          " more than the distinct places any of its divisions holds, and 5%+ of the field")
     rows = _run(cur, f"""
-        WITH m AS (
-            SELECT DISTINCT meet_id, 'anet' AS source FROM meets
-            WHERE source = 'anet' AND meet_date ~ '{ISO}' AND left(meet_date, 10) BETWEEN %(lo)s AND %(hi)s
-            UNION
-            SELECT meet_id, 'tfrrs' FROM meets_tfrrs
-            WHERE sport = 'XC' AND date ~ '{ISO}' AND left(date, 10) BETWEEN %(lo)s AND %(hi)s
-        ), d AS (
-            SELECT r.source, r.meet_id, r.div_id, count(*) AS n,
-                   count(DISTINCT r.place) FILTER (WHERE r.place > 0) AS placed,
-                   max(r.place) AS top
-            FROM m JOIN results r ON r.meet_id = m.meet_id AND r.source = m.source
-            WHERE r.source <> 'anet' OR r.result_id < {ALIVE_RESULT_BASE}
+        WITH a AS (
+            SELECT m.meet_id, m.div_id, round(COALESCE(m.distance, 0))::int AS dist
+            FROM meets m WHERE m.source = 'anet' AND m.meet_date ~ '{ISO}'
+              AND left(m.meet_date, 10) BETWEEN %(lo)s AND %(hi)s
+        ), ar AS (
+            SELECT 'anet'::text AS source, a.meet_id, a.dist AS race, r.div_id, r.place
+            FROM a JOIN results r ON r.meet_id = a.meet_id AND r.div_id = a.div_id AND r.source = 'anet'
+            WHERE r.result_id < {ALIVE_RESULT_BASE}
+        ), tr AS (
+            SELECT 'tfrrs'::text, r.meet_id, r.div_id::int, r.div_id, r.place
+            FROM meets_tfrrs t JOIN results r ON r.meet_id = t.meet_id AND r.source = 'tfrrs'
+            WHERE t.sport = 'XC' AND t.date ~ '{ISO}' AND left(t.date, 10) BETWEEN %(lo)s AND %(hi)s
+        ), g AS (
+            SELECT source, meet_id, race, count(*) AS n, count(DISTINCT div_id) AS divs,
+                   count(DISTINCT place) FILTER (WHERE place > 0) AS placed, max(place) AS top
+            FROM (SELECT * FROM ar UNION ALL SELECT * FROM tr) x
             GROUP BY 1, 2, 3
         )
-        SELECT source, meet_id, div_id, n, placed, top, top - placed AS gap FROM d
+        SELECT source, meet_id, race, divs, n, top, top - placed AS gap FROM g
         WHERE top - placed >= 3 AND (top - placed) >= 0.05 * top AND top < 5000
         ORDER BY gap DESC""", {"lo": lo, "hi": hi})
     by = {}
@@ -365,9 +377,9 @@ def sectionRows(cur, a, lo, hi):
         c = by.setdefault(r[0], [0, 0])
         c[0] += 1
         c[1] += r[6]
-    _table(((s, v[0], v[1]) for s, v in sorted(by.items())), ("source", "divisions", "places missing"))
-    _table(((r[0], r[1], r[2], r[3], r[5], r[6]) for r in rows),
-           ("source", "meet", "div", "rows", "top place", "missing"), a.show)
+    _table(((s, v[0], v[1]) for s, v in sorted(by.items())), ("source", "races", "places missing"))
+    _table(((r[0], r[1], r[2], r[3], r[4], r[5], r[6]) for r in rows),
+           ("source", "meet", "race (m / tfrrs div)", "divs", "rows", "top place", "missing"), a.show)
 
 
 # ---------------------------------------------------------------- misreads

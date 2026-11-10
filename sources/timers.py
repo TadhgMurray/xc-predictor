@@ -498,6 +498,14 @@ def _all(a, conn):
     deadline = _now() + budget * 60 if budget else None
     print(f"[all] {len(srcs)} timers, meets from {since} on, up to {a.per_source} new each; "
           f"{len(known):,} pages already landed" + (f"; {budget:g}-minute budget" if budget else ""))
+    # ! A PDF REPORT NEEDS pdftotext (poppler-utils; deploy/server_setup.sh).
+    #   The server had none on 2026-11-07 and every PDF meet failed with
+    #   FileNotFoundError, once per meet, quietly. Said once, loudly, here;
+    #   and those failures are not counted as a page's tries (noteSeen below).
+    import shutil
+    if shutil.which("pdftotext") is None:
+        print("[all] ⚠ pdftotext is not installed: every PDF results report will fail to parse."
+              " Install it: apt-get install -y poppler-utils", flush=True)
     fetcher = Fetcher(RawStore())
 
     async def one(src):
@@ -525,7 +533,10 @@ def _all(a, conn):
         ok, mine = 0, []
         seen = []
         for u, lm, why in got:
-            seen.append((u, src.slug, lm, _outcome(lm, why)))
+            # a failure of OURS (a missing tool) is not the page's: not recorded,
+            # so it is offered again tomorrow with no rest and no try used
+            if not (lm is None and "pdftotext" in str(why)):
+                seen.append((u, src.slug, lm, _outcome(lm, why)))
             if lm is not None and lm.races and lm.date and lm.date >= _dt.date.today().isoformat():
                 # ★ NOT ON ITS OWN DAY (2026-11-01): promoted is final, so a
                 #   meet still being posted would stay short; it is not

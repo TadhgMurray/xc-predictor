@@ -628,7 +628,7 @@ def emptyUndated(cur, sport, top, span=UNDATED_SPAN, source="anet"):
 
 
 def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet",
-                    since=None):
+                    since=None, until=None, hours=None):
     """Meets marked DONE with 0 results that left NO meet row at all, within
     `span` ids below the watermark.
 
@@ -651,7 +651,7 @@ def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet",
       watermark, because there is no date to bound it by -- that is the bug.
     """
     t = _t(source, sport)
-    rested = _rested(cur)
+    rested = _rested(cur, hours=hours)
     # ! since: only the meets whose OWN date (meet_queue.empty_date, kept
     #   since 2026-10-15) is in [since, today] -- the default one-week pass.
     #   None is the deep sweep by id.
@@ -661,8 +661,10 @@ def emptyUnrecorded(cur, sport, top, span=UNDATED_SPAN, source="anet",
                        WHERE table_name = 'meet_queue' AND column_name = 'empty_date'""")
         if cur.fetchone() is None:
             return []
-        dated = "AND q.empty_date BETWEEN %s AND current_date"
+        dated = "AND q.empty_date BETWEEN %s AND " + ("%s" if until else "current_date")
         params.append(since)
+        if until:
+            params.append(until)
     cur.execute(f"""
         SELECT q.meet_id
         FROM   meet_queue q
@@ -1110,10 +1112,19 @@ def seedSport(cur, sport, source="anet", write=False, ahead=AHEAD,
         if has_date and not deep:
             s0 = seasonStartIso()
             if s0 < since:
+                # ★ AND THE ONES THAT LEFT NO MEET ROW (2026-11-10, coverage
+                #   report: 686 of the season's missing meets were "athletic.net
+                #   says no results yet", asked once, never again). A meet with
+                #   no divisions or HasResults false saves no meets row, so
+                #   emptyRecent's date join cannot see it; its own date is on
+                #   meet_queue.empty_date, and emptyUnrecorded reads that --
+                #   but only inside the RECENT_DAYS window until now.
                 season = sorted(set(emptyRecent(cur, sport, s0, source, until=since,
                                                 hours=SEASON_REASK_HOURS))
                                 | set(partialRecent(cur, sport, s0, source, until=since,
-                                                    hours=SEASON_REASK_HOURS)))
+                                                    hours=SEASON_REASK_HOURS))
+                                | set(emptyUnrecorded(cur, sport, top, source=source, since=s0,
+                                                      until=since, hours=SEASON_REASK_HOURS)))
         n_season = len(season)
         season = sorted(season, reverse=True)[:SEASON_CAP]
         out["season"] = len(season)

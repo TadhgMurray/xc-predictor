@@ -34,3 +34,56 @@ def test_tallies_split_have_elsewhere_and_missing():
 def test_the_nightly_step_runs_it():
     with open(os.path.join(_ROOT, "deploy", "nightly_update.sh"), encoding="utf-8") as fh:
         assert "scripts/coverage_report.py --nightly" in fh.read()
+
+
+class _Cur:
+    def __init__(self):
+        self.sql, self.args = None, None
+
+    def execute(self, sql, args=()):
+        self.sql, self.args = sql, args
+
+    def fetchall(self):
+        return []
+
+
+def test_alive_xc_rests_a_meet_it_tried_and_could_not_land():
+    # 2026-11-10: held meets were never marked and took the night's slots again
+    sys.path.insert(0, _ROOT)
+    from sources import athleticlive_xc as X
+    cur = _Cur()
+    X.candidates(cur, 100)
+    assert "tried_at IS NULL OR am.tried_at < now() - make_interval(days => %s)" in cur.sql
+    assert "u.fresh DESC" in cur.sql and cur.args[0] == X.TRY_REST_DAYS
+
+
+class _QCur:
+    """Answers the column checks yes and records the last query."""
+    def __init__(self):
+        self.sql, self.args = None, None
+
+    def execute(self, sql, args=()):
+        self.sql, self.args = sql, args
+        self._one = sql.lstrip().startswith("SELECT 1 FROM information_schema")
+
+    def fetchone(self):
+        return (1,) if self._one else None
+
+    def fetchall(self):
+        if "column_name IN" in (self.sql or ""):
+            return [("requeued_at",), ("empty_date",), ("empty_has_results",)]
+        return []
+
+
+def test_the_weekly_season_pass_reaches_meets_that_left_no_meet_row():
+    # 2026-11-10: 686 meets athletic.net called "no results yet" were asked
+    # once and never again, because the season pass only read meets rows
+    import queue_meets as Q
+    cur = _QCur()
+    Q.emptyUnrecorded(cur, "XC", 290000, since="2026-08-15", until="2026-10-30",
+                      hours=Q.SEASON_REASK_HOURS)
+    assert "q.empty_date BETWEEN %s AND %s" in cur.sql
+    assert cur.args[-2:] == ["2026-08-15", "2026-10-30"]
+    assert f"{float(Q.SEASON_REASK_HOURS)} hours" in cur.sql
+    src = open(os.path.join(_ROOT, "scripts", "queue_meets.py"), encoding="utf-8").read()
+    assert "emptyUnrecorded(cur, sport, top, source=source, since=s0," in src

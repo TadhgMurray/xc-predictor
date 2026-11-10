@@ -313,3 +313,51 @@ def test_the_two_race_and_sibling_sql():
         _drop(c, cur, "oa_sib")
     assert two == set(range(1, 41)) | set(range(101, 131))
     assert sib == {300 + g: "race" for g in range(1, 21)}
+
+
+def test_first_names_call_a_combined_list():
+    # Beantown by names: ~50 men's names, ~35 women's
+    assert RO.nameMixSide(50, 35) == "mixed"
+    # two girls' names in a boys' race of forty
+    assert RO.nameMixSide(38, 2) is None
+    # three in fifty: under a tenth
+    assert RO.nameMixSide(47, 3) is None
+
+
+@pytest.mark.skipif(not DSN, reason="needs XCP_TWIN_TEST_DSN")
+def test_the_name_sql_sees_men_whose_person_says_f():
+    c, cur = _conn("oa_names")
+    try:
+        cur.execute(_RESULTS + """
+            ALTER TABLE results ADD COLUMN athlete_name text;
+            CREATE TABLE person_gender (person_id bigint PRIMARY KEY, gender text, split boolean);
+            CREATE TABLE athlete_named (person_id bigint PRIMARY KEY, name text);
+            -- the corpus: 600 Henrys (men), 60 Emmas (women), 60 Taylors (both)
+            INSERT INTO athlete_named SELECT 10000 + g, 'Henry X' || g FROM generate_series(1, 600) g;
+            INSERT INTO person_gender SELECT 10000 + g, 'M', false FROM generate_series(1, 600) g;
+            INSERT INTO athlete_named SELECT 100 + g, 'Emma Y' || g FROM generate_series(1, 60) g;
+            INSERT INTO person_gender SELECT 100 + g, 'F', false FROM generate_series(1, 60) g;
+            INSERT INTO athlete_named SELECT 200 + g, 'Taylor Z' || g FROM generate_series(1, 60) g;
+            INSERT INTO person_gender SELECT 200 + g, CASE WHEN g % 2 = 0 THEN 'M' ELSE 'F' END, false
+                                      FROM generate_series(1, 60) g;
+            -- a "women's" list: 6 Henrys (their persons say F, made from it) and 20 Emmas
+            INSERT INTO athlete_named SELECT 300 + g, 'Henry W' || g FROM generate_series(1, 6) g;
+            INSERT INTO person_gender SELECT 300 + g, 'F', false FROM generate_series(1, 6) g;
+            INSERT INTO results (result_id, person_id, source, meet_id, div_id, date, speed_rating, rating_pool)
+                   SELECT 1000 + g, 300 + g, 'tfrrs', 5, 0, '2022-09-23', 138, 'college_f|XC'
+                   FROM generate_series(1, 6) g;
+            INSERT INTO results (result_id, person_id, source, meet_id, div_id, date, speed_rating, rating_pool)
+                   SELECT 1100 + g, 100 + g, 'tfrrs', 5, 0, '2022-09-23', 110, 'college_f|XC'
+                   FROM generate_series(1, 20) g;
+            -- a girls' race with Taylors in it: names that go both ways say nothing
+            INSERT INTO results (result_id, person_id, source, meet_id, div_id, date, speed_rating, rating_pool)
+                   SELECT 1200 + g, 200 + g, 'anet', 6, 61, '2022-09-24', 110, 'hs_f|XC'
+                   FROM generate_series(1, 20) g;
+            INSERT INTO results (result_id, person_id, source, meet_id, div_id, date, speed_rating, rating_pool)
+                   SELECT 1300 + g, 120 + g, 'anet', 6, 61, '2022-09-24', 110, 'hs_f|XC'
+                   FROM generate_series(1, 20) g;
+        """)
+        got = {r[0] for r in RO.nameMixRows(cur)}
+    finally:
+        _drop(c, cur, "oa_names")
+    assert got == set(range(1001, 1007)) | set(range(1101, 1121))

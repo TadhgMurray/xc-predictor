@@ -529,15 +529,32 @@ async def fetchXC(fetcher, alive_id, meet_date=None):
 def candidates(cur, limit, meets=None):
     if meets:
         return list(meets)
-    cur.execute("""SELECT DISTINCT u.anet_id, am.meet_date, COALESCE(am.wanted, false)
-                   FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
-                   WHERE am.sport = 'XC' AND am.landed_at IS NULL
-                     AND COALESCE(am.date_end, am.meet_date) < %s AND am.state = ANY(%s)
-                     AND COALESCE(am.name, '') !~* %s
+    # ! A MEET TRIED AND NOT LANDED RESTS (2026-11-10; alive_meets.tried_at):
+    #   never-tried meets first, then the rested ones, so a pile of held meets
+    #   can no longer fill every night's --limit
+    cur.execute("""SELECT u.anet_id FROM (
+                     SELECT DISTINCT u.anet_id, am.meet_date, COALESCE(am.wanted, false) AS wanted,
+                            am.tried_at IS NULL AS fresh
+                     FROM alive_meets am CROSS JOIN LATERAL unnest(am.anet_ids) u(anet_id)
+                     WHERE am.sport = 'XC' AND am.landed_at IS NULL
+                       AND (am.tried_at IS NULL OR am.tried_at < now() - make_interval(days => %s))
+                       AND COALESCE(am.date_end, am.meet_date) < %s AND am.state = ANY(%s)
+                       AND COALESCE(am.name, '') !~* %s) u
                    -- a meet the owner asked for first (fixes.wantAlive)
-                   ORDER BY 3 DESC, am.meet_date DESC LIMIT %s""",
-                (datetime.date.today().isoformat(), list(A.US_STATES), A.NOT_RUNNING, limit))
+                   ORDER BY u.wanted DESC, u.fresh DESC, u.meet_date DESC LIMIT %s""",
+                (TRY_REST_DAYS, datetime.date.today().isoformat(), list(A.US_STATES),
+                 A.NOT_RUNNING, limit))
     return [r[0] for r in cur.fetchall()]
+
+
+TRY_REST_DAYS = 3
+
+
+def _noteTriedFor(cur, meet_id, note):
+    """noteTried for every unlanded XC alive meet naming this athletic.net id."""
+    cur.execute("""UPDATE alive_meets SET tried_at = now(), landed_note = %s
+                   WHERE sport = 'XC' AND landed_at IS NULL AND %s = ANY(anet_ids)""",
+                (note, meet_id))
 
 
 def cmdLand(a):
@@ -551,6 +568,9 @@ def cmdLand(a):
             alive = A.aliveFor(cur, meet_id, sport="XC")
             if not alive:
                 total["not on AthleticLIVE"] += 1
+                if a.write:
+                    _noteTriedFor(cur, meet_id, "not on AthleticLIVE")
+                    conn.commit()
                 continue
             if anetHasXC(cur, meet_id):
                 why, n = checkAnetCopy(cur, fetcher, meet_id, alive, a.write)
@@ -579,6 +599,10 @@ def cmdLand(a):
                   + (f"; skipped {dict(p['skipped'])}" if p["skipped"] else ""))
             if not n_res:
                 total["held or empty"] += 1
+                if a.write:
+                    A.noteTried(cur, alive["alive_id"],
+                                f"held: {p.get('held') or 'no results'}"[:200])
+                    conn.commit()
                 continue
             total["meets"] += 1
             total["results"] += n_res

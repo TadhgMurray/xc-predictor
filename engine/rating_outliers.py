@@ -1218,6 +1218,65 @@ GAP2_SQL = """
 """
 
 
+# ★ AND BY FIRST NAMES, WHICH NEED NO GENDER FROM THE LIST ITSELF (owner,
+#   2026-11-10: "any other way tho this is kind of specific"). A person
+#   made from one combined list carries that list's label as their gender,
+#   but their first name carries the corpus's: Aksel, Malav, Henry, Tucker
+#   are men's names in every other race on file. A first name shared by
+#   NAME_MIN or more people of known gender, NAME_SURE of them one gender,
+#   speaks for a row; a list with MIXED_MIN rows of each and the smaller a
+#   MIXED_SHARE_INV-th of the named rows is two fields: 'mixed'. Names that
+#   go both ways (Taylor, Jordan) say nothing. Split people are left out of
+#   the name table.
+NAME_MIN = 50
+NAME_SURE = 0.97
+NAMES_SQL = """
+    WITH fn AS (
+        SELECT lower(split_part(btrim(an.name), ' ', 1)) AS f,
+               avg((pg.gender = 'M')::int) AS m
+        FROM   athlete_named an
+        JOIN   person_gender pg ON pg.person_id = an.person_id
+        WHERE  NOT COALESCE(pg.split, false) AND an.name ~ '^[A-Za-z]'
+        GROUP  BY 1 HAVING count(*) >= %(name_min)s),
+    x AS (
+        SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id,
+               left(r.date, 10) AS day, r.speed_rating AS s,
+               CASE WHEN fn.m >= %(sure)s THEN 'M' WHEN fn.m <= 1 - %(sure)s THEN 'F' END AS g
+        FROM   results r
+        LEFT   JOIN athlete_named an ON an.person_id = r.person_id
+        LEFT   JOIN fn ON fn.f = lower(split_part(btrim(COALESCE(an.name, r.athlete_name, '')), ' ', 1))
+        WHERE  r.speed_rating > 0 AND r.person_id IS NOT NULL
+          AND  r.meet_id IS NOT NULL AND r.div_id IS NOT NULL
+          AND  r.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'),
+    dv AS (
+        SELECT source, meet_id, div_id
+        FROM   x GROUP BY 1, 2, 3
+        HAVING least(count(*) FILTER (WHERE g = 'M'), count(*) FILTER (WHERE g = 'F')) >= %(min)s
+           AND least(count(*) FILTER (WHERE g = 'M'), count(*) FILTER (WHERE g = 'F')) * %(share)s
+               >= count(*) FILTER (WHERE g IS NOT NULL))
+    SELECT x.result_id, x.person_id, extract(year FROM x.day::date)::int, x.s
+    FROM   x JOIN dv USING (source, meet_id, div_id)
+"""
+
+
+def nameMixSide(n_mname, n_fname, n_min=MIXED_MIN, share_inv=MIXED_SHARE_INV):
+    """'mixed' when a list holds n_min+ rows of each gender's first names and
+    the smaller side is a share_inv-th of the named rows. Pure."""
+    lo = min(int(n_mname or 0), int(n_fname or 0))
+    return "mixed" if lo >= n_min and lo * share_inv >= (n_mname or 0) + (n_fname or 0) else None
+
+
+def nameMixRows(cur):
+    """[(result_id, 'XC', person_id, season, rating, None, 'mixed')]; empty
+    where the name or gender table is not built."""
+    if not (_tableExists(cur, "athlete_named") and _tableExists(cur, "person_gender")):
+        return []
+    cur.execute(NAMES_SQL, {"name_min": NAME_MIN, "sure": NAME_SURE,
+                            "min": MIXED_MIN, "share": MIXED_SHARE_INV})
+    return [(rid, "XC", pid, yr, float(s), None, "mixed")
+            for rid, pid, yr, s in cur.fetchall()]
+
+
 def twoRacesSide(n, gap, before, after, n_min=GAP2_N, gap_min=GAP2_MIN,
                  side=GAP2_SIDE, side_min=GAP2_SIDE_MIN):
     """'mixed' when a gap of gap_min between consecutive finishers has
@@ -1641,6 +1700,7 @@ def main():
                 extra += closeRows(cur)
                 extra += raceRows(cur)
                 extra += dayRows(cur)
+                extra += nameMixRows(cur)
                 extra += twoRaceRows(cur)
                 extra += siblingRows(cur)
                 printExtra(extra, args.show)

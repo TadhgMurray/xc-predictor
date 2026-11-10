@@ -149,6 +149,12 @@ CREATE TABLE IF NOT EXISTS alive_meets (
 CREATE INDEX IF NOT EXISTS alive_meets_anet ON alive_meets USING gin (anet_ids);
 -- a meet the owner asked for (fixes.wantAlive): the lander takes it first
 ALTER TABLE alive_meets ADD COLUMN IF NOT EXISTS wanted boolean;
+-- ★ WHEN THE XC LANDER LAST TRIED A MEET IT COULD NOT LAND (2026-11-10): a
+--   meet held back (too few runners named) or not found was never marked, so
+--   it took one of the night's --limit slots again every night, newest
+--   first, and older meets were never reached (388 this season). The try is
+--   noted here; athleticlive_xc.candidates rests it TRY_REST_DAYS.
+ALTER TABLE alive_meets ADD COLUMN IF NOT EXISTS tried_at timestamptz;
 -- ★ THE RUNNERS A LANDED RACE COULD NOT NAME (owner, 2026-10-27: land a race
 --   when 90% of its runners are named; holdUnknown). Kept whole, so a later
 --   linker can put each result on its person when they turn up with an id.
@@ -1128,6 +1134,13 @@ def cmdCover(a):
         conn.commit()
     print(f"[alive] {n:,} athletic.net queue rows closed: AthleticLIVE has those meets")
     return 0
+
+
+def noteTried(cur, alive_id, note):
+    """A meet the lander looked at and could not land: when, and why (it
+    stays unlanded, landed_at NULL, and is tried again after a rest)."""
+    cur.execute("UPDATE alive_meets SET tried_at = now(), landed_note = %s WHERE alive_id = %s",
+                (note, alive_id))
 
 
 def noteLanded(cur, alive_id, n, note):
