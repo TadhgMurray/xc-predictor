@@ -90,3 +90,24 @@ track meets whose name and date also sit in the XC table, XC rows that are a
 track row one to three days apart (xc_track_copy needs the same day), track
 distances run February to July, and course cells at a track distance rating
 4% or more fast. Whatever it finds becomes a rule once read.
+
+### What the server read found (2026-11-10)
+
+- **Track meets filed in both tables** under one name and date: "CT 1600m
+  Virtual Time Trials" (581 XC rows), "2026 Mid-Season Mania 1600m" (556),
+  "Moorpark King of the Track Classic", "Ayala 3200m Time Trial", "Boot Camp
+  Mile", "Crater Track Twilight", "YMCA Run Club Meet #2". Now twins
+  `xc_track_meet`: the XC row goes when its runner is at the same-named track
+  meet that day (a real XC race beside track events keeps everyone else).
+- **Marks lists filed as meets**: "HS Best Marks B - Ntl Ekiden Qualifying
+  Teams 2010" (rows rated 150-162), "Best HS 3k Team Marks Through
+  September", "Season's Best" (March 1, four years). Now `xc_placeholder`.
+- **Track copies dated apart**: "Quick TC 3000m Time Trial", one day off.
+  `xc_track_copy` now reads up to three days apart, to the tenth.
+- **Road race championships**: the New Zealand "Track, Field and Road Race
+  Championships" XC rows rated up to 180.5, already caught by the road rule.
+- **Not tracks**: the spring XC leagues (National Heritage Academies in
+  Michigan, West Sound and WSMS in Washington, Brackenridge in Texas) are
+  real cross country; the fast short venues (Bear Valley Park, Dunbar Park,
+  school campuses at 1600-3200 m) are consistent short courses whose own
+  difficulty absorbs them.
