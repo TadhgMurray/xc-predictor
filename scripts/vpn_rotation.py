@@ -174,6 +174,17 @@ ROTATION_COOLDOWN_SECONDS = 90
 # Purpose: Manages VPN server rotation across all scraping sessions on
 #          Windows, using the Mullvad CLI. One instance is shared by
 #          all sessions in launcher.py.
+# ★ IP ROTATION IS OFF, WHATEVER NO_VPN SAYS (owner, 2026-11-10: "Never work
+#   around a bot challenge, a rate limit or a login wall. If a source blocks
+#   us, report it."). Moving to a new exit address when a site answers 429 or
+#   challenges us is exactly that. The rotator classes stay, every method a
+#   no-op (the launchers' rotation surface is unchanged), and a block stops
+#   the run on the one address we have. Turning rotation back on is the
+#   owner's decision, made here in code, not by an environment variable.
+def _rotationOff():
+    return True
+
+
 class VPNRotatorWindows:
     
     # __init__
@@ -189,10 +200,10 @@ class VPNRotatorWindows:
         #   computer). rotate/checkRotation/removeCurrentServer already read
         #   self.disabled -- only the Linux rotator ever SET it, so a Windows
         #   run with NO_VPN=1 died on AttributeError at the first meet.
-        self.disabled = os.environ.get("NO_VPN", "") not in ("", "0", "false")
+        self.disabled = _rotationOff()
         if self.disabled:
-            print("[VPN] NO_VPN=1 -- no tunnel, no rotation, one IP. "
-                  "A block stops the run (polite_stop).")
+            print("[VPN] off -- no tunnel, no rotation, one IP. "
+                  "A block stops the run (polite_stop) and is reported.")
 
         # Index of the current server in MULLVAD_LOCATIONS.
         self.current_index = 0
@@ -929,10 +940,10 @@ class VPNRotatorLinux:
         #   turned off: one IP, no rotation, and a Cloudflare block has
         #   nothing to rotate to -- fine for a bounded catch-up run on a
         #   host you control, wrong for a full sweep.
-        self.disabled = os.environ.get("NO_VPN", "") not in ("", "0", "false")
+        self.disabled = _rotationOff()
         if self.disabled:
-            print("[VPN] NO_VPN=1 -- no tunnel, no rotation, one IP. "
-                  "A Cloudflare block will have nowhere to go.")
+            print("[VPN] off -- no tunnel, no rotation, one IP. "
+                  "A block stops the run and is reported.")
             self.configs = []
             self.current_index = -1
             self.lock = asyncio.Lock()

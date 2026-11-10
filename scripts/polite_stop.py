@@ -11,7 +11,11 @@
 #   block stops every session: their claimed meets go back to the queue and
 #   the run ends. The next run (the nightly update) starts where it stopped.
 #
-# ! POLITE IS THE DEFAULT WHENEVER NO_VPN=1; ANET_POLITE=0 turns it off.
+# ★ AND ALWAYS (owner, 2026-11-10: "Never work around a bot challenge, a
+#   rate limit or a login wall. If a source blocks us, report it."). IP
+#   rotation is gone (vpn_rotation._rotationOff), so there is no setting in
+#   which knocking on after a 429 is right: NO_VPN and ANET_POLITE no longer
+#   change anything here.
 import os
 import threading
 
@@ -24,10 +28,7 @@ class PoliteStop(Exception):
 
 
 def active():
-    raw = os.environ.get("ANET_POLITE")
-    if raw is not None and raw.strip() != "":
-        return raw.strip() not in ("0", "false")
-    return os.environ.get("NO_VPN", "") not in ("", "0", "false")
+    return True
 
 
 def trip(label, why):

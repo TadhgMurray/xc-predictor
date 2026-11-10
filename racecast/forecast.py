@@ -189,7 +189,7 @@ def _fetch(lat, lon, d, hour):
         "hourly": ",".join(_HOURLY), "timezone": "auto",
         "start_date": d.isoformat(), "end_date": d.isoformat()})
     req = urllib.request.Request(f"{_URL}?{q}",
-                                 headers={"User-Agent": "racecast.co predictions"})
+                                 headers={"User-Agent": "racecast.co predictions (racecast@racecast.co)"})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -470,7 +470,7 @@ def _fetchDayRows(lat, lon, d):
     if key:
         q["apikey"] = key
     req = urllib.request.Request(f"{base}?{urllib.parse.urlencode(q)}",
-                                 headers={"User-Agent": "racecast.co predictions"})
+                                 headers={"User-Agent": "racecast.co predictions (racecast@racecast.co)"})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
