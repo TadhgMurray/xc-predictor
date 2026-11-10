@@ -1436,6 +1436,17 @@ def latestEraKeys(keys, solved):
     return bare, pub
 
 
+def _memAvailableGb():
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1048576.0
+    except OSError:
+        pass
+    return 0.0
+
+
 def writeLive(live):
     """⚠ Writes course_difficulties, athlete_ratings and results.speed_rating."""
     import pair_golive as pg
@@ -1467,9 +1478,41 @@ def writeLive(live):
     #   staging table has had a `pool` column all along. So pass it
     #   through rather than naming its parts, and this cannot rot again
     #   the next time buildLive learns to carry something else.
-    for name, arrays in live["per_sport"].items():
-        saveResultSpeedRatings(name, arrays)
-        print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
+    # ★ THE TWO SPORTS SAVED SIDE BY SIDE WHEN THERE IS ROOM (2026-11-10, the
+    #   owner: "sure"). Each save is its own table end to end -- its own
+    #   connection, go-live lock (per table), staging table, heap rebuild and
+    #   swap -- and the maintenance flag takes several holders (maintenance.
+    #   siteMaintenance), so the two need nothing from each other. Run
+    #   20261109_033652: track's save ~20 min after XC's ~7. Overlapped they
+    #   also double the index builds' sort memory (~6 GB a table), beside this
+    #   process's own arrays -- so only with XCP_GOLIVE_SAVE_MIN_GB (32) free
+    #   when they start; otherwise one after the other, as before, and said.
+    #   XCP_GOLIVE_SAVE_PARALLEL=0 is always one after the other.
+    items = list(live["per_sport"].items())
+    avail = _memAvailableGb()
+    need = float(os.environ.get("XCP_GOLIVE_SAVE_MIN_GB", "32"))
+    side = (len(items) > 1 and os.environ.get("XCP_GOLIVE_SAVE_PARALLEL", "1") != "0"
+            and avail >= need)
+    if side:
+        import concurrent.futures as cf
+        print(f"[joint/live] saving {', '.join(n for n, _ in items)} side by side "
+              f"({avail:.0f} GB available)", flush=True)
+        # the bigger table first, so its rebuild starts at once
+        items.sort(key=lambda kv: -kv[1][0].size)
+        with cf.ThreadPoolExecutor(max_workers=len(items)) as pool:
+            futs = {pool.submit(saveResultSpeedRatings, name, arrays): (name, arrays)
+                    for name, arrays in items}
+            for f in cf.as_completed(futs):
+                f.result()                     # a failed save raises here, as in line
+                name, arrays = futs[f]
+                print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
+    else:
+        if len(items) > 1 and os.environ.get("XCP_GOLIVE_SAVE_PARALLEL", "1") != "0":
+            print(f"[joint/live] saving one sport at a time: {avail:.0f} GB available, "
+                  f"under XCP_GOLIVE_SAVE_MIN_GB={need:.0f}", flush=True)
+        for name, arrays in items:
+            saveResultSpeedRatings(name, arrays)
+            print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
     writeGoliveStamp()
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))
