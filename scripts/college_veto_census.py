@@ -82,7 +82,7 @@ def faultA(cur, show):
     ays = [a for _p, a in seasons]
     school, klass, rows = Counter(), Counter(), Counter()
     for sport, table in _TABLES:
-        ay = seasonYearSqlInt(None, "r.date")
+        ay = seasonYearSqlInt(sport, "r.date")
         cur.execute(f"""
             SELECT r.person_id, {ay} AS ay, r.grade, count(*)
             FROM   {table} r

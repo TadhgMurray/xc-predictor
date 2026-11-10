@@ -153,7 +153,7 @@ def test_the_pack_asks_the_helper():
 
 def test_the_pack_asks_the_club_gate_with_the_academic_year():
     body = _function(_src("engine/speed_ratings.py"), "rowTeamFacts")
-    assert "clubSeason(person_id, _academicYear(race_date))" in body
+    assert "clubSeason(person_id, _academicYear(race_date, sport))" in body
     assert ".year)" not in body
 
 

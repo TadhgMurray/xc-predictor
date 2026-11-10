@@ -105,7 +105,7 @@ MIN_DECIDED_RACES = 1
 # CHUNK 1 -- ACADEMIC YEAR
 # ------------------------------------------------------------------ #
 
-def _academicYearExpr(alias="r"):
+def _academicYearExpr(alias="r", sport=None):
     """
     The season a race belongs to. Delegates to season_year -- the ONE clock.
 
@@ -121,8 +121,11 @@ def _academicYearExpr(alias="r"):
     ⚠ REBUILD athlete_season_level AFTER THIS CHANGE. Until it re-runs, the
       stored table is still on the July seam and this expression will
       mis-join against it in exactly the way described above.
+
+    ★ AND THE ROW'S SPORT (2026-11-10): cross country opens Aug 1, track
+      Aug 15; both vote loops pass their table's.
     """
-    return seasonYearSqlInt(None, f"{alias}.date")
+    return seasonYearSqlInt(sport, f"{alias}.date")
 
 
 # ------------------------------------------------------------------ #
@@ -158,7 +161,7 @@ def _collectVotes(cur):
             INSERT INTO tmp_season_vote
                    (person_id, ay, sport, level, n, n_school, n_class)
             SELECT r.person_id,
-                   {_academicYearExpr('r')} AS ay,
+                   {_academicYearExpr('r', sport)} AS ay,
                    '{sport}',
                    rl.level,
                    count(*),
@@ -299,7 +302,7 @@ def _collectMaskVotes(cur):
             INSERT INTO tmp_season_vote
                    (person_id, ay, sport, level, n, n_school, n_class)
             SELECT r.person_id,
-                   {_academicYearExpr('r')} AS ay,
+                   {_academicYearExpr('r', sport)} AS ay,
                    '{sport}',
                    CASE {mask_col} & 14 {level_case} END AS level,
                    count(*),
@@ -584,7 +587,7 @@ def refuseCollegeBeforeCollege(cur):
 #      Python objects. Only use it if A is impossible.
 
 
-def academicYearOf(date):
+def academicYearOf(date, sport=None):
     """
     Python twin of _academicYearExpr -- both now delegate to season_year, so
     they cannot disagree with each other OR with speed_ratings' lookup.
@@ -594,11 +597,11 @@ def academicYearOf(date):
     if date is None:
         return None
     if isinstance(date, str):
-        return seasonYearFromIso(None, date)
-    return seasonYearFor(None, date)
+        return seasonYearFromIso(sport, date)
+    return seasonYearFor(sport, date)
 
 
-def seasonLevelJoinSql(results_alias="r", out="season_level"):
+def seasonLevelJoinSql(results_alias="r", out="season_level", sport=None):
     """
     The LEFT JOIN + column to splice into a backfill source query.
 
@@ -612,7 +615,7 @@ def seasonLevelJoinSql(results_alias="r", out="season_level"):
     join = f"""
         LEFT JOIN athlete_season_level asl
                ON asl.person_id = {results_alias}.person_id
-              AND asl.ay = {seasonYearSqlInt(None, f"{results_alias}.date")}"""
+              AND asl.ay = {seasonYearSqlInt(sport, f"{results_alias}.date")}"""
     select = f"asl.level AS {out}"
     return join, select
 

@@ -276,10 +276,12 @@ def levelSql(a="r"):
             f"WHEN {hsSql(a)} THEN '{HS}' END)")
 
 
-def acadSql(a="r"):
-    """The academic year of a row, NULL for a date that is not a date."""
+def acadSql(a="r", table=None):
+    """The academic year of a row, NULL for a date that is not a date. `table`
+    names the sport (cross country opens Aug 1, track Aug 15)."""
+    sport = "TF" if str(table).endswith("_tf") else "XC" if table else None
     return (f"(CASE WHEN {_DATE_OK.format(a=a)} "
-            f"THEN {seasonYearSqlInt(None, f'{a}.date')} END)")
+            f"THEN {seasonYearSqlInt(sport, f'{a}.date')} END)")
 
 
 # ------------------------------------------------------------------ #
@@ -299,7 +301,7 @@ def acadSql(a="r"):
 def stagedSql(table):
     """[(label, sql)] -- the statements prepare() runs, in order. The last
     leaves lc_rows (result_id, person_id, acad, day, level)."""
-    acad = acadSql("r")
+    acad = acadSql("r", table)
     return [
         ("college cells", f"""
             CREATE TEMP TABLE lc_col AS
@@ -489,7 +491,7 @@ def _samples(cur, table, sport, flags, limit, person=None):
            if has_log else "NULL::text")
     params = ([sport] if has_log else []) + [pids]
     cur.execute(f"""
-        SELECT r.person_id, {acadSql('r')} AS acad, r.result_id, r.source,
+        SELECT r.person_id, {acadSql('r', table)} AS acad, r.result_id, r.source,
                r.athlete_id, r.native_id, r.grade, r.school, r.date,
                r.meet_id, r.time_seconds, {levelSql('r')} AS level, {log}
         FROM   {table} r

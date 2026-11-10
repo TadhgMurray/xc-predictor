@@ -115,7 +115,7 @@ def _academicYear(alias="r"):
     Getting this wrong would split each XC season across two labels and halve
     every year's n."""
     from season_year import seasonYearSqlInt
-    return seasonYearSqlInt(None, f"{alias}.date")
+    return seasonYearSqlInt("XC", f"{alias}.date")      # an XC course study: XC opens Aug 1
 
 
 # ------------------------------------------------------------------ #

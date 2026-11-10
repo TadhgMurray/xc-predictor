@@ -1089,14 +1089,14 @@ def _loadSeasonLevels(cur):
 # ★ SO IT DELEGATES, WITH NO RULE OF ITS OWN: seasonYearFromIso for text,
 #   exactly what fill_ratings._rowPool and build_ranking_results call on
 #   the same row. A malformed date is None, as before.
-def _academicYearOf(date):
+def _academicYearOf(date, sport=None):
     if date is None:
         return None
     if isinstance(date, str):
         if len(date) < 7 or not (date[0:4].isdigit() and date[5:7].isdigit()):
             return None
-        return seasonYearFromIso(None, date[:10])
-    return seasonYearFor(None, date)
+        return seasonYearFromIso(sport, date[:10])
+    return seasonYearFor(sport, date)
 
 
 # _loadMatchedTwinKeys
@@ -2199,7 +2199,7 @@ def _callLibrary(cfg, row, distance, gender, track_type, track_length, race_date
 #            {person_id: first collegiate academic year}; sport -- 'XC'/'TF'.
 # Output  : a pool name, or None.
 def _seasonPool(row, gender, season_levels, college_first, sport):
-    _ay = _academicYearOf(row[_DATE])
+    _ay = _academicYearOf(row[_DATE], sport)
     # This sport's verdict if it has one, else the combined verdict --
     # so a season with no votes for this sport is no worse off than it was
     # before the table gained a sport dimension.

@@ -1181,7 +1181,7 @@ def isCollegeClass(grade):
     return GRADE_TO_LEVEL.get(normalizeGrade(grade)) == "college"
 
 
-def academicYearOfDate(value):
+def academicYearOfDate(value, sport=None):
     """season_year's academic year for a date, a datetime or an ISO
     'YYYY-MM-DD' string; None for anything else. A thin, tolerant front on
     the ONE clock -- it decides nothing itself.
@@ -1198,9 +1198,9 @@ def academicYearOfDate(value):
         s = value.strip()
         if len(s) < 7 or not (s[:4].isdigit() and s[5:7].isdigit()):
             return None
-        return seasonYearFromIso(None, s[:10])
+        return seasonYearFromIso(sport, s[:10])
     try:
-        return seasonYearFor(None, value)
+        return seasonYearFor(sport, value)
     except AssertionError:
         return None
 

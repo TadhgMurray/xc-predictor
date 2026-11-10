@@ -451,7 +451,7 @@ def namePairs(cur, since):
     """[(None, minted pid, None, anet pid, 'name', None, None)]: one-partner
     same-name, same-school, same-season pairs (see above). Temp tables only."""
     from season_year import seasonYearSqlInt
-    acad = seasonYearSqlInt(None, "r.date")
+    acad = seasonYearSqlInt("XC", "r.date")      # FROM results: cross country opens Aug 1
     for t in ("fn_t", "fn_a"):
         cur.execute(f"DROP TABLE IF EXISTS {t}")
     cur.execute(f"""
