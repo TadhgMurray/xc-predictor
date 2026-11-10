@@ -146,3 +146,36 @@ def test_the_state_grade_rank_names_its_scope():
 def test_chart_year_labels_never_overlap():
     js = _src(os.path.join(ROOT, "racecast", "static", "athlete-charts.js"))
     assert js.count("lastRight") >= 3 and js.count("lastRight2") >= 3
+
+
+def test_badges_a_race_earns_by_default_are_not_shown():
+    # owner, 2026-11-10: a first race is a PR, SR, CR, R and RSR by
+    # definition; a PR already says SR and an R already says RSR
+    pytest.importorskip("flask")
+    import app as A
+
+    def r(rid, date, t, rt, ev="5000", course="A", season="2026"):
+        return {"result_id": rid, "date": date, "time_raw": t, "speed_rating": rt,
+                "event": ev, "course": course, "season_label": season, "sport": "XC",
+                "is_pr": True, "is_sr": True, "is_course_pr": True, "is_rating_pr": True,
+                "is_rating_sr": True, "is_star_pr": False, "is_star_course": False,
+                "is_star_rating": False}
+
+    races = [r(1, "2026-09-01", 1000, 110.0),            # first of everything
+             r(2, "2026-09-15", 990, 112.0),             # faster, same course
+             r(3, "2026-10-01", 995, 111.0, course="B")]  # slower, a new course
+    races[2].update(is_pr=False, is_rating_pr=False)     # it was neither
+    by_distance = lambda x: x["event"]
+    by_course = lambda x: x["course"]
+    by_season_d = lambda x: (x["season_label"], x["sport"], x["event"])
+    by_season = lambda x: (x["season_label"], x["sport"])
+    A.quietAutomaticFlags(races, by_distance, by_course, by_season_d, by_season,
+                          lambda x: x["time_raw"], lambda x: x["speed_rating"])
+    first, second, third = races
+    assert not any(first[k] for k in ("is_pr", "is_sr", "is_course_pr",
+                                      "is_rating_pr", "is_rating_sr"))
+    # a real PR and R: shown, and they stand in for SR and RSR
+    assert second["is_pr"] and second["is_rating_pr"] and second["is_course_pr"]
+    assert not second["is_sr"] and not second["is_rating_sr"]
+    # a first run on course B is not a course record worth a badge
+    assert not third["is_course_pr"]
