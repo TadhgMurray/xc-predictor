@@ -11,7 +11,7 @@ Postgres).
 | job | started by | lock | memory (reserve) |
 |---|---|---|---|
 | `run_pipeline.sh` | the owner, in tmux | exclusive, whole run | measured per step; 08_golive reserves `XCP_GOLIVE_GB` (60) |
-| `nightly_update.sh` | `xcp-nightly.timer` | exclusive, whole night | — |
+| `nightly_update.sh` | `xcp-nightly.timer` | exclusive, whole night; behind a run it QUEUES (up to 4 h) and scrapes once the run notes `results_stable=1` | — |
 | `backup_db.sh` (pg_dump) | `xcp-backup.timer` | queued, dump only (released before the off-server copy) | — |
 | `race_model_weekly.sh` | `xcp-race-model.timer` | queued, table build only (~1.5 h); the routes again (~20 min) | race_rows 20, each fit 30 |
 | `engine_replay.sh` | the owner, in tmux (one to three sessions) | **none** | 60 each, sacrificial |
@@ -22,23 +22,32 @@ Postgres).
 Every job takes it through `deploy/lockctl.sh` (`lock_take` / `lock_release`).
 
 1. **Never two writers.** A pipeline or the nightly holding the lock makes a
-   second one stop at once (the nightly skips the night).
-2. **Queued jobs never jump an interactive run.** The backup and the race
+   second pipeline stop at once. A nightly behind a run queues (rule 2).
+2. **A night is never dropped for a run.** A nightly that finds a run
+   holding the lock queues (a want posted, so no backup or race model goes
+   first) for up to `XCP_NIGHTLY_WAIT_H` (4) hours. It scrapes as soon as the
+   run notes `results_stable=1` in its holder record -- after the go-live,
+   the last step that rebuilds and swaps results / results_tf, or at once
+   for a run from 9 on -- and prices and publishes when the run lets go. If
+   the wait runs out, what was scraped stays unpriced for the next night,
+   and the log says so. (Before 2026-11-10 it skipped the night: 11-06,
+   11-09.)
+3. **Queued jobs never jump an interactive run.** The backup and the race
    model are *queued*: they poll every 30 s and take the lock only when it is
    free **and** no run has posted `.pipeline.lock.want`. A run started while
    one of them holds the lock waits for it (up to `XCP_LOCK_WAIT_MIN`, 120)
    instead of failing, with the want posted so the next queued job cannot
    slip in between.
-3. **Why the backup and the race model still take it at all.** pg_dump holds
+4. **Why the backup and the race model still take it at all.** pg_dump holds
    a share lock on every table for its whole run, and every pipeline swap
    (DROP + RENAME) needs an exclusive one: a swap behind a dump queues every
    page behind it. race_rows reads ratings for 1.5 h in one cursor; a go-live
    in the middle would give it half old, half new ratings. Both conflict with
    the whole run, so both hold the lock -- but only for the part that reads
    the database. The off-server copy and the fits run without it.
-4. **Nothing the run leaves behind holds it.** A child that outlives the run
+5. **Nothing the run leaves behind holds it.** A child that outlives the run
    is started with `9>&-` (the delayed edge purge; the nightly's scrapers).
-5. **Every holder says who it is.** `.pipeline.lock.holder` has the job, its
+6. **Every holder says who it is.** `.pipeline.lock.holder` has the job, its
    pid, since when, and what it is doing. `bash scripts/who_holds_the_lock.sh`
    reads `/proc/locks`, which tells the holder from the jobs waiting for it,
    prints the systemd unit (a timer's job is not on any screen), the want, and

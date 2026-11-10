@@ -88,8 +88,10 @@ lock_take() {
           echo "FATAL: '$holder' still holds .pipeline.lock after $((maxw / 60)) min" >&2
           return 1 ;;
         *)
-          echo "FATAL: another job holds $LOCK_FILE -- never run two at once:" >&2
-          _lock_who
+          if [ "$job" != nightly ]; then
+            echo "FATAL: another job holds $LOCK_FILE -- never run two at once:" >&2
+            _lock_who
+          fi
           return 1 ;;
       esac ;;
     queued)
@@ -106,6 +108,20 @@ lock_take() {
   return 1
 }
 
+# lock_note KEY=VALUE -- add a fact to our holder record (who_holds and the
+# nightly read it): run_pipeline notes results_stable=1 once nothing in the
+# run will rewrite results / results_tf again (after the go-live).
+lock_note() {
+  if [ -f "$LOCK_HOLDER" ] && grep -qx "pid=$$" "$LOCK_HOLDER" 2>/dev/null; then
+    echo "$1" >> "$LOCK_HOLDER"
+  fi
+}
+
+# lock_holder_says KEY=VALUE -- true when the live holder's record has it
+lock_holder_says() {
+  [ -n "$(lock_holder_job)" ] && grep -qx "$1" "$LOCK_HOLDER" 2>/dev/null
+}
+
 lock_release() {
   # only our own holder record goes
   if [ -f "$LOCK_HOLDER" ] && grep -qx "pid=$$" "$LOCK_HOLDER" 2>/dev/null; then
@@ -113,4 +129,36 @@ lock_release() {
   fi
   flock -u 9 2>/dev/null
   exec 9>&-
+}
+
+# lock_queue_behind_run <job> <max-wait-s> <log-file> <on-stable-function> "<what>"
+#   For the nightly (2026-11-10): the lock is held by a run. Post a want (no
+#   backup or race model goes first), wait for the lock up to <max-wait-s>,
+#   and call <on-stable-function> once, the first time the holder's record
+#   says results_stable=1. Every line goes to the screen and <log-file>.
+#   0 = lock taken; 1 = gave up (the caller says what that cost).
+lock_queue_behind_run() {
+  local job="$1" maxw="$2" log="$3" onstable="$4" what="$5" t0 holder done=0
+  holder=$(lock_holder_job)
+  t0=$(date +%s)
+  echo "  ⚠ ${job^^} QUEUED: '${holder:-another job}' holds .pipeline.lock ($(date +%H:%M))." \
+       "Not skipping: waiting up to $((maxw / 60)) min." | tee -a "$log"
+  exec 8>"$LOCK_WANT"; flock -n 8 2>/dev/null || true
+  echo "$job $$ (queued since $(date '+%F %H:%M'))" >&8
+  until flock -n 9; do
+    if [ "$done" -eq 0 ] && [ -n "$onstable" ] && lock_holder_says "results_stable=1"; then
+      done=1
+      echo "  the run's results tables are stable ($(date +%H:%M)): $onstable now, the rest when it lets go" | tee -a "$log"
+      "$onstable"
+    fi
+    if [ $(( $(date +%s) - t0 )) -ge "$maxw" ]; then
+      flock -u 8 2>/dev/null; exec 8>&-; rm -f "$LOCK_WANT"
+      return 1
+    fi
+    sleep "${LOCK_POLL_S:-60}"
+  done
+  flock -u 8 2>/dev/null; exec 8>&-; rm -f "$LOCK_WANT"
+  _lock_write_holder "$job" "$what"
+  echo "  lock taken after $(( ($(date +%s) - t0) / 60 )) min in the queue" | tee -a "$log"
+  return 0
 }

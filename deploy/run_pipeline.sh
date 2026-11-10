@@ -220,6 +220,11 @@ echo "  logs -> $LOGDIR"
 #   collected: engine_replay.sh will not start a cutoff meanwhile, and one
 #   already running is stopped (and retried later) the moment the go-live
 #   asks for memory it cannot have. It dies with this shell.
+# ★ "THE RESULTS TABLES ARE STABLE" (2026-11-10): a run from 9 on never
+#   rewrites results / results_tf, so a nightly waiting on the lock may
+#   scrape new rows into them now (deploy/nightly_update.sh). A run from 8
+#   or lower says so after its go-live (below).
+if [ "$DRY" -eq 0 ] && [ "$FROM" -gt 8 ]; then lock_note "results_stable=1"; fi
 if [ "$DRY" -eq 0 ] && [ "$FROM" -le 8 ]; then
   "$PY" "$ROOT/scripts/jobrun.py" --want-standing $$ --gb "${XCP_GOLIVE_GB:-60}" \
         --name "pipeline $(basename "$LOGDIR") (a solve is ahead)" 2>/dev/null || true
@@ -1759,6 +1764,12 @@ if failed 08_golive; then
     summarise
   fi
 fi
+# ★ FROM HERE NOTHING IN THE RUN REWRITES results / results_tf (05's
+#   backfill and 08's merge are the rebuild-and-swap writers; what follows
+#   updates rows in place or reads them). A nightly waiting on the lock may
+#   scrape now -- its new rows can no longer be lost in a swap -- and prices
+#   them once the run lets go (deploy/nightly_update.sh, 2026-11-10).
+[ "$DRY" -eq 0 ] && lock_note "results_stable=1"
 
 # ★★ THE SITE FOLLOWS THE MODE ITS RATINGS WERE BUILT IN (owner, 2026-11-08:
 #    "it should obv not publish new ratings until they are right"). The site

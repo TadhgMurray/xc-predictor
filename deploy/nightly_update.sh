@@ -22,9 +22,8 @@
 #   `engine/fill_ratings.py --check 3000` measures how far this pricing sits
 #   from the solve's own ratings on rows the solve did rate.
 #
-# ! ONE AT A TIME WITH THE PIPELINE: the same lock file. A full run holding
-#   it means tonight's update is skipped (exit 0, said in the log), never
-#   queued behind it.
+# ! ONE AT A TIME WITH THE PIPELINE: the same lock file. A run holding it
+#   QUEUES the night (2026-11-10; see "A NIGHT IS NEVER DROPPED" below).
 set -u -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${XCP_PYTHON:-/srv/venv/bin/python}"
@@ -50,15 +49,6 @@ while [ $# -gt 0 ]; do
 done
 cd "$ROOT" || exit 1
 
-if [ "$DRY" -eq 0 ]; then
-  # deploy/lockctl.sh: a pipeline holding it skips the night; a queued job
-  # (backup, race model) is waited for, up to an hour
-  . "$ROOT/deploy/lockctl.sh"
-  if ! lock_take nightly exclusive 3600 "nightly_update.sh (logs/nightly_*)"; then
-    echo "[nightly] the pipeline holds $ROOT/.pipeline.lock -- skipping tonight"
-    exit 0
-  fi
-fi
 if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
 # the model's settings, as the pipeline loads them (distance mode, weather ...)
 [ -f "$ROOT/deploy/solve_env.sh" ] && . "$ROOT/deploy/solve_env.sh"
@@ -154,135 +144,174 @@ if [ "$SCRAPE" -eq 1 ] && [ "$DRY" -eq 0 ]; then
     fi
   done
 fi
-if [ "$SCRAPE" -eq 1 ]; then
-  echo "== scrape (anet ${XCP_NIGHTLY_ANET_SPORT-XC} + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
-  # ★ SLOW AND FEW (owner, 2026-10-22: "make those scrapes go slowly so
-  #   they don't get banned, like 2 sessions, 5-10 seconds"). The night runs
-  #   from the server's own address (NO_VPN), so the sources see one IP:
-  #   two sessions per feed, 5-10 s between meets. About 15 meets a minute
-  #   per feed -- a weeknight's new meets in well under the 3-hour bound.
-  #   The XCP_NIGHTLY_* names win over the full run's NUM_SESSIONS /
-  #   PER_MEET_DELAY in the env file, which are sized for the VPN pool.
-  export NUM_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
-  # ★ TFRRS SLOWER STILL (owner, 2026-10-30: "slow the rate"): one session,
-  #   10-20 s between meets, whatever the athletic.net knobs say
-  export TFRRS_SESSIONS="${XCP_NIGHTLY_TFRRS_SESSIONS:-1}"
-  export PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
-  export TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_TFRRS_DELAY:-10,20}"
-  # ★ A SHORT PROBE PAST THE NEWEST MEET (owner, 2026-10-22: "lower probe
-  #   for both"). Every id asked waits the 5-10 s above, a miss included, so
-  #   the full run's probe (anet 500-id blocks until two come back empty --
-  #   up to 1,000 misses a sport, an hour each at this pace; tfrrs 2,000 ids
-  #   past the highest seen) would eat the night. A night only has to reach
-  #   the meets created since the last one: anet blocks of 150, two empty
-  #   to stop (at most 300 misses a sport, ~20 min); tfrrs 300 ids ahead.
-  #   ! If a night misses new meets, the gap between real ids is wider than
-  #   a block: raise XCP_NIGHTLY_SEED_AHEAD. The widest recent gaps:
-  #   docs/MIGRATE-2026-10.md, "the probe check".
-  # ★ ONE CALL PER DIVISION NOW (2026-10-23: athletic.net closed its
-  #   whole-meet results call), so the gap between a meet's division calls
-  #   matters too: 0.5 requests a second for the IP is ~3-5 s between them
-  #   with two sessions. A fall 2025 week at its busiest (540 meets, 2,335
-  #   divisions) is about two hours at this pace.
-  export TARGET_REQUESTS_PER_SEC_PER_IP="${XCP_NIGHTLY_REQ_PER_SEC:-0.5}"
-  # ★ CROSS COUNTRY ONLY FOR NOW (owner, 2026-10-23: "for rn let's only scrape
-  #   xc results"). A track meet is one call per EVENT now -- 39 a meet,
-  #   ~150,000 requests in spring's busiest week. XCP_NIGHTLY_ANET_SPORT=
-  #   (empty) scrapes both again; TF scrapes track only.
-  export ANET_SPORT="${XCP_NIGHTLY_ANET_SPORT-XC}"
-  # ★ FEWER PROBES (owner, 2026-11-01: "tfrrs seems to probe too long ...
-  #   should probe less meets. Anet and local should do too"): the night of
-  #   10-31 spent ~680 TFRRS requests on ids past the newest meet ("not a
-  #   meet yet - kept"). TFRRS's newest meets now come from its own
-  #   latest-results index (01_tfrrs_latest, priority 1), so its walk is a
-  #   backstop: 50 ids, one empty block stops it. athletic.net: 100-id
-  #   blocks, one empty block stops it (was 150 x 2).
-  export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-100}"
-  export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-1}"
-  export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-50}"
-  export TFRRS_DRY_BLOCKS="${XCP_NIGHTLY_TFRRS_DRY_BLOCKS:-1}"
-  # ★ TFRRS CROSS COUNTRY ONLY TOO (owner, 2026-10-30), as athletic.net
-  #   above: a track meet is its landing page plus the /m and /f compiled
-  #   pages, and Cloudflare challenged those on the manual run.
-  #   XCP_NIGHTLY_TFRRS_SPORT= (empty) claims both again.
-  export TFRRS_SPORT="${XCP_NIGHTLY_TFRRS_SPORT-XC}"
-  # ★ TFRRS'S HIGH SCHOOL STATE SITES FIRST (2026-10-25): the newest meets
-  #   on fl. / indiana.tfrrs.org's lists (3 index pages each, ~6 requests),
-  #   kept in tfrrs_hs_meets for 04a pass 2b, and any of the last 30 days
-  #   with no rows queued for the scrape below. XCP_NIGHTLY_TFRRS_HS=0 skips.
-  if [ "${XCP_NIGHTLY_TFRRS_HS:-1}" != "0" ]; then
-    step 01_tfrrs_hs "$PY" -u -m sources.tfrrs_hs refresh --pages 3 --since-days 30 --out "$LOGDIR/tfrrs_hs_index.csv"
-  fi
-  # ★ AND WWW.TFRRS.ORG'S NEWEST RESULTS (2026-10-30, the Mike Woods
-  #   Classic): its index names meets posted lately wherever their id sits,
-  #   queued at priority 1 so the scrape takes them first. A few requests;
-  #   XCP_NIGHTLY_TFRRS_LATEST=0 skips.
-  if [ "${XCP_NIGHTLY_TFRRS_LATEST:-1}" != "0" ]; then
-    # 6 pages (168 meets): an October weekend posts more than 3 pages' worth
-    step 01_tfrrs_latest "$PY" -u -m sources.tfrrs_hs latest --pages "${XCP_NIGHTLY_TFRRS_LATEST_PAGES:-6}" --since-days 60 \
-      ${TFRRS_SPORT:+--sport "$TFRRS_SPORT"} --out "$LOGDIR/tfrrs_latest_index.csv"
-  fi
-  scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
-  pb=$!
-  # ★ LOCAL SOURCES BEFORE ATHLETIC.NET (owner, 2026-11-01: "we should
-  #   scrape local b4 any anet, as we want to skip any meets on anet we can
-  #   get with a local source"). AthleticLIVE lands its meets under their
-  #   athletic.net ids first, and the anet track scrape's hook
-  #   (athleticlive.landForScrape) then skips the results calls for every
-  #   meet already landed. Timer meets (deploy/scrape_local.sh) go in too;
-  #   dedup keeps the feed's copy when athletic.net posts the same meet.
-  #   TFRRS runs alongside (it does not overlap the local sources).
-  #   XCP_NIGHTLY_LOCAL=0 skips; XCP_NIGHTLY_LOCAL_PER_SOURCE new meets a timer.
-  # ★ TWO STEPS, EACH WITH ITS OWN BOUND (owner, 2026-11-08: "I haven't
-  #   seen us ever scrape any local results"). AthleticLIVE and the timing
-  #   companies shared one 45-minute bound, AthleticLIVE first; on the nights
-  #   it hit the bound (11-03, 11-04) the timers never started. Now
-  #   01_local_alive (AthleticLIVE) and 01_local_timers (every enabled
-  #   timing company) each get their own, so neither can starve the other.
-  #   XCP_NIGHTLY_LOCAL_MIN bounds AthleticLIVE, XCP_NIGHTLY_TIMERS_MIN the
-  #   timers.
-  if [ "${XCP_NIGHTLY_LOCAL:-1}" != "0" ]; then
-    for part in alive timers; do
-      if [ "$part" = alive ]; then
-        mins="${XCP_NIGHTLY_LOCAL_MIN:-45}"
-        step 01_local_alive timeout "${mins}m" env TIMERS=0 bash deploy/scrape_local.sh
-      else
-        mins="${XCP_NIGHTLY_TIMERS_MIN:-40}"
-        # ! THE TIMERS STOP THEMSELVES FIRST: no new meet is started after
-        #   the bound less 8 minutes, so what was parsed is landed, deduped
-        #   and promoted before the timeout kills the step
-        step 01_local_timers timeout "${mins}m" env ALIVE=0 XCP_TIMERS_MINUTES="$(( mins > 12 ? mins - 8 : mins / 2 ))" \
-          bash deploy/scrape_local.sh \
-          --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
-      fi
-      local_rc=$?
-      # ! THE BOUND IS NOT A FAILURE (owner's server, 2026-11-03 and 04:
-      #   "01_local FAILED (exit 124) after 2700s" failed the whole night). As
-      #   scrape() says for the feeds: what it saved is priced below, the rest
-      #   waits for tomorrow.
-      if [ "$local_rc" -eq 124 ]; then
-        FAILED="${FAILED/ 01_local_$part/}"
-        echo "  01_local_$part stopped at the ${mins}-minute bound; the rest waits for tomorrow" \
-          | tee -a "$SUMMARY"
-      fi
+# ★ A NIGHT IS NEVER DROPPED FOR A RUN (2026-11-10; the nights of 11-06 and
+#   11-09 were skipped because a pipeline held the lock, and every skipped
+#   night is a day of new results nobody scraped). The lock is taken HERE,
+#   just before the scrape, through deploy/lockctl.sh:
+#   * free -> taken, the night as always.
+#   * a queued job (backup, race model) holds it -> waited for, a want posted.
+#   * a PIPELINE holds it -> the night QUEUES, says so loudly, and posts a
+#     want so no backup or race model slips in ahead of it; up to
+#     XCP_NIGHTLY_WAIT_H (4) hours: with a 3 h scrape and ~4 h of pricing and
+#     boards after, still an hour inside the unit's 12 h limit.
+#     While it waits it SCRAPES as soon as the run notes results_stable=1
+#     (run_pipeline.sh, after its go-live: nothing in the run rebuilds and
+#     swaps results / results_tf again, so new rows cannot be lost in a swap;
+#     a run from 9 on notes it at once). The pricing and boards wait for the
+#     lock. If the wait runs out, whatever was scraped stays in the database
+#     unpriced -- the next night prices it -- and the log says so.
+_SCRAPED=0
+_scrapeAll() {
+  [ "$_SCRAPED" -eq 1 ] && return 0
+  _SCRAPED=1
+  if [ "$SCRAPE" -eq 1 ]; then
+    echo "== scrape (anet ${XCP_NIGHTLY_ANET_SPORT-XC} + tfrrs, at most ${SCRAPE_MIN} min, ${XCP_NIGHTLY_SESSIONS:-2} sessions each, ${XCP_NIGHTLY_DELAY:-5,10} s between meets)    $(date +%H:%M:%S)"
+    # ★ SLOW AND FEW (owner, 2026-10-22: "make those scrapes go slowly so
+    #   they don't get banned, like 2 sessions, 5-10 seconds"). The night runs
+    #   from the server's own address (NO_VPN), so the sources see one IP:
+    #   two sessions per feed, 5-10 s between meets. About 15 meets a minute
+    #   per feed -- a weeknight's new meets in well under the 3-hour bound.
+    #   The XCP_NIGHTLY_* names win over the full run's NUM_SESSIONS /
+    #   PER_MEET_DELAY in the env file, which are sized for the VPN pool.
+    export NUM_SESSIONS="${XCP_NIGHTLY_SESSIONS:-2}"
+    # ★ TFRRS SLOWER STILL (owner, 2026-10-30: "slow the rate"): one session,
+    #   10-20 s between meets, whatever the athletic.net knobs say
+    export TFRRS_SESSIONS="${XCP_NIGHTLY_TFRRS_SESSIONS:-1}"
+    export PER_MEET_DELAY="${XCP_NIGHTLY_DELAY:-5,10}"
+    export TFRRS_PER_MEET_DELAY="${XCP_NIGHTLY_TFRRS_DELAY:-10,20}"
+    # ★ A SHORT PROBE PAST THE NEWEST MEET (owner, 2026-10-22: "lower probe
+    #   for both"). Every id asked waits the 5-10 s above, a miss included, so
+    #   the full run's probe (anet 500-id blocks until two come back empty --
+    #   up to 1,000 misses a sport, an hour each at this pace; tfrrs 2,000 ids
+    #   past the highest seen) would eat the night. A night only has to reach
+    #   the meets created since the last one: anet blocks of 150, two empty
+    #   to stop (at most 300 misses a sport, ~20 min); tfrrs 300 ids ahead.
+    #   ! If a night misses new meets, the gap between real ids is wider than
+    #   a block: raise XCP_NIGHTLY_SEED_AHEAD. The widest recent gaps:
+    #   docs/MIGRATE-2026-10.md, "the probe check".
+    # ★ ONE CALL PER DIVISION NOW (2026-10-23: athletic.net closed its
+    #   whole-meet results call), so the gap between a meet's division calls
+    #   matters too: 0.5 requests a second for the IP is ~3-5 s between them
+    #   with two sessions. A fall 2025 week at its busiest (540 meets, 2,335
+    #   divisions) is about two hours at this pace.
+    export TARGET_REQUESTS_PER_SEC_PER_IP="${XCP_NIGHTLY_REQ_PER_SEC:-0.5}"
+    # ★ CROSS COUNTRY ONLY FOR NOW (owner, 2026-10-23: "for rn let's only scrape
+    #   xc results"). A track meet is one call per EVENT now -- 39 a meet,
+    #   ~150,000 requests in spring's busiest week. XCP_NIGHTLY_ANET_SPORT=
+    #   (empty) scrapes both again; TF scrapes track only.
+    export ANET_SPORT="${XCP_NIGHTLY_ANET_SPORT-XC}"
+    # ★ FEWER PROBES (owner, 2026-11-01: "tfrrs seems to probe too long ...
+    #   should probe less meets. Anet and local should do too"): the night of
+    #   10-31 spent ~680 TFRRS requests on ids past the newest meet ("not a
+    #   meet yet - kept"). TFRRS's newest meets now come from its own
+    #   latest-results index (01_tfrrs_latest, priority 1), so its walk is a
+    #   backstop: 50 ids, one empty block stops it. athletic.net: 100-id
+    #   blocks, one empty block stops it (was 150 x 2).
+    export SEED_AHEAD="${XCP_NIGHTLY_SEED_AHEAD:-100}"
+    export DRY_BLOCKS_TO_STOP="${XCP_NIGHTLY_DRY_BLOCKS:-1}"
+    export TFRRS_SEED_AHEAD="${XCP_NIGHTLY_TFRRS_AHEAD:-50}"
+    export TFRRS_DRY_BLOCKS="${XCP_NIGHTLY_TFRRS_DRY_BLOCKS:-1}"
+    # ★ TFRRS CROSS COUNTRY ONLY TOO (owner, 2026-10-30), as athletic.net
+    #   above: a track meet is its landing page plus the /m and /f compiled
+    #   pages, and Cloudflare challenged those on the manual run.
+    #   XCP_NIGHTLY_TFRRS_SPORT= (empty) claims both again.
+    export TFRRS_SPORT="${XCP_NIGHTLY_TFRRS_SPORT-XC}"
+    # ★ TFRRS'S HIGH SCHOOL STATE SITES FIRST (2026-10-25): the newest meets
+    #   on fl. / indiana.tfrrs.org's lists (3 index pages each, ~6 requests),
+    #   kept in tfrrs_hs_meets for 04a pass 2b, and any of the last 30 days
+    #   with no rows queued for the scrape below. XCP_NIGHTLY_TFRRS_HS=0 skips.
+    if [ "${XCP_NIGHTLY_TFRRS_HS:-1}" != "0" ]; then
+      step 01_tfrrs_hs "$PY" -u -m sources.tfrrs_hs refresh --pages 3 --since-days 30 --out "$LOGDIR/tfrrs_hs_index.csv"
+    fi
+    # ★ AND WWW.TFRRS.ORG'S NEWEST RESULTS (2026-10-30, the Mike Woods
+    #   Classic): its index names meets posted lately wherever their id sits,
+    #   queued at priority 1 so the scrape takes them first. A few requests;
+    #   XCP_NIGHTLY_TFRRS_LATEST=0 skips.
+    if [ "${XCP_NIGHTLY_TFRRS_LATEST:-1}" != "0" ]; then
+      # 6 pages (168 meets): an October weekend posts more than 3 pages' worth
+      step 01_tfrrs_latest "$PY" -u -m sources.tfrrs_hs latest --pages "${XCP_NIGHTLY_TFRRS_LATEST_PAGES:-6}" --since-days 60 \
+        ${TFRRS_SPORT:+--sport "$TFRRS_SPORT"} --out "$LOGDIR/tfrrs_latest_index.csv"
+    fi
+    scrape scrape_tfrrs "$PY" -u tfrrs/driver/launch_tfrrs.py &
+    pb=$!
+    # ★ LOCAL SOURCES BEFORE ATHLETIC.NET (owner, 2026-11-01: "we should
+    #   scrape local b4 any anet, as we want to skip any meets on anet we can
+    #   get with a local source"). AthleticLIVE lands its meets under their
+    #   athletic.net ids first, and the anet track scrape's hook
+    #   (athleticlive.landForScrape) then skips the results calls for every
+    #   meet already landed. Timer meets (deploy/scrape_local.sh) go in too;
+    #   dedup keeps the feed's copy when athletic.net posts the same meet.
+    #   TFRRS runs alongside (it does not overlap the local sources).
+    #   XCP_NIGHTLY_LOCAL=0 skips; XCP_NIGHTLY_LOCAL_PER_SOURCE new meets a timer.
+    # ★ TWO STEPS, EACH WITH ITS OWN BOUND (owner, 2026-11-08: "I haven't
+    #   seen us ever scrape any local results"). AthleticLIVE and the timing
+    #   companies shared one 45-minute bound, AthleticLIVE first; on the nights
+    #   it hit the bound (11-03, 11-04) the timers never started. Now
+    #   01_local_alive (AthleticLIVE) and 01_local_timers (every enabled
+    #   timing company) each get their own, so neither can starve the other.
+    #   XCP_NIGHTLY_LOCAL_MIN bounds AthleticLIVE, XCP_NIGHTLY_TIMERS_MIN the
+    #   timers.
+    if [ "${XCP_NIGHTLY_LOCAL:-1}" != "0" ]; then
+      for part in alive timers; do
+        if [ "$part" = alive ]; then
+          mins="${XCP_NIGHTLY_LOCAL_MIN:-45}"
+          step 01_local_alive timeout "${mins}m" env TIMERS=0 bash deploy/scrape_local.sh
+        else
+          mins="${XCP_NIGHTLY_TIMERS_MIN:-40}"
+          # ! THE TIMERS STOP THEMSELVES FIRST: no new meet is started after
+          #   the bound less 8 minutes, so what was parsed is landed, deduped
+          #   and promoted before the timeout kills the step
+          step 01_local_timers timeout "${mins}m" env ALIVE=0 XCP_TIMERS_MINUTES="$(( mins > 12 ? mins - 8 : mins / 2 ))" \
+            bash deploy/scrape_local.sh \
+            --per-source "${XCP_NIGHTLY_LOCAL_PER_SOURCE:-5}"
+        fi
+        local_rc=$?
+        # ! THE BOUND IS NOT A FAILURE (owner's server, 2026-11-03 and 04:
+        #   "01_local FAILED (exit 124) after 2700s" failed the whole night). As
+        #   scrape() says for the feeds: what it saved is priced below, the rest
+        #   waits for tomorrow.
+        if [ "$local_rc" -eq 124 ]; then
+          FAILED="${FAILED/ 01_local_$part/}"
+          echo "  01_local_$part stopped at the ${mins}-minute bound; the rest waits for tomorrow" \
+            | tee -a "$SUMMARY"
+        fi
+      done
+    fi
+    # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
+    #   blocked the old server and agreed only to a small scrape from the
+    #   owner's side computer (ISSUES-RUNNING, 2026-10-12), so the server
+    #   scrapes it only once they have said the server may.
+    if [ "${XCP_NIGHTLY_ANET:-1}" = "0" ]; then
+      echo "  scrape_anet: off (XCP_NIGHTLY_ANET=0)" | tee -a "$SUMMARY"
+    else
+      scrape scrape_anet "$PY" -u scripts/launcher.py &
+      pa=$!
+    fi
+    [ -n "${pa:-}" ] && wait "$pa"; wait "$pb"
+    for nm in scrape_anet scrape_tfrrs; do
+      [ -f "$LOGDIR/$nm.failed" ] && FAILED="$FAILED $nm"
     done
   fi
-  # ! XCP_NIGHTLY_ANET=0 leaves athletic.net out (2026-10-23): athletic.net
-  #   blocked the old server and agreed only to a small scrape from the
-  #   owner's side computer (ISSUES-RUNNING, 2026-10-12), so the server
-  #   scrapes it only once they have said the server may.
-  if [ "${XCP_NIGHTLY_ANET:-1}" = "0" ]; then
-    echo "  scrape_anet: off (XCP_NIGHTLY_ANET=0)" | tee -a "$SUMMARY"
-  else
-    scrape scrape_anet "$PY" -u scripts/launcher.py &
-    pa=$!
+}
+if [ "$DRY" -eq 0 ]; then
+  . "$ROOT/deploy/lockctl.sh"
+  _what="nightly_update.sh: scrape, price, boards ($LOGDIR)"
+  if ! lock_take nightly exclusive 3600 "$_what"; then
+    _waitH="${XCP_NIGHTLY_WAIT_H:-4}"
+    _onStable=""; [ "$SCRAPE" -eq 1 ] && _onStable=_scrapeAll
+    if ! lock_queue_behind_run nightly $(( _waitH * 3600 )) "$SUMMARY" "$_onStable" "$_what"; then
+      if [ "$_SCRAPED" -eq 1 ]; then
+        echo "  ⚠ NIGHTLY: the run still held the lock after ${_waitH} h. Tonight's scrape is IN the database," \
+             "UNPRICED; the next night (or the run's own pricing) rates it." | tee -a "$SUMMARY"
+      else
+        echo "  ⚠⚠ NIGHTLY SKIPPED: the run held the lock ${_waitH} h and never reached a stable results table;" \
+             "nothing was scraped tonight." | tee -a "$SUMMARY"
+      fi
+      exit 0
+    fi
   fi
-  [ -n "${pa:-}" ] && wait "$pa"; wait "$pb"
-  for nm in scrape_anet scrape_tfrrs; do
-    [ -f "$LOGDIR/$nm.failed" ] && FAILED="$FAILED $nm"
-  done
 fi
-
+_scrapeAll
 step 01z_coverage "$PY" -u scripts/coverage_report.py --nightly || true  # meets found vs expected, per source
 # ---- 2. who each new row is, and what it is (the pipeline's own steps) --- #
 step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
