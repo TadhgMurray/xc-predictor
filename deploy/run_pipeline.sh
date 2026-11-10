@@ -2242,7 +2242,21 @@ _REPORTS=(17_checklist "$PY -u scripts/run_checklist.py"
 #   engine/data/run_history.jsonl and written to $LOGDIR/REPORT.txt. 16b
 #   feeds it the LACCTiC fair tests (college; public API, about 150
 #   requests a second apart; XCP_LACCTIC=0 skips, XCP_LACCTIC_RACES picks).
-if [ "${XCP_LACCTIC:-1}" != "0" ]; then
+# ★ ONCE A WEEK (owner, 2026-11-10: "make it once weekly"): a run whose
+#   last LACCTiC comparison is under XCP_LACCTIC_DAYS (7) days old skips
+#   it -- about 153 requests to their API each time, and the numbers hardly
+#   move between runs. XCP_LACCTIC=force runs it anyway. The report reads
+#   the last run that has it.
+_lacRecent=""
+if [ "${XCP_LACCTIC:-1}" != "force" ]; then
+  _lacRecent=$(find "$ROOT/logs" -mindepth 2 -maxdepth 2 -name 16b_lacctic.log -size +1k \
+                 -mtime -"${XCP_LACCTIC_DAYS:-7}" 2>/dev/null | head -1)
+fi
+if [ "${XCP_LACCTIC:-1}" = "0" ]; then
+  :
+elif [ -n "$_lacRecent" ]; then
+  echo "  16b_lacctic: skipped -- last run under ${XCP_LACCTIC_DAYS:-7} days ago ($_lacRecent)" | tee -a "$SUMMARY"
+else
   _REPORTS+=(16b_lacctic "$PY -u scripts/lacctic_compare.py --race ${XCP_LACCTIC_RACES:-12194,12158,11632} --runners 150")
 fi
 # ★ OUR PREDICTIONS FOR KAILO'S UPCOMING MEETS, SAVED BEFORE THE RACE (owner,
