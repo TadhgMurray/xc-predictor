@@ -789,3 +789,23 @@ def test_drop_old_and_the_backup_count_nothing_for_a_log_line():
         conn.rollback()
     src = read("engine", "drop_old.py") + read("engine", "pair_golive.py")
     assert "SELECT count(*) FROM {table}" not in src and "SELECT count(*) FROM {backup}" not in src
+
+
+def test_rank_streams_follow_the_rows_two_for_xc_six_for_track(tmp_path):
+    # 2026-11-10: the stub answers --parts with parts-1 seams, as the real one does
+    stub = tmp_path / "py"
+    stub.write_text('#!/bin/sh\nn=0; for a in "$@"; do [ "$prev" = "--parts" ] && n=$a; prev=$a; done\n'
+                    'out=""; i=1; while [ $i -lt $n ]; do out="$out 20$((10 + i))-01-01"; i=$((i + 1)); done\n'
+                    'echo $out\n')
+    stub.chmod(0o755)
+    script = (f"DRY=0; LOGDIR={tmp_path}; PY={stub}\n"
+              "beforeFrom() { return 1; }\n" + _func("rankSeamsOk") + "\n"
+              + _rankBlock() + '\nfor x in "${_RANK[@]}"; do echo "ARG $x"; done\n')
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+    args = [ln[4:] for ln in out.splitlines() if ln.startswith("ARG ")]
+    pairs = list(zip(args[0::2], args[1::2]))
+    xc, tf = _ranges(pairs, "XC"), _ranges(pairs, "TF")
+    assert len(xc) == 2 and len(tf) == 6 and len(pairs) == 8
+    for r in (xc, tf):
+        assert r[0][1] == "1990-01-01" and r[-1][2] == "2100-01-01"
+        assert all(r[i][2] == r[i + 1][1] for i in range(len(r) - 1))

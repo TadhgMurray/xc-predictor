@@ -1915,14 +1915,22 @@ step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prep
 #   XCP_RANK_SEAM="d1 d2 ..." states the seams (one date, as before, is two
 #   streams per sport).
 #   XCP_RANK_PARTS=2 XCP_RANK_STREAMS=4 is the old shape.
+# ★ THE STREAMS SHARED BY ROWS, NOT BY SPORT (2026-11-10; run 20261109_033652:
+#   four streams each, and the four track streams ran 2,063-2,388 s while the
+#   cross country ones were done in under 810 -- track has ~168M rows to XC's
+#   ~43M). Still eight streams at once (the same connections and load), now
+#   XC 2 and TF 6 (XCP_RANK_PARTS_XC / _TF): ~21M and ~28M rows a stream.
+#   XCP_RANK_PARTS, when set, still gives both sports that many.
 _RANK=()
 for _sp in XC TF; do
   _lc=$(echo "$_sp" | tr 'A-Z' 'a-z')
+  if [ "$_sp" = XC ]; then _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_XC:-2}}"
+  else _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_TF:-6}}"; fi
   _seams="${XCP_RANK_SEAM:-}"
   if [ -z "$_seams" ] && [ "$DRY" -eq 0 ] && ! beforeFrom 10_rankings_prepare \
-     && [ "${XCP_RANK_PARTS:-4}" -gt 2 ]; then
+     && [ "$_parts" -ge 2 ]; then
     _seams=$("$PY" racecast/build_ranking_results.py --stage seams --sport "$_sp" \
-               --parts "${XCP_RANK_PARTS:-4}" 2>>"$LOGDIR/10_rankings_seams.log" | tail -n 1)
+               --parts "$_parts" 2>>"$LOGDIR/10_rankings_seams.log" | tail -n 1)
     _seams=$(rankSeamsOk "$_seams")
   fi
   [ -n "$_seams" ] || _seams="2018-01-01"
