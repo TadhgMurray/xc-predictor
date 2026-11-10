@@ -378,6 +378,7 @@ function drawChart(host, points, opts) {
      seasonRuns keys on year AND sport, so a spring TF season and the following
      autumn XC season are two runs and get a rule between them -- on the career
      chart that boundary is exactly where the reader needs a break. */
+  let lastRight = -Infinity;
   runs.forEach((run, i) => {
     if (i > 0) {
       const divX = (xScale(run.start) + xScale(run.start - 1)) / 2;
@@ -411,7 +412,15 @@ function drawChart(host, points, opts) {
       ? xScale(next.start) - xScale(run.start)
       : (width - PAD.right) - xScale(run.start);
 
-    if (run.year && Math.max(runWidth, slotWidth) >= needed) {
+    /* ! AND NEVER ON TOP OF THE LAST ONE DRAWN (owner, 2026-11-10: "XC
+         2023XC 2024" on a phone). The room test above measures from the
+         run's start, but the label is centred on the run, so two short
+         seasons side by side both passed and their labels met. A label
+         whose left edge would come within 6px of the previous label's
+         right edge is skipped. */
+    const left = +mid - needed / 2;
+    if (run.year && Math.max(runWidth, slotWidth) >= needed && left >= lastRight + 6) {
+      lastRight = +mid + needed / 2;
       parts.push(
         `<text class="axis-x" x="${mid}" y="${height - 10}" ` +
         `text-anchor="middle">${esc(label)}</text>`
@@ -687,6 +696,7 @@ function drawCompareChart(host, series, opts) {
   }
 
   const runs = seasonRuns(slotPoints);
+  let lastRight2 = -Infinity;
   runs.forEach((run, i) => {
     if (i > 0) {
       const divX = (xScale(run.start) + xScale(run.start - 1)) / 2;
@@ -702,7 +712,10 @@ function drawCompareChart(host, series, opts) {
     const slotWidth = next
       ? xScale(next.start) - xScale(run.start)
       : (width - PAD.right) - xScale(run.start);
-    if (run.year && Math.max(runWidth, slotWidth) >= label.length * 6.2) {
+    const needed2 = label.length * 6.2;
+    // never on top of the last label drawn (the same rule as the chart above)
+    if (run.year && Math.max(runWidth, slotWidth) >= needed2 && +mid - needed2 / 2 >= lastRight2 + 6) {
+      lastRight2 = +mid + needed2 / 2;
       parts.push(
         `<text class="axis-x" x="${mid}" y="${height - 10}" ` +
         `text-anchor="middle">${esc(label)}</text>`

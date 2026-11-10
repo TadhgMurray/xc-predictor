@@ -137,7 +137,7 @@ _NON_SCHOOL_FRAGMENTS = ("dark sky", "under arm", "under armour", "under armor")
 # the rankings tables disagree about which season a race is in, the home card
 # and the page it links to silently show different sets of athletes.
 sys.path.insert(0, "engine")
-from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt
+from season_year import seasonYearFromIso, seasonYearSql, seasonYearSqlInt, seasonYearForPerson
 from season_floor import OPEN_FROM, floorFor, isOpen
 from pool_resolve import resolvePool, inScope
 from pro_ability import proAbilityFor
@@ -444,7 +444,7 @@ def _poolOf(row, sport):
     # The season, for the hand-listed professionals -- per athlete-season now.
     # A row with no parseable date simply does not narrow the span.
     try:
-        season = seasonYearFromIso(sport, row.get("date"))
+        season = seasonYearForPerson(sport, row.get("date"), row.get("person_id"))
     except (TypeError, ValueError, IndexError):
         season = None
 
@@ -1111,7 +1111,7 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
             #   identical.
             h_all = buckets[("performance", "alltime", sport, pool)]
             h_sea = buckets[("performance", "season", sport, pool)]
-            row_season = str(seasonYearFromIso(sport, row["date"]))
+            row_season = str(seasonYearForPerson(sport, row["date"], row.get("person_id")))
             if not ((len(h_all) < COLLECT_N or score > h_all[0][0])
                     or (row_season == season_year
                         and (len(h_sea) < COLLECT_N or score > h_sea[0][0]))):
@@ -1664,6 +1664,10 @@ def main():
         # ordinary statements and can use parallel workers. The streaming
         # cursors cannot -- see dbfast.
         tuneSession(conn)
+        # the professionals' summer (season_year 3b): the boards' seasons
+        with conn.cursor() as _pcur:
+            from season_year import loadProSeasons as _lps
+            _lps(_pcur)
         # ★ ONCE, BEFORE THE SPORT LOOP. `ath` is session-scoped, so it must be
         #   built on the SAME connection every query below uses -- and it must
         #   be built before the first query, not lazily, so a failure surfaces

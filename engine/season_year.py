@@ -247,6 +247,101 @@ def seasonYearSqlInt(sport=None, date_col="date"):
 
 
 # ------------------------------------------------------------------ #
+#  3b. THE PROFESSIONALS' SUMMER                                      #
+# ------------------------------------------------------------------ #
+#
+# ★ A PRO'S TRACK SEASON RUNS TO THE END OF SEPTEMBER (owner-approved,
+#   2026-11-10: Grant Fisher headed "2027 Track · professional" off four races
+#   dated Aug 21 - Sep 11, 2026 -- Lausanne, Zurich, Brussels and the
+#   Diamond League final -- grouped into the season ahead and driving his
+#   header). The August 15 seam stays for everyone in school or college
+#   (Grotenhuis, above): only a TRACK race, dated PRO_SUMMER (Aug 15 - Sep
+#   30), by a person who was a PROFESSIONAL IN THE SEASON IT WOULD JOIN
+#   (pro_athlete_season holds (person, season)), belongs to that earlier
+#   season. A college athlete racing late summer is not in the table for
+#   that season and does not move; a new professional's first pro summer
+#   joins nothing behind it and stays where it is.
+#
+# ! PERSON-AWARE, SO NOT INSIDE seasonShift. The four forms above are a pure
+#   (sport, date) rule and every caller keeps them. A caller that decides a
+#   professional's track season -- the boards (build_ranking_results), the
+#   pack (speed_ratings), the pricer (fill_ratings), the athlete page and
+#   the panels -- passes the person through seasonYearForPerson (Python) or
+#   seasonYearSqlPersonInt (SQL), and both read the same table.
+# ! pro_flag ITSELF STAYS ON THE PLAIN CLOCK: it is where "a professional in
+#   that season" comes from, so it cannot ask itself.
+PRO_SUMMER_FROM = SEASON_START_MMDD     # '08-15'
+PRO_SUMMER_TO = "09-30"
+
+_PRO = {"seasons": None}
+
+
+def setProSeasons(pairs):
+    """Register the (person_id, season) professional seasons this process
+    shifts by (a set; None turns the rule off)."""
+    _PRO["seasons"] = None if pairs is None else {(int(p), int(s)) for p, s in pairs}
+
+
+def loadProSeasons(cur):
+    """Read pro_athlete_season once through `cur` and register it. Returns
+    the count (0 when the table is absent: the rule is then off)."""
+    cur.execute("SELECT to_regclass('pro_athlete_season')")
+    got = cur.fetchone()
+    present = got[0] if not isinstance(got, dict) else list(got.values())[0]
+    if not present:
+        setProSeasons(None)
+        return 0
+    cur.execute("SELECT person_id, season FROM pro_athlete_season")
+    rows = cur.fetchall()
+    setProSeasons((r[0], r[1]) if not isinstance(r, dict) else (r["person_id"], r["season"])
+                  for r in rows)
+    return len(_PRO["seasons"])
+
+
+def proSummerShift(sport, date_text, person_id, base=None):
+    """0 or -1: the professionals' summer exception for one row. Pure given
+    the registered seasons."""
+    seasons = _PRO["seasons"]
+    if not seasons or person_id is None or sport != "TF" or not date_text:
+        return 0
+    mmdd = date_text[5:10]
+    if not (PRO_SUMMER_FROM <= mmdd <= PRO_SUMMER_TO):
+        return 0
+    if base is None:
+        base = seasonYearFromIso(sport, date_text)
+    return -1 if (int(person_id), base - 1) in seasons else 0
+
+
+def seasonYearForPerson(sport, date_text, person_id):
+    """seasonYearFromIso, with the professionals' summer applied."""
+    base = seasonYearFromIso(sport, date_text)
+    return base + proSummerShift(sport, date_text, person_id, base)
+
+
+def seasonYearForPersonDate(sport, d, person_id, ledger=None):
+    """seasonYearFor (a date object), with the professionals' summer."""
+    base = seasonYearFor(sport, d, ledger)
+    return base + proSummerShift(sport, d.isoformat()[:10], person_id, base)
+
+
+def seasonYearSqlPersonInt(sport_sql, date_col, person_col):
+    """seasonYearSqlInt with the professionals' summer, as SQL. `sport_sql`
+    is an SQL expression for the row's sport ('TF' literal or a column)."""
+    base = seasonYearSqlInt(None, date_col)
+    return (f"({base} - CASE WHEN ({sport_sql}) = 'TF' "
+            f"AND substring({date_col}, 6, 5) BETWEEN '{PRO_SUMMER_FROM}' AND '{PRO_SUMMER_TO}' "
+            f"AND EXISTS (SELECT 1 FROM pro_athlete_season pss "
+            f"WHERE pss.person_id = {person_col} "
+            f"AND pss.season = substring({date_col}, 1, 4)::int - 1) "
+            f"THEN 1 ELSE 0 END)")
+
+
+def seasonYearSqlPerson(sport_sql, date_col, person_col):
+    """The same, as TEXT (seasonYearSql's type)."""
+    return f"({seasonYearSqlPersonInt(sport_sql, date_col, person_col)})::text"
+
+
+# ------------------------------------------------------------------ #
 #  4. WHERE THIS RULE MUST *NOT* BE APPLIED                           #
 # ------------------------------------------------------------------ #
 #
@@ -344,6 +439,30 @@ def _selfCheck():
               f"(want {want})  {why}")
 
     print("\n" + ledger.line())
+
+    # ★ THE PROFESSIONALS' SUMMER: Fisher (a professional in 2025) moves; a
+    #   college athlete the same dates does not; nobody moves on Oct 1, on
+    #   cross country, or before Aug 15.
+    saved = _PRO["seasons"]
+    setProSeasons([(1, 2025)])
+    pro_cases = [
+        ("TF", "2026-08-21", 1, 2025, "Fisher's Lausanne -- his 2025 season"),
+        ("TF", "2026-09-11", 1, 2025, "and the Diamond League final"),
+        ("TF", "2026-09-30", 1, 2025, "the last day of the pro summer"),
+        ("TF", "2026-10-01", 1, 2026, "October opens the new season"),
+        ("TF", "2026-08-10", 1, 2025, "before Aug 15: the plain rule already"),
+        ("XC", "2026-09-05", 1, 2026, "cross country never moves"),
+        ("TF", "2026-08-21", 2, 2026, "a college athlete, same day: stays"),
+        ("TF", "2026-08-21", None, 2026, "no person: the plain rule"),
+    ]
+    for sport, iso, pid, want, why in pro_cases:
+        got = seasonYearForPerson(sport, iso, pid)
+        got_d = seasonYearForPersonDate(sport, date.fromisoformat(iso), pid)
+        ok = got == want == got_d
+        bad += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} {sport} {iso} person {pid} -> {got} "
+              f"(want {want})  {why}")
+    setProSeasons(saved)
     print("\nall cases pass" if not bad else f"\n{bad} FAILURES")
     return bad
 

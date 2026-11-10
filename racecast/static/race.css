@@ -904,29 +904,42 @@ main.ath-page.rc .rc-tbar, main.ath-page.rc .rc-side > h2:first-child { min-heig
    every season still lines up down the page */
 main.ath-page.rc .season table th, main.ath-page.rc .season table td { padding-left: .45rem; padding-right: .45rem; }
 main.ath-page.rc .season table { min-width: 0; }
-main.ath-page.rc .season table th:nth-child(1) { width: 6.4rem; }
-main.ath-page.rc .season table th:nth-child(2) { width: auto; }
-main.ath-page.rc .season table th:nth-child(3) { width: 4.8rem; }   /* Result, the event under it */
-main.ath-page.rc .season table th:nth-child(4) { width: 5rem; }
+/* ★ COLUMNS BY CLASS, NOT POSITION (owner, 2026-11-10: the rating moved
+     beside the result and the 5K column became its sub-line). Order: Date,
+     Meet, Result, Rating, Place, Course, Records; a track season with no
+     indoor race has no Course column, so a position would size the wrong
+     one. The fixed columns sum to ~32.4rem, 6rem less than with the 5K
+     column, and Meet takes the rest. */
+main.ath-page.rc .season table th.c-date { width: 6.4rem; }
+main.ath-page.rc .season table th.c-meet { width: auto; }
+main.ath-page.rc .season table th.c-res { width: 4.8rem; }   /* Result, the event under it */
+main.ath-page.rc .season table th.c-rt { width: 4.8rem; }    /* Rating, the 5K under it */
+main.ath-page.rc .season table th.c-pl { width: 5rem; }
 /* ! THE HEADERS FIT ON ONE LINE, ⓘ INCLUDED (owner, 2026-10-11: "the i
      still goes to the next row"), and no header wraps */
 main.ath-page.rc .season table th { white-space: nowrap; }
-main.ath-page.rc .season table th:nth-child(5) { width: 4.8rem; }
-/* ★ THE EQUIVALENT'S HEADER ON ONE LINE TOO (owner, 2026-10-23: two rows
-     "annoys me ... it should be on one row when possible"). 2026-10-13 let
-     it wrap because "3200M EQUIV (i)" ran under COURSE; the column is sized
-     to its label instead, measured in Chromium: "5K equiv ⓘ" 79 px and
-     "3200m equiv ⓘ" 105 px of text, plus .9rem of padding. */
-main.ath-page.rc .season table th:nth-child(6) { width: 6rem; }
-main.ath-page.rc .season table th.fk.fk-long { width: 7.6rem; }
-main.ath-page.rc .season table th.fk { white-space: nowrap; }
-main.ath-page.rc .season table th:nth-child(7) { width: 4.8rem; }
+main.ath-page.rc .season table th.c-co { width: 4.8rem; }
 /* ★ RECORDS: THREE PILLS TO A LINE (owner, 2026-10-11: "make the flags not
      make all the meets go multiple rows"). A row is already two lines (the
      course under the meet, the team place under the place); at three a line
      even all six badges fit in those two, so the flags never add a third. */
-main.ath-page.rc .season table th:nth-child(8) { width: 6.6rem; }
+main.ath-page.rc .season table th.c-rec { width: 6.6rem; }
+/* the race's track 5K, small and muted under its rating */
+main.ath-page.rc .season td.c-rt .fk-sub { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); font-weight: 400; white-space: nowrap; }
+/* the date under the meet: phones only (the date column is hidden there) */
+main.ath-page.rc .season td.meet-cell .meet-date { display: none; }
 main.ath-page.rc .season td.res-cell .res-ev { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); }
+/* ★ ON TRACK THE EVENT IS WHAT THE ROW IS (owner, 2026-11-10): "3200m" in
+     ink under the time, the round after it stays grey */
+main.ath-page.rc #tf .season td.res-cell .res-ev { color: var(--ink); font-weight: 500; font-size: .85rem; }
+main.ath-page.rc #tf .season td.res-cell .res-rnd { color: var(--muted); font-weight: 400; }
+/* ★ A TRACK MEET'S NAME MAY TAKE TWO LINES (owner, 2026-11-10: "for track
+     you can make it up to two lines"): a track row is already three lines
+     (time, event, round), so the second costs nothing. Cross country keeps
+     its one line and ellipsis; both show the whole name on hover (title). */
+main.ath-page.rc #tf .season table td.meet-cell { white-space: normal; overflow: visible; text-overflow: clip; }
+main.ath-page.rc #tf .season table td.meet-cell > a,
+main.ath-page.rc #tf .season table td.meet-cell > .meet-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* ⚠ AND THE MEET NEVER SQUEEZED TO A LETTER (owner, 2026-10-11: "meet names
      are all cut off. Entirely."). The sized columns sum to ~38.5rem (615 px) (border-box,
      athlete-charts.css), less than before the 5K and the ⓘ came in; the
@@ -985,7 +998,13 @@ main.ath-page.rc .tf-chart-pick .seg-btn { cursor: pointer; font: inherit; font-
   main.ath-page.rc .rc-tbar-end { margin-left: 0; }
   /* a season table scrolls inside its season block, never the page */
   main.ath-page.rc .season { overflow-x: auto; }
-  main.ath-page.rc .season table { min-width: 640px; }
+  /* ★ THE RATING ON SCREEN (owner, 2026-11-10): no date column, the date
+       under the meet, the meet held to 11rem -- Meet, Result and Rating
+       fit a 390px phone; Place, Course and Records are a swipe away */
+  main.ath-page.rc .season table { min-width: 560px; }
+  main.ath-page.rc .season table .c-date { display: none; }
+  main.ath-page.rc .season table th.c-meet { width: 11rem; }
+  main.ath-page.rc .season td.meet-cell .meet-date { display: block; font-size: .8rem; line-height: 1.2; color: var(--muted); }
   /* B on a phone: Follow stays at the name's right (follow.js stacks it
      under the name elsewhere); the rating takes the strip's first row, the
      other three share the second */
@@ -1091,3 +1110,22 @@ main.rc .vb-wrap { max-width: 100%; overflow-x: auto; }
   main.rc.rc-side-away .side-fold-rc { display: none; }
 }
 
+
+
+/* ★ THE SEASON FOLDS (owner, 2026-11-10: "I like the dropdown now"). Each
+   season is a <details>; the arrow sits in front of the year, the race count
+   after it, and the whole heading is the control. A closed season keeps its
+   team and grade line and adds its best race (.sb-best), so it still says
+   what season it was. */
+main.ath-page.rc details.season > summary { list-style: none; cursor: pointer; }
+main.ath-page.rc details.season > summary::-webkit-details-marker { display: none; }
+main.ath-page.rc details.season .sh-left { display: inline-flex; align-items: baseline; }
+main.ath-page.rc details.season .sh-tog { display: inline-block; width: 1.1rem; font-size: .75rem; color: var(--muted); }
+main.ath-page.rc details.season .sh-tog::before { content: "\25B8"; }
+main.ath-page.rc details.season[open] .sh-tog::before { content: "\25BE"; }
+main.ath-page.rc details.season .sh-n { margin-left: .45rem; font-size: .85rem; font-weight: 400; color: var(--muted); }
+main.ath-page.rc details.season .sb-best { color: var(--muted); }
+main.ath-page.rc details.season .sb-best b { color: var(--ink); font-weight: 600; }
+main.ath-page.rc details.season[open] .sb-best { display: none; }
+main.ath-page.rc details.season:not([open]) .season-meta { margin-bottom: .9rem; }
+main.ath-page.rc details.season > summary:hover .season-head { color: var(--link); }

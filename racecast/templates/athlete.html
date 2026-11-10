@@ -166,40 +166,57 @@
 {%- endmacro %}
 
 {# The shared rating-value + toggle macros; scale-view.js does the swap. #}
-{% from "_scale.html" import rv, fk_th, fk, fk_inline %}
+{% from "_scale.html" import rv, fk_th, fk, fk_inline, fk_sub %}
 {% from "_explain.html" import rating_i, difficulty_i, dv %}
 
-{% macro season_block(year, sport, season) %}
-    <div class="season" id="{{ year }}-{{ sport }}">
+{% macro season_block(year, sport, season, open=True) %}
+    {# ★ EVERY SEASON FOLDS; ONLY THE NEWEST STARTS OPEN (owner, 2026-11-10:
+       the dropdown with the arrow in front of the year). A <details>, so the
+       heading is the control with no script, and the browser's find-in-page
+       opens a closed season to show a match. A closed season still says
+       whose it was: team, grade, and its best race (.sb-best, shown only
+       while closed). race-page.js opens the season holding a linked row or
+       a #<year>-<sport> anchor. #}
+    {% set _rated = season.races|rejectattr('rank_outlier')|selectattr('hs_rating')|list %}
+    {% set _best = (_rated|sort(attribute='hs_rating', reverse=True)|first) if _rated else none %}
+    <details class="season" id="{{ year }}-{{ sport }}"{% if open %} open{% endif %}>
+        <summary class="season-sum">
         {# The rating is IN the heading, not buried in the meta line below it:
            it is the number the section is about, and the sidebar links here
            showing the same figure. #}
         <h3 class="season-head">
-            {{ year }} {{ sport|sport_short }}
-            <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}{{ fk_inline(five_k(season.rating, season.pool, sport, season.rating_hs)) }}</span>
+            <span class="sh-left"><span class="sh-tog" aria-hidden="true"></span>{{ year }} {{ sport|sport_short }}<span class="sh-n">{{ season.races|length }} race{{ "" if season.races|length == 1 else "s" }}</span></span>
+            {# ≈ the track 5K for every level (owner, 2026-11-10: "make
+               everything 5k equivalent"): five_k_hs reads the HS-equivalent #}
+            <span class="season-rating">{{ rv(season.rating, season.rating_hs) }}{{ fk_inline(five_k_hs(season.rating, season.pool, sport, season.rating_hs)) }}</span>
         </h3>
-        <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %}{% if season.pro_verdict or (season.pool and (season.pool|string).startswith('pro_')) %} · Professional{% elif season.grade %}{% set gl = season.grade|grade_label(season.pool) %} · {{ gl if gl.startswith("Class of") else "Grade " ~ gl }}{% if season.grade_note %}<span class="flag season-note" tabindex="0" data-title="Grade from the meet results" data-blurb="{{ season.grade_note }}" aria-label="Grade from the meet results. {{ season.grade_note }}">&#10033;</span>{% endif %}{% endif %}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}</p>
+        <p class="season-meta">{% if season.school|is_team %}{{ crest(season.school, season.state, pool=season.pool) }}<a href="{{ school_href(season.school, season.state, pool=season.pool) }}">{{ season.school|school_label_for(season.pool, season.state) }}</a>{% else %}{{ season.school|school_label_for(season.pool, season.state) }}{% endif %}{% if season.pro_verdict or (season.pool and (season.pool|string).startswith('pro_')) %} · Professional{% elif season.grade %}{% set gl = season.grade|grade_label(season.pool) %} · {{ gl if gl.startswith("Class of") else "Grade " ~ gl }}{% if season.grade_note %}<span class="flag season-note" tabindex="0" data-title="Grade from the meet results" data-blurb="{{ season.grade_note }}" aria-label="Grade from the meet results. {{ season.grade_note }}">&#10033;</span>{% endif %}{% endif %}{% if gender_mixed and season.gender %} · {{ "Boys" if season.gender == "m" else "Girls" }}{% endif %}{% if season.board_note %}{{ board_note(season.board_note) }}{% endif %}{% if _best %}<span class="sb-best"> · best race <b>{{ rv(_best.speed_rating, _best.hs_rating) }}</b> at {{ (_best.meet or "a race")|meet_clean }}{% if _best.date %}, {{ _best.date|mdy|replace(", " ~ (_best.date|string)[:4], "") }}{% endif %}</span>{% endif %}</p>
+        </summary>
         <table>
             <thead>
+                {# ★ THE RATING BESIDE THE TIME (owner, 2026-11-10). On a phone
+                   the rating sat past the screen's edge in every table; next to
+                   the result, with the ≈5K under it the way the distance sits
+                   under the time, it is on screen from the first row. The 5K
+                   column it replaces is that sub-line now. Columns carry
+                   classes (race.css sizes them by class, not by position). #}
+                {# A track season whose every course is 0.0% (outdoor) drops the
+                   Course column; one with an indoor race keeps it, blank on the
+                   outdoor rows (owner, 2026-11-10: "indoor does have difficulty") #}
+                {% set _show_course = sport == 'XC' or season.races|selectattr('difficulty', 'ne', none)|map(attribute='difficulty')|map('diffpct', 'TF')|reject('in', ['0.0%', ' - '])|list|length > 0 %}
                 <tr>
-                    <th>Date</th>
-                    <th>Meet</th>
+                    <th class="c-date">Date</th>
+                    <th class="c-meet">Meet</th>
                     {# ★ THE EVENT UNDER THE RESULT, NOT ITS OWN COLUMN (owner,
                        2026-10-11: "cluttered"): "25:35.4 / 8000m" reads as one
                        fact, and the column went to the meet's name #}
-                    <th>Result</th>
-                    <th>Place</th>
-                    <th class="no-break">Rating{{ rating_i() }}</th>
-                    {# ★ THE 5K COLUMN (owner, 2026-10-10): every race, XC
-                       or track, as the track 5K its rating is worth (3200 m
-                       in middle school). Kept on phones -- the season block
-                       scrolls inside itself, never the page. #}
-                    {% set fk_label = five_k_label(season.races|map(attribute="pool")) %}
-                    {{ fk_th(fk_label, "fk-long" if (fk_label or "5K")|length > 3 else "") }}
+                    <th class="c-res">Result</th>
+                    <th class="c-rt no-break">Rating{{ rating_i() }}</th>
+                    <th class="c-pl">Place</th>
                     {# ★ COURSE, IN A WORD; RECORDS, THE THREE A PARENT
                        KNOWS (header redesign B, 2026-10-10). See the cells. #}
-                    <th>Course</th>
-                    <th>Records</th>
+                    {% if _show_course %}<th class="c-co">Course</th>{% endif %}
+                    <th class="c-rec">Records</th>
                 </tr>
             </thead>
             <tbody>
@@ -209,7 +226,7 @@
                        2026-10-10): a race page links #race-<its own id>,
                        which may be one of these; link-flash.js and
                        race-page.js resolve the anchor to this row. #}
-                    <td class="no-break">{% for a in race.alias_ids or [] %}<span id="race-{{ a }}" class="race-alias" hidden></span>{% endfor %}{{ race.date|mdy }}</td>
+                    <td class="c-date no-break">{% for a in race.alias_ids or [] %}<span id="race-{{ a }}" class="race-alias" hidden></span>{% endfor %}{{ race.date|mdy }}</td>
                     <td class="meet-cell">
                         {# EVERY race with a meet_id links somewhere real:
                            the race page when the division ids exist, the
@@ -222,22 +239,22 @@
                                feed holds is the bare URL plus #r<id>, one edge copy per
                                race instead of one per finisher #}
                             <a href="/race/xc/{{ race.meet_id }}/{{ race.div_id }}{% if race.feed_pin is sameas false %}#r{% else %}?r={% endif %}{{ race.result_id }}"
-                               title="{{ race.meet or 'Race results' }}">{{ meet_logo(race.meet) }}{{ race.meet or 'Race results →' }}</a>
+                               title="{{ race.meet or 'Race results' }}">{{ meet_logo(race.meet) }}{{ race.meet|meet_clean or 'Race results →' }}</a>
                         {% elif race.sport == 'TF' and race.meet_id and race.event_id is not none and race.div_id is not none %}
                             {# ?r= pins the page to THIS row's source: the
                                feeds' id spaces collide, and a bare URL can
                                resolve to the other feed's event #}
                             <a href="/race/tf/{{ race.meet_id }}/{{ race.event_id }}/{{ race.div_id }}{% if race.feed_pin is sameas false %}#r{% else %}?r={% endif %}{{ race.result_id }}"
-                               title="{{ race.meet or 'Race results' }}">{{ race.meet or 'Race results →' }}</a>
+                               title="{{ race.meet or 'Race results' }}">{{ race.meet|meet_clean or 'Race results →' }}</a>
                         {% elif race.meet_id %}
                             {# ?r= ON BOTH SPORTS NOW. The XC meet page pins on it too -- the
                                anet and tfrrs id spaces collide on 15,096 XC meet_ids,
                                and without the pin the bigger feed's meet always won
                                (owner, 2026-09-17: races that 404). #}
                             <a href="/meet/{{ 'xc' if race.sport == 'XC' else 'tf' }}/{{ race.meet_id }}{% if race.sport == 'XC' and race.feed_pin is sameas false %}#r{% else %}?r={% endif %}{{ race.result_id }}"
-                               title="{{ race.meet or 'Meet' }}">{{ race.meet or 'Meet results →' }}</a>
+                               title="{{ race.meet or 'Meet' }}">{{ race.meet|meet_clean or 'Meet results →' }}</a>
                         {% else %}
-                            <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet or " - " }}</span>
+                            <span class="meet-name" title="{{ race.meet or '' }}">{{ race.meet|meet_clean or " - " }}</span>
                         {% endif %}
                         {# The course, under the meet, on XC rows whose
                            course is not already the name shown (issue
@@ -246,13 +263,24 @@
                             <a class="meet-course" href="/course/{{ race.course|urlencode }}"
                                title="{{ race.course }}">{{ race.course }}</a>
                         {% endif %}
+                        {# the date, under the meet on a phone, where the
+                           date column is hidden to keep the rating on screen #}
+                        <span class="meet-date">{{ race.date|mdy }}</span>
 
                     </td>
 
                     {# The round under the event: a prelim and a final are two
                        races at one distance, and the page used to print the
                        same "1600m" twice with no way to tell them apart. #}
-                    <td class="res-cell">{{ race.result }}<span class="res-ev">{{ race.event|event_label }}{% set _rnd = race.round|round_label %}{% if _rnd and _rnd != (race.event|event_label) %} · {{ _rnd }}{% endif %}</span></td>
+                    <td class="res-cell">{{ race.result }}<span class="res-ev">{{ race.event|event_label }}{% set _rnd = race.round|round_label %}{% if _rnd and _rnd != (race.event|event_label) %}<span class="res-rnd"> · {{ _rnd }}</span>{% endif %}</span></td>
+                    {# ★ A SLOW OUTLIER KEEPS ITS ROW AND ITS NUMBER, greyed
+                       (owner, 2026-09-29, Moretta's easy long run): it
+                       counts toward no season number. #}
+                    {% if race.rank_outlier == 'slow' %}
+                    <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}" class="c-rt rating--uncounted" title="not counted: far off this athlete's neighbouring races">{{ rv(race.speed_rating, race.hs_rating) }}{{ fk_sub(five_k_hs(race.speed_rating, race.pool, race.sport, race.hs_rating)) }}</td>
+                    {% else %}
+                    <td class="c-rt" data-rx="{{ race.sport|lower }}:{{ race.result_id }}">{{ rv(race.speed_rating, race.hs_rating) }}{{ fk_sub(five_k_hs(race.speed_rating, race.pool, race.sport, race.hs_rating)) }}</td>
+                    {% endif %}
                     {# Derived within the division, ties share a place. No
                        place for field events or DNS/DNF sentinel rows.
                        The team place always shows (owner's call:
@@ -265,19 +293,10 @@
                             {%- endif %}
                         {%- else -%} - {%- endif -%}
                     </td>
-                    {# ★ A SLOW OUTLIER KEEPS ITS ROW AND ITS NUMBER, greyed
-                       (owner, 2026-09-29, Moretta's easy long run): it
-                       counts toward no season number. #}
-                    {% if race.rank_outlier == 'slow' %}
-                    <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}" class="rating--uncounted" title="not counted: far off this athlete's neighbouring races">{{ rv(race.speed_rating, race.hs_rating) }}</td>
-                    {% else %}
-                    <td data-rx="{{ race.sport|lower }}:{{ race.result_id }}">{{ rv(race.speed_rating, race.hs_rating) }}</td>
-                    {% endif %}
-                    {{ fk(race.speed_rating, race.pool, race.sport, race.hs_rating, fk_label) }}
                     {# ! THE COURSE CELL IS THE DIFFICULTY %, AS IT WAS (owner,
                        2026-10-11). Header B's one word -- Fast / Typical / Hard
                        against "a typical cross country course" -- is gone. #}
-                    <td>{{ dv(race.difficulty, race.sport, race.day_effect) }}</td>
+                    {% if _show_course %}<td class="c-co">{% if race.sport == 'TF' and (race.difficulty is none or race.difficulty|diffpct('TF') == '0.0%') %}{% else %}{{ dv(race.difficulty, race.sport, race.day_effect) }}{% endif %}</td>{% endif %}
                     {# ★ RECORDS: PR, SR AND CR ONLY (header redesign B,
                        2026-10-10). The rating records (R, RSR) and the course
                        season record (CSR) were three more badges and a legend
@@ -302,8 +321,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        
-    </div>
+    </details>
 {% endmacro %}
 
 {# ★ THE RACE PAGE'S SHAPE (owner, 2026-10-10). Header: kicker, name, one
@@ -372,7 +390,7 @@
         <div>
             <span class="s-lab">Best race</span>
             <span class="s-val"><a href="#race-{{ alltime.rating.result_id }}">{{ rv(alltime.rating.speed_rating, alltime.rating.hs_rating) }}</a></span>
-            <span class="s-sub s-under">{{ alltime.rating.sport|sport_name }}{% if alltime.rating.date %}, {{ alltime.rating.date|mdy }}{% endif %}{{ fk_inline(five_k(alltime.rating.speed_rating, alltime.rating.pool, alltime.rating.sport, alltime.rating.hs_rating)) }}</span>
+            <span class="s-sub s-under">{{ alltime.rating.sport|sport_name }}{% if alltime.rating.date %}, {{ alltime.rating.date|mdy }}{% endif %}{{ fk_inline(five_k_hs(alltime.rating.speed_rating, alltime.rating.pool, alltime.rating.sport, alltime.rating.hs_rating)) }}</span>
         </div>
         {% endif %}
         {# Guarded like the others: a caller that does not set this should
@@ -398,7 +416,7 @@
        omits the whole line when nothing real is rankable. #}
     {% if rank_line %}
     <p class="rank-line">
-        <span class="rl-lab">Ranked</span>
+        <span class="rl-lab">Ranked{% if athlete.grade_rank %}<span class="rl-scope">, all grades</span>{% endif %}</span>
         {%- for e in rank_line %}
             {%- if not loop.first %}<span class="sep">·</span>{% endif -%}
             {%- if e.wip -%}
@@ -479,9 +497,18 @@
        anchor links of the sport-toggle; the whole-career chart is the
        third. The labels are short so the bar stays one line and the first
        table starts level with the side card. #}
+    {# ★ THE PAGE OPENS ON THE SPORT RACED LAST (owner, 2026-11-10: "yes
+       100%"): Fisher and Tuohy opened on cross country from 2018 and 2023
+       though both race track now. Each sport's newest season leads its
+       list and its newest race leads that season, so the two first races
+       say which is newer; a tie goes to cross country, as before. The tab
+       keeps its place in the bar; data-default tells race-page.js. #}
+    {% set _xc_last = xc_seasons[0][1].races[0].date if xc_seasons and xc_seasons[0][1].races else none %}
+    {% set _tf_last = tf_seasons[0][1].races[0].date if tf_seasons and tf_seasons[0][1].races else none %}
+    {% set _lead = 'tf' if (tf_seasons and (not xc_seasons or (_tf_last and (not _xc_last or (_tf_last|string) > (_xc_last|string))))) else 'xc' %}
     <nav class="seg rc-tabs" role="tablist">
-      {% if xc_seasons %}<a class="seg-btn is-on" href="#xc" data-tab="xc">{{ "XC"|sport_name }}<span class="n">{{ n_xc }}</span></a>{% endif %}
-      {% if tf_seasons %}<a class="seg-btn{% if not xc_seasons %} is-on{% endif %}" href="#tf" data-tab="tf">{{ "TF"|sport_name }}<span class="n">{{ n_tf }}</span></a>{% endif %}
+      {% if xc_seasons %}<a class="seg-btn{% if _lead == 'xc' %} is-on{% endif %}" href="#xc" data-tab="xc"{% if _lead == 'xc' %} data-default{% endif %}>{{ "XC"|sport_name }}<span class="n">{{ n_xc }}</span></a>{% endif %}
+      {% if tf_seasons %}<a class="seg-btn{% if _lead == 'tf' %} is-on{% endif %}" href="#tf" data-tab="tf"{% if _lead == 'tf' %} data-default{% endif %}>{{ "TF"|sport_name }}<span class="n">{{ n_tf }}</span></a>{% endif %}
       <a class="seg-btn{% if not xc_seasons and not tf_seasons %} is-on{% endif %}" href="#career" data-tab="career">Career</a>
     </nav>
     {# ★ NO SCALE SWITCH ON AN ATHLETE PAGE (owner, 2026-10-10): one
@@ -519,7 +546,7 @@
         {% endfor %}
     </nav>
     {% for (year, sport), season in xc_seasons %}
-        {{ season_block(year, sport, season) }}
+        {{ season_block(year, sport, season, open=loop.first) }}
     {% endfor %}
     {# the badges spelled out ONCE per tab, under its last season (owner,
        2026-10-11: one legend under every season was clutter) #}
@@ -559,7 +586,7 @@
         {% endfor %}
     </nav>
     {% for (year, sport), season in tf_seasons %}
-        {{ season_block(year, sport, season) }}
+        {{ season_block(year, sport, season, open=loop.first) }}
     {% endfor %}
     {# the badges spelled out ONCE per tab, under its last season (owner,
        2026-10-11: one legend under every season was clutter) #}
@@ -612,7 +639,7 @@
     <tbody>
     {% if bucket.rating %}
     <tr class="is-rating"><td class="tn">Best rating</td>
-      <td class="n tpts"><a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a>{{ fk_inline(five_k(bucket.rating.speed_rating, bucket.rating.pool, sport, bucket.rating.hs_rating)) }}</td></tr>
+      <td class="n tpts"><a href="#race-{{ bucket.rating.result_id }}">{{ rv(bucket.rating.speed_rating, bucket.rating.hs_rating) }}</a>{{ fk_inline(five_k_hs(bucket.rating.speed_rating, bucket.rating.pool, sport, bucket.rating.hs_rating)) }}</td></tr>
     {% endif %}
     {% if bucket.avg_rating %}
     <tr class="is-rating"><td class="tn">Average rating</td>
@@ -648,7 +675,7 @@
     <tbody>
     <tr class="ath-season-h">
       <td class="tn"><a href="#{{ year }}-{{ sp }}">{{ year }} {{ sp|sport_short }}</a></td>
-      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}{{ fk_inline(five_k(bests.season_rating, bests.season_pool, sp, bests.season_rating_hs)) }}
+      <td class="n tpts">{{ rv(bests.season_rating, bests.season_rating_hs) }}{{ fk_inline(five_k_hs(bests.season_rating, bests.season_pool, sp, bests.season_rating_hs)) }}
         {% if bests.rating %}<span class="ath-best">best <a href="#race-{{ bests.rating.result_id }}">{{ rv(bests.rating.speed_rating, bests.rating.hs_rating) }}</a></span>{% endif %}</td>
     </tr>
     {% for event, race in bests.events.items() %}
