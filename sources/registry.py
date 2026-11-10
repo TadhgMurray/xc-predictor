@@ -59,15 +59,15 @@ CUSTOM_ON = {"heartland-timing", "y-timing", "extra-mile-timing", "crescent-city
              "sub5-track-club-results-hub"}
 FLOSPORTS = {"meetpro", "milesplit"}
 
-# terms that forbid bots and scrapers: never fetched, whatever else they post
-BLOCKED_NAMES = re.compile(r"pttiming|primetime timing|leone timing", re.I)
-# ★ THE HOSTS NOTHING FETCHES (owner, 2026-10-23, PLAN-MULTISOURCE.md "What
-#   counts as off limits"): terms that forbid bots (PTTiming and its white
-#   labels, Leone, TimerHub), and results a robots.txt bars for every
-#   crawler (ItsYourRace's results, eccathletics.org's results pages).
-#   sources.timers refuses a url on one of these before any request.
-OFF_LIMITS_HOSTS = re.compile(r"(^|\.)(pttiming\.com|primetimetiming\.com|leonetiming\.com|"
-                              r"timerhub\.com|itsyourrace\.com|eccathletics\.org)$", re.I)
+# ★ NOTHING IS OFF LIMITS BY NAME OR HOST NOW (owner, 2026-11-10: PTTiming /
+#   PrimeTime, Leone, TimerHub, ItsYourRace and eccathletics.org told him
+#   scraping is fine -- "yes" to switching them on). Until then their terms
+#   or robots.txt kept them out (owner, 2026-10-23, PLAN-MULTISOURCE.md "What
+#   counts as off limits"). A robots.txt that bars every crawler is still
+#   honoured by sources.fetch (ItsYourRace's and eccathletics.org's results
+#   do), and a pass's "off limits" note still blocks its source.
+BLOCKED_NAMES = re.compile(r"(?!)")          # matches nothing
+OFF_LIMITS_HOSTS = re.compile(r"(?!)")       # matches nothing
 
 
 def offLimits(url):
@@ -150,8 +150,7 @@ def kindsOf(platform, name="", urls="", notes=""):
     #   scraping it is fine"): terms that forbid bots, robots.txt barring the
     #   results for every crawler, or a bot challenge -- what a pass marks
     #   "off limits" in its notes
-    if BLOCKED_NAMES.search(name or "") or "pttiming" in p or "off limits" in (notes or "").lower() \
-            or "off limits" in p:
+    if BLOCKED_NAMES.search(name or "") or "off limits" in (notes or "").lower() or "off limits" in p:
         return ["blocked"]
     if "arrowliveresults" in p or "arrow live" in p or "arrowliveresults" in u:
         kinds.append("arrow")

@@ -707,9 +707,39 @@ def _all(a, conn):
             got.append((mt["url"], lm, why))
         return src, got, note
 
+    # ★ PRIMETIME TIMING, THE SAME WAY (owner, 2026-11-10: off limits until
+    #   then; sources/pttiming.py): WI / MO state meets, WIAA and IHSA
+    #   sectionals, Big Ten / SEC / Big 12. XCP_PTTIMING=0 leaves it out.
+    async def pttimingJob():
+        from types import SimpleNamespace
+        from sources import pttiming
+        src = SimpleNamespace(slug=pttiming.SLUG)
+        if (os.environ.get("XCP_PTTIMING", "1") == "0" or (a.only and pttiming.SLUG not in set(a.only))
+                or pttiming.SLUG not in slugs):
+            return src, [], "off"
+        try:
+            evs, note = await pttiming.discover(fetcher, since, int(os.environ.get("XCP_PTTIMING_PER_RUN", "15")),
+                                                known)
+        except Exception as exc:                                    # noqa: BLE001
+            return src, [], f"discover failed: {type(exc).__name__}: {exc}"
+        got = []
+        for ev in evs:
+            if deadline and _now() > deadline:
+                note += f"; budget spent, {len(evs) - len(got)} meets wait for the next run"
+                break
+            try:
+                lm, why = await pttiming.readMeet(fetcher, ev, RETRY_AGE if ev["url"] in retry else MAX_AGE)
+                if lm is not None and _recent(lm.date) and ev["url"] not in retry:
+                    lm, why = await pttiming.readMeet(fetcher, ev, RECENT_AGE)
+            except Exception as exc:                                # noqa: BLE001
+                lm, why = None, f"{type(exc).__name__}: {exc}"
+            got.append((ev["url"], lm, why))
+        return src, got, note
+
     async def go(f):
         for fut in asyncio.as_completed([one(s) for s in srcs]
-                                        + [arrowJob(), raceRosterJob(), iresultsJob(), milesplitJob()]):
+                                        + [arrowJob(), raceRosterJob(), iresultsJob(), milesplitJob(),
+                                           pttimingJob()]):
             report(*(await fut), f)
 
     with open(out, "w", encoding="utf-8") as f:
