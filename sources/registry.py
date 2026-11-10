@@ -53,7 +53,10 @@ INDEPENDENT = {"hytek", "custom", "arrow", "raceroster"}
 #   HTML. Switched on by name; the rest need their own adapters or post
 #   only to a feed. (Arrow and Race Roster timers are read by
 #   sources/arrow.py and sources/raceroster.py, not one by one.)
-CUSTOM_ON = {"heartland-timing", "y-timing", "extra-mile-timing", "crescent-city-timing-corp"}
+#   The same dry run over the 123 `unknown` sources found one more: Sub5
+#   Track Club's results hub (CO).
+CUSTOM_ON = {"heartland-timing", "y-timing", "extra-mile-timing", "crescent-city-timing-corp",
+             "sub5-track-club-results-hub"}
 FLOSPORTS = {"meetpro", "milesplit"}
 
 # terms that forbid bots and scrapers: never fetched, whatever else they post
