@@ -1171,7 +1171,7 @@ import level_conflict as LC                                     # noqa: E402
 #   runner's gender is the copy. The runner's gender is the better-evidenced
 #   of the two rows' persons. A DNF placeholder never pairs (60 s to 4 h).
 #   Read-only listing first: scripts/cross_division_dupes.py.
-def dupCrossGenderSql(table, sport):
+def _dupCrossGenderOneQuery(table, sport):
     if sport != "XC":
         return f"SELECT result_id FROM {table} WHERE false"
     key = "lower(regexp_replace(r.athlete_name, '[^A-Za-z]+', '', 'g'))"
@@ -1219,6 +1219,106 @@ def dupCrossGenderSql(table, sport):
           AND  fx.g <> g.g
     """
 
+
+
+# ★ dup_cross_gender IN STAGES (2026-11-10; run 20261108_155220: 927 s).
+#   The server's plan (--explain XC:dup_cross_gender) read results in full
+#   three times -- the (meet, day, name, time) groups, a parallel seq scan of
+#   43M rows with the name regexp run again to join back to them, and a seq
+#   scan for the field genders -- and person_gender (17.6M) twice, to serve a
+#   few thousand rows. Staged (prepareCrossGender): the groups are the one
+#   full pass, as before; their rows, the fields' genders and the runners'
+#   genders are index lookups (results by meet_id, person_gender by its key)
+#   with nested loops on, every table analysed; the final self-join reads the
+#   staged tables with the session's setting. The same rows as
+#   _dupCrossGenderOneQuery (tests/test_twin_cross_gender_staged.py).
+def _crossGenderParts(table):
+    key = "lower(regexp_replace(r.athlete_name, '[^A-Za-z]+', '', 'g'))"
+    return [
+        ("k", f"""
+            SELECT r.source, r.meet_id, left(r.date, 10) AS day, {key} AS nk,
+                   round(r.time_seconds::numeric, 1) AS rt
+            FROM   {table} r
+            WHERE  r.time_seconds BETWEEN 60 AND 14400
+              AND  NULLIF(btrim(r.athlete_name), '') IS NOT NULL
+            GROUP  BY 1, 2, 3, 4, 5
+            HAVING count(DISTINCT r.div_id) = 2""", False),
+        ("rows", f"""
+            SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id, k.day, k.nk, k.rt
+            FROM   _cg_k k
+            JOIN   {table} r ON k.source = r.source AND k.meet_id = r.meet_id
+                   AND left(r.date, 10) = k.day AND {key} = k.nk
+                   AND round(r.time_seconds::numeric, 1) = k.rt""", True),
+        ("fld", f"""
+            SELECT f.source, f.meet_id, f.div_id,
+                   CASE WHEN count(*) FILTER (WHERE pg.gender = 'M') >= 0.7 * count(pg.gender)
+                             AND count(pg.gender) >= 5 THEN 'M'
+                        WHEN count(*) FILTER (WHERE pg.gender = 'F') >= 0.7 * count(pg.gender)
+                             AND count(pg.gender) >= 5 THEN 'F' END AS g
+            FROM   {table} f
+            JOIN   (SELECT DISTINCT source, meet_id, div_id FROM _cg_rows) d
+                   ON d.source = f.source AND d.meet_id = f.meet_id AND d.div_id = f.div_id
+            LEFT   JOIN person_gender pg ON pg.person_id = f.person_id
+            GROUP  BY 1, 2, 3""", True),
+        ("runner", """
+            SELECT DISTINCT ON (x.source, x.meet_id, x.day, x.nk, x.rt)
+                   x.source, x.meet_id, x.day, x.nk, x.rt, pg.gender AS g
+            FROM   _cg_rows x JOIN person_gender pg ON pg.person_id = x.person_id
+            WHERE  pg.gender IN ('M', 'F')
+            ORDER  BY x.source, x.meet_id, x.day, x.nk, x.rt,
+                      COALESCE(pg.n_m, 0) + COALESCE(pg.n_f, 0) DESC""", True),
+    ]
+
+
+def prepareCrossGender(cur, table, sport, explain=False):
+    """Stage dup_cross_gender into _cg_<part> temp tables (XC only), each
+    analysed; the session's enable_nestloop is put back after. explain=True
+    prints each part's plan and stages empty tables."""
+    if sport != "XC":
+        return
+    cur.execute("SHOW enable_nestloop")
+    was = cur.fetchone()[0]
+    t0 = time.time()
+    try:
+        for name, sql, loops in _crossGenderParts(table):
+            cur.execute(f"SET enable_nestloop = {'on' if loops else was}")
+            tbl = f"_cg_{name}"
+            cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+            if explain:
+                cur.execute(f"EXPLAIN {sql}")
+                print(f"-- dup_cross_gender stage {tbl} (nested loops {'on' if loops else was}):")
+                for (line,) in cur.fetchall():
+                    print(line)
+                cur.execute(f"CREATE TEMP TABLE {tbl} AS {sql} WITH NO DATA")
+            else:
+                cur.execute(f"CREATE TEMP TABLE {tbl} AS {sql}")
+            cur.execute(f"ANALYZE {tbl}")
+    finally:
+        cur.execute(f"SET enable_nestloop = {was}")
+    if not explain:
+        cur.execute("SELECT (SELECT count(*) FROM _cg_k), (SELECT count(*) FROM _cg_rows)")
+        k, r = cur.fetchone()
+        print(f"  [{sport}] dup_cross_gender staged: {k:,} name-time groups in two divisions, "
+              f"{r:,} rows ({time.time() - t0:.0f}s)", flush=True)
+
+
+def dupCrossGenderSql(table, sport):
+    """The final self-join over the staged tables (prepareCrossGender); see
+    _dupCrossGenderOneQuery for the rule."""
+    if sport != "XC":
+        return f"SELECT result_id FROM {table} WHERE false"
+    return """
+        SELECT x.result_id
+        FROM   _cg_rows x
+        JOIN   _cg_fld fx ON fx.source = x.source AND fx.meet_id = x.meet_id AND fx.div_id = x.div_id
+        JOIN   _cg_rows y ON y.source = x.source AND y.meet_id = x.meet_id AND y.day = x.day
+                     AND y.nk = x.nk AND y.rt = x.rt AND y.div_id <> x.div_id
+        JOIN   _cg_fld fy ON fy.source = y.source AND fy.meet_id = y.meet_id AND fy.div_id = y.div_id
+        JOIN   _cg_runner g ON g.source = x.source AND g.meet_id = x.meet_id AND g.day = x.day
+                       AND g.nk = x.nk AND g.rt = x.rt
+        WHERE  fx.g IS NOT NULL AND fy.g IS NOT NULL AND fx.g <> fy.g
+          AND  fx.g <> g.g
+    """
 
 # ★ A SPLIT, WHATEVER ITS MEET IS CALLED (owner, 2026-11-05: "why does the
 #   nightly keep letting this happen"). The same person in two meets on one
@@ -1332,6 +1432,7 @@ def prepareRule(cur, table, sport, reason, explain=False):
         if cur.fetchone()[0] is None:
             cur.execute("CREATE TEMP TABLE IF NOT EXISTS person_gender "
                         "(person_id bigint, gender text, n_m int, n_f int, split boolean)")
+        prepareCrossGender(cur, table, sport, explain=explain)
     elif reason == LC.REASON:
         LC.prepare(cur, table, sport, explain=explain)
 
