@@ -2623,6 +2623,14 @@ def athlete(person_id):
         print(f"athlete {person_id}: outlier marks skipped: "
               f"{type(exc).__name__}: {exc}", flush=True)
 
+    # ★ ONLY THE BADGES THAT SAY SOMETHING (owner, 2026-11-10: "sure"). A
+    #   freshman's first two races wore five badges each, because a first
+    #   race at a distance is a PR and an SR by definition, a first run on a
+    #   course a CR, a first rated race an R and an RSR. The page shows a
+    #   badge only when it adds something (quietAutomaticFlags).
+    quietAutomaticFlags(races, by_distance, by_course, by_season_d, by_season,
+                        time_of, rating_of)
+
     # 5. group/enrich/sort
     seasons = group_into_seasons(races)
     # ★ THE SEASON NUMBER IS THE BOARD'S (owner, 2026-09-05): athlete_season
@@ -4302,6 +4310,57 @@ def _courseKey(r):
       prints under the meet is the venue; a row without one keeps its meet."""
     course = " ".join(str(r.get("course") or "").split()).lower()
     return (course or r.get("meet"), r.get("event"))
+
+
+def _firstIds(races, key_fn, value_fn):
+    """The earliest race with a value in each group: its record is automatic."""
+    seen, first = set(), set()
+    for race in sorted(races, key=lambda r: (r["date"], r["result_id"])):
+        if value_fn(race) is None:
+            continue
+        k = key_fn(race)
+        if k not in seen:
+            seen.add(k)
+            first.add(race["result_id"])
+    return first
+
+
+def quietAutomaticFlags(races, by_distance, by_course, by_season_d, by_season,
+                        time_of, rating_of):
+    """Turn off the record badges a race earns by default (owner, 2026-11-10).
+
+      * the first race at a distance:     no PR, no SR
+      * the first race at a distance in a season:  no SR
+      * the first run on a course:        no CR
+      * the first rated race:             no R
+      * the first rated race of a season: no RSR
+      * a PR already says SR, an R already says RSR: no SR beside a PR,
+        no RSR beside an R
+
+    Display only: the race's records are unchanged (the header's best race,
+    the side cards and the boards read their own); this clears the is_*
+    keys the season tables print, after every other reader of them."""
+    first_dist = _firstIds(races, by_distance, time_of)
+    first_season_d = _firstIds(races, by_season_d, time_of)
+    first_course = _firstIds(races, by_course, time_of)
+    first_rated = _firstIds(races, lambda r: "ALL", rating_of)
+    first_season_r = _firstIds(races, by_season, rating_of)
+    for race in races:
+        rid = race["result_id"]
+        if rid in first_dist:
+            race["is_pr"] = race["is_star_pr"] = False
+        if rid in first_season_d:
+            race["is_sr"] = False
+        if rid in first_course:
+            race["is_course_pr"] = race["is_star_course"] = False
+        if rid in first_rated:
+            race["is_rating_pr"] = race["is_star_rating"] = False
+        if rid in first_season_r:
+            race["is_rating_sr"] = False
+        if race.get("is_pr"):
+            race["is_sr"] = False
+        if race.get("is_rating_pr"):
+            race["is_rating_sr"] = False
 
 
 def flag_records(races, key_fn, value_fn, better):

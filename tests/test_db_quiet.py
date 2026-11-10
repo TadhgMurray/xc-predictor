@@ -129,7 +129,10 @@ def test_an_interrupted_run_ends_its_backends_and_the_boards_are_vacuumed_last()
     assert "trap _cleanup INT TERM" in sh
     assert "db_activity.py --kill-pipeline" in sh
     assert sh.index("trap _cleanup") < sh.index("step 01_season_year")
-    assert sh.index("17_checklist \"$PY -u scripts/run_checklist.py") < sh.index("step 18_vacuum") < sh.rindex("\nsummarise")
+    # the boards' vacuum: after their last writer (10d2), collected before the
+    # integrity read of the same pages (2026-11-10: off the run's tail)
+    assert sh.index("step 10d2_restamp_units") < sh.index("bgstep 18_vacuum") \
+        < sh.index("bgjoin 18_vacuum") < sh.index("step 18b_integrity_boards") < sh.rindex("\nsummarise")
     src = open(os.path.join(_ROOT, "racecast", "build_ranking_results.py")).read()
     assert "WITH (autovacuum_enabled = false)" in src
     import db_activity

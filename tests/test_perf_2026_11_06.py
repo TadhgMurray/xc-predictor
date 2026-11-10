@@ -1012,7 +1012,7 @@ def test_prewarm_plan_takes_what_pages_read_in_priority_order():
 def test_prewarm_runs_after_the_last_swap_and_in_the_nightly():
     sh = _read("deploy", "run_pipeline.sh")
     assert sh.rindex("\nbgwait\n") < sh.index("step 19b_prewarm") < sh.rindex("\nsummarise")
-    assert sh.index("step 18_vacuum") < sh.index("step 19b_prewarm")
+    assert sh.index("bgjoin 18_vacuum") < sh.index("step 19b_prewarm")
     nu = _read("deploy", "nightly_update.sh")
     assert nu.index("step 10f4_season_events") < nu.index("step 13z_prewarm")
 
