@@ -543,3 +543,45 @@ def test_only_open_qualifiers_add_a_regions_runners():
               "NCAA Division II Cross Country Championships",
               "NCAA Division III Cross Country Championships"):
         assert not Q.ruleFor(n).get("region_adds"), n
+
+
+# ---- a round not yet run, placed by season rating (owner, 2026-11-10) ---- #
+
+def test_a_round_not_yet_run_is_ordered_by_hs_equivalent_rating(monkeypatch):
+    import pool_view
+    import upcoming_preview as U
+    monkeypatch.setattr(pool_view, "toHs", lambda r, pool, sport=None:
+                        r * (1.2 if pool.startswith("college") else 1.0))
+    teams = [{"school": "Middlebury", "runners": [
+                 {"person_id": 1, "rating": 140.0, "pool": "college_m|x", "hs_rating": 168.0},
+                 {"person_id": 2, "rating": 130.0, "pool": "college_m"}]},
+             {"school": "Williams", "runners": [
+                 {"person_id": 3, "rating": 160.0, "pool": "hs_m"},   # a freshman, HS-rated
+                 {"person_id": 4, "rating": None, "pool": "college_m"}]}]
+    rows = U.ratedRows(teams, extra=[(5, "MIT", 150.0, "college_m"), (1, "X", 1.0, "hs_m")])
+    assert [r[0] for r in rows] == [5, 1, 3, 2]          # 180, 168, 160, 156
+    assert rows[0][1] == "MIT" and rows[1][1] == "Middlebury"
+    assert rows[0][2] < rows[1][2] and abs(rows[0][3] - 180.0) < 1e-9
+
+
+def test_rounds_are_rated_unless_the_model_is_asked_for(monkeypatch):
+    import upcoming_preview as U
+    calls = []
+    monkeypatch.setattr(U, "ratedDiv", lambda cur, m, d, s, add=None: calls.append((m, d)) or [])
+    monkeypatch.delenv("XCP_QUALIFY_BY", raising=False)
+    assert U.predictedDiv(None, 7, 9, "tfrrs") == [] and calls == [(7, 9)]
+    monkeypatch.setenv("XCP_QUALIFY_BY", "model")
+    assert not U.byRating()
+
+
+def test_this_years_ncaa_host_course():
+    """(owner, 2026-11-10) The board's NCAA championships open on this year's
+    host course, not last year's."""
+    import re
+    import upcoming_preview as U
+    d1 = U.hostPattern("NCAA Division I Cross Country Championships", "tfrrs", "2026-11-21")
+    d3 = U.hostPattern("NCAA Division III Cross Country Championships", "tfrrs", "2026-11-21")
+    assert d1 and re.search(d1, "LaVern Gibson Championship Course", re.I)
+    assert d3 and re.search(d3, "Bill Huyck Championship Course", re.I)
+    assert U.hostPattern("NCAA Division I Cross Country Championships", "tfrrs", "2027-11-20") is None
+    assert U.hostPattern("Some Invitational", "anet", "2026-11-21") is None
