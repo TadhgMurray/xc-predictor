@@ -2539,7 +2539,13 @@ def athlete(person_id):
     career_wide = lambda r: "ALL"
     by_season_d = lambda r: (r["season_label"], r["sport"], r["event"])
     time_of     = lambda r: r["time_raw"]
-    rating_of   = lambda r: r["speed_rating"]
+    # ★ THE RATING RECORDS ON THE ONE SCALE THE PAGE SHOWS (2026-11-10,
+    #   Newberry: his best race, 148.5 at state, wore no R because his
+    #   middle school races read higher on the MS pool's own scale). R and
+    #   RSR compare HS-equivalents, as the header's Best race does; a row
+    #   with no HS value falls back to its own number.
+    rating_of   = lambda r: (r.get("hs_rating") if r.get("hs_rating") is not None
+                             else r["speed_rating"])
     faster      = lambda new, best: new < best
     higher      = lambda new, best: new > best
     by_season        = lambda r: (r["season_label"], r["sport"])
