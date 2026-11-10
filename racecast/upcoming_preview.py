@@ -446,6 +446,79 @@ def storedField(source, meet_id, div_id, day):
     return {int(k): v for k, v in got["field"].items()}, dict(got["info"], made=got.get("made"))
 
 
+# ★ THE NCAA FIELD FROM THE NCAA PROJECTION (owner, 2026-11-10: "yes" to one
+#   source of truth). /ncaa/<division>/<gender> (build_ncaa_projection.py)
+#   applies the selection manual as written -- the official regions, the
+#   at-large criteria on the season's head-to-head results -- over thousands
+#   of simulated regionals; its "most likely November" is the field. The
+#   predictions page takes that field (each selected team's seven, and the
+#   selected individuals) until the regionals have run; from the day after
+#   them, the regionals' own results through the rule (fieldFromRounds).
+#   XCP_QUALIFY_NCAA=rule goes back to the rule throughout.
+_NCAA_DIV = {"ncaa_d1": "d1", "ncaa_d2": "d2", "ncaa_d3": "d3"}
+
+
+def projectionField(cur, rule_key, gender, day, today=None):
+    """({person_id: school}, info) from the stored NCAA projection for the
+    championship on `day` (ISO), or (None, None): another rule, no
+    projection for the season, one stored before it kept runners, or its
+    regionals already run."""
+    if os.environ.get("XCP_QUALIFY_NCAA", "projection") == "rule":
+        return None, None
+    div = _NCAA_DIV.get(rule_key)
+    g = {"M": "men", "F": "women"}.get(gender)
+    if not div or not g or not day:
+        return None, None
+    try:
+        cur.execute("SAVEPOINT up_ncaa")
+        cur.execute("SELECT to_regclass('public.ncaa_projection') AS t")
+        has = _dictRows(cur)
+        rows = []
+        if has and has[0].get("t"):
+            cur.execute("""SELECT week, payload FROM ncaa_projection
+                           WHERE division = %s AND gender = %s AND year = %s
+                           ORDER BY week DESC LIMIT 1""", (div, g, int(str(day)[:4])))
+            rows = _dictRows(cur)
+        _release(cur, "up_ncaa")
+    except Exception as exc:                            # noqa: BLE001
+        _undo(cur, "up_ncaa")
+        print(f"ncaa projection {div} {g}: {type(exc).__name__}: {exc}", flush=True)
+        return None, None
+    if not rows:
+        return None, None
+    field, info = fieldFromProjection(rows[0]["payload"], rule_key, rows[0]["week"], today)
+    if info:
+        info["gender"] = g                 # the page links /ncaa/<division>/<gender>
+    return field, info
+
+
+def fieldFromProjection(payload, rule_key, week=None, today=None):
+    """The projection's most likely field as ({person_id: school}, info), or
+    (None, None) when its regionals have run or it predates the stored
+    runners. Pure."""
+    today = today or datetime.date.today()
+    reg = (payload or {}).get("regional_date")
+    if not reg or today > datetime.date.fromisoformat(reg):
+        return None, None
+    teams = payload.get("teams") or []
+    field = {}
+    for t in teams:
+        if t.get("proj") in ("auto", "at-large", "pushed"):
+            if t.get("runners") is None:
+                return None, None          # stored before the runners were kept
+            for pid in t["runners"]:
+                field[int(pid)] = t["school"]
+    for ind in payload.get("individuals") or []:
+        i = ind.get("team")
+        if ind.get("pid") is not None and isinstance(i, int) and 0 <= i < len(teams):
+            field.setdefault(int(ind["pid"]), teams[i]["school"])
+    if not field:
+        return None, None
+    n = len(payload.get("regions") or [])
+    return field, {"rule": rule_key, "rounds": n, "predicted": n, "via": "ncaa_projection",
+                   "week": str(week)[:10] if week else None}
+
+
 def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
     """({person_id: school}, {"rule", "rounds", "predicted"}) or (None, None)
     for one race of a meet plan: where the field came from, for the page
@@ -477,6 +550,11 @@ def qualifiedFieldInfo(cur, plan, div_id, live=False, why=None):
             return None, None
     if not race.get("gender"):
         race = dict(race, gender=lastYearGender(cur, plan, race))
+    if rule is not None and rule["key"] in _NCAA_DIV:
+        pf, pinfo = projectionField(cur, rule["key"], race.get("gender"), str(plan["date"])[:10])
+        if pf:
+            why.update(how="ncaa_projection", gender=race.get("gender"))
+            return pf, pinfo
     # ★ ELSE A LEARNED ROUTE (high school state / section / district, NAIA):
     #   Q.learnedRoute, from scripts/qualifier_audit.py --write-routes
     route = None if rule is not None else Q.learnedRoute(

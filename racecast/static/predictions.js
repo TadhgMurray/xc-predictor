@@ -2094,9 +2094,18 @@ function showBasis(blocks) {
     const how = !p ? `All ${rounds} have been run, so these are the real qualifiers.`
       : p >= n ? `None of the ${rounds} have been run yet, so this is our guess at who will qualify.`
       : `${n - p} of the ${rounds} have been run; for the other ${p}, we've predicted who gets through.`;
-    parts.push(`You have to qualify for this meet, so we've filled the field with this `
-      + `season's qualifiers. ${how} Want last year's teams instead? Switch "Field for `
-      + `qualifying meets" in the options. You can also edit the field below.`);
+    /* ★ THE NCAA FIELD IS THE /ncaa PROJECTION'S (owner, 2026-11-10: one
+       source of truth): say so, and link it */
+    const ncaa = b.via === "ncaa_projection" && b.rule
+      ? `/ncaa/${b.rule.replace("ncaa_", "")}/${b.gender === "women" ? "women" : "men"}` : null;
+    parts.push(ncaa
+      ? `You have to qualify for this meet, so we've filled the field with our NCAA `
+        + `projection's most likely qualifiers: the selection rules applied to thousands of `
+        + `simulated regionals (<a href="${ncaa}">see the projection</a>). Once the regionals `
+        + `are run, the field is who actually qualified. You can also edit the field below.`
+      : `You have to qualify for this meet, so we've filled the field with this `
+        + `season's qualifiers. ${how} Want last year's teams instead? Switch "Field for `
+        + `qualifying meets" in the options. You can also edit the field below.`);
   } else if (b) parts.push(b.kind === "last_edition"
     ? `No entries posted yet \u2014 the field is the teams from the last `
       + `running of this meet (${fmtDate(b.date)}), with this season's squads. Edit it below.`

@@ -26,14 +26,62 @@ for sub in ("racecast", "scripts", "engine", "model"):
         sys.path.insert(0, p)
 
 
+# ★ A STATE MEET'S ROUNDS (owner, 2026-11-10: "did it have CIF NCS
+#   predicted?"). A championship with no published rule is fielded from a
+#   learned route (scripts/qualifier_audit.py --write-routes): its rounds,
+#   each sending its top k teams and m individuals. This lists them and
+#   where each stands this season: run (its results), posted and not run
+#   (placed by season rating), or not posted (last season's run again).
+def showRoutes(text, day=None):
+    import datetime
+    import psycopg2.extras
+    import qualifying as Q
+    from database import getConn
+    want = text.strip().lower()
+    routes = [r for rs in Q._loadRoutes().values() for r in rs if want in (r.get("meet") or "").lower()]
+    if not routes:
+        sys.exit(f"no learned route for a meet named like {text!r} ({Q.ROUTES_PATH})")
+    with getConn() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SET statement_timeout = '300s'")
+        for r in sorted(routes, key=lambda r: (r.get("meet") or "", r.get("race") or "")):
+            rounds = r.get("rounds") or []
+            on = day or (max((x["date"] for x in rounds), default=None) and
+                         (datetime.date.fromisoformat(max(x["date"] for x in rounds))
+                          + datetime.timedelta(days=364 + 14)).isoformat())
+            print(f"\n{r.get('meet')} -- {r.get('race')} ({r.get('gender') or '?'}, "
+                  f"{r.get('source')}): {len(rounds)} rounds")
+            for rnd in sorted(rounds, key=lambda x: (x["date"], x["meet"])):
+                try:
+                    at = Q._thisRound(cur, rnd, on or datetime.date.today().isoformat(),
+                                      r["source"])
+                except Exception as exc:                 # noqa: BLE001
+                    conn.rollback()
+                    at = None
+                    print(f"    ({type(exc).__name__}: {exc})")
+                where = ("not posted this season: last season's run again" if at is None else
+                         f"RAN this season (meet {at[0]})" if at[2] else
+                         f"posted, not run yet (meet {at[0]}): placed by season rating")
+                print(f"  {rnd['date']}  {rnd['meet'][:48]:48}  top {int(rnd.get('teams') or 0)} teams, "
+                      f"{int(rnd.get('individuals') or 0)} individuals  -- {where}")
+        conn.rollback()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("name", help="the runner's first and last name")
+    ap.add_argument("name", nargs="?", default=None, help="the runner's first and last name")
+    ap.add_argument("--route", default=None, metavar="MEET",
+                    help="instead: the learned routes of championships whose name holds this "
+                         "(e.g. 'CIF State'), each round and whether it has run this season")
     ap.add_argument("--rule", default="nxn", help="ncaa_d1, ncaa_d2, ncaa_d3, nxn or brooks")
     ap.add_argument("--date", default=None, help="the championship's date (default: NXN's, "
                                                  "the first Saturday of December)")
     a = ap.parse_args()
+    if a.route:
+        return showRoutes(a.route, a.date)
+    if not a.name:
+        ap.error("a runner's name, or --route MEET")
 
     import datetime
     import psycopg2.extras
@@ -171,6 +219,8 @@ def main():
                                               predict_past=past, info=info)
         finally:
             Q.roundResults = orig
+        # what the predictions page uses for an NCAA meet before its regionals
+        proj, pinfo = U.projectionField(cur, rule["key"], gender, day)
         names = {}
         mids = sorted({m for _k, m, _d, _r in seen})
         if mids:
@@ -207,6 +257,12 @@ def main():
         for i, (k, school) in enumerate(picks["at_large"], 1):
             kk = k[1] if isinstance(k, tuple) else k
             print(f"  {i:>2}. {school}  (from {names.get(kk, kk)})")
+    if proj:
+        pin = sorted(ids & set(proj))
+        print(f"\nTHE PREDICTIONS PAGE uses the /ncaa projection's field (week of {pinfo.get('week')}), "
+              f"until the regionals have run: {len(proj)} runners; {a.name} "
+              + (f"IS in it (for {proj[pin[0]]!r})" if pin else "is NOT in it")
+              + ". The rule's field below is what the regionals' results will give.")
     inn = sorted(ids & set(field or {}))
     print(f"\n{a.name} {'IS' if inn else 'is NOT'} in the field"
           + (f" (for {field[inn[0]]!r})" if inn else ""))
