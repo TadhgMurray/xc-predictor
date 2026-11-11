@@ -4,7 +4,7 @@ diag_anet_tf_calls.py -- with athletic.net's whole-meet call gone, the
 cheapest way to get a track meet's results. READ ONLY; writes nothing.
 
     cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a
-    NO_VPN=1 xvfb-run -a /srv/venv/bin/python -u scripts/diag_anet_tf_calls.py [meet_id]
+    xvfb-run -a /srv/venv/bin/python -u scripts/diag_anet_tf_calls.py [meet_id]
 
 ★ WHY (owner, 2026-10-23): GetAllResultsData answers 403 to everyone not
   signed in (diag_anet_results_call.py), and the per-race call costs a busy

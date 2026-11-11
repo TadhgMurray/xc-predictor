@@ -323,10 +323,15 @@ async def discover(fetcher, since_year, per_run, known, states=None, index_max_a
     """([meet], note): up to per_run cross country meets not yet landed,
     newest first, from every state's recent list."""
     entries, failed = [], []
+    # ★ A THIRD OF THE STATES A NIGHT (sources.rotate): the rest from the store
+    from sources import rotate
+    want = [sid for sid, st in STATES.items() if not states or st in states]
+    now = rotate.due(getattr(fetcher, "store", None), [indexUrl(sid) for sid in want])
     for sid, st in STATES.items():
         if states and st not in states:
             continue
-        got = await fetcher.fetch(indexUrl(sid), index_max_age)
+        got = await fetcher.fetch(indexUrl(sid), index_max_age if indexUrl(sid) in now
+                                  else rotate.FOREVER)
         if not got.body:
             failed.append(st)
             continue

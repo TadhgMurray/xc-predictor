@@ -137,7 +137,7 @@ def _isStuckPattern(consecutive_failures: int) -> bool:
 #           page, meet_id, meet_info, event_div, events_dict, jwt_token:
 #                       same as _collectTFEventDiv — needed to retry it.
 #           label: session label for logging.
-#           vpn_rotator: the shared VPNRotatorWindows/Linux instance.
+#           vpn_rotator: the shared OneIP instance (scripts/one_ip.py).
 #           meets_to_save, athletes_to_save, results_to_save: collector
 #                       lists, mutated in place (same as
 #                       _collectTFEventDiv normally does).

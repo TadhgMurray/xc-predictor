@@ -4,7 +4,7 @@ diag_anet_results_call.py -- why GetAllResultsData answers 403 for a meet
 athletic.net plainly shows results for. READ ONLY; writes nothing.
 
     cd /srv/xc-predictor && set -a; . /etc/xc-predictor.env; set +a
-    NO_VPN=1 xvfb-run -a /srv/venv/bin/python -u scripts/diag_anet_results_call.py 288317 1149714
+    xvfb-run -a /srv/venv/bin/python -u scripts/diag_anet_results_call.py 288317 1149714
 
 ★ WHY (owner, 2026-10-23): the first scrape on the new server got HTTP 403
   with an empty body from GetAllResultsData for 288317 while GetMeetData

@@ -53,7 +53,10 @@ SPORT_TF = "TF"
 # ! FROM THE ENVIRONMENT, like the anet side's NUM_SESSIONS. 24 headful
 #   Chrome pages is a lot of RAM to discover by surprise, and the two scrapers
 #   now run at the same time on one box.
-SESSION_COUNT = int(os.environ.get("TFRRS_SESSIONS", 24))
+# ★ THE NIGHTLY'S PACE BY DEFAULT (owner, 2026-11-10): one session, 10-20 s
+#   between meets, as deploy/nightly_update.sh runs it (was 24 and 3-6 s).
+#   TFRRS_SESSIONS / TFRRS_PER_MEET_DELAY in the env still win.
+SESSION_COUNT = int(os.environ.get("TFRRS_SESSIONS", 1))
 
 # Save gates. Both are False today and flip to True when their blocker clears:
 #   - results: saveTFRRSResultsBulk needs the migration's identity columns
@@ -93,7 +96,7 @@ def _envRange(name, default):
         return default
 
 
-PER_MEET_DELAY = _envRange("TFRRS_PER_MEET_DELAY", (3, 6))
+PER_MEET_DELAY = _envRange("TFRRS_PER_MEET_DELAY", (10, 20))
 
 # _borrowConn / _returnConn
 # Purpose: Borrow a raw connection from the shared pool and return it. These wrap
@@ -290,8 +293,8 @@ async def processMeet(conn, meet_id, sport, meet_url, page=None):
     except (CloudflareException, RateLimitException) as exc:
         return _meetBundle(meet_id, sport, False, [], [], note=f"blocked: {exc}")
     except IPBlockedException:
-        # Re-raise so the session loop catches it and rotates. Do NOT swallow it
-        # into a bundle — the loop needs to see it to trigger rotation.
+        # Re-raise so the session loop catches it and stops politely. Do NOT swallow it
+        # into a bundle — the loop needs to see it to stop.
         raise
     except Exception as exc:
         return _meetBundle(meet_id, sport, False, [], [], note=f"error: {exc}")
@@ -574,16 +577,15 @@ async def _extendFrontier(label):
 #           page:        this session's OWN Playwright page.
 #           counter:     a shared [count] list + lock for a global progress number.
 # Output:   none.
-async def _sessionWorker(session_idx, url_for, page, rotator, counter):
+async def _sessionWorker(session_idx, url_for, page, counter):
     # ★ POLITE MODE (scripts/polite_stop.py; owner, 2026-10-12: "the tfrrs
-    #   scraper seemingly doesn't stop"). With NO_VPN=1 the block path
-    #   "rotated" (a no-op) and took the next meet at once, and a 429 or a
+    #   scraper seemingly doesn't stop"). The block path used to "rotate"
+    #   (a no-op on one IP) and take the next meet at once, and a 429 or a
     #   Cloudflare page was logged "blocked:" and the drain went on at the
     #   same pace. Now the first of either ends every session; the meets
     #   they still hold sit at scraped=3 and resetTFRRSInProgress returns
     #   them to the queue when the next run starts.
     import polite_stop
-    gen = 0   # this session's last-seen rotation generation (for stagger)
     # Borrow ONE connection for this session's whole lifetime (off the loop).
     conn = await asyncio.to_thread(_borrowConn)
     try:
@@ -610,19 +612,18 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
             for meet_id, sport in batch:
                 if polite_stop.stopped():
                     break
-                gen = await rotator.waitForTunnel(session_idx, gen, SESSION_COUNT)
                 url = url_for(meet_id, sport)
                 t1 = time.perf_counter()
                 try:
                     bundle = await processMeet(conn, meet_id, sport, url, page=page)
                 except IPBlockedException:
-                    # roll back any partial txn before rotating, so this session's
-                    # conn is clean when it resumes.
+                    # roll back any partial txn, so this session's conn is clean
                     await asyncio.to_thread(conn.rollback)
+                    # one address, nothing to rotate to: the block ends the run
+                    # (or, with polite mode off, the meet is skipped)
                     if polite_stop.trip(f"[S{session_idx}]",
                                         f"CloudFront IP block on meet {meet_id}"):
                         break
-                    await rotator.rotate(f"[S{session_idx}]", "CloudFront IP block")
                     continue
                 
                 _tick("process", time.perf_counter() - t1)
@@ -633,7 +634,6 @@ async def _sessionWorker(session_idx, url_for, page, rotator, counter):
                     if polite_stop.trip(f"[S{session_idx}]",
                                         f"{bundle['note']} (meet {meet_id})"):
                         break
-                await rotator.checkRotation(f"[S{session_idx}]")
                 await asyncio.sleep(random.uniform(*PER_MEET_DELAY))
     finally:
         # Always return the connection when this session ends (queue drained or
@@ -655,7 +655,7 @@ CLAIM_BATCH_SIZE = 50
 #           url_for: callable (meet_id, sport) -> URL to fetch.
 #           page:    the Playwright page (passed through to processMeet).
 # Output:   none. Each meet's status is written by processMeet.
-async def runDrain(make_page, url_for, rotator):
+async def runDrain(make_page, url_for):
     resetTFRRSInProgress()
 
     counter = [0]   # shared global meet count (index 0); see _sessionWorker note
@@ -664,7 +664,7 @@ async def runDrain(make_page, url_for, rotator):
     for i in range(SESSION_COUNT):
         page = await make_page()           # each session its own async page
         tasks.append(asyncio.create_task(
-            _sessionWorker(i, url_for, page, rotator, counter)))
+            _sessionWorker(i, url_for, page, counter)))
 
     await asyncio.gather(*tasks)
     print(f"[drain] queue empty — processed {counter[0]} meets", flush=True)

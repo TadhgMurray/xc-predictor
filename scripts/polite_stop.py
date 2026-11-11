@@ -11,7 +11,7 @@
 #   block stops every session: their claimed meets go back to the queue and
 #   the run ends. The next run (the nightly update) starts where it stopped.
 #
-# ! POLITE IS THE DEFAULT WHENEVER NO_VPN=1; ANET_POLITE=0 turns it off.
+# ! POLITE IS ALWAYS ON (one address since 2026-11-10); ANET_POLITE=0 turns it off.
 import os
 import threading
 
@@ -27,7 +27,10 @@ def active():
     raw = os.environ.get("ANET_POLITE")
     if raw is not None and raw.strip() != "":
         return raw.strip() not in ("0", "false")
-    return os.environ.get("NO_VPN", "") not in ("", "0", "false")
+    # ★ ALWAYS, NOW THERE IS ONE ADDRESS (owner, 2026-11-10: the VPN rotation
+    #   is gone, scripts/one_ip.py): a block or a 429 has nowhere to go, so it
+    #   ends the run. ANET_POLITE=0 is the only way off.
+    return True
 
 
 def trip(label, why):

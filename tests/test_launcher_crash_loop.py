@@ -33,7 +33,7 @@ def _launcher(monkeypatch):
         "playwright_stealth": {"Stealth": None},
         "scrape_results": {"scrapeMeetBySport": None, "scrapeMeetTFMetaOnly": None},
         "scraper": {"CloudflareException": type("CF", (Exception,), {})},
-        "vpn_rotation": {"VPNRotator": object},
+        "one_ip": {"OneIP": object},
     }.items():
         if name not in sys.modules:
             monkeypatch.setitem(sys.modules, name, types.SimpleNamespace(**attrs))

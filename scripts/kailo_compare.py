@@ -505,7 +505,14 @@ def recordUpcoming(cur, season, sleep):
     import predict as P
     tr = fetch("/track-record", sleep, params={"season": season} if season else None)
     os.makedirs(STORE, exist_ok=True)
-    keys = {r["meet_key"] for r in tr.get("races", [])}
+    # ★ ONLY MEETS NOT YET RUN (owner, 2026-11-10): every meet of the season's
+    #   track record was fetched every 6 h to find the few still ahead. A race
+    #   already run (its state scored, or its date past) is never recorded
+    #   here, so its meet is not asked for.
+    today = datetime.date.today().isoformat()
+    keys = {r["meet_key"] for r in tr.get("races", [])
+            if r.get("meet_key") and (r.get("state") in UPCOMING
+                                      or (r.get("race_date") or "9999") >= today)}
     if tr.get("next_meet"):
         keys.add(tr["next_meet"]["meet_key"])
     n_saved = 0

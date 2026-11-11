@@ -37,7 +37,7 @@ WATCHED = (
     #   the first thing that runs on a scrape night.
     "scripts/launcher.py",
     "scripts/scrape_results.py",
-    "scripts/vpn_rotation.py",
+    "scripts/one_ip.py",
     "scripts/scrape_tuning.py",
     "scripts/queue_meets.py",
     "scripts/queue_status.py",

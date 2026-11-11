@@ -357,7 +357,7 @@ def cmdQueue(a):
         conn.commit()
     print(f"[tfrrs-hs] queued {n:,} (source tfrrs, due); tfrrs_hs_meets holds all {len(rows):,} indexed meets. "
           f"Scrape just these:")
-    print("    TFRRS_NO_SEED=1 TFRRS_SEED_AHEAD=50 TFRRS_SESSIONS=2 TFRRS_PER_MEET_DELAY=5,10 NO_VPN=1 "
+    print("    TFRRS_NO_SEED=1 TFRRS_SEED_AHEAD=50 TFRRS_SESSIONS=2 TFRRS_PER_MEET_DELAY=5,10 "
           "timeout 180m xvfb-run -a $P -u tfrrs/driver/launch_tfrrs.py")
     return 0
 

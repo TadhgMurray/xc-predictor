@@ -71,3 +71,30 @@ def test_a_fall_meet_with_no_track_events_is_cross_country(monkeypatch):
     lm, _ = asyncio.run(M.readMeet(_Site(), meet, 0))
     assert lm.rowCount() == 815 and {r.sport for r in lm.races} == {"XC"}
     assert M.isFallMeet("2026-11-07") and not M.isFallMeet("2026-04-11")
+
+
+def test_an_athlete_heading_with_a_bib_column_reads_every_row():
+    # HXN Championships 2026: "#  Athlete  Yr Team  Mark  H#", no "Name"
+    ev = M.eventsOf(read("hxn_2026_athlete_heading.txt"))
+    assert len(ev) == 1 and ev[0].gender == "M" and len(ev[0].rows) == 10
+    r = ev[0].rows[0]
+    assert (r.first, r.last, r.grade, r.school, r.mark) == ("Abraham", "Raines", "12", "Sovereign Grace", "15:06.07")
+    assert r.points is None                                  # H# is the heat
+    assert ev[0].rows[9].school == "Grand Rapids Track Club"
+
+
+class _Track(_Site):
+    async def fetch(self, url, max_age=None):
+        from sources.fetch import Fetched
+        if url.endswith("/raw"):
+            return Fetched(url, 200, ("<pre>" + read("aia_2026_womens_track.txt") + "</pre>").encode(), True, "")
+        return await super().fetch(url, max_age)
+
+
+def test_a_womens_event_reads_and_a_november_meet_on_a_track_stays_track(monkeypatch):
+    # Athletes in Action Evening of Miles 2026: "Event 1  Womens 3200 Meter Run"
+    monkeypatch.setattr(M, "GAP", 0)
+    meet = {"meet_id": 789829, "url": S5, "name": "Athletes in Action Evening of Miles", "venue": "",
+            "state": "OH", "date": "2026-11-09"}
+    lm, _ = asyncio.run(M.readMeet(_Track(), meet, 0))
+    assert lm.rowCount() >= 6 and {r.sport for r in lm.races} == {"TF"}

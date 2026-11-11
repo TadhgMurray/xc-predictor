@@ -1,6 +1,7 @@
 """Polite mode (owner, 2026-10-11: athletic.net rate-limited the server).
-With NO_VPN=1 the first 429 or block stops the whole run instead of
-moving on to the next meet at the same pace.
+The first 429 or block stops the whole run instead of moving on to the
+next meet at the same pace. Always on since the VPN rotation went
+(2026-11-10); ANET_POLITE=0 is the only way off.
 
     python -m pytest -q tests/test_polite_stop.py
 """
@@ -21,8 +22,8 @@ def fresh(monkeypatch, **env):
     return importlib.reload(polite_stop)
 
 
-def test_on_with_no_vpn_and_stops_everything(monkeypatch):
-    P = fresh(monkeypatch, NO_VPN="1")
+def test_on_by_default_and_stops_everything(monkeypatch):
+    P = fresh(monkeypatch)
     assert P.active() and not P.stopped()
     assert P.trip("[S1]", "429 on meet 1")
     assert P.stopped()
@@ -33,11 +34,9 @@ def test_on_with_no_vpn_and_stops_everything(monkeypatch):
         assert "429" in str(e)
 
 
-def test_off_without_no_vpn_or_when_turned_off(monkeypatch):
-    P = fresh(monkeypatch)
+def test_off_only_when_turned_off(monkeypatch):
+    P = fresh(monkeypatch, ANET_POLITE="0")
     assert not P.active() and not P.trip("[S1]", "429") and not P.stopped()
-    P = fresh(monkeypatch, NO_VPN="1", ANET_POLITE="0")
-    assert not P.active()
 
 
 def test_the_scraper_trips_it_on_a_429():
