@@ -230,6 +230,9 @@ def _sweepMany(d, t):
             pass
 
 
+_SAID = {}
+
+
 def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
     """File {key: value} into the bucket, computed now, beside the entries
     already there that are younger than `ttl` (older ones are dropped), the
@@ -262,7 +265,13 @@ def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
                 with open(tmp, "wb") as fh:
                     pickle.dump(data, fh, protocol=pickle.HIGHEST_PROTOCOL)
                 os.replace(tmp, pkl)
-            except Exception:                           # noqa: BLE001
+            except Exception as exc:                    # noqa: BLE001
+                # ! SAID ONCE, NOT SWALLOWED (2026-11-12: a bucket that never
+                #   stores looks exactly like a cold one from outside)
+                if not _SAID.get("putMany"):
+                    _SAID["putMany"] = True
+                    print(f"[sharedcache] putMany {str(bucket)[:60]}: not stored "
+                          f"({type(exc).__name__}: {exc})", flush=True)
                 try:
                     os.unlink(tmp)
                 except OSError:
