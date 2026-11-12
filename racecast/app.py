@@ -5865,7 +5865,10 @@ def _dropUselessPin(rid):
     from urllib.parse import urlencode
     rest = [(k, v) for k, v in request.args.items(multi=True) if k != "r"]
     url = request.path + (("?" + urlencode(rest)) if rest else "") + f"#r{rid}"
-    resp = redirect(url, code=302)
+    # ★ 301 (2026-11-12): Googlebot got 2,746 302s in a week, most of them
+    #   these -- every ?r= link off an athlete page. A 302 tells Google to
+    #   keep the ?r= URL as its own page; a 301 folds it into the race page.
+    resp = redirect(url, code=301)
     resp.headers["Cache-Control"] = PUBLIC_CACHE_CONTROL
     return resp
 
