@@ -12841,9 +12841,16 @@ def _upcomingChampsCached():
                 {"meet_id": m["meet_id"], "src": m["source"], "date": m["date"],
                  "pick": "predicted", **({"course": m["course"]} if m.get("course") else {})})
         return out
+    # ★ ONCE FOR THE BOX (2026-11-12, as weekend.comingUpCached): the
+    #   worker's copy in front, the first worker's answer shared behind it; a
+    #   failure (None) is not shared, so the next worker tries again
+    def shared():
+        import sharedcache
+        return sharedcache.get(f"predict-upcoming-{_dt.date.today().isoformat()}",
+                               compute, ttl=6 * 3600, keep=lambda v: v is not None)[0]
     try:
         rows, _ = ttlcache.get(("predict_upcoming", _dt.date.today().isoformat()),
-                               compute, ttl=6 * 3600,
+                               shared, ttl=6 * 3600,
                                ttl_of=lambda v: 6 * 3600 if v is not None else 600)
     except Exception:                                   # noqa: BLE001
         app.logger.exception("upcoming championships failed")
