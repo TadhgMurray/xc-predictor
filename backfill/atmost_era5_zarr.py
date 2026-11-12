@@ -610,8 +610,10 @@ def main():
             done = loadDoneKeys(conn)                   # set of finished triples
 
         # Drop already-done triples so a resume does no duplicate work.
-        work = work[~work.apply(
-            lambda r: (r.cellLat, r.cellLon, str(r.date)) in done, axis=1)]
+        n_asked = len(work)
+        work = _notDone(work, done)
+        print(f"{n_asked:,} (cell, date) asked by the meets; {len(done):,} stored; "
+              f"{len(work):,} still to fetch", flush=True)
 
         # One date-list per cell, then bucket cells into 3-deg TILES (= one store
         # chunk) so each chunk is read once and shared by all its cells.
@@ -644,6 +646,35 @@ def main():
             _runBackfill(ds, tiles, conn, args.debug)
     finally:
         closePool()                                     # always release the pool
+
+
+def _notDone(work, done):
+    """The work units not yet stored. ★ ON THE STORED KEY'S OWN TERMS
+    (2026-11-12): the table keeps each day as 'YYYY-MM-DD' (_rowsFromHourly)
+    and the cells on the 0.25-degree grid, but the four feeds hand dates as
+    text or dates in their own spelling -- a day spelled any other way never
+    matched, was fetched again on every run, and was written back unchanged
+    (ON CONFLICT). Dates are normalised to the stored spelling first (a date
+    no parser reads is dropped: _neededHours could not expand it either),
+    duplicates that only differed in spelling fold, and the test is one
+    vectorised membership, not a Python call per row."""
+    if work.empty:
+        return work
+    txt = work["date"].astype(str)
+    try:                                    # each value on its own (pandas >= 2)
+        day = pd.to_datetime(txt, errors="coerce", format="mixed")
+    except (TypeError, ValueError):
+        day = pd.to_datetime(txt, errors="coerce")
+    work = work.assign(date=day.dt.strftime("%Y-%m-%d"))[day.notna().to_numpy()]
+    work = work.assign(cellLat=work["cellLat"].round(2), cellLon=work["cellLon"].round(2))
+    work = work.drop_duplicates(["cellLat", "cellLon", "date"]).reset_index(drop=True)
+    if not done:
+        return work
+    keys = pd.MultiIndex.from_frame(work[["cellLat", "cellLon", "date"]])
+    have = pd.MultiIndex.from_tuples(
+        [(round(float(a), 2), round(float(b), 2), str(d)[:10]) for a, b, d in done],
+        names=["cellLat", "cellLon", "date"])
+    return work[~keys.isin(have)].reset_index(drop=True)
 
 
 def _groupIntoTiles(cells, tileDeg=3.0):
