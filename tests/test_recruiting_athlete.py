@@ -371,7 +371,7 @@ def test_the_pages_are_wired():
     assert "recruiting.js" in read("racecast", "templates", "recruiting.html")
     assert "/api/recruiting/schools" in read("racecast", "static", "recruiting.js")
     assert "/api/recruiting?" in read("racecast", "static", "recruiting-search.js")
-    assert 'stepsN 10f_recruits "$PY -u racecast/build_recruiting.py"' in read("deploy", "run_pipeline.sh")
+    assert '_G10F=(10f_recruits "$PY -u racecast/build_recruiting.py"' in read("deploy", "run_pipeline.sh")
     assert ".r-pill-top" in read("racecast", "static", "style.css")
 
 

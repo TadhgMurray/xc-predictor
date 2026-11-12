@@ -3462,7 +3462,9 @@ _SEASON_WORK_MEM = (("512MB", "256MB") if dbQuiet()
 # the shards of the athlete_season aggregate, and each one's sort memory:
 # a quarter of the ~3.4GB sort fits in 1GB (XCP_SEASON_SHARDS=1: one
 # statement, as before)
-_SEASON_SHARDS = max(1, int(os.environ.get("XCP_SEASON_SHARDS", "4")))
+# 8 since 2026-11-12 (4 took 427 s on run 20261112_015027; a person is in one
+# shard whatever the count, so the table is the same)
+_SEASON_SHARDS = max(1, int(os.environ.get("XCP_SEASON_SHARDS", "8")))
 _SEASON_SHARD_WORK_MEM = ("1GB", "512MB", "256MB")
 
 

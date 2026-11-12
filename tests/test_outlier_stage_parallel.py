@@ -17,7 +17,8 @@ DSN = os.environ.get("XCP_TEST_PG_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="XCP_TEST_PG_DSN not set")
 
 
-def test_the_workers_stage_the_one_inserts_rows():
+def test_the_workers_stage_the_one_inserts_rows(monkeypatch):
+    monkeypatch.setenv("XCP_OUTLIER_FILL_PARALLEL", "1")   # opt-in since 2026-11-12
     import psycopg2
     import rating_outliers as R
 

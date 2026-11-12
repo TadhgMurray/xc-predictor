@@ -1033,6 +1033,7 @@ _BUILD = f"""
     --   DROP at the top handles a leftover from a crash; nothing else reads
     --   it, and an unlogged table is emptied by a server restart anyway.
     DROP TABLE IF EXISTS allraces;
+    DROP TABLE IF EXISTS pa_races;      -- never one from an older allraces
 
     -- ! BOTH KEYS ON EVERY ROW. `acad` is what the grade is reasoned about;
     --   `cal` is what the row is written under. Carrying both here means no
@@ -1146,14 +1147,27 @@ _BUILD = f"""
     --   So: collapse to one row per race first. A race carrying both
     --   spellings counts ONCE, as a number, because the number is the
     --   readable one. A race carrying only a word counts as a word.
-    DROP TABLE IF EXISTS raceKinds;
-    CREATE UNLOGGED TABLE raceKinds AS
+    -- ★ ONE PASS FOR TWO TABLES (2026-11-12; run 20261111_200338: raceKinds
+    --   212 s, then season_races 322 s grouping the same 225M rows again by
+    --   the same keys, count(DISTINCT) on one core). pa_races holds every
+    --   (person, season, race) once, graded or not; raceKinds is its graded
+    --   part -- bool_or skips the NULL grades, so has_num / has_word are the
+    --   graded rows' own -- and season_races counts its races (below). The
+    --   fold and the relabels between touch grade_folded only, never the
+    --   person, season or race.
+    DROP TABLE IF EXISTS pa_races;
+    CREATE UNLOGGED TABLE pa_races AS
         SELECT person_id, acad, race,
                bool_or(grade ~ '^[0-9]+$')                     AS has_num,
-               bool_or(grade IN ('FR','SO','JR','SR'))         AS has_word
+               bool_or(grade IN ('FR','SO','JR','SR'))         AS has_word,
+               bool_or(grade IS NOT NULL)                      AS has_grade
         FROM   allraces
-        WHERE  grade IS NOT NULL
         GROUP  BY 1, 2, 3;
+    DROP TABLE IF EXISTS raceKinds;
+    CREATE UNLOGGED TABLE raceKinds AS
+        SELECT person_id, acad, race, has_num, has_word
+        FROM   pa_races
+        WHERE  has_grade;
     CREATE INDEX ON raceKinds (person_id, acad);
     ANALYZE raceKinds;
 
@@ -1318,8 +1332,7 @@ _FIELD_BUILD = f"""
 
     DROP TABLE IF EXISTS season_races;
     CREATE UNLOGGED TABLE season_races AS
-        SELECT person_id, acad, count(DISTINCT race) AS races
-        FROM   allraces GROUP BY 1, 2;
+        __SEASON_RACES__;
     ANALYZE season_races;
 
     DROP TABLE IF EXISTS fld_best;
@@ -1636,13 +1649,30 @@ def collegeClasses(field_rows, starts):
     return out
 
 
-def fieldBuild(share=None, codes=None, college_codes=None):
+# season_races: from pa_races when this run built it (one row per race of a
+# season, so count(race) IS count(DISTINCT race); see raceKinds), else the
+# grouped pass over allraces it replaces -- the same table either way
+_SEASON_RACES_PA = "SELECT person_id, acad, count(race) AS races FROM pa_races GROUP BY 1, 2"
+_SEASON_RACES_ALL = ("SELECT person_id, acad, count(DISTINCT race) AS races "
+                     "FROM allraces GROUP BY 1, 2")
+
+
+def fieldBuild(share=None, codes=None, college_codes=None, pa_races=False):
     """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
     None; above 1 is off), and the withheld votes after it (openSchoolBuild;
-    `codes` / `college_codes` the school and college team codes)."""
+    `codes` / `college_codes` the school and college team codes).
+    pa_races: build season_races from pa_races (it exists on this run)."""
     share = float(OPEN_FIELD_SHARE if share is None else share)
     return (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
+            .replace("__SEASON_RACES__", _SEASON_RACES_PA if pa_races else _SEASON_RACES_ALL)
             + openSchoolBuild(share <= 1.0, codes, college_codes))
+
+
+def _paReady(cur):
+    """pa_races is built with allraces in the same pass and dropped with it,
+    so if it exists it is this allraces' own."""
+    cur.execute("SELECT to_regclass('pa_races') IS NOT NULL")
+    return bool(cur.fetchone()[0])
 
 
 # rule 4's staging tables; season_races outlives them until rule 5e reads it
@@ -3057,7 +3087,8 @@ def _resolve(cur):
     if _on:
         loadCollegeNames(cur)
     runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if _on else (),
-                             college_codes=_collegeTeamCodes() if _on else ()),
+                             college_codes=_collegeTeamCodes() if _on else (),
+                             pa_races=_paReady(cur)),
              label="[4] staging")
     cur.execute(_FIELD_SQL)
     _field_rows = cur.fetchall()
@@ -3611,7 +3642,8 @@ def compareOpen(cur, share=0.5, show=20, codes=None, college_codes=None):
     for label, sh in (("off", OPEN_FIELD_OFF), ("on", share)):
         if label == "on":
             print(f"    college names: {loadCollegeNames(cur):,}", flush=True)
-        runTimed(cur, fieldBuild(sh, codes, college_codes), label=f"[open {label}] staging")
+        runTimed(cur, fieldBuild(sh, codes, college_codes, pa_races=_paReady(cur)),
+                 label=f"[open {label}] staging")
         if label == "on":
             cur.execute("SELECT count(*) FROM fld_adult_ev")
             print(f"    adult open races voting 'hs': {cur.fetchone()[0]:,}", flush=True)

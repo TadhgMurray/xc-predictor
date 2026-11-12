@@ -300,6 +300,7 @@ summarise() {
   #   after the pipeline finished from now on"): deploy/AFTER_PIPELINE.md,
   #   printed above the banner on every finish, failed or not. Edit the
   #   file as items are done or added.
+  rm -f "$LOGDIR"/.club_cache.*            # the run's club tables (07_pack), done with
   if [ -s deploy/AFTER_PIPELINE.md ]; then
     echo ""
     echo "==== AFTER THIS RUN (deploy/AFTER_PIPELINE.md) ===="
@@ -411,10 +412,10 @@ step() {
   if $NICE $(_jr "$name") "$@" 2>&1 | _stampTo "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
   el=$(( $(date +%s) - t0 ))
   if [ "$rc" -ne 0 ]; then
-    echo "  $name FAILED after ${el}s$(_peak "$name")" | tee -a "$SUMMARY"
+    echo "  $name FAILED after ${el}s${STEP_NOTE:+, $STEP_NOTE}$(_peak "$name")" | tee -a "$SUMMARY"
     FAILED="$FAILED $name"
   else
-    echo "  $name ok (${el}s$(_peak "$name"))" | tee -a "$SUMMARY"
+    echo "  $name ok (${el}s${STEP_NOTE:+, $STEP_NOTE}$(_peak "$name"))" | tee -a "$SUMMARY"
   fi
 }
 
@@ -617,14 +618,18 @@ bgjoin() {
   for i in "${!BG_PIDS[@]}"; do
     [ "${BG_NAMES[$i]}" = "$1" ] && [ -n "${BG_PIDS[$i]}" ] || continue
     echo "  waiting for background step $1..."
+    local tw; tw=$(date +%s)
     if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
+    # ★ HOW LONG THE RUN STOOD STILL FOR IT (2026-11-12): a background
+    #   step's own time says nothing about what it cost the run
+    tw=$(( $(date +%s) - tw ))
     tail -n 2 "$LOGDIR/$1.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  $1 FAILED after ${el}s (background$(_peak "$1"))" | tee -a "$SUMMARY"
+      echo "  $1 FAILED after ${el}s (background, held the run ${tw}s$(_peak "$1"))" | tee -a "$SUMMARY"
       FAILED="$FAILED $1"
     else
-      echo "  $1 ok (${el}s, background$(_peak "$1"))" | tee -a "$SUMMARY"
+      echo "  $1 ok (${el}s, background, held the run ${tw}s$(_peak "$1"))" | tee -a "$SUMMARY"
     fi
     BG_PIDS[$i]=""
   done
@@ -634,14 +639,16 @@ bgwait() {
   for i in "${!BG_PIDS[@]}"; do
     [ -n "${BG_PIDS[$i]}" ] || continue          # already collected by bgjoin
     echo "  waiting for background step ${BG_NAMES[$i]}..."
+    local tw; tw=$(date +%s)
     if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
+    tw=$(( $(date +%s) - tw ))                   # the run stood still this long (bgjoin)
     tail -n 2 "$LOGDIR/${BG_NAMES[$i]}.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
+      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background, held the run ${tw}s$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
       FAILED="$FAILED ${BG_NAMES[$i]}"
     else
-      echo "  ${BG_NAMES[$i]} ok (${el}s, background$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
+      echo "  ${BG_NAMES[$i]} ok (${el}s, background, held the run ${tw}s$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
     fi
   done
   BG_PIDS=(); BG_NAMES=(); BG_T0=()
@@ -692,7 +699,9 @@ bgchainjoin() {
   for i in "${!BGC_PIDS[@]}"; do
     [ "${BGC_NAMES[$i]}" = "$1" ] && [ -n "${BGC_PIDS[$i]}" ] || continue
     echo "  waiting for the $1 chain..."
+    local tw; tw=$(date +%s)
     wait "${BGC_PIDS[$i]}"
+    echo "  $1_chain held the run $(( $(date +%s) - tw ))s" | tee -a "$SUMMARY"
     if [ -f "$LOGDIR/.chain_$1.failed" ]; then
       _ef=$(tr -s ' \n' ' ' < "$LOGDIR/.chain_$1.failed" | sed 's/^ *//; s/ *$//')
       [ -n "$_ef" ] && FAILED="$FAILED $_ef"
@@ -764,7 +773,18 @@ step 01b_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --ou
 #   reads until 04f/05; bgjoin collects it right before them. The comments
 #   on why it exists sit where it used to run, above 04f.
 if [ -x "$WXPY" ]; then
-  bgstep 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+  # ★ BOUNDED TOO (2026-11-12; run 20261111_200338: 5,991 s, and the run
+  #   stood at its bgjoin, before 04f/05, for the half hour past the ~70 min
+  #   of steps 02-04 in line). It commits every WRITE_BATCH rows and skips
+  #   what is stored, so a stop keeps what it fetched and the next run
+  #   carries on from there.
+  #   XCP_WX_GRID_MIN (60) sets it; the stop is reported as a bound.
+  bgstep 04e_weather_grid sh -c 'timeout -k 60 "$1m" "$2" -u backfill/atmost_era5_zarr.py; rc=$?
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      echo "04e: stopped at its $1-minute bound (exit $rc) -- what it fetched is stored; the rest waits for the next run"
+      exit 0
+    fi
+    exit "$rc"' sh "${XCP_WX_GRID_MIN:-60}" "$WXPY"
   # ★ AND THE MONTHS THAT STORE HAS NOT REACHED (2026-10-25: the grid
   #   stopped at 2026-06-30 -- the free store runs 3-4 months behind). The
   #   CDS's ERA5T, ~5 days behind, for the days after the store's last one;
@@ -1311,6 +1331,11 @@ bgstep 13c0_search_helpers "$PY" -u racecast/build_search_helpers.py
 bgstep 10b0_tfrrs_link "$PY" -u scripts/link_tfrrs_to_anet.py --write
 # 10e marks which meets are championships (issue 34)
 bgstep 10e_meet_units "$PY" -u racecast/build_meet_units.py
+# ★ THE CLUB TABLES ONCE FOR THE RUN (2026-11-12; speed_ratings._runCached):
+#   07_pack builds them and 09b_fill / 09b_fill_tf read its copy. Named here,
+#   after every step that writes their inputs (03 pro seasons, 04 links,
+#   05 backfill), so no earlier step can save a copy the later ones outdate.
+export XCP_CLUB_CACHE="$LOGDIR/.club_cache"
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 bgjoin 13c0_person_redirects
 bgjoin 13c0_search_helpers
@@ -1705,14 +1730,33 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   run, competing with 10_rankings for memory and disk; nothing they
   #   write is read by the site. The scorecard (17c) then reports no fair
   #   tests for this run.
+  # ★ ONCE A WEEK (2026-11-12; owner: "speed it up more"). Three holdout
+  #   solves of 34-38 GB, the ladder and the diagnostics ran on EVERY run,
+  #   beside the boards the run waits for -- the same cores, the same memory
+  #   bus. They publish nothing; the model they score changes by a commit,
+  #   not by a night's data. A run within XCP_EVIDENCE_DAYS (7) of the last
+  #   one whose holdout passed skips them, as XCP_EVIDENCE=0 does (17c then
+  #   reports no fair tests for this run). XCP_EVIDENCE=force runs them.
+  _evRecent=""
+  if [ "${XCP_EVIDENCE:-1}" = "1" ]; then
+    _evRecent=$(find "$ROOT/logs" -mindepth 2 -maxdepth 2 -name summary.log \
+                  -mtime -"${XCP_EVIDENCE_DAYS:-7}" 2>/dev/null \
+                | xargs -r grep -l "08a_holdout ok" 2>/dev/null | head -1)
+  fi
   if [ "${XCP_EVIDENCE:-1}" = "0" ]; then
     echo "  08a..08d (holdouts, ladder, diagnostics) skipped (XCP_EVIDENCE=0)" | tee -a "$SUMMARY"
+  elif [ -n "$_evRecent" ]; then
+    echo "  08a..08d (holdouts, ladder, diagnostics) skipped -- last scored under" \
+         "${XCP_EVIDENCE_DAYS:-7} days ago ($(dirname "$_evRecent")); XCP_EVIDENCE=force runs them" \
+      | tee -a "$SUMMARY"
   elif [ "${XCP_EVIDENCE_BG:-1}" = "1" ] && [ "$DRY" -eq 0 ] && [ "${FROM:-0}" -le 8 ]; then
     echo ""
     echo "  08a..08d (holdouts, ladder, diagnostics) started IN THE BACKGROUND at nice" \
          "${XCP_EVIDENCE_NICE:-19}; their lines carry [evidence]"
     (
       FAILED=""
+      # the summary says these ran beside the run (pipeline_profile reads it)
+      STEP_NOTE="background, evidence chain"
       NICE="nice -n ${XCP_EVIDENCE_NICE:-19}"
       command -v ionice >/dev/null 2>&1 && NICE="$NICE ionice -c2 -n7"
       _evidence
@@ -2056,16 +2100,23 @@ stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
 # teams read school_identity. "Runners like you" (10f3) reads college_recruit
 # (10f) and holds a transaction, so it stays in line before 11b. 10g2 reads
 # 10g's ranks.
-stepsN 10f_recruits "$PY -u racecast/build_recruiting.py" \
-       11_teams "$PY -u racecast/build_team_season.py" \
-       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py"
-step 10f3_comps       "$PY" -u racecast/build_comps.py
+# ★ 11c_ncaa JOINS THIS GROUP (2026-11-12, ~374 s off the line): it writes
+#   ncaa_projection alone and reads athlete_season, results, meets_tfrrs,
+#   dist_override, college_directory and corrections.py -- none written by
+#   the other three. Its first reader is 13h/13h2. Still before 11b.
+_G10F=(10f_recruits "$PY -u racecast/build_recruiting.py"
+       11_teams "$PY -u racecast/build_team_season.py"
+       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py")
+if [ "${XCP_NCAA:-0}" = "1" ]; then
+  _G10F+=(11c_ncaa "$PY -u racecast/build_ncaa_projection.py")
+fi
+stepsN "${_G10F[@]}"
 # ★ THE NCAA CHAMPIONSHIPS PROJECTION (2026-10-10): the regionals, the
 #   at-large selection and nationals, simulated for D1/D2/D3 men and women,
 #   one stored row per board per week (build_ncaa_projection.py). Reads
 #   athlete_season and the season's tfrrs results; /ncaa reads its table.
 #   OFF until XCP_NCAA=1: run it by hand once first.
-if [ "${XCP_NCAA:-0}" = "1" ]; then step 11c_ncaa "$PY" -u racecast/build_ncaa_projection.py; fi
+# (11c_ncaa now runs in the 10f group above)
 # ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
 #   (step 14), so every course page of a first run was built without the
 #   indexes the course queries need; 12b took 41,047 s on 2026-09-02.
@@ -2073,12 +2124,27 @@ if [ "${XCP_NCAA:-0}" = "1" ]; then step 11c_ncaa "$PY" -u racecast/build_ncaa_p
 # index builds wait for every older open transaction
 bgchainjoin 15_rowguard
 step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
+# ★ 10f3_COMPS IN THE BACKGROUND FROM HERE (2026-11-12, ~113 s off the line):
+#   it writes season_comps / season_comps_meta (a swap) that only comps.py
+#   and 19b's prewarm read; its inputs are not written after 10f. After 11b,
+#   never beside it (11b's concurrent index builds wait on open
+#   transactions). Collected by bgwait.
+bgstep 10f3_comps "$PY" -u racecast/build_comps.py
 # ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
 #   nothing below waits on it. Collected by bgwait before 17.
 # ! AND STARTED AFTER 11b, NOT BEFORE (2026-09-26). CREATE INDEX CONCURRENTLY
 #   waits for every older open transaction in the database; with this
 #   running beside it, 11b_indexes took 626 minutes. The script now commits
 #   per slice too, so 13c's concurrent index build does not wait on it either.
+# ★ THE COURSE AND VENUE PAGES AS ONE BACKGROUND CHAIN (2026-11-12, ~850 s
+#   off the line). 12_courses, 12b and 12c write only course_rank,
+#   course_boards and venue_tf_boards (each _new and swapped) and read
+#   course_difficulties, meets*, results*, ranking_results and
+#   course_canonical -- none of which the panels, 13f, 13f2 or 13g write.
+#   In order inside the chain, so 12c (6.6 GB) starts about as the panels
+#   (~16 GB together) end. Joined before 13b_pool_consts, so 12b/12c read
+#   last run's pool constants file exactly as before; 13j starts after it.
+_courseChain() {
 step 12_courses       "$PY" -u racecast/build_course_rank.py
 # ★ COURSE PAGES IN THREE SHARDS (issue 140). One process building 1,200
 #   courses in a row was mostly waiting on the database; three workers on
@@ -2104,6 +2170,8 @@ if willRun 12c_venue_pages; then
 else
   echo "  12c_prepare, 12c_venue_pages, 12c_finish skipped (the venue pages keep the last build)"
 fi
+}
+if [ "${XCP_COURSE_BG:-1}" = "1" ]; then bgchain courses _courseChain; else _courseChain; fi
 # ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
 #   course records by era, "on this day" (racecast/build_record_books.py).
 #   IN THE BACKGROUND, off the main chain: only the record pages read
@@ -2112,7 +2180,7 @@ fi
 #   books rebuild only where a school's results moved (XCP_RECORD_SCHOOLS a
 #   run, biggest first). ! AFTER 11b and 12b on purpose: CREATE INDEX
 #   CONCURRENTLY waits on every older open transaction (see 10f2 above).
-if [ "${XCP_RECORD_BOOKS:-0}" = "1" ]; then bgstep 13j_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"; fi
+# (13j_record_books starts after the course chain is collected, below)
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels
 steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
@@ -2140,6 +2208,8 @@ if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_s
 #   run's tables, as it did when this ran after it in line -- so bgwait
 #   collects it at the end.
 if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then bgstep 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
+bgchainjoin courses                       # 12/12b/12c, before 13b rewrites the constants
+if [ "${XCP_RECORD_BOOKS:-0}" = "1" ]; then bgstep 13j_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"; fi
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone
@@ -2160,14 +2230,19 @@ bgstep 13c_search_index "$PY" -u racecast/search_index.py
 if [ "$FAST" -eq 0 ]; then
   step 13c2_snapshot "$PY" -u scripts/take_snapshot.py --weekly --keep 8 || true
 fi
+# ★ SIDE BY SIDE (2026-11-12, ~5 min off the line): the sitemap, the follow
+#   digest, the posted-meet forecasts and the qualifier fields write disjoint
+#   things (sitemap files; alert_* / follow_snapshot; meet_forecast and the
+#   day's inputs file; the qualified-fields output) and none reads another's.
+#   13h_raw stays after the group: it can share 13h's daily inputs file.
+#   13e (IndexNow) reads the sitemap, so it runs after. XCP_LATE_PARALLEL=0
+#   runs them one after another, as before.
 # the sitemap for Google: every ranked athlete, school, course and meet
-step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
-# IndexNow: the URLs that changed, to Bing and friends (needs XCP_INDEXNOW_KEY)
-step 13e_indexnow     "$PY" -u scripts/indexnow_submit.py
+_G13=(13d_sitemap "$PY -u racecast/build_sitemap.py")
 # ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless XCP_ALERTS=1.
 #   After 13f (the breakouts it reads); see racecast/follow_alerts.py.
 if [ "${XCP_ALERTS:-0}" = "1" ]; then
-  step 13g_follow_alerts "$PY" -u racecast/follow_alerts.py --send --prewarm
+  _G13+=(13g_follow_alerts "$PY -u racecast/follow_alerts.py --send --prewarm")
 fi
 # ★ "WHAT WE SAID" BEFORE EACH MEET, SCORED AFTER (owner, 2026-10-10): the
 #   week's posted XC forecasts stored, the run meets scored, for /meet/recap
@@ -2181,24 +2256,32 @@ if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   #   ratings and course numbers, which have seen the races it learns from;
   #   these files (race_model.keepInputs, one .jsonl.gz a day) are the table
   #   nothing after the forecast touched. XCP_RACE_INPUTS_DIR= (empty) stops it.
-  step 13h_meet_forecasts env XCP_RACE_INPUTS_DIR="${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}" \
-    "$PY" -u racecast/build_meet_forecasts.py
+  _G13+=(13h_meet_forecasts "env XCP_RACE_INPUTS_DIR='${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}' $PY -u racecast/build_meet_forecasts.py")
   # ★ THE NO-RATINGS RACE MODEL, FROZEN BESIDE IT (owner, 2026-11-06, PLAN-MODEL
   #   §9): the same posted meets, its own table, so score_frozen_forecasts can
   #   hold the two side by side before the site serves either. Only when its
   #   file exists (a missing one would record the ratings under its name).
   #   XCP_FORECAST_RAW=0 skips it.
   RAW_MODEL="${XCP_RACE_MODEL_RAW:-$(dirname "${XCP_RACE_MODEL:-$ROOT/model/data/race_trees.pkl}")/race_trees_raw.pkl}"
-  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then
-    step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
-      "$PY" -u racecast/build_meet_forecasts.py
-  fi
+  _RAW13=""
+  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then _RAW13=1; fi
 fi
 # ★ AND THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS, as the nightly
 #   (racecast/build_qualified_fields.py); XCP_QUALIFIED_BUILD=0 skips it
 if [ "${XCP_QUALIFIED_BUILD:-1}" = "1" ]; then
-  step 13h2_qualified_fields "$PY" -u racecast/build_qualified_fields.py --budget-minutes 60
+  _G13+=(13h2_qualified_fields "$PY -u racecast/build_qualified_fields.py --budget-minutes 60")
 fi
+if [ "${XCP_LATE_PARALLEL:-1}" = "1" ]; then
+  stepsN "${_G13[@]}"
+else
+  XCP_STREAMS=1 stepsN "${_G13[@]}"
+fi
+if [ -n "${_RAW13:-}" ]; then
+  step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
+    "$PY" -u racecast/build_meet_forecasts.py
+fi
+# IndexNow: the URLs that changed, to Bing and friends (needs XCP_INDEXNOW_KEY)
+step 13e_indexnow     "$PY" -u scripts/indexnow_submit.py
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.
@@ -2242,7 +2325,21 @@ _REPORTS=(17_checklist "$PY -u scripts/run_checklist.py"
 #   engine/data/run_history.jsonl and written to $LOGDIR/REPORT.txt. 16b
 #   feeds it the LACCTiC fair tests (college; public API, about 150
 #   requests a second apart; XCP_LACCTIC=0 skips, XCP_LACCTIC_RACES picks).
-if [ "${XCP_LACCTIC:-1}" != "0" ]; then
+# ★ ONCE A WEEK (owner, 2026-11-10: "make it once weekly"): a run whose
+#   last LACCTiC comparison is under XCP_LACCTIC_DAYS (7) days old skips
+#   it -- about 153 requests to their API each time, and the numbers hardly
+#   move between runs. XCP_LACCTIC=force runs it anyway. The report reads
+#   the last run that has it.
+_lacRecent=""
+if [ "${XCP_LACCTIC:-1}" != "force" ]; then
+  _lacRecent=$(find "$ROOT/logs" -mindepth 2 -maxdepth 2 -name 16b_lacctic.log -size +1k \
+                 -mtime -"${XCP_LACCTIC_DAYS:-7}" 2>/dev/null | head -1)
+fi
+if [ "${XCP_LACCTIC:-1}" = "0" ]; then
+  :
+elif [ -n "$_lacRecent" ]; then
+  echo "  16b_lacctic: skipped -- last run under ${XCP_LACCTIC_DAYS:-7} days ago ($_lacRecent)" | tee -a "$SUMMARY"
+else
   _REPORTS+=(16b_lacctic "$PY -u scripts/lacctic_compare.py --race ${XCP_LACCTIC_RACES:-12194,12158,11632} --runners 150")
 fi
 # ★ OUR PREDICTIONS FOR KAILO'S UPCOMING MEETS, SAVED BEFORE THE RACE (owner,
@@ -2284,7 +2381,9 @@ XCP_STREAMS="${XCP_REPORT_STREAMS:-5}" stepsN "${_REPORTS[@]}"
 # the evidence chain (08a..08d), started after the go-live: 17c reads its logs
 if [ -n "${EVID_PID:-}" ]; then
   echo "  waiting for the evidence chain (08a..08d)..."
+  _tw=$(date +%s)
   wait "$EVID_PID"
+  echo "  evidence_chain held the run $(( $(date +%s) - _tw ))s" | tee -a "$SUMMARY"
   _ef=$(tr -s ' \n' ' ' < "$EVID_FAILED_FILE" 2>/dev/null | sed 's/^ *//; s/ *$//')
   [ -n "$_ef" ] && FAILED="$FAILED $_ef"
 fi

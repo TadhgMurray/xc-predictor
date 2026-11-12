@@ -21,6 +21,7 @@ import re
 import sys
 
 LINE = re.compile(r"^\s*(\S+) (ok|FAILED after) \(?(\d+)s(.*)$")
+HELD = re.compile(r"^\s*(\S+) held the run (\d+)s")
 
 
 def load(run):
@@ -32,12 +33,19 @@ def load(run):
     for ln in lines:
         m = LINE.match(ln)
         if not m:
+            c = HELD.match(ln)              # "  evidence_chain held the run 812s"
+            if c:
+                steps[c.group(1)] = {"s": int(c.group(2)), "ok": True, "kind": "wait",
+                                     "held": int(c.group(2)), "peak": None, "low": None,
+                                     "ran": None}
             continue
         name, verdict, secs, rest = m.groups()
         kind = "bg" if "background" in rest else "par" if "in parallel" in rest else "line"
         pk = re.search(r"peak ([0-9.]+) GB", rest)
         lo = re.search(r"down to ([0-9.]+) GB", rest)
+        hd = re.search(r"held the run (\d+)s", rest)
         e = {"s": int(secs), "ok": verdict == "ok", "kind": kind,
+             "held": int(hd.group(1)) if hd else None,
              "peak": float(pk.group(1)) if pk else None,
              "low": float(lo.group(1)) if lo else None}
         mem = os.path.join(run, ".mem", name)
@@ -73,6 +81,18 @@ def _ran(path):
     return total
 
 
+def _wall(run):
+    """Seconds from the run's start (its folder's name) to the summary's
+    last write -- the run's wall clock, stalls and all."""
+    import datetime as dt
+    m = re.search(r"(\d{8}_\d{6})", os.path.basename(run.rstrip("/")))
+    try:
+        t0 = dt.datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").timestamp()
+        return int(os.path.getmtime(os.path.join(run, "summary.log")) - t0)
+    except (AttributeError, ValueError, OSError):
+        return None
+
+
 def fmt(e):
     if not e:
         return f"{'':>7} {'':>7} {'':>6} {'':>5}"
@@ -106,8 +126,12 @@ def main():
         print(f"{n[:28]:<28} {kind:<4} " + " | ".join(fmt(r.get(n)) for r in runs))
     for r, path in zip(runs, a.runs):
         inline = sum(e["s"] for e in r.values() if e["kind"] == "line")
+        held = sum(e["held"] or 0 for e in r.values() if e["kind"] in ("bg", "wait"))
+        wall = _wall(path)
         fails = [n for n, e in r.items() if not e["ok"]]
         print(f"\n{os.path.basename(path.rstrip('/'))}: {len(r)} steps, {inline:,} s in line"
+              f"{f', {held:,} s held for background steps' if held else ''}"
+              f"{f', {wall / 3600:.1f} h start to last summary line' if wall else ''}"
               f"{', FAILED: ' + ' '.join(fails) if fails else ''}")
         try:
             fin = [ln for ln in open(os.path.join(path, "summary.log")) if "finished in" in ln]
