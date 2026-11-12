@@ -267,10 +267,25 @@ def candidateSql(cur, sport):
           AND  r.time_seconds / (d.distance / 1000.0) < {PREFILTER_PACE}"""
 
 
+# ⚠ HASH JOINS ONLY, AND A BOUND (2026-11-12; run 20261111_200338 sat 3 h
+#   in 06c after the XC half). The pace filter is an expression over a
+#   COALESCE of distances, so the planner guesses its rows; guessed low, it
+#   can put the ag aggregate (one row per athlete) inside a nested loop and
+#   rescan it per candidate. Every join here is an equality on keys, so a
+#   hash join answers each one; nested loops off makes the plan the one the
+#   rows need, whatever the guess. statement_timeout (XCP_06C_STMT_MIN, 60)
+#   turns a runaway plan into a failed step instead of a stalled run.
 def loadCandidates(cur, sport):
+    cur.execute("SELECT current_setting('enable_nestloop'), current_setting('statement_timeout')")
+    was_nl, was_to = cur.fetchone()
+    cur.execute("SET LOCAL enable_nestloop = off")
+    cur.execute(f"SET LOCAL statement_timeout = '{int(os.environ.get('XCP_06C_STMT_MIN', '60'))}min'")
     cur.execute(candidateSql(cur, sport))
     cols = [c[0] for c in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    out = [dict(zip(cols, r)) for r in cur.fetchall()]
+    cur.execute("SELECT set_config('enable_nestloop', %s, true), "
+                "set_config('statement_timeout', %s, true)", (was_nl, was_to))
+    return out
 
 
 def raceRows(cur, sport, key):
