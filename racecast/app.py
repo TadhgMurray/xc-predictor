@@ -11679,6 +11679,37 @@ def api_rankings():
                     "hs_movable": hs_movable,
                     "rows": rows})
 
+# ★ A TEAM BOARD ONCE FOR THE BOX (2026-11-12: its count and the year list
+#   were 515 s of the slow log in 72 h). /api/teams answers the same filters
+#   the same way for every visitor -- the count, the live race and the slice
+#   -- so serveBoard's answer is shared by every worker for TEAM_BOARD_TTL,
+#   keyed by the filters and the oids of the tables it reads (a rebuilt board
+#   is a new copy). serveBoard also settles f (the span, the sort) and the
+#   route reports f back, so the settled f is kept with the rows and put back.
+TEAM_BOARD_TTL = 1800.0
+
+
+def _sharedTeamBoard(cur, f):
+    from teams import serveBoard
+    import hashlib
+    import sharedcache
+    oids = tuple(sharedcache.tableOid(cur, t)
+                 for t in ("team_season", "athlete_season", "ranking_results"))
+    if None in oids:
+        return serveBoard(cur, f)
+    key = "teams-" + hashlib.sha1(repr((sorted((k, repr(v)) for k, v in f.items()), oids))
+                                  .encode("utf-8")).hexdigest()
+
+    def compute():
+        g = dict(f)
+        rows, info = serveBoard(cur, g)
+        return [dict(r) for r in rows], info, g
+    (rows, info, settled), _at = sharedcache.get(key, compute, ttl=TEAM_BOARD_TTL)
+    f.clear()
+    f.update(settled)
+    return [dict(r) for r in rows], dict(info)
+
+
 @app.route("/api/teams")
 @_publicBoard("teams")
 def api_teams():
@@ -11771,7 +11802,7 @@ def api_teams():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             try:
-                rows, info = serveBoard(cur, f)
+                rows, info = _sharedTeamBoard(cur, f)
             except psycopg2.errors.UndefinedTable:
                 # ! THE HONEST 400 THE RANKINGS ROUTE ALREADY LEARNED TO GIVE.
                 #   Unhandled, Flask answers with its debug PAGE and the
