@@ -58,3 +58,35 @@ class Rejoin(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Cur:
+    """Answers splitCollisionTeams' two questions: the tables exist, and
+    Penn has an Indiana cluster (the high school, biggest) and a PA one."""
+    def __init__(self):
+        self.sql = ""
+
+    def execute(self, sql, params=None):
+        self.sql = sql
+
+    def fetchone(self):
+        return {"present": True}
+
+    def fetchall(self):
+        if "FROM school_identity" in self.sql:
+            return [{"school": "Penn", "state": "IN"}, {"school": "Penn", "state": "PA"}]
+        return []
+
+
+class CollegeTeams(unittest.TestCase):
+    def test_a_college_team_is_not_put_under_a_high_school_namesake(self):
+        """2026-11-12: the Ivy League men's 8K scored Penn as "Penn (IN)"."""
+        rs = [{"school": "Penn", "person_id": i, "rating_pool": "college_m",
+               "school_state": "PA"} for i in range(7)]
+        M.splitCollisionTeams(_Cur(), rs, meet_state="NY")
+        self.assertEqual(schools(rs), [f"Penn{K}PA"])
+
+    def test_high_school_runners_still_split(self):
+        rs = [{"school": "Penn", "person_id": i, "rating_pool": "hs_m"} for i in range(7)]
+        M.splitCollisionTeams(_Cur(), rs, meet_state="IN")
+        self.assertTrue(all(r["school"].startswith("Penn" + K) for r in rs))
