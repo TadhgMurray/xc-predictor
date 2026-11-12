@@ -18,6 +18,10 @@ import random
 # of the expected JSON. Both mean the current IP is blocked at the network
 # level and require a VPN rotation to recover. Distinct from
 # RateLimitException (429) — that is a server miscommunication error.
+class RefusedException(Exception):
+    """The results API answered 403 or 429: not retried (polite_stop.strike)."""
+
+
 class CloudflareException(Exception):
     pass
 
@@ -77,6 +81,10 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
     # ------------------------------------------------------------------ #
     last_error = None
 
+    # the run is stopping (polite_stop): ask nothing more
+    import polite_stop
+    if polite_stop.stopped():
+        raise RefusedException("the run is stopping")
 
     for attempt in range(MAX_RETRIES):
 
@@ -139,8 +147,12 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
             # Empty text or 429 — server not ready, worth retrying
             if not text:
                 raise Exception(f"Empty response from API (status {status})")
-            if status == 429:
-                raise Exception("Server miscommunication error (status 429)")
+            # ★ 403 / 429: REFUSED, NOT RETRIED (2026-11-12) -- a strike
+            #   toward the polite stop, and the meet is left for another night
+            if status in (403, 429):
+                import polite_stop
+                polite_stop.strike("[XC]", f"status {status}, meet {meet_id} div {div_id}")
+                raise RefusedException(f"API refused (status {status})")
             if status != 200:
                 raise Exception(f"API returned status {status}")
 
@@ -160,6 +172,8 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
             # once). teamScores[] = THIS division's team scoring (caller
             # accumulates across divisions). teams/team_scores are None when the
             # response omits them.
+            import polite_stop
+            polite_stop.clear()
             results = parsed.get("resultsXC", [])
 
             # resultsXC sometimes comes back as a list-of-lists (the actual
@@ -176,9 +190,8 @@ async def getMeetResults(page, meet_id: int, div_id: int, jwt_token: str):
  
             return results, teams, team_scores
 
-        except CloudflareException:
-            # Don't retry Cloudflare blocks — raise immediately so the
-            # caller can trigger VPN rotation
+        except (CloudflareException, RefusedException):
+            # Don't retry a block or a refusal -- raise at once (polite_stop)
             raise
 
         except Exception as e:
@@ -330,9 +343,22 @@ async def getMeetData(page, meet_id: int):
             );
 
             clearTimeout(timeoutId);
-            return await response.text();
+            return { status: response.status, text: await response.text() };
         }
     """, {"meetId": meet_id, "timeoutMs": JS_FETCH_TIMEOUT_MS})
+
+    # ★ THE STATUS IS READ NOW (2026-11-12). A 403 / 429 / 5xx used to come
+    #   back as text that parsed to nothing, so the meet was written state 4,
+    #   "no meet at this id", and a real meet was lost. A refusal is a strike
+    #   toward the polite stop; a server error fails the meet (retried).
+    status = (data or {}).get("status")
+    data = (data or {}).get("text") or ""
+    if status in (403, 429):
+        import polite_stop
+        polite_stop.strike("[XC]", f"GetMeetData status {status}, meet {meet_id}")
+        raise RefusedException(f"GetMeetData refused (status {status})")
+    if status is not None and status >= 500:
+        raise Exception(f"GetMeetData server error (status {status})")
 
     # data is the raw response text — empty or "null" both mean no XC
     # data for this meet_id.
@@ -683,8 +709,10 @@ async def getMeetResultsTF(page, meet_id: int, div_id: int, event_short: str,
 
             if not text:
                 raise Exception(f"Empty response from API (status {status})")
-            if status == 429:
-                raise RateLimitException("Server returned 429 (rate limited)")
+            if status in (403, 429):
+                import polite_stop
+                polite_stop.strike("[TF]", f"status {status}, meet {meet_id}")
+                raise RefusedException(f"API refused (status {status})")
             if status != 200:
                 raise Exception(f"API returned status {status}")
 
@@ -713,9 +741,8 @@ async def getMeetResultsTF(page, meet_id: int, div_id: int, event_short: str,
 
             return results, teams
         
-        except CloudflareException:
-            # Don't retry Cloudflare blocks — raise immediately so the
-            # caller can trigger VPN rotation.
+        except (CloudflareException, RefusedException):
+            # Don't retry a block or a refusal -- raise at once (polite_stop)
             raise
 
         except Exception as e:
