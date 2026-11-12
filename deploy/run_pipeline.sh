@@ -2211,6 +2211,14 @@ fi
 if [ "${XCP_MEET_COUNTS:-1}" != "0" ]; then
   step 13f4_meet_counts "$PY" -u racecast/build_meet_counts.py || true
 fi
+# ★ THE "ADD ANYONE" PICKER'S TABLE (2026-11-12; racecast/build_athlete_pick.py):
+#   one row per rated runner, sport and gender with the newest season, used
+#   by /api/predict/athletes while athletes and athlete_season are unchanged
+#   since. A failure costs nothing: the search runs as before.
+#   XCP_ATHLETE_PICK=0 skips it.
+if [ "${XCP_ATHLETE_PICK:-1}" != "0" ]; then
+  step 13f5_athlete_pick "$PY" -u racecast/build_athlete_pick.py || true
+fi
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up
 #   at /account/admin/social. A report step: it never fails the run. Off with

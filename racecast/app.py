@@ -13361,6 +13361,8 @@ def _athleteSearchRows(where, params, tokens=()):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SET LOCAL statement_timeout = " + str(int(ATHLETE_SEARCH_TIMEOUT_MS)))
+            if params.get("gender") in ("M", "F") and tokens and _pickValid(cur):
+                return _athleteSearchPick(cur, tokens, params)
             source = "athlete_season s JOIN athletes a ON a.athlete_id = s.person_id"
             name_col = _ATHLETE_NAME_SQL
             conds = list(where)
@@ -13440,6 +13442,72 @@ _ATHLETE_WALK_SQL = """
               person_id
     LIMIT  40
 """
+
+
+# ★ THE PICKER'S OWN TABLE (2026-11-12; racecast/build_athlete_pick.py): one
+#   row per rated runner, sport and gender, with the name and the newest
+#   qualifying season -- every row qualifies, so the walk by id stops 200
+#   matches in, and a rare name is read through its trigram index first as
+#   above. Used only while athletes and athlete_season are unchanged since
+#   the build (their oids and change stamps); else the paths above.
+_PICK_SQL = """
+    SELECT * FROM (
+        SELECT p.person_id, p.school, p.year, p.mean_rating, p.pool, p.name
+        FROM   athlete_pick p
+        WHERE  p.sport = %(sport)s AND p.g = %(gender)s AND {conds}
+        ORDER  BY p.person_id
+        LIMIT  200
+    ) x
+    ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s THEN 0 ELSE 1 END),
+              mean_rating DESC NULLS LAST,
+              person_id
+    LIMIT  40
+"""
+
+
+def _pickValid(cur):
+    try:
+        cur.execute("SAVEPOINT athlete_pick")
+        try:
+            cur.execute("SELECT src, oid, stamp FROM athlete_pick_meta")
+            meta = {(r["src"] if isinstance(r, dict) else r[0]):
+                    tuple(int(x) for x in (list(r.values())[1:] if isinstance(r, dict) else r[1:]))
+                    for r in cur.fetchall()}
+            from build_meet_counts import STAMP_SQL
+            now = {}
+            for t in ("athletes", "athlete_season"):
+                cur.execute(STAMP_SQL, (t,))
+                r = cur.fetchone()
+                now[t] = tuple(int(x) for x in (r.values() if isinstance(r, dict) else r)) if r else None
+            cur.execute("RELEASE SAVEPOINT athlete_pick")
+        except Exception:                               # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT athlete_pick")
+            return False
+    except Exception:                                   # noqa: BLE001
+        return False
+    return bool(meta) and all(meta.get(t) == now[t] for t in now)
+
+
+def _athleteSearchPick(cur, tokens, params):
+    conds = [f"p.name ILIKE %(t{i})s" for i in range(len(tokens))]
+    long_ = [f"p.name ILIKE %(t{i})s" for i, t in enumerate(tokens) if len(t) >= 3]
+    params = dict(params)
+    if long_:
+        cur.execute("SELECT p.person_id FROM athlete_pick p WHERE p.sport = %(sport)s"
+                    " AND p.g = %(gender)s AND " + " AND ".join(long_)
+                    + " LIMIT " + str(int(NAME_FIRST_CAP) + 1), params)
+        ids = [r["person_id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+        if not ids:
+            return []
+        if len(ids) <= NAME_FIRST_CAP:
+            params["pk_ids"] = ids
+            cur.execute(_PICK_SQL.format(conds=" AND ".join(
+                conds + ["p.person_id = ANY(%(pk_ids)s)"])), params)
+            return cur.fetchall()
+    cur.execute("SET LOCAL enable_seqscan = off")
+    cur.execute("SET LOCAL enable_bitmapscan = off")
+    cur.execute(_PICK_SQL.format(conds=" AND ".join(conds)), params)
+    return cur.fetchall()
 
 
 def _athleteSearchWalk(cur, where, is_name, params):

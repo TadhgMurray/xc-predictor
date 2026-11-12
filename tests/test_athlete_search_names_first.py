@@ -197,3 +197,65 @@ def test_a_name_past_the_cap_keeps_the_walk_and_the_rows(pg, monkeypatch):
     monkeypatch.setattr(A, "NAME_FIRST_CAP", 3)      # "Collin" is now common
     over, old2, _ = _both(A, monkeypatch, q)
     assert under == over == old == old2 and under
+
+
+def _buildPick(conn):
+    """build_athlete_pick's table and stamps, in the test schema."""
+    import build_athlete_pick as BP
+    with conn.cursor() as c:
+        c.execute("SET search_path TO t_asearch, public")
+        c.execute(BP._BUILD)
+        c.execute("ALTER TABLE athlete_pick_new RENAME TO athlete_pick")
+        c.execute("ALTER TABLE athlete_pick ADD PRIMARY KEY (sport, g, person_id)")
+        c.execute("CREATE INDEX ON athlete_pick USING gin (name gin_trgm_ops)")
+        c.execute("CREATE TABLE athlete_pick_meta (src text PRIMARY KEY, oid bigint, stamp bigint,"
+                  " built_at timestamptz DEFAULT now())")
+        conn.commit()
+        c.execute("SELECT pg_stat_force_next_flush()")
+        conn.commit()
+        for src, (oid, st) in zip(BP.SOURCES, BP.stamps(c)):
+            c.execute("INSERT INTO athlete_pick_meta (src, oid, stamp) VALUES (%s, %s, %s)",
+                      (src, oid, st))
+    conn.commit()
+
+
+@pytest.mark.parametrize("q", [
+    "q=Collin+ha&sport=XC&gender=M", "q=Collin+ha&sport=TF&gender=F", "q=collin&sport=XC&gender=M",
+    "q=jo&sport=XC&gender=M", "q=jo+li&sport=XC&gender=F", "q=ha&sport=TF&gender=M",
+    "q=smith+jo+al+ng&sport=TF&gender=M", "q=zzz&sport=XC&gender=F", "q=o'h&sport=XC&gender=M",
+])
+def test_the_pick_table_answers_what_the_old_query_answered(pg, monkeypatch, q):
+    A, conn = pg
+    _buildPick(conn)
+    with conn.cursor() as c:
+        c.execute("SET search_path TO t_asearch, public")
+        assert A._pickValid(c)
+    conn.rollback()
+    used = []
+    real_pick = A._athleteSearchPick
+    monkeypatch.setattr(A, "_athleteSearchPick",
+                        lambda *a, **k: used.append(1) or real_pick(*a, **k))
+    new, old, body = _both(A, monkeypatch, q)
+    assert new == old, q
+    assert used, "the pick table was not used"
+    # and with the cap forced low, the walk on the pick table too
+    monkeypatch.setattr(A, "NAME_FIRST_CAP", 2)
+    new2, old2, _ = _both(A, monkeypatch, q)
+    assert new2 == old2 == old, q
+
+
+def test_a_changed_source_turns_the_pick_table_off(pg):
+    A, conn = pg
+    _buildPick(conn)
+    with conn.cursor() as c:
+        c.execute("SET search_path TO t_asearch, public")
+        assert A._pickValid(c)
+        conn.rollback()
+        c.execute("SET search_path TO t_asearch, public")
+        c.execute("INSERT INTO athletes (athlete_id, first_name, last_name) VALUES (999999, 'New', 'Runner')")
+        conn.commit()
+        c.execute("SELECT pg_stat_force_next_flush()")
+        conn.commit()
+        c.execute("SET search_path TO t_asearch, public")
+        assert not A._pickValid(c)
+    conn.rollback()
