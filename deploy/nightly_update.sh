@@ -548,6 +548,15 @@ step 13c0_person_redirects "$PY" -u scripts/person_redirects.py --resolve
 #   a night that published nothing. A failure costs nothing else: the site
 #   computes a state live when its row is missing or old.
 step 13f2_wit_marks "$PY" -u racecast/build_wit_marks.py
+# ★ THE BIG SCHOOLS' PAGES, PRECOMPUTED (2026-11-12; racecast/build_school_pages.py):
+#   the history half of /school/:name (header, year bar, current season,
+#   best, top athletes) for schools with XCP_SCHOOL_PAGE_MIN_SEASONS+ seasons,
+#   by the page's own functions, served only for tonight's boards and code
+#   (school_pages.py). A failure costs nothing: the page computes live.
+#   XCP_SCHOOL_PAGES=0 skips it.
+if [ "${XCP_SCHOOL_PAGES:-1}" != "0" ]; then
+  step 13f3_school_pages "$PY" -u racecast/build_school_pages.py || true
+fi
 
 # --no-publish: rated and redirected; the sitemap, forecasts and watchdog
 # read the boards, which tonight's run did not rebuild -- the next night does

@@ -739,6 +739,9 @@ def schoolTopAthletes(cur, school, sport, limit=12,
 # ! A DEGRADED ANSWER IS NOT SHARED: a header whose count ran out of budget
 #   (athletes None) or a missing school (None) is computed again next time.
 SCHOOL_SHARED_TTL = 1800.0
+# the calls build_school_pages.py stores (the page's history half)
+PRECOMPUTED = ("schoolHeader", "schoolYears", "currentSeason", "schoolBest",
+               "schoolTopAthletes")
 
 
 def _plain(v):
@@ -773,6 +776,14 @@ def sharedSchool(cur, fn, *args, **kw):
             sharedcache.tableOid(cur, "ranking_results"))
     if None in oids:
         return fn(cur, *args, **kw)
+    # ★ THE PIPELINE'S COPY FIRST (school_pages.py, build_school_pages.py):
+    #   a big school's history computed overnight by these same functions,
+    #   served only for the boards it was read from and the code that read it
+    if fn.__name__ in PRECOMPUTED:
+        import school_pages
+        hit = school_pages.storedValue(cur, fn.__name__, args, kw, oids)
+        if hit is not None:
+            return hit
     key = repr((fn.__name__, args, sorted(kw.items()), oids,
                 datetime.date.today().isoformat()))
     name = "school-" + hashlib.sha1(key.encode("utf-8")).hexdigest()

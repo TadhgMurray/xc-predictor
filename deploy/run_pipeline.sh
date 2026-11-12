@@ -2194,6 +2194,15 @@ step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
 #   build costs nothing else: the site computes a state live when its row is
 #   missing or older than cuts.MAX_AGE_S.
 step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py
+# ★ THE BIG SCHOOLS' PAGES, PRECOMPUTED (2026-11-12; racecast/build_school_pages.py):
+#   the history half of /school/:name (header, year bar, current season,
+#   best, top athletes) for schools with XCP_SCHOOL_PAGE_MIN_SEASONS+ seasons,
+#   by the page's own functions, served only for tonight's boards and code
+#   (school_pages.py). A failure costs nothing: the page computes live.
+#   XCP_SCHOOL_PAGES=0 skips it.
+if [ "${XCP_SCHOOL_PAGES:-1}" != "0" ]; then
+  step 13f3_school_pages "$PY" -u racecast/build_school_pages.py || true
+fi
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up
 #   at /account/admin/social. A report step: it never fails the run. Off with
