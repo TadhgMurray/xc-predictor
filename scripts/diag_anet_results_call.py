@@ -67,7 +67,7 @@ async def main(meet_id, div_id):
 
     async with async_playwright() as pw:
         browser = await L._launchBrowser(pw)
-        ctx = await L._buildContext(browser, 0)
+        ctx = await L._buildContext(browser)
         page = await ctx.new_page()
         print(f"browser {browser.version}; UA {await page.evaluate('navigator.userAgent')}")
 

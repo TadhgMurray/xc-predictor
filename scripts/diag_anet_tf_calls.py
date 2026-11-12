@@ -78,7 +78,7 @@ async def main(meet_id):
 
     async with async_playwright() as pw:
         browser = await L._launchBrowser(pw)
-        ctx = await L._buildContext(browser, 0)
+        ctx = await L._buildContext(browser)
         page = await ctx.new_page()
 
         calls = []
