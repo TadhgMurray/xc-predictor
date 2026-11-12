@@ -54,3 +54,28 @@ def check():
     """Raise PoliteStop when the run is stopping."""
     if _STOP.is_set():
         raise PoliteStop(_WHY[0] if _WHY else "stopped")
+
+
+# ★ A REFUSAL IS A "NO" TOO (2026-11-12: the night of 11-12 asked athletic.net
+#   for 149 meets' results and got 403 on every one, three tries a minute apart
+#   each, for the whole three hours -- not one meet saved). A 403 or 429 on a
+#   results call is a strike; REFUSED_STRIKES in a row (any success clears
+#   them) stop the run like a block does. One meet that is private on its own
+#   costs a strike, not the night.
+REFUSED_STRIKES = int(os.environ.get("ANET_REFUSED_STRIKES") or 3)
+_STRIKES = [0]
+
+
+def strike(label, why):
+    """A refused results call. Returns True when the run is now stopping."""
+    _STRIKES[0] += 1
+    print(f"{label} [polite] refused ({why}) -- strike {_STRIKES[0]} of {REFUSED_STRIKES}",
+          flush=True)
+    if _STRIKES[0] >= REFUSED_STRIKES:
+        return trip(label, f"{_STRIKES[0]} refused results calls in a row, the last: {why}")
+    return False
+
+
+def clear():
+    """A results call answered: the strikes start again."""
+    _STRIKES[0] = 0

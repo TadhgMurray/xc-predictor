@@ -50,3 +50,20 @@ def test_the_tfrrs_drain_stops_too():
     src = open(os.path.join(ROOT, "tfrrs", "driver", "run_tfrrs.py")).read()
     assert "while not polite_stop.stopped():" in src
     assert src.count("polite_stop.trip(") == 2          # IP block and "blocked:" bundles
+
+
+def test_three_refusals_in_a_row_stop_the_run_and_a_success_clears_them(monkeypatch):
+    """2026-11-12: every results call answered 403 for three hours."""
+    P = fresh(monkeypatch)
+    P.clear()
+    assert not P.strike("[XC]", "status 403") and not P.strike("[XC]", "status 403")
+    P.clear()                       # one meet answered: start again
+    assert not P.strike("[XC]", "status 403") and not P.strike("[XC]", "status 403")
+    assert P.strike("[XC]", "status 403") and P.stopped()
+
+
+def test_the_scraper_does_not_retry_a_refusal_and_reads_getmeetdata_status():
+    src = open(os.path.join(ROOT, "scripts", "scraper.py")).read()
+    assert src.count("polite_stop.strike(") == 3      # XC results, TF results, GetMeetData
+    assert src.count("except (CloudflareException, RefusedException):") == 2
+    assert "return { status: response.status, text: await response.text() };" in src

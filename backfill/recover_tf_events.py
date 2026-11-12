@@ -153,7 +153,7 @@ async def _runSession(playwright, grouped: dict, meet_ids: list, session_index: 
 
     # restartBrowser handles Chrome launch, stealth, webdriver patch,
     # and initial navigation to athletic.net.
-    browser, page = await restartBrowser(playwright, None, config, proxy_index=0)
+    browser, page = await restartBrowser(playwright, None, config)
  
     try:
         for meet_id in meet_ids:
