@@ -13324,6 +13324,8 @@ def _athleteSearchRows(where, params, tokens=()):
                     conds = [w if k is None else "m.name ILIKE " + k
                              for w, k in zip(where, is_name)
                              if not (k and keys[k] >= 3)]
+            if source.startswith("athlete_season s JOIN"):
+                return _athleteSearchWalk(cur, where, is_name, params)
             cur.execute(f"""
                 SELECT * FROM (
                     SELECT DISTINCT ON (s.person_id)
@@ -13345,6 +13347,52 @@ def _athleteSearchRows(where, params, tokens=()):
 
 # the name as the select list and idx_athletes_name_trgm spell it
 _ATHLETE_NAME_SQL = "COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')"
+
+
+# ★ THE WALK THAT STOPS (2026-11-12: every search that took the walk hit the
+#   10 s cap -- "ty", "xa", and names past NAME_FIRST_CAP: "luke", "tyson",
+#   "zachary", "Alexand"). The old walk joined athlete_season to athletes and
+#   Postgres chose to read every athlete whose name matched before sorting
+#   for DISTINCT ON. This walks athletes in athlete_id order, takes each
+#   match's newest qualifying season (ORDER BY year DESC LIMIT 1), and stops
+#   at 200 people: the same 200 lowest person_ids, each with the same
+#   season, the DISTINCT ON defined (athlete_id is athletes' key). The plan
+#   is pinned to the key order (no seq or bitmap scan) so the LIMIT can stop
+#   it; a common name finds its 200 near the start (3M-athlete copy: "Smith"
+#   509 -> 18 ms, "jo li" 848 -> 88 ms). Only short tokens and names past the
+#   cap come here; a rare name goes name-first.
+_ATHLETE_WALK_SQL = """
+    SELECT * FROM (
+        SELECT s.person_id, s.school, s.year, s.mean_rating, s.pool,
+               {name} AS name
+        FROM   athletes a
+        CROSS  JOIN LATERAL (
+            SELECT s.person_id, s.school, s.year, s.mean_rating, s.pool
+            FROM   athlete_season s
+            WHERE  s.person_id = a.athlete_id AND {seasons}
+            ORDER  BY s.year DESC
+            LIMIT  1
+        ) s
+        WHERE  {names}
+        ORDER  BY a.athlete_id
+        LIMIT  200
+    ) x
+    ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s THEN 0 ELSE 1 END),
+              mean_rating DESC NULLS LAST,
+              person_id
+    LIMIT  40
+"""
+
+
+def _athleteSearchWalk(cur, where, is_name, params):
+    names = [w for w, k in zip(where, is_name) if k] or ["TRUE"]
+    seasons = [w for w, k in zip(where, is_name) if not k] or ["TRUE"]
+    cur.execute("SET LOCAL enable_seqscan = off")
+    cur.execute("SET LOCAL enable_bitmapscan = off")
+    cur.execute(_ATHLETE_WALK_SQL.format(name=_ATHLETE_NAME_SQL,
+                                         seasons=" AND ".join(seasons),
+                                         names=" AND ".join(names)), params)
+    return cur.fetchall()
 
 
 @app.route("/api/predict/weather")

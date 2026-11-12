@@ -27,6 +27,9 @@ _LAST = ["Harper", "Hall", "Collins", "Smith", "Johnson", "Ha", "Li", "Nguyen",
          "Shah", "Haas", None, "O'Hara", "Ng"]
 
 
+_CONN = []
+
+
 @pytest.fixture
 def pg(monkeypatch):
     dsn = os.environ.get("XCP_TWIN_TEST_DSN")
@@ -70,11 +73,37 @@ def pg(monkeypatch):
         finally:
             conn.rollback()
     monkeypatch.setattr(A, "getConn", _conn)
+    _CONN[:] = [conn]
     yield A, conn
     conn.rollback()
     cur.execute("DROP SCHEMA IF EXISTS t_asearch CASCADE")
     conn.commit()
     conn.close()
+
+
+_OLD_WALK = """
+    SELECT * FROM (
+        SELECT DISTINCT ON (s.person_id)
+               s.person_id, s.school, s.year, s.mean_rating, s.pool,
+               COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'') AS name
+        FROM   athlete_season s JOIN athletes a ON a.athlete_id = s.person_id
+        WHERE  {w}
+        ORDER  BY s.person_id, s.year DESC
+        LIMIT  200
+    ) x
+    ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s THEN 0 ELSE 1 END),
+              mean_rating DESC NULLS LAST, person_id
+    LIMIT  40"""
+
+
+def _oldRows(conn, where, params):
+    """The search as it ran before 2026-11-08: one join, DISTINCT ON."""
+    import psycopg2.extras
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+        c.execute(_OLD_WALK.format(w=" AND ".join(where)), params)
+        rows = c.fetchall()
+    conn.rollback()
+    return rows
 
 
 def _both(A, monkeypatch, query):
@@ -90,7 +119,8 @@ def _both(A, monkeypatch, query):
     r = A.app.test_client().get("/api/predict/athletes?" + query)
     assert r.status_code == 200, r.get_data(as_text=True)
     where, params = seen["args"]
-    old = real(where, params)                     # no tokens: the old walk
+    old = _oldRows(_CONN[0],
+                   where, params)                 # the query as it was
     monkeypatch.setattr(A, "_athleteSearchRows", real)
     new = real(where, params, [t for t in params_tokens(params)])
     return [dict(x) for x in new], [dict(x) for x in old], r.get_json()
@@ -156,7 +186,8 @@ def test_the_sql_shape_follows_the_tokens(pg, monkeypatch):
     assert any("statement_timeout" in s for s in sent)
     A.app.test_client().get("/api/predict/athletes?q=jo+li&sport=XC")
     assert "unnest(" not in sent[-1]
-    assert "athlete_season s JOIN athletes a ON a.athlete_id = s.person_id" in sent[-1]
+    assert "CROSS  JOIN LATERAL" in sent[-1] and "ORDER  BY a.athlete_id" in sent[-1]
+    assert any("enable_bitmapscan = off" in x for x in sent)
 
 
 def test_a_name_past_the_cap_keeps_the_walk_and_the_rows(pg, monkeypatch):
