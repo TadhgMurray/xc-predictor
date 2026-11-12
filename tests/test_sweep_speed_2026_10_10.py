@@ -137,7 +137,7 @@ class ResultLinksUseTheFragment(unittest.TestCase):
         A = self.A
         with A.app.test_request_context("/race/xc/1/2?school=Tufts&r=-123"):
             resp = A._dropUselessPin(-123)
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 301)
         loc = resp.headers["Location"]
         self.assertTrue(loc.endswith("/race/xc/1/2?school=Tufts#r-123"), loc)
         self.assertIn("public", resp.headers["Cache-Control"])
@@ -213,10 +213,10 @@ class ResultLinksUseTheFragment(unittest.TestCase):
 
     def test_old_pinned_links_land_on_the_shared_page(self):
         r = self._routeWithOneFeed("/race/xc/10/20?r=555")
-        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.status_code, 301)
         self.assertTrue(r.headers["Location"].endswith("/race/xc/10/20#r555"))
         r = self._routeWithOneFeed("/race/tf/10/3/20?r=-555")
-        self.assertEqual(r.status_code, 302)
+        self.assertEqual(r.status_code, 301)
         self.assertTrue(r.headers["Location"].endswith("/race/tf/10/3/20#r-555"))
 
     def test_the_race_routes_redirect_a_useless_pin(self):
