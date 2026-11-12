@@ -73,9 +73,12 @@ def test_the_new_sides_reach_the_page_and_the_report():
                encoding="utf-8").read()
     assert "race.rank_outlier == 'race'" in tpl
     assert "race.rank_outlier == 'day'" in tpl
+    # the rules main() runs (side by side since 2026-11-12: RO.ExtraRules)
+    run = {fn for _label, fn in RO.EXTRA_RULES}
+    for fn in ("closeRows", "raceRows", "dayRows"):
+        assert fn in run and callable(getattr(RO, fn)), fn
     src = open(os.path.join(_ROOT, "engine", "rating_outliers.py"), encoding="utf-8").read()
-    for fn in ("closeRows(cur)", "raceRows(cur)", "dayRows(cur)"):
-        assert f"extra += {fn}" in src, fn
+    assert "rules.collect()" in src
 
 
 # ---------------------------------------------------------------- SQL

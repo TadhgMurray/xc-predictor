@@ -104,6 +104,7 @@ import json
 import math
 import os
 import sys
+import threading
 import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -465,6 +466,7 @@ def buildStage(cur, since=None, persons=None, sample_mod=None, shards=None,
     #   used it yet, and two other speed-ups of this week planned badly on
     #   the first full run (03_pro_flag, 06c). The default is the one
     #   INSERT every earlier run finished on, until it is seen on the server.
+    t0 = time.time()
     if (connect is not None and streams > 1 and not persons
             and os.environ.get("XCP_OUTLIER_FILL_PARALLEL", "0") == "1"):
         _fillParallel(cur, name, since, sample_mod, prior_fast, connect, streams)
@@ -476,8 +478,14 @@ def buildStage(cur, since=None, persons=None, sample_mod=None, shards=None,
         cur.execute(f"INSERT INTO {name} (key, sport, result_id, person_id, d, "
                     f"rating, nb, judge) " + "\nUNION ALL\n".join(parts),
                     {"persons": list(persons or [])})
+    if verbose:
+        print(f"    [{time.time() - t0:8.1f}s] stage: filled", flush=True)
+    t0 = time.time()
     for i in range(shards):
         cur.execute(f"ANALYZE {name}_{i}")
+    if verbose:
+        print(f"    [{time.time() - t0:8.1f}s] stage: {shards} partition(s) analyzed",
+              flush=True)
     if verbose:
         cur.execute(f"SELECT count(*), count(*) FILTER (WHERE judge), "
                     f"count(*) FILTER (WHERE NOT nb) FROM {name}")
@@ -575,6 +583,16 @@ def _medOfFirst(near, k):
             f"unnest(({near})[1:{k}]) x ORDER BY x) AS s OFFSET 0) q)")
 
 
+# ★ THE CALIBRATION SAMPLE IS TAKEN BEFORE THE WINDOW, NOT AFTER IT
+#   (2026-11-12, 09d at 1,951 s). The sample is a hash of person_id and the
+#   window is PARTITION BY person_id, so dropping a whole person first leaves
+#   every kept person's window -- and so ro_cal, K and the floor -- exactly
+#   as it was; filtering after it computed the neighbourhood of every row of
+#   the partition (1 in `mod` of which was kept) and threw the rest away.
+#   False is the old shape, kept as the reference the tests compare against.
+CAL_SAMPLE_FIRST = True
+
+
 def calibrate(cur, src, k_fixed=None, verbose=True):
     """K and the floor from `src` (one partition of the stage: a hash
     sample of athletes). Returns {k, floor, curve, persons}. With k_fixed
@@ -587,6 +605,11 @@ def calibrate(cur, src, k_fixed=None, verbose=True):
     mod = max(1, round(n / CAL_ROWS))
     kmax = max(K_CANDIDATES)
     samp = f"AND abs(hashint8(w.person_id)) % {mod} = 0" if mod > 1 else ""
+    near_src = src
+    if CAL_SAMPLE_FIRST and mod > 1:
+        near_src, samp = (f"(SELECT * FROM {src} "
+                          f"WHERE abs(hashint8(person_id)) % {mod} = 0)"), ""
+    t0 = time.time()
     cur.execute("DROP TABLE IF EXISTS ro_cal")
     # the neighbours' ratings, nearest first
     cur.execute(f"""CREATE TEMP TABLE ro_cal AS
@@ -594,7 +617,10 @@ def calibrate(cur, src, k_fixed=None, verbose=True):
                ARRAY(SELECT z.rs[(u.x % 1000)::int]
                      FROM unnest(z.o) WITH ORDINALITY u(x, j)
                      ORDER BY u.j) AS near
-        FROM ({nearSql(src, kmax, samp, judged_only=False)}) z""")
+        FROM ({nearSql(near_src, kmax, samp, judged_only=False)}) z""")
+    if verbose:
+        print(f"    [{time.time() - t0:8.1f}s] calibration: the sample's "
+              f"neighbourhoods (1 in {mod} athletes)", flush=True)
     # ★ EVERY K ON THE SAME RACES: those with all kmax neighbours, so the
     #   curve compares neighbourhoods and not samples.
     cur.execute(f"""
@@ -734,17 +760,40 @@ def flaggedRows(cur, fast_cut, slow_cut):
     return [tuple(r) for r in cur.fetchall()]
 
 
+# ★ THE INSERTS IN PAGES, NOT A ROUND TRIP A ROW (2026-11-12: 108 s for the
+#   1,291,404 extra rows of run 20261112_015027). execute_values sends the
+#   same rows, in the same order, INSERT_PAGE to a statement; psycopg2 quotes
+#   each value exactly as executemany does. ON CONFLICT DO NOTHING inside one
+#   statement keeps the FIRST of two rows with one key, as one statement a
+#   row did: the VALUES list is inserted in order and the second row's
+#   conflict check sees the first. False is the old executemany.
+BATCH_INSERT = True
+INSERT_PAGE = 5000
+
+
+def _insertRows(cur, sql_many, sql_values, rows):
+    if BATCH_INSERT:
+        import psycopg2.extras
+        psycopg2.extras.execute_values(cur, sql_values, rows, page_size=INSERT_PAGE)
+    else:
+        cur.executemany(sql_many, rows)
+
+
 def write(cur, rows, calib):
     cur.execute(DDL)
     cur.execute("DELETE FROM rating_outlier")
     cut = {"fast": calib["fast_cut"], "slow": calib["slow_cut"]}
-    cur.executemany("""
+    head = """
         INSERT INTO rating_outlier (result_id, sport, person_id, season,
                                     rating, med, sigma, n_races, z, side,
                                     span_days, cut)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (result_id, sport) DO NOTHING
-    """, [r + (cut[r[9]],) for r in rows])
+        VALUES """
+    tail = "\n        ON CONFLICT (result_id, sport) DO NOTHING"
+    t0 = time.time()
+    _insertRows(cur, head + "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)" + tail,
+                head + "%s" + tail, [r + (cut[r[9]],) for r in rows])
+    print(f"    [{time.time() - t0:8.1f}s] wrote the neighbourhood's {len(rows):,} rows",
+          flush=True)
     cur.execute("""INSERT INTO rating_outlier_calib
                        (k, floor, fast_cut, slow_cut, n_judged, detail)
                    VALUES (%s, %s, %s, %s, %s, %s)""",
@@ -1491,11 +1540,129 @@ def siblingRows(cur):
 
 
 def writeExtra(cur, rows):
-    cur.executemany("""
+    head = """
         INSERT INTO rating_outlier (result_id, sport, person_id, season, rating, med, side)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (result_id, sport) DO NOTHING""", rows)
+        VALUES """
+    tail = "\n        ON CONFLICT (result_id, sport) DO NOTHING"
+    t0 = time.time()
+    _insertRows(cur, head + "(%s, %s, %s, %s, %s, %s, %s)" + tail, head + "%s" + tail, rows)
+    print(f"    [{time.time() - t0:8.1f}s] wrote the rules' {len(rows):,} rows", flush=True)
     return len(rows)
+
+
+# ---------------------------------------------------------------------- #
+# the rules after the neighbourhood, side by side
+# ---------------------------------------------------------------------- #
+# ! THE ORDER IS THE TABLE'S: writeExtra inserts ON CONFLICT DO NOTHING, so a
+#   row two rules name keeps the side of the one listed first. Whatever order
+#   they finish in, collect() concatenates them in this one.
+EXTRA_RULES = (
+    ("thin/field/level/mixed", "extraRows"),
+    ("same-time copies", "copyRows"),
+    ("career", "careerRows"),
+    ("close", "closeRows"),
+    ("race", "raceRows"),
+    ("day", "dayRows"),
+    ("first names", "nameMixRows"),
+    ("two races in one list", "twoRaceRows"),
+    ("sibling divisions", "siblingRows"),
+)
+
+
+class ExtraRules:
+    """The nine rules of EXTRA_RULES. With connect and streams > 1 each runs
+    on its own connection, `streams` at a time, STARTED AT CONSTRUCTION, so
+    they read results while the main connection fills and judges the stage;
+    collect() waits for them. Otherwise collect() runs them one after
+    another on `cur`, as every run before 2026-11-12 did.
+
+    ★ WHY SIDE BY SIDE (run 20261112_015027: 09d 1,951 s, 1,042 s three days
+      earlier). Seven of the nine were added that week, each a full read of
+      results (34M rows) with its own sorts, all on the main connection
+      after the judging, while the --streams connections sat idle and the
+      stage fill before them held one core of 32.
+    ! THE SAME ROWS: every rule is a read of committed tables -- results,
+      meets, person_gender, athlete_named, race_day_suspect_division and
+      last run's rating_outlier, result_twin, impossible_result -- none of
+      which the main connection writes before collect() returns (write()
+      comes after), and none of which reads the stage. Each rule's SQL is
+      untouched; only the connection it runs on moved. siblingRows' temp
+      table is its own connection's, rolled back with it."""
+
+    def __init__(self, cur, connect=None, streams=1, verbose=True):
+        self.cur, self.connect, self.verbose = cur, connect, verbose
+        self.streams = max(1, int(streams or 1))
+        self.futs = None
+        self.live = {}
+        self.lock = threading.Lock()
+        if connect is not None and self.streams > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            self.t0 = time.time()
+            self.pool = ThreadPoolExecutor(
+                max_workers=min(self.streams, len(EXTRA_RULES)))
+            self.futs = [self.pool.submit(self._work, label, fn)
+                         for label, fn in EXTRA_RULES]
+            if verbose:
+                print(f"    rules: {len(EXTRA_RULES)} started, "
+                      f"{min(self.streams, len(EXTRA_RULES))} side by side "
+                      f"beside the stage and the judging", flush=True)
+
+    def _say(self, secs, label, n, where):
+        if self.verbose:
+            print(f"    [{secs:8.1f}s] rule {label}: {n:,} rows ({where})", flush=True)
+
+    def _work(self, label, fn):
+        from pg_guard import guard
+        t0 = time.time()
+        with self.connect() as wconn:
+            with self.lock:
+                self.live[label] = wconn
+            try:
+                with wconn.cursor() as wcur:
+                    guard(wcur, verbose=False)
+                    got = globals()[fn](wcur)
+            finally:
+                with self.lock:
+                    self.live.pop(label, None)
+                wconn.rollback()
+        self._say(time.time() - t0, label, len(got), "own connection")
+        return got
+
+    def collect(self):
+        out = []
+        if self.futs is None:
+            for label, fn in EXTRA_RULES:
+                t0 = time.time()
+                got = globals()[fn](self.cur)
+                self._say(time.time() - t0, label, len(got), "main connection")
+                out += got
+            return out
+        t_wait = time.time()
+        for f in self.futs:
+            out += f.result()
+        self.pool.shutdown(wait=True)
+        self.futs = None
+        if self.verbose:
+            print(f"    [{time.time() - t_wait:8.1f}s] rules: waited for the last "
+                  f"({time.time() - self.t0:.1f} s since they started)", flush=True)
+        return out
+
+    def close(self):
+        """After a failure: cancel what still runs and wait for it. A no-op
+        once collect() has returned."""
+        if self.futs is None:
+            return
+        for f in self.futs:
+            f.cancel()
+        with self.lock:
+            conns = list(self.live.values())
+        for c in conns:
+            try:
+                c.cancel()
+            except Exception:                              # noqa: BLE001
+                pass
+        self.pool.shutdown(wait=True)
+        self.futs = None
 
 
 def printExtra(rows, show):
@@ -1652,7 +1819,8 @@ def run(cur, since=None, k=None, floor=None, fast_sigma=None,
     cal["detail"].update({"fast_derived": fcut, "slow_derived": scut,
                           "hist": {s: {str(b): v for b, v in h.items()}
                                    for s, h in hist.items()}})
-    rows = flaggedRows(cur, cal["fast_cut"], cal["slow_cut"])
+    with _Clock("the flagged rows read back"):
+        rows = flaggedRows(cur, cal["fast_cut"], cal["slow_cut"])
     if verbose:
         printDistribution(hist, total, bars)
         printCut("fast", fcut, fwhy, frows)
@@ -1748,21 +1916,24 @@ def main():
             # ! THE SCRATCH GOES WHATEVER HAPPENS. With streams the stage is
             #   committed (the workers must see it), so a rollback alone
             #   would leave several GB of unlogged tables behind.
+            # ★ THE RULES START FIRST, on their own connections, and read
+            #   results while this one stages and judges (ExtraRules).
+            #   XCP_OUTLIER_RULE_STREAMS=1 runs them after the judging on
+            #   this connection, one by one, as before 2026-11-12.
+            rule_streams = int(os.environ.get("XCP_OUTLIER_RULE_STREAMS")
+                               or args.streams)
             try:
-                rows, cal = run(cur, since=args.since, k=args.k,
-                                floor=args.floor, fast_sigma=args.fast_sigma,
-                                slow_sigma=args.slow_sigma, bars=bars,
-                                show=args.show, shards=args.shards,
-                                connect=getConn, streams=args.streams)
-                extra = extraRows(cur)
-                extra += copyRows(cur)
-                extra += careerRows(cur)
-                extra += closeRows(cur)
-                extra += raceRows(cur)
-                extra += dayRows(cur)
-                extra += nameMixRows(cur)
-                extra += twoRaceRows(cur)
-                extra += siblingRows(cur)
+                rules = ExtraRules(cur, connect=getConn if rule_streams > 1 else None,
+                                   streams=rule_streams)
+                try:
+                    rows, cal = run(cur, since=args.since, k=args.k,
+                                    floor=args.floor, fast_sigma=args.fast_sigma,
+                                    slow_sigma=args.slow_sigma, bars=bars,
+                                    show=args.show, shards=args.shards,
+                                    connect=getConn, streams=args.streams)
+                    extra = rules.collect()
+                finally:
+                    rules.close()
                 printExtra(extra, args.show)
                 if args.write:
                     if args.since:
