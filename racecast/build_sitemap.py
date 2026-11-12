@@ -386,6 +386,16 @@ def main():
                     help="list athletes who raced in the last N seasons only "
                          "(default XCP_SITEMAP_ATHLETE_YEARS or 2; 0 = every athlete)")
     args = ap.parse_args()
+    # ! NOT WITHOUT THE ID KEY (2026-11-12: the live sitemap still listed
+    #   /athlete/3565, numbers that 301 to token URLs since 2026-11-08). With
+    #   no XCP_PUBLIC_ID_KEY, _public() writes the feed numbers as they are,
+    #   so every URL Google and IndexNow are handed is a redirect. Stop
+    #   instead. XCP_SITEMAP_NUMERIC=1 builds the numeric one on purpose.
+    import public_ids as _pi
+    if not _pi.enabled() and os.environ.get("XCP_SITEMAP_NUMERIC") != "1":
+        raise SystemExit("[sitemap] XCP_PUBLIC_ID_KEY is not set, so every URL would be an old "
+                         "numeric one that redirects. Load /etc/xc-predictor.env first "
+                         "(XCP_SITEMAP_NUMERIC=1 to build it anyway).")
     from database import getConn
     with getConn() as conn:
         by_kind = collect(conn, args.race_years, args.athlete_years)
