@@ -2897,7 +2897,6 @@ class _HistoryRead:
 #   results tables' oids and the feature code, so nothing outlives the data
 #   or the code that made it.
 HISTORY_TTL_S = 600
-HISTORY_SHARDS = 1024
 _HIST_STAMP = {}
 
 
@@ -2928,15 +2927,10 @@ def _historyShared(c, sport, hour, some, has_weather, scale, read):
         return read(c, sport, hour, some)
     fx = _fx()
     base = ("hist", sport, bool(has_weather), scale, hour, fx.MIN_NORMALIZED_TIME, stamp)
-    by_shard = {}
-    for p in some:
-        by_shard.setdefault(int(p) % HISTORY_SHARDS, []).append(int(p))
     have = {}
-    for sh, ids in by_shard.items():
-        for pid, (packed, _at) in sharedcache.peekMany(base + (sh,), ids,
-                                                       ttl=HISTORY_TTL_S).items():
-            cols, tuples = packed
-            have[pid] = [dict(zip(cols, t)) for t in tuples]
+    for pid, (cols, tuples) in sharedcache.peekKeys(base, [int(p) for p in some],
+                                                    ttl=HISTORY_TTL_S).items():
+        have[pid] = [dict(zip(cols, t)) for t in tuples]
     missing = [int(p) for p in some if int(p) not in have]
     out = [r for p in some if int(p) in have for r in have[int(p)]]
     if not missing:
@@ -2951,10 +2945,7 @@ def _historyShared(c, sport, hour, some, has_weather, scale, read):
     def pack(rs):
         cols = tuple(rs[0]) if rs else ()
         return cols, [tuple(r[k] for k in cols) for r in rs]
-    for sh in {p % HISTORY_SHARDS for p in missing}:
-        sharedcache.putMany(base + (sh,), {p: pack(got[p]) for p in missing
-                                           if p % HISTORY_SHARDS == sh},
-                            ttl=HISTORY_TTL_S)
+    sharedcache.putKeys(base, {p: pack(got[p]) for p in missing})
     return out + rows
 
 
@@ -6261,24 +6252,17 @@ def _raceEntrantRowsShared(cur, key):
       differ by a few names, so a copy keyed by the whole list was never the
       other's). The query groups by school and runner, so a school's rows do
       not depend on which other schools are asked with it: each school's rows
-      are filed under it (sharedcache buckets, ENTRANT_SHARDS of them by the
+      are filed under it (sharedcache.putKeys, one file per school, by the
       school's name, for _ENTRANTS_TTL_S), a field reads those it finds and
       queries only the rest, in one statement as before."""
-    import hashlib
     import sharedcache
     schools, sport, year = key
 
-    def shard(name):
-        return int(hashlib.sha1(name.encode("utf-8")).hexdigest()[:8], 16) % ENTRANT_SHARDS
-    by_shard = {}
-    for sc in schools:
-        by_shard.setdefault(shard(sc), []).append(sc)
+    prefix = ("entrants", sport, year)
     have = {}
-    for sh, names in by_shard.items():
-        for sc, (packed, _at) in sharedcache.peekMany(("entrants", sport, year, sh), names,
-                                                      ttl=_ENTRANTS_TTL_S).items():
-            cols, tuples = packed
-            have[sc] = [dict(zip(cols, t)) for t in tuples]
+    for sc, (cols, tuples) in sharedcache.peekKeys(prefix, list(schools),
+                                                   ttl=_ENTRANTS_TTL_S).items():
+        have[sc] = [dict(zip(cols, t)) for t in tuples]
     missing = [sc for sc in schools if sc not in have]
     if missing:
         got = {sc: [] for sc in missing}
@@ -6288,17 +6272,11 @@ def _raceEntrantRowsShared(cur, key):
         def pack(rows):
             cols = tuple(rows[0]) if rows else ()
             return cols, [tuple(r[c] for c in cols) for r in rows]
-        for sh in {shard(sc) for sc in missing}:
-            sharedcache.putMany(("entrants", sport, year, sh),
-                                {sc: pack(got[sc]) for sc in missing if shard(sc) == sh},
-                                ttl=_ENTRANTS_TTL_S)
+        sharedcache.putKeys(prefix, {sc: pack(got[sc]) for sc in missing})
         have.update(got)
     return [dict(r) for sc in schools for r in have.get(sc, ())]
 
 
-# small buckets: a field reads one file per school it names, each a handful
-# of schools' rows, never the whole season's (a bucket is read whole)
-ENTRANT_SHARDS = 256
 
 
 def _entrantsKeep(key, rows, now):

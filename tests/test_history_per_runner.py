@@ -46,3 +46,27 @@ def test_runners_read_once(tmp_path, monkeypatch):
     P._historyShared(None, "TF", 15, [2], True, "pool", read)
     P._historyShared(None, "XC", 15, [2], True, "common5000", read)
     assert asked[2:] == [[2], [2]]
+
+
+def test_a_field_reads_only_its_runners_files(tmp_path, monkeypatch):
+    """A 282-runner field among 5,000 others' cached histories reads in a
+    fraction of a second -- one small file per runner, not shared buckets
+    (2026-11-12: 1.8 s through buckets other fields had filled)."""
+    import time
+    import sharedcache
+    monkeypatch.setattr(sharedcache, "DIR", str(tmp_path / "shared"))
+    monkeypatch.setattr(sharedcache, "tableOid", lambda cur, t, now=None: 11)
+    monkeypatch.setattr(P, "_fx", lambda: type("FX", (), {"MIN_NORMALIZED_TIME": 120.0}))
+
+    def read(c, sport, hour, some):
+        return [{"person_id": p, "athlete_id": p, "date": f"2025-09-{10 + k:02d}",
+                 **{f"f{j}": float(j) for j in range(40)}}
+                for p in some for k in range(48)]
+    P._historyShared(None, "XC", 15, list(range(10000, 15000)), True, "pool", read)
+    field = list(range(10000, 10282))
+    t = time.perf_counter()
+    rows = P._historyShared(None, "XC", 15, field, True, "pool",
+                            lambda *a: (_ for _ in ()).throw(AssertionError("read")))
+    took = time.perf_counter() - t
+    assert len(rows) == 282 * 48
+    assert took < 0.5, took
