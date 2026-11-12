@@ -411,10 +411,10 @@ step() {
   if $NICE $(_jr "$name") "$@" 2>&1 | _stampTo "$LOGDIR/$name.log"; then rc=0; else rc=1; fi
   el=$(( $(date +%s) - t0 ))
   if [ "$rc" -ne 0 ]; then
-    echo "  $name FAILED after ${el}s$(_peak "$name")" | tee -a "$SUMMARY"
+    echo "  $name FAILED after ${el}s${STEP_NOTE:+, $STEP_NOTE}$(_peak "$name")" | tee -a "$SUMMARY"
     FAILED="$FAILED $name"
   else
-    echo "  $name ok (${el}s$(_peak "$name"))" | tee -a "$SUMMARY"
+    echo "  $name ok (${el}s${STEP_NOTE:+, $STEP_NOTE}$(_peak "$name"))" | tee -a "$SUMMARY"
   fi
 }
 
@@ -617,14 +617,18 @@ bgjoin() {
   for i in "${!BG_PIDS[@]}"; do
     [ "${BG_NAMES[$i]}" = "$1" ] && [ -n "${BG_PIDS[$i]}" ] || continue
     echo "  waiting for background step $1..."
+    local tw; tw=$(date +%s)
     if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
+    # ★ HOW LONG THE RUN STOOD STILL FOR IT (2026-11-12): a background
+    #   step's own time says nothing about what it cost the run
+    tw=$(( $(date +%s) - tw ))
     tail -n 2 "$LOGDIR/$1.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  $1 FAILED after ${el}s (background$(_peak "$1"))" | tee -a "$SUMMARY"
+      echo "  $1 FAILED after ${el}s (background, held the run ${tw}s$(_peak "$1"))" | tee -a "$SUMMARY"
       FAILED="$FAILED $1"
     else
-      echo "  $1 ok (${el}s, background$(_peak "$1"))" | tee -a "$SUMMARY"
+      echo "  $1 ok (${el}s, background, held the run ${tw}s$(_peak "$1"))" | tee -a "$SUMMARY"
     fi
     BG_PIDS[$i]=""
   done
@@ -634,14 +638,16 @@ bgwait() {
   for i in "${!BG_PIDS[@]}"; do
     [ -n "${BG_PIDS[$i]}" ] || continue          # already collected by bgjoin
     echo "  waiting for background step ${BG_NAMES[$i]}..."
+    local tw; tw=$(date +%s)
     if wait "${BG_PIDS[$i]}"; then rc=0; else rc=1; fi
     el=$(( $(date +%s) - ${BG_T0[$i]} ))
+    tw=$(( $(date +%s) - tw ))                   # the run stood still this long (bgjoin)
     tail -n 2 "$LOGDIR/${BG_NAMES[$i]}.log"
     if [ "$rc" -ne 0 ]; then
-      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
+      echo "  ${BG_NAMES[$i]} FAILED after ${el}s (background, held the run ${tw}s$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
       FAILED="$FAILED ${BG_NAMES[$i]}"
     else
-      echo "  ${BG_NAMES[$i]} ok (${el}s, background$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
+      echo "  ${BG_NAMES[$i]} ok (${el}s, background, held the run ${tw}s$(_peak "${BG_NAMES[$i]}"))" | tee -a "$SUMMARY"
     fi
   done
   BG_PIDS=(); BG_NAMES=(); BG_T0=()
@@ -692,7 +698,9 @@ bgchainjoin() {
   for i in "${!BGC_PIDS[@]}"; do
     [ "${BGC_NAMES[$i]}" = "$1" ] && [ -n "${BGC_PIDS[$i]}" ] || continue
     echo "  waiting for the $1 chain..."
+    local tw; tw=$(date +%s)
     wait "${BGC_PIDS[$i]}"
+    echo "  $1_chain held the run $(( $(date +%s) - tw ))s" | tee -a "$SUMMARY"
     if [ -f "$LOGDIR/.chain_$1.failed" ]; then
       _ef=$(tr -s ' \n' ' ' < "$LOGDIR/.chain_$1.failed" | sed 's/^ *//; s/ *$//')
       [ -n "$_ef" ] && FAILED="$FAILED $_ef"
@@ -1713,6 +1721,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
          "${XCP_EVIDENCE_NICE:-19}; their lines carry [evidence]"
     (
       FAILED=""
+      # the summary says these ran beside the run (pipeline_profile reads it)
+      STEP_NOTE="background, evidence chain"
       NICE="nice -n ${XCP_EVIDENCE_NICE:-19}"
       command -v ionice >/dev/null 2>&1 && NICE="$NICE ionice -c2 -n7"
       _evidence
@@ -2298,7 +2308,9 @@ XCP_STREAMS="${XCP_REPORT_STREAMS:-5}" stepsN "${_REPORTS[@]}"
 # the evidence chain (08a..08d), started after the go-live: 17c reads its logs
 if [ -n "${EVID_PID:-}" ]; then
   echo "  waiting for the evidence chain (08a..08d)..."
+  _tw=$(date +%s)
   wait "$EVID_PID"
+  echo "  evidence_chain held the run $(( $(date +%s) - _tw ))s" | tee -a "$SUMMARY"
   _ef=$(tr -s ' \n' ' ' < "$EVID_FAILED_FILE" 2>/dev/null | sed 's/^ *//; s/ *$//')
   [ -n "$_ef" ] && FAILED="$FAILED $_ef"
 fi
