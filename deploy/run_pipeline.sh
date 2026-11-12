@@ -773,7 +773,18 @@ step 01b_tfrrs_location "$PY" -u scripts/backfill_tfrrs_location.py --apply --ou
 #   reads until 04f/05; bgjoin collects it right before them. The comments
 #   on why it exists sit where it used to run, above 04f.
 if [ -x "$WXPY" ]; then
-  bgstep 04e_weather_grid "$WXPY" -u backfill/atmost_era5_zarr.py
+  # ★ BOUNDED TOO (2026-11-12; run 20261111_200338: 5,991 s, and the run
+  #   stood at its bgjoin, before 04f/05, for the half hour past the ~70 min
+  #   of steps 02-04 in line). It commits every WRITE_BATCH rows and skips
+  #   what is stored, so a stop keeps what it fetched and the next run
+  #   carries on from there.
+  #   XCP_WX_GRID_MIN (60) sets it; the stop is reported as a bound.
+  bgstep 04e_weather_grid sh -c 'timeout -k 60 "$1m" "$2" -u backfill/atmost_era5_zarr.py; rc=$?
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      echo "04e: stopped at its $1-minute bound (exit $rc) -- what it fetched is stored; the rest waits for the next run"
+      exit 0
+    fi
+    exit "$rc"' sh "${XCP_WX_GRID_MIN:-60}" "$WXPY"
   # ★ AND THE MONTHS THAT STORE HAS NOT REACHED (2026-10-25: the grid
   #   stopped at 2026-06-30 -- the free store runs 3-4 months behind). The
   #   CDS's ERA5T, ~5 days behind, for the days after the store's last one;
@@ -1719,8 +1730,25 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   run, competing with 10_rankings for memory and disk; nothing they
   #   write is read by the site. The scorecard (17c) then reports no fair
   #   tests for this run.
+  # ★ ONCE A WEEK (2026-11-12; owner: "speed it up more"). Three holdout
+  #   solves of 34-38 GB, the ladder and the diagnostics ran on EVERY run,
+  #   beside the boards the run waits for -- the same cores, the same memory
+  #   bus. They publish nothing; the model they score changes by a commit,
+  #   not by a night's data. A run within XCP_EVIDENCE_DAYS (7) of the last
+  #   one whose holdout passed skips them, as XCP_EVIDENCE=0 does (17c then
+  #   reports no fair tests for this run). XCP_EVIDENCE=force runs them.
+  _evRecent=""
+  if [ "${XCP_EVIDENCE:-1}" = "1" ]; then
+    _evRecent=$(find "$ROOT/logs" -mindepth 2 -maxdepth 2 -name summary.log \
+                  -mtime -"${XCP_EVIDENCE_DAYS:-7}" 2>/dev/null \
+                | xargs -r grep -l "08a_holdout ok" 2>/dev/null | head -1)
+  fi
   if [ "${XCP_EVIDENCE:-1}" = "0" ]; then
     echo "  08a..08d (holdouts, ladder, diagnostics) skipped (XCP_EVIDENCE=0)" | tee -a "$SUMMARY"
+  elif [ -n "$_evRecent" ]; then
+    echo "  08a..08d (holdouts, ladder, diagnostics) skipped -- last scored under" \
+         "${XCP_EVIDENCE_DAYS:-7} days ago ($(dirname "$_evRecent")); XCP_EVIDENCE=force runs them" \
+      | tee -a "$SUMMARY"
   elif [ "${XCP_EVIDENCE_BG:-1}" = "1" ] && [ "$DRY" -eq 0 ] && [ "${FROM:-0}" -le 8 ]; then
     echo ""
     echo "  08a..08d (holdouts, ladder, diagnostics) started IN THE BACKGROUND at nice" \
