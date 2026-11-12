@@ -260,6 +260,53 @@ _BROWSE_SQL = """
 """
 
 
+# ★ THE COUNTS BY KEY (2026-11-12; build_meet_counts.py): the LATERAL above
+#   counts every result of every candidate meet. Where the view has no
+#   season or date range, the same two numbers -- the newest sane-dated
+#   result and how many there are -- come from meet_counts, but only while
+#   the results table is the one they were counted from (its oid) and
+#   unchanged since (its change stamp); otherwise the LATERAL, as before.
+# ! DERIVED FROM _BROWSE_SQL, so an edit to the pick is never lost here; if
+#   the LATERAL is ever reworded the derivation fails and this is off.
+_LATERAL = """    JOIN   LATERAL (
+        SELECT max(r.date) AS date, count(*) AS n_results
+        FROM   {table} r
+        WHERE  r.meet_id = p.meet_id
+          AND  r.date ~ %(sane)s
+          {year_clause}
+    ) agg ON agg.date IS NOT NULL
+"""
+_COUNTS_JOIN = """    JOIN   meet_counts agg ON agg.sport = %(mc_sport)s AND agg.meet_id = p.meet_id
+"""
+_BROWSE_COUNTS_SQL = (_BROWSE_SQL.replace(_LATERAL, _COUNTS_JOIN)
+                      if _LATERAL in _BROWSE_SQL else None)
+
+
+def countsValid(cur, sport, table):
+    """Is meet_counts current for `table` (its oid and change stamp as when
+    counted)? False on any doubt -- a missing table included."""
+    if _BROWSE_COUNTS_SQL is None:
+        return False
+    try:
+        cur.execute("SAVEPOINT meet_counts")
+        try:
+            cur.execute("SELECT oid, stamp FROM meet_counts_meta WHERE sport = %s", (sport,))
+            meta = cur.fetchone()
+            from build_meet_counts import STAMP_SQL
+            cur.execute(STAMP_SQL, (table,))
+            now = cur.fetchone()
+            cur.execute("RELEASE SAVEPOINT meet_counts")
+        except Exception:                               # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT meet_counts")
+            return False
+    except Exception:                                   # noqa: BLE001
+        return False
+    if not meta or not now:
+        return False
+    vals = lambda r: tuple(r.values()) if isinstance(r, dict) else tuple(r)   # noqa: E731
+    return tuple(int(x) for x in vals(meta)) == tuple(int(x) for x in vals(now))
+
+
 # filteredMeets
 # Purpose:   the rows for one filtered view of /meets.
 # Arguments: cur    -- a RealDictCursor
@@ -607,15 +654,21 @@ def filteredMeets(cur, f):
     meets_from = f"{meets_table} m"
     if dated and sport != "XC":
         meets_from = "meets_tf m LEFT JOIN meets_tf_meta t ON t.meet_id = m.meet_id"
-    sql = _BROWSE_SQL.format(meets_from=meets_from, table=table,
+    fmt = dict(meets_from=meets_from, table=table,
                              course_pick=course_pick, pick_order=pick_order,
                              state_clause=state_clause, q_clause=q_clause,
                              year_clause=year_clause,
                              unit_clause=unit_clause,
                              unit_cols=unit_cols.replace("m.meet_id", "p.meet_id"))
+    sql = _BROWSE_SQL.format(**fmt)
 
     def compute():
-        cur.execute(sql, params)
+        # the counts by key on a miss only (countsValid is two small reads);
+        # the same rows either way, so one shared copy serves both
+        if not year_clause and countsValid(cur, sport, table):
+            cur.execute(_BROWSE_COUNTS_SQL.format(**fmt), dict(params, mc_sport=sport))
+        else:
+            cur.execute(sql, params)
         return [dict(r) for r in cur.fetchall()]
     # ★ A BROWSE VIEW ONCE FOR THE BOX (2026-11-09: /meets?sport=TF&level=
     #   college took 55 s during a pipeline step -- 3,200 candidate meets,

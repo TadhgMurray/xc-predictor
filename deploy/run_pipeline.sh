@@ -2203,6 +2203,14 @@ step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py
 if [ "${XCP_SCHOOL_PAGES:-1}" != "0" ]; then
   step 13f3_school_pages "$PY" -u racecast/build_school_pages.py || true
 fi
+# ★ EVERY MEET'S NEWEST DATE AND RESULT COUNT (2026-11-12;
+#   racecast/build_meet_counts.py): /meets reads them by key instead of
+#   counting each candidate meet's results, while results is unchanged since
+#   (its oid and change stamp). A failure costs nothing: /meets counts live.
+#   XCP_MEET_COUNTS=0 skips it.
+if [ "${XCP_MEET_COUNTS:-1}" != "0" ]; then
+  step 13f4_meet_counts "$PY" -u racecast/build_meet_counts.py || true
+fi
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up
 #   at /account/admin/social. A report step: it never fails the run. Off with
