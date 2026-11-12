@@ -26,7 +26,8 @@ def _old(sql, I):
     return sql.replace("ag.gender AS gender", f"{I.GENDER_SUBQUERY} AS gender")
 
 
-def test_the_join_gives_the_subquerys_rows():
+def test_the_join_gives_the_subquerys_rows(monkeypatch):
+    monkeypatch.setenv("XCP_06C_GENDER_JOIN", "1")      # opt-in since 2026-11-12
     import psycopg2
     import impossible_race as I
     conn = psycopg2.connect(DSN)

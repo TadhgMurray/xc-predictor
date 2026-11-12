@@ -461,7 +461,12 @@ def buildStage(cur, since=None, persons=None, sample_mod=None, shards=None,
     #   same rows. Nothing after this depends on the order rows land: the
     #   window orders by (d, key), key is unique, the partitions are by
     #   person, and the calibration sample is a hash of person_id.
-    if connect is not None and streams > 1 and not persons:
+    # ⚠ OPT-IN SINCE 2026-11-12 (XCP_OUTLIER_FILL_PARALLEL=1): no run has
+    #   used it yet, and two other speed-ups of this week planned badly on
+    #   the first full run (03_pro_flag, 06c). The default is the one
+    #   INSERT every earlier run finished on, until it is seen on the server.
+    if (connect is not None and streams > 1 and not persons
+            and os.environ.get("XCP_OUTLIER_FILL_PARALLEL", "0") == "1"):
         _fillParallel(cur, name, since, sample_mod, prior_fast, connect, streams)
     else:
         parts = [s for s in (_sourceSelect(cur, sp, since, persons, sample_mod,

@@ -227,8 +227,16 @@ def candidateSql(cur, sport):
     #   their rows, a tie to the later letter ('M'), as `ORDER BY count(*)
     #   DESC, a.gender DESC LIMIT 1` chose; none when they have neither.
     #   GENDER_SUBQUERY keeps the old expression (tests compare the two).
-    gender = "ag.gender"
-    ag = """LEFT JOIN (
+    # ⚠ OPT-IN SINCE 2026-11-12 (XCP_06C_GENDER_JOIN=1). On run
+    #   20261111_200338 the joined form ran 3 h on track without finishing
+    #   (see loadCandidates); the default is the subquery every earlier run
+    #   finished on, until the join is seen to plan well on the server.
+    if os.environ.get("XCP_06C_GENDER_JOIN", "0") != "1":
+        gender, ag = GENDER_SUBQUERY, ""
+    else:
+        gender, ag = "ag.gender", None
+    if ag is None:
+        ag = """LEFT JOIN (
                 SELECT athlete_id,
                        (array_agg(gender ORDER BY n DESC, gender DESC))[1] AS gender
                 FROM  (SELECT athlete_id, gender, count(*) AS n FROM athletes
@@ -278,7 +286,8 @@ def candidateSql(cur, sport):
 def loadCandidates(cur, sport):
     cur.execute("SELECT current_setting('enable_nestloop'), current_setting('statement_timeout')")
     was_nl, was_to = cur.fetchone()
-    cur.execute("SET LOCAL enable_nestloop = off")
+    if os.environ.get("XCP_06C_GENDER_JOIN", "0") == "1":
+        cur.execute("SET LOCAL enable_nestloop = off")
     cur.execute(f"SET LOCAL statement_timeout = '{int(os.environ.get('XCP_06C_STMT_MIN', '60'))}min'")
     cur.execute(candidateSql(cur, sport))
     cols = [c[0] for c in cur.description]
