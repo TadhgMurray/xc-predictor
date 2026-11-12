@@ -2303,7 +2303,13 @@ _CANONICAL_INDEXES = {
          "(event_kind, mark DESC) WHERE event_kind IS NOT NULL"),
 
         # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
-        ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+        # ★ AND THE RANKING READS THE INDEX ALONE (2026-11-12, cold reads):
+        #   schoolBest ranks a school's every rated row by pool to keep the
+        #   best 100 of each -- ~13,000 rows for a big programme, each one a
+        #   heap page read when cold. With pool, result_id and person_id (the
+        #   state chip's key) carried, the ranking is index-only and only the
+        #   kept rows are fetched whole.
+        ("rr_school_idx", "(school, sport, speed_rating DESC) INCLUDE (pool, result_id, person_id)"),
         # ★ THE ROSTER CARRY-FORWARD WINDOW (roster.racesRun, 2026-09-16):
         #   count(DISTINCT meet_id) per school for ONE season. Asked of every
         #   school in a field -- 396 at a championship -- and without `year`

@@ -2219,6 +2219,14 @@ fi
 if [ "${XCP_ATHLETE_PICK:-1}" != "0" ]; then
   step 13f5_athlete_pick "$PY" -u racecast/build_athlete_pick.py || true
 fi
+# ★ THE SMALL REBUILT TABLES' VISIBILITY MAPS, AFTER THE BUILDS (2026-11-12:
+#   season_comps and athletes at 0% all-visible on the server). A VACUUM can
+#   only mark a page all-visible once no older transaction is open, and a
+#   build's own vacuum runs beside the rest of the run -- so season_comps'
+#   index-only band read (comps.py) went to the table for every row. These
+#   are small (a few GB in all) and are done at the trickle's pace.
+step 13f6_vacuum_small "$PY" -u scripts/gentle_vacuum.py --table season_comps --table athletes \
+     --table athlete_pick --table school_page --table meet_counts || true
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up
 #   at /account/admin/social. A report step: it never fails the run. Off with
