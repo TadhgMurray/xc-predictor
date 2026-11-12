@@ -278,7 +278,7 @@ def test_four_late_steps_beside_the_pack_joined_before_the_golive():
     # each still precedes its reader
     assert at("bgstep 10b0_tfrrs_link") < at("stepsN 10b_school_ids")
     assert at("bgstep 13c0_search_helpers") < at("step 13c_search_index")
-    assert at("bgstep 13c0_person_redirects") < at("step 13d_sitemap")
+    assert at("bgstep 13c0_person_redirects") < at("_G13=(13d_sitemap")
     # and none of them reads a rating
     for f in (("scripts", "person_redirects.py"), ("racecast", "build_search_helpers.py"),
               ("scripts", "link_tfrrs_to_anet.py"), ("racecast", "build_meet_units.py")):

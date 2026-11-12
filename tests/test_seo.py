@@ -426,8 +426,11 @@ class Wiring(unittest.TestCase):
 
     def test_full_pipeline_too(self):
         sh = _read("deploy", "run_pipeline.sh")
-        self.assertRegex(sh, r"(?m)^step 13d_sitemap ")
-        self.assertLess(sh.index("step 13c0_person_redirects"), sh.index("step 13d_sitemap"))
+        # in the late group since 2026-11-12, still after the redirects and
+        # before IndexNow (which reads its files)
+        self.assertRegex(sh, r"(?m)^_G13=\(13d_sitemap ")
+        self.assertLess(sh.index("step 13c0_person_redirects"), sh.index("_G13=(13d_sitemap"))
+        self.assertLess(sh.index("_G13=(13d_sitemap"), sh.index("step 13e_indexnow"))
 
     def test_indexnow_state_is_not_served(self):
         import indexnow_submit as IN

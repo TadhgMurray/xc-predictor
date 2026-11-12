@@ -2100,16 +2100,23 @@ stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
 # teams read school_identity. "Runners like you" (10f3) reads college_recruit
 # (10f) and holds a transaction, so it stays in line before 11b. 10g2 reads
 # 10g's ranks.
-stepsN 10f_recruits "$PY -u racecast/build_recruiting.py" \
-       11_teams "$PY -u racecast/build_team_season.py" \
-       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py"
-step 10f3_comps       "$PY" -u racecast/build_comps.py
+# ★ 11c_ncaa JOINS THIS GROUP (2026-11-12, ~374 s off the line): it writes
+#   ncaa_projection alone and reads athlete_season, results, meets_tfrrs,
+#   dist_override, college_directory and corrections.py -- none written by
+#   the other three. Its first reader is 13h/13h2. Still before 11b.
+_G10F=(10f_recruits "$PY -u racecast/build_recruiting.py"
+       11_teams "$PY -u racecast/build_team_season.py"
+       10g2_rank_snapshot "$PY -u racecast/build_rank_snapshot.py")
+if [ "${XCP_NCAA:-0}" = "1" ]; then
+  _G10F+=(11c_ncaa "$PY -u racecast/build_ncaa_projection.py")
+fi
+stepsN "${_G10F[@]}"
 # ★ THE NCAA CHAMPIONSHIPS PROJECTION (2026-10-10): the regionals, the
 #   at-large selection and nationals, simulated for D1/D2/D3 men and women,
 #   one stored row per board per week (build_ncaa_projection.py). Reads
 #   athlete_season and the season's tfrrs results; /ncaa reads its table.
 #   OFF until XCP_NCAA=1: run it by hand once first.
-if [ "${XCP_NCAA:-0}" = "1" ]; then step 11c_ncaa "$PY" -u racecast/build_ncaa_projection.py; fi
+# (11c_ncaa now runs in the 10f group above)
 # ! THE PAGE INDEXES COME BEFORE THE COURSE PAGES. They ran AFTER them
 #   (step 14), so every course page of a first run was built without the
 #   indexes the course queries need; 12b took 41,047 s on 2026-09-02.
@@ -2117,12 +2124,27 @@ if [ "${XCP_NCAA:-0}" = "1" ]; then step 11c_ncaa "$PY" -u racecast/build_ncaa_p
 # index builds wait for every older open transaction
 bgchainjoin 15_rowguard
 step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
+# ★ 10f3_COMPS IN THE BACKGROUND FROM HERE (2026-11-12, ~113 s off the line):
+#   it writes season_comps / season_comps_meta (a swap) that only comps.py
+#   and 19b's prewarm read; its inputs are not written after 10f. After 11b,
+#   never beside it (11b's concurrent index builds wait on open
+#   transactions). Collected by bgwait.
+bgstep 10f3_comps "$PY" -u racecast/build_comps.py
 # ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
 #   nothing below waits on it. Collected by bgwait before 17.
 # ! AND STARTED AFTER 11b, NOT BEFORE (2026-09-26). CREATE INDEX CONCURRENTLY
 #   waits for every older open transaction in the database; with this
 #   running beside it, 11b_indexes took 626 minutes. The script now commits
 #   per slice too, so 13c's concurrent index build does not wait on it either.
+# ★ THE COURSE AND VENUE PAGES AS ONE BACKGROUND CHAIN (2026-11-12, ~850 s
+#   off the line). 12_courses, 12b and 12c write only course_rank,
+#   course_boards and venue_tf_boards (each _new and swapped) and read
+#   course_difficulties, meets*, results*, ranking_results and
+#   course_canonical -- none of which the panels, 13f, 13f2 or 13g write.
+#   In order inside the chain, so 12c (6.6 GB) starts about as the panels
+#   (~16 GB together) end. Joined before 13b_pool_consts, so 12b/12c read
+#   last run's pool constants file exactly as before; 13j starts after it.
+_courseChain() {
 step 12_courses       "$PY" -u racecast/build_course_rank.py
 # ★ COURSE PAGES IN THREE SHARDS (issue 140). One process building 1,200
 #   courses in a row was mostly waiting on the database; three workers on
@@ -2148,6 +2170,8 @@ if willRun 12c_venue_pages; then
 else
   echo "  12c_prepare, 12c_venue_pages, 12c_finish skipped (the venue pages keep the last build)"
 fi
+}
+if [ "${XCP_COURSE_BG:-1}" = "1" ]; then bgchain courses _courseChain; else _courseChain; fi
 # ★ THE RECORD BOOKS (2026-10-10): state all-time lists, school record books,
 #   course records by era, "on this day" (racecast/build_record_books.py).
 #   IN THE BACKGROUND, off the main chain: only the record pages read
@@ -2156,7 +2180,7 @@ fi
 #   books rebuild only where a school's results moved (XCP_RECORD_SCHOOLS a
 #   run, biggest first). ! AFTER 11b and 12b on purpose: CREATE INDEX
 #   CONCURRENTLY waits on every older open transaction (see 10f2 above).
-if [ "${XCP_RECORD_BOOKS:-0}" = "1" ]; then bgstep 13j_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"; fi
+# (13j_record_books starts after the course chain is collected, below)
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels
 steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
@@ -2184,6 +2208,8 @@ if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_s
 #   run's tables, as it did when this ran after it in line -- so bgwait
 #   collects it at the end.
 if [ "${XCP_STATE_ODDS:-0}" = "1" ]; then bgstep 13i_state_odds "$PY" -u racecast/build_state_odds.py; fi
+bgchainjoin courses                       # 12/12b/12c, before 13b rewrites the constants
+if [ "${XCP_RECORD_BOOKS:-0}" = "1" ]; then bgstep 13j_record_books "$PY" -u racecast/build_record_books.py --max-schools "${XCP_RECORD_SCHOOLS:-4000}"; fi
 step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 # ★ THE SEARCH INDEX, REBUILT EVERY RUN (issue 140). It was never in the
 #   pipeline, so new athletes and meets stayed unsearchable until someone
@@ -2204,14 +2230,19 @@ bgstep 13c_search_index "$PY" -u racecast/search_index.py
 if [ "$FAST" -eq 0 ]; then
   step 13c2_snapshot "$PY" -u scripts/take_snapshot.py --weekly --keep 8 || true
 fi
+# ★ SIDE BY SIDE (2026-11-12, ~5 min off the line): the sitemap, the follow
+#   digest, the posted-meet forecasts and the qualifier fields write disjoint
+#   things (sitemap files; alert_* / follow_snapshot; meet_forecast and the
+#   day's inputs file; the qualified-fields output) and none reads another's.
+#   13h_raw stays after the group: it can share 13h's daily inputs file.
+#   13e (IndexNow) reads the sitemap, so it runs after. XCP_LATE_PARALLEL=0
+#   runs them one after another, as before.
 # the sitemap for Google: every ranked athlete, school, course and meet
-step 13d_sitemap      "$PY" -u racecast/build_sitemap.py
-# IndexNow: the URLs that changed, to Bing and friends (needs XCP_INDEXNOW_KEY)
-step 13e_indexnow     "$PY" -u scripts/indexnow_submit.py
+_G13=(13d_sitemap "$PY -u racecast/build_sitemap.py")
 # ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless XCP_ALERTS=1.
 #   After 13f (the breakouts it reads); see racecast/follow_alerts.py.
 if [ "${XCP_ALERTS:-0}" = "1" ]; then
-  step 13g_follow_alerts "$PY" -u racecast/follow_alerts.py --send --prewarm
+  _G13+=(13g_follow_alerts "$PY -u racecast/follow_alerts.py --send --prewarm")
 fi
 # ★ "WHAT WE SAID" BEFORE EACH MEET, SCORED AFTER (owner, 2026-10-10): the
 #   week's posted XC forecasts stored, the run meets scored, for /meet/recap
@@ -2225,24 +2256,32 @@ if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   #   ratings and course numbers, which have seen the races it learns from;
   #   these files (race_model.keepInputs, one .jsonl.gz a day) are the table
   #   nothing after the forecast touched. XCP_RACE_INPUTS_DIR= (empty) stops it.
-  step 13h_meet_forecasts env XCP_RACE_INPUTS_DIR="${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}" \
-    "$PY" -u racecast/build_meet_forecasts.py
+  _G13+=(13h_meet_forecasts "env XCP_RACE_INPUTS_DIR='${XCP_RACE_INPUTS_DIR-${XCP_PRED_DIR:-/srv/pred}/race_inputs}' $PY -u racecast/build_meet_forecasts.py")
   # ★ THE NO-RATINGS RACE MODEL, FROZEN BESIDE IT (owner, 2026-11-06, PLAN-MODEL
   #   §9): the same posted meets, its own table, so score_frozen_forecasts can
   #   hold the two side by side before the site serves either. Only when its
   #   file exists (a missing one would record the ratings under its name).
   #   XCP_FORECAST_RAW=0 skips it.
   RAW_MODEL="${XCP_RACE_MODEL_RAW:-$(dirname "${XCP_RACE_MODEL:-$ROOT/model/data/race_trees.pkl}")/race_trees_raw.pkl}"
-  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then
-    step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
-      "$PY" -u racecast/build_meet_forecasts.py
-  fi
+  _RAW13=""
+  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then _RAW13=1; fi
 fi
 # ★ AND THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS, as the nightly
 #   (racecast/build_qualified_fields.py); XCP_QUALIFIED_BUILD=0 skips it
 if [ "${XCP_QUALIFIED_BUILD:-1}" = "1" ]; then
-  step 13h2_qualified_fields "$PY" -u racecast/build_qualified_fields.py --budget-minutes 60
+  _G13+=(13h2_qualified_fields "$PY -u racecast/build_qualified_fields.py --budget-minutes 60")
 fi
+if [ "${XCP_LATE_PARALLEL:-1}" = "1" ]; then
+  stepsN "${_G13[@]}"
+else
+  XCP_STREAMS=1 stepsN "${_G13[@]}"
+fi
+if [ -n "${_RAW13:-}" ]; then
+  step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
+    "$PY" -u racecast/build_meet_forecasts.py
+fi
+# IndexNow: the URLs that changed, to Bing and friends (needs XCP_INDEXNOW_KEY)
+step 13e_indexnow     "$PY" -u scripts/indexnow_submit.py
 
 # ---- rowguard ------------------------------------------------------- #
 # 2000-row rail; anything past it diverts to .OVER-CAP for a human.
