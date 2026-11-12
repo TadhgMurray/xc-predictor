@@ -5,9 +5,8 @@ from somewhere else (owner, 2026-11-12, after athletic.net put its results
 call behind a challenge: "I can't see a way the site can continue").
 
 READ-ONLY. For every athletic.net XC meet of the season that has results
-here, is the same meet also in:
-  - AthleticLIVE (alive_meets names the athletic.net meet ids it is), or
-  - a timer's own site (meets_ext: same date, same state when both name
+here, is the same meet also on a timer's own site, independent of
+athletic.net (meets_ext: same date, same state when both name
     one, names agreeing -- sources.anet_twins.match, the matcher the
     nightly uses; here without its "as many races" test, since the question
     is "is the meet there", not "may athletic.net's copy be skipped")?
@@ -16,7 +15,10 @@ here, is the same meet also in:
     /srv/venv/bin/python scripts/anet_overlap.py                  # this season
     /srv/venv/bin/python scripts/anet_overlap.py --since 2025-08-15 --until 2025-12-15
 
-Prints meets and results covered, by source; the states with the most
+! AthleticLIVE IS athletic.net's OWN (owner, 2026-11-12), so it is no
+  alternative: its meets are counted on their own line, not as coverage.
+
+Prints meets and results covered by the timers; the states with the most
 athletic.net-only results; and the timers that stand in for the most meets.
 """
 import argparse
@@ -77,8 +79,6 @@ def main(argv=None):
     by_timer = collections.Counter()
     covered_t = set()
     for mid, (name, day, st) in meets.items():
-        if mid in alive:
-            continue
         cands = timers.get(str(day)[:10]) or []
         hit = match(name, day, st, [c[:4] for c in cands])
         if hit is not None:
@@ -92,11 +92,10 @@ def main(argv=None):
               f"{r:>11,} results ({100 * r / max(total_r, 1):5.1f}%)")
     print(f"athletic.net XC meets with results, {a.since} .. {a.until}: "
           f"{total_m:,} meets, {total_r:,} results")
-    line("also on AthleticLIVE", alive)
-    line("also on a timer's own site", covered_t)
-    line("covered by either", alive | covered_t)
-    only = set(meets) - alive - covered_t
-    line("athletic.net ONLY", only)
+    line("on a timer's own site", covered_t)
+    only = set(meets) - covered_t
+    line("athletic.net ONLY (no timer copy)", only)
+    line("  of which on AthleticLIVE (theirs)", only & alive)
 
     st_only = collections.Counter()
     for m in only:
