@@ -300,6 +300,7 @@ summarise() {
   #   after the pipeline finished from now on"): deploy/AFTER_PIPELINE.md,
   #   printed above the banner on every finish, failed or not. Edit the
   #   file as items are done or added.
+  rm -f "$LOGDIR"/.club_cache.*            # the run's club tables (07_pack), done with
   if [ -s deploy/AFTER_PIPELINE.md ]; then
     echo ""
     echo "==== AFTER THIS RUN (deploy/AFTER_PIPELINE.md) ===="
@@ -1319,6 +1320,11 @@ bgstep 13c0_search_helpers "$PY" -u racecast/build_search_helpers.py
 bgstep 10b0_tfrrs_link "$PY" -u scripts/link_tfrrs_to_anet.py --write
 # 10e marks which meets are championships (issue 34)
 bgstep 10e_meet_units "$PY" -u racecast/build_meet_units.py
+# ★ THE CLUB TABLES ONCE FOR THE RUN (2026-11-12; speed_ratings._runCached):
+#   07_pack builds them and 09b_fill / 09b_fill_tf read its copy. Named here,
+#   after every step that writes their inputs (03 pro seasons, 04 links,
+#   05 backfill), so no earlier step can save a copy the later ones outdate.
+export XCP_CLUB_CACHE="$LOGDIR/.club_cache"
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 bgjoin 13c0_person_redirects
 bgjoin 13c0_search_helpers

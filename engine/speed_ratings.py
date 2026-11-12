@@ -276,13 +276,53 @@ def teamKey(r):
 _CLUB_PROS = None
 
 
+# ★ ONCE PER PIPELINE RUN, NOT ONCE PER STEP (2026-11-12; run 20261112_015027:
+#   07_pack, 09b_fill and 09b_fill_tf each rebuilt the same two club tables
+#   -- "12,512,910 athlete-years", the same count three times -- 10 to 13
+#   minutes apiece, two of them in line). Both are functions of the rows'
+#   person, date, team, school and grade, pro_athlete_season and the team
+#   levels; no step from 07 on writes any of those (09c writes its alias
+#   table only). The pipeline names a file in the run's log folder from 07
+#   on (XCP_CLUB_CACHE); the first step to build a table saves it there and
+#   the rest read it. Unset (a hand run, the nightly): built as before.
+def _runCached(key, build):
+    path = os.environ.get("XCP_CLUB_CACHE")
+    if not path:
+        return build()[0]
+    import pickle
+    f = f"{path}.{key}.pkl"
+    try:
+        with open(f, "rb") as fh:
+            got = pickle.load(fh)
+        print(f"[engine] {key}: this run's copy ({f})", flush=True)
+        return got
+    except (OSError, EOFError, pickle.UnpicklingError):
+        pass
+    got, ok = build()
+    if not ok:                              # a failed build is not the run's answer
+        return got
+    try:
+        tmp = f"{f}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as fh:
+            pickle.dump(got, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, f)                  # whole or not at all for a reader
+    except OSError as exc:
+        print(f"[engine] {key}: not saved for the run ({exc})", flush=True)
+    return got
+
+
 def loadClubPros():
     """({team_id: n}, {normalised school: n}) of teams with professionals,
     once (speed_ratings_db.loadClubPros)."""
     global _CLUB_PROS
     if _CLUB_PROS is not None:
         return _CLUB_PROS
-    _CLUB_PROS = ({}, {})
+    _CLUB_PROS = _runCached("club_pros", _buildClubPros)
+    return _CLUB_PROS
+
+
+def _buildClubPros():
+    out = ({}, {})
     try:
         from speed_ratings_db import loadClubPros as _load, loadClubTeams
         by_team, by_school = _load()
@@ -305,14 +345,15 @@ def loadClubPros():
         from pool_resolve import NATIONAL_TEAMS
         for k in NATIONAL_TEAMS:
             by_school[k] = max(by_school.get(k, 0), 1)
-        _CLUB_PROS = (by_team, by_school)
+        out = (by_team, by_school)
         print(f"[engine] clubs: {n_pro_t:,} anet teams and {n_pro_s:,} school names carry a "
               f"professional; {len(ct):,} teams and {len(cs):,} names are gradeless non-schools; "
               f"together {len(by_team):,} teams and {len(by_school):,} names (their grade 1-8 "
               f"and gradeless rows pool pro in a season raced mostly for them)")
     except Exception as exc:                                     # noqa: BLE001
         print(f"[engine] clubs with professionals unavailable ({type(exc).__name__}: {exc})")
-    return _CLUB_PROS
+        return out, False
+    return out, True
 
 
 _CLUB_MAJORITY = None
@@ -324,19 +365,25 @@ def loadClubMajority():
     global _CLUB_MAJORITY
     if _CLUB_MAJORITY is not None:
         return _CLUB_MAJORITY
-    _CLUB_MAJORITY = set()
+    _CLUB_MAJORITY = _runCached("club_majority", _buildClubMajority)
+    return _CLUB_MAJORITY
+
+
+def _buildClubMajority():
+    out = set()
     try:
         from speed_ratings_db import loadClubMajority as _load
         levels = loadAnetLevels()
         by_team, by_school = loadClubPros()
         club_ids = [t for t, lv in levels.items() if lv == "club"]
-        _CLUB_MAJORITY = _load(club_ids, list(by_team), list(by_school))
-        print(f"[engine] club seasons: {len(_CLUB_MAJORITY):,} athlete-years race mostly "
+        out = _load(club_ids, list(by_team), list(by_school))
+        print(f"[engine] club seasons: {len(out):,} athlete-years race mostly "
               f"for a club or a team with professionals (the club rules fire only there)")
     except Exception as exc:                                     # noqa: BLE001
         print(f"[engine] club seasons unavailable ({type(exc).__name__}: {exc}) -- "
               "the club rules stay off")
-    return _CLUB_MAJORITY
+        return out, False
+    return out, True
 
 
 def clubSeason(person_id, year):
