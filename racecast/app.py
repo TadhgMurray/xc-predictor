@@ -4962,6 +4962,9 @@ _REC_DIST_TOL = 0.0025
 _ROUND_RUN_ORDER = {"prelim": 0, "quarter": 1, "semi": 2, "final": 3}
 
 
+RECORD_FLAGS_TTL = 3600.0
+
+
 def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
     """Stamp is_pr / is_sr onto race result rows, anet-style.
 
@@ -5005,8 +5008,8 @@ def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
               "kind": event_kind,
               "lo": float(distance) * (1 - _REC_DIST_TOL),
               "hi": float(distance) * (1 + _REC_DIST_TOL)}
-    same_day = {}
-    try:
+    def _read():
+        same_day = {}
         cur.execute(f"""
             SELECT person_id,
                    min(time_seconds) FILTER (
@@ -5024,7 +5027,7 @@ def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
               {kind_sql}
             GROUP  BY person_id
         """, params)
-        prior = {r["person_id"]: r for r in cur.fetchall()}
+        prior = {r["person_id"]: dict(r) for r in cur.fetchall()}
         if sport == "TF":
             cur.execute(f"""
                 SELECT rr.person_id, rr.result_id, rr.time_seconds, rt.round
@@ -5038,7 +5041,24 @@ def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
                   {kind_sql}
             """, params)
             for r in cur.fetchall():
-                same_day.setdefault(r["person_id"], []).append(r)
+                same_day.setdefault(r["person_id"], []).append(dict(r))
+        return prior, same_day
+    # ★ ONE RACE'S FLAGS ONCE FOR THE BOX (2026-11-12: the round lookup above,
+    #   347 runs over 250 ms in 72 h). Both reads depend only on the race --
+    #   its runners, day, distance and kind -- and the boards table, so every
+    #   worker shares them (sharedcache) for RECORD_FLAGS_TTL, keyed by those
+    #   and ranking_results' oid.
+    try:
+        import hashlib
+        import sharedcache
+        oid = sharedcache.tableOid(cur, "ranking_results")
+        if oid is None:
+            prior, same_day = _read()
+        else:
+            key = "recflags-" + hashlib.sha1(repr((
+                sport, str(race_date), params["lo"], params["hi"], event_kind,
+                kind_sql, sorted(int(p) for p in pids), oid)).encode("utf-8")).hexdigest()
+            (prior, same_day), _at = sharedcache.get(key, _read, ttl=RECORD_FLAGS_TTL)
     except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
         cur.connection.rollback()
         print(f"stampRecordFlags: {sport} {race_date} skipped: "
