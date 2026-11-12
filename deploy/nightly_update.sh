@@ -253,6 +253,14 @@ _scrapeAll() {
     #   timers.
     if [ "${XCP_NIGHTLY_LOCAL:-1}" != "0" ]; then
       for part in alive timers; do
+        # ★ AthleticLIVE IS athletic.net's OWN (owner, 2026-11-12): while
+        #   athletic.net's results are paused (XCP_NIGHTLY_ANET=0),
+        #   XCP_NIGHTLY_ALIVE=0 pauses its live-results site too; the
+        #   independent timers still run
+        if [ "$part" = alive ] && [ "${XCP_NIGHTLY_ALIVE:-1}" = "0" ]; then
+          echo "  01_local_alive: off (XCP_NIGHTLY_ALIVE=0)" | tee -a "$SUMMARY"
+          continue
+        fi
         if [ "$part" = alive ]; then
           mins="${XCP_NIGHTLY_LOCAL_MIN:-45}"
           step 01_local_alive timeout "${mins}m" env TIMERS=0 bash deploy/scrape_local.sh
