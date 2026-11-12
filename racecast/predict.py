@@ -6179,19 +6179,51 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
 
 def _raceEntrantRowsShared(cur, key):
     """_raceEntrantRows once for the box, not once per worker (2026-11-08:
-    1.1 s a run, p95 2.3 s, in the slow log under /api/predict/field). The
-    first worker to need a field reads it and shares it (sharedcache) for
-    _ENTRANTS_TTL_S, the same ten minutes each worker already kept it; the
-    others read that copy. The key is the sorted schools, sport and year."""
+    1.1 s a run, p95 2.3 s, in the slow log under /api/predict/field).
+
+    ★ PER SCHOOL, NOT PER FIELD (2026-11-12: a meet's boys' and girls' races
+      were read one after the other at 1.5 s each -- their school lists
+      differ by a few names, so a copy keyed by the whole list was never the
+      other's). The query groups by school and runner, so a school's rows do
+      not depend on which other schools are asked with it: each school's rows
+      are filed under it (sharedcache buckets, ENTRANT_SHARDS of them by the
+      school's name, for _ENTRANTS_TTL_S), a field reads those it finds and
+      queries only the rest, in one statement as before."""
     import hashlib
     import sharedcache
     schools, sport, year = key
-    name = "entrants-%s-%s-%s" % (sport, year, hashlib.sha1(
-        repr(schools).encode("utf-8")).hexdigest()[:20])
-    rows, _at = sharedcache.get(
-        name, lambda: _raceEntrantRows(cur, list(schools), sport, year),
-        ttl=_ENTRANTS_TTL_S)
-    return rows
+
+    def shard(name):
+        return int(hashlib.sha1(name.encode("utf-8")).hexdigest()[:8], 16) % ENTRANT_SHARDS
+    by_shard = {}
+    for sc in schools:
+        by_shard.setdefault(shard(sc), []).append(sc)
+    have = {}
+    for sh, names in by_shard.items():
+        for sc, (packed, _at) in sharedcache.peekMany(("entrants", sport, year, sh), names,
+                                                      ttl=_ENTRANTS_TTL_S).items():
+            cols, tuples = packed
+            have[sc] = [dict(zip(cols, t)) for t in tuples]
+    missing = [sc for sc in schools if sc not in have]
+    if missing:
+        got = {sc: [] for sc in missing}
+        for r in _raceEntrantRows(cur, missing, sport, year):
+            got.setdefault(r["school"], []).append(dict(r))
+
+        def pack(rows):
+            cols = tuple(rows[0]) if rows else ()
+            return cols, [tuple(r[c] for c in cols) for r in rows]
+        for sh in {shard(sc) for sc in missing}:
+            sharedcache.putMany(("entrants", sport, year, sh),
+                                {sc: pack(got[sc]) for sc in missing if shard(sc) == sh},
+                                ttl=_ENTRANTS_TTL_S)
+        have.update(got)
+    return [dict(r) for sc in schools for r in have.get(sc, ())]
+
+
+# small buckets: a field reads one file per school it names, each a handful
+# of schools' rows, never the whole season's (a bucket is read whole)
+ENTRANT_SHARDS = 256
 
 
 def _entrantsKeep(key, rows, now):
