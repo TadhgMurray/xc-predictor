@@ -1793,9 +1793,9 @@ def _packLoop(batches, today, merge=False):
 _PARKED = []
 
 
-def _remapCodes(codes, other_uniq, lookup, uniq):
-    """Codes into other_uniq -> codes into uniq, appending the keys uniq has
-    not met (in other_uniq's order); -1 stays -1."""
+def _codeMap(other_uniq, lookup, uniq):
+    """other_uniq's position -> its code in uniq, appending the keys uniq has
+    not met (in other_uniq's order)."""
     m = np.empty(len(other_uniq), dtype=np.int64)
     for i, k in enumerate(other_uniq):
         c = lookup.get(k)
@@ -1803,10 +1803,20 @@ def _remapCodes(codes, other_uniq, lookup, uniq):
             c = lookup[k] = len(uniq)
             uniq.append(k)
         m[i] = c
+    return m
+
+
+def _applyMap(codes, m):
     codes = np.asarray(codes)
     if not len(m):
         return codes
     return np.where(codes >= 0, m[np.clip(codes, 0, None)], -1).astype(codes.dtype)
+
+
+def _remapCodes(codes, other_uniq, lookup, uniq):
+    """Codes into other_uniq -> codes into uniq, appending the keys uniq has
+    not met (in other_uniq's order); -1 stays -1."""
+    return _applyMap(codes, _codeMap(other_uniq, lookup, uniq))
 
 
 def _mergePackStates(states):
@@ -1816,21 +1826,21 @@ def _mergePackStates(states):
            "census": defaultdict(int)}
     look = {"a_uniq": {}, "v_uniq": {}, "t_uniq": {}}
     for st in states:
-        maps = {}
-        for key in ("a_uniq", "v_uniq", "t_uniq"):
-            maps[key] = st[key]
+        # ★ ONE MAP PER SPORT, NOT ONE PER CHUNK (2026-11-12; run
+        #   20261112_015027 sat 634 s silent between the stream's end and
+        #   cell_days). The map walked the sport's whole key list in Python
+        #   for every 200k-row chunk; it is the same map every time -- the
+        #   first walk appends every key in the list's order, and later
+        #   walks only look them up -- so it is made once and applied to
+        #   each chunk. The same codes, the same key order.
+        m = {key: _codeMap(st[key], look[key], out[key])
+             for key in ("a_uniq", "v_uniq", "t_uniq")}
         for ch in st["chunks"]:
             ch = list(ch)
-            ch[1] = _remapCodes(ch[1], maps["a_uniq"], look["a_uniq"], out["a_uniq"])
-            ch[2] = _remapCodes(ch[2], maps["v_uniq"], look["v_uniq"], out["v_uniq"])
-            ch[12] = _remapCodes(ch[12], maps["t_uniq"], look["t_uniq"], out["t_uniq"])
+            ch[1] = _applyMap(ch[1], m["a_uniq"])
+            ch[2] = _applyMap(ch[2], m["v_uniq"])
+            ch[12] = _applyMap(ch[12], m["t_uniq"])
             out["chunks"].append(tuple(ch))
-        # a sport with no chunk still owns its keys (none: a key is made only
-        # for a kept row) -- but keep the tables in order regardless
-        for key in ("a_uniq", "v_uniq", "t_uniq"):
-            for k in maps[key]:
-                if k not in look[key]:
-                    look[key][k] = len(out[key]); out[key].append(k)
         for k, v in st["census"].items():
             out["census"][k] += v
     return out
