@@ -137,8 +137,16 @@ def comingUpCached(getConn, today=None):
                 out = comingUp(cur, today)
                 conn.rollback()
                 return out
+    # ★ ONCE FOR THE BOX, NOT ONCE PER WORKER (2026-11-12: /predictions at a
+    #   1.6 s median -- 94 views a day over 24 workers, so most visitors met a
+    #   worker that had not computed it). The worker's copy stays in front;
+    #   behind it every worker shares the first one's answer (sharedcache).
+    def shared():
+        import sharedcache
+        return sharedcache.get(f"coming-up-{today.isoformat()}", compute,
+                               ttl=ttlcache._DEFAULT_TTL)[0]
     try:
-        return ttlcache.get(f"coming_up:{today.isoformat()}", compute)[0]
+        return ttlcache.get(f"coming_up:{today.isoformat()}", shared)[0]
     except Exception as exc:                                     # noqa: BLE001
         print(f"coming up: {type(exc).__name__}: {exc}", flush=True)
         return []

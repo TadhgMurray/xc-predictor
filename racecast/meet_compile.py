@@ -924,6 +924,40 @@ def splitCollisionTeams(cur, rows, meet_state=None, published_names=None,
             else (row[0], row[1])
         clus.setdefault(s, []).append(st)
     multi = {s for s, sts in clus.items() if len(sts) >= 2}
+    # ★ NOR A COLLEGE TEAM AT AN anet MEET (owner, 2026-11-12: the Ivy League
+    #   men's 8K scored University of Pennsylvania as "Penn (IN)" -- Penn
+    #   High School in Indiana, the name's biggest cluster). The rule above
+    #   for tfrrs holds for any race: a name whose runners here are all
+    #   college or pro is one college's team, and the high-school clusters
+    #   of the same name say nothing about it. Each runner's own school_state
+    #   (stampSchoolStates) names it when they agree.
+    def _lvl(r):
+        return str(r.get("rating_pool") or r.get("label_pool") or r.get("pool") or "").split("|")[0]
+    college = set()
+    for sname in multi:
+        mine = [r for r in rows if r.get("school") == sname]
+        if mine and all(_lvl(r).startswith(("college", "pro")) for r in mine):
+            college.add(sname)
+    for sname in college:
+        from collections import Counter as _C
+        sts = _C(r.get("school_state") for r in rows
+                 if r.get("school") == sname and r.get("school_state"))
+        if not sts:
+            # none stamped: the college directory's answer for the name
+            try:
+                import school_identity as _si
+                lv = next((_lvl(r) for r in rows if r.get("school") == sname), None)
+                st0 = _si.teamState(sname, lv, None)
+                if st0:
+                    sts[st0] += 1
+            except Exception:                           # noqa: BLE001
+                pass
+        if sts:
+            st = sts.most_common(1)[0][0]
+            for r in rows:
+                if r.get("school") == sname:
+                    r["school"] = f"{sname}{_KEYSEP}{st}"
+    multi -= college
     if not multi:
         return
     pids = sorted({r["person_id"] for r in rows

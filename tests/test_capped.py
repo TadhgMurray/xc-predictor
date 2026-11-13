@@ -64,7 +64,9 @@ def test_capped():
     # ---- 2. the LIMIT and the fetch are one change -------------------------- #
     # fetchCapped cannot see the query, so passing the plain limit would leave
     # truncated permanently False -- the old silent behaviour, not a crash.
-    for mod, n in (("school.py", 3), ("app.py", 1)):
+    # school.py: roster, top athletes, best -- and best's whole-row fallback
+    # for a school whose rows repeat a result_id (2026-11-12), also limit + 1
+    for mod, n in (("school.py", 4), ("app.py", 1)):
         src = read("racecast", mod)
         # both helpers, returned or assigned (fetchCappedPerPool since 2026-09-29)
         calls = len(re.findall(r"(?:return|rows =) fetchCapped(?:PerPool)?\(cur, limit\)", src))

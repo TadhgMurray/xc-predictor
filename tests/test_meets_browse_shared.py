@@ -19,10 +19,14 @@ class _Cur:
         self.rows, self.sql = rows, []
 
     def execute(self, sql, params=None):
-        self.sql.append(sql)
+        if "WITH picked" in sql:              # the view's own statement
+            self.sql.append(sql)
 
     def fetchall(self):
         return [dict(r) for r in self.rows]
+
+    def fetchone(self):
+        return None
 
 
 def _f(**kw):

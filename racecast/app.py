@@ -4962,6 +4962,9 @@ _REC_DIST_TOL = 0.0025
 _ROUND_RUN_ORDER = {"prelim": 0, "quarter": 1, "semi": 2, "final": 3}
 
 
+RECORD_FLAGS_TTL = 3600.0
+
+
 def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
     """Stamp is_pr / is_sr onto race result rows, anet-style.
 
@@ -5005,8 +5008,8 @@ def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
               "kind": event_kind,
               "lo": float(distance) * (1 - _REC_DIST_TOL),
               "hi": float(distance) * (1 + _REC_DIST_TOL)}
-    same_day = {}
-    try:
+    def _read():
+        same_day = {}
         cur.execute(f"""
             SELECT person_id,
                    min(time_seconds) FILTER (
@@ -5024,7 +5027,7 @@ def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
               {kind_sql}
             GROUP  BY person_id
         """, params)
-        prior = {r["person_id"]: r for r in cur.fetchall()}
+        prior = {r["person_id"]: dict(r) for r in cur.fetchall()}
         if sport == "TF":
             cur.execute(f"""
                 SELECT rr.person_id, rr.result_id, rr.time_seconds, rt.round
@@ -5038,7 +5041,24 @@ def stampRecordFlags(cur, sport, rows, distance, race_date, event_kind=None):
                   {kind_sql}
             """, params)
             for r in cur.fetchall():
-                same_day.setdefault(r["person_id"], []).append(r)
+                same_day.setdefault(r["person_id"], []).append(dict(r))
+        return prior, same_day
+    # ★ ONE RACE'S FLAGS ONCE FOR THE BOX (2026-11-12: the round lookup above,
+    #   347 runs over 250 ms in 72 h). Both reads depend only on the race --
+    #   its runners, day, distance and kind -- and the boards table, so every
+    #   worker shares them (sharedcache) for RECORD_FLAGS_TTL, keyed by those
+    #   and ranking_results' oid.
+    try:
+        import hashlib
+        import sharedcache
+        oid = sharedcache.tableOid(cur, "ranking_results")
+        if oid is None:
+            prior, same_day = _read()
+        else:
+            key = "recflags-" + hashlib.sha1(repr((
+                sport, str(race_date), params["lo"], params["hi"], event_kind,
+                kind_sql, sorted(int(p) for p in pids), oid)).encode("utf-8")).hexdigest()
+            (prior, same_day), _at = sharedcache.get(key, _read, ttl=RECORD_FLAGS_TTL)
     except Exception as exc:             # noqa: BLE001 -- UndefinedTable et al.
         cur.connection.rollback()
         print(f"stampRecordFlags: {sport} {race_date} skipped: "
@@ -11679,6 +11699,37 @@ def api_rankings():
                     "hs_movable": hs_movable,
                     "rows": rows})
 
+# ★ A TEAM BOARD ONCE FOR THE BOX (2026-11-12: its count and the year list
+#   were 515 s of the slow log in 72 h). /api/teams answers the same filters
+#   the same way for every visitor -- the count, the live race and the slice
+#   -- so serveBoard's answer is shared by every worker for TEAM_BOARD_TTL,
+#   keyed by the filters and the oids of the tables it reads (a rebuilt board
+#   is a new copy). serveBoard also settles f (the span, the sort) and the
+#   route reports f back, so the settled f is kept with the rows and put back.
+TEAM_BOARD_TTL = 1800.0
+
+
+def _sharedTeamBoard(cur, f):
+    from teams import serveBoard
+    import hashlib
+    import sharedcache
+    oids = tuple(sharedcache.tableOid(cur, t)
+                 for t in ("team_season", "athlete_season", "ranking_results"))
+    if None in oids:
+        return serveBoard(cur, f)
+    key = "teams-" + hashlib.sha1(repr((sorted((k, repr(v)) for k, v in f.items()), oids))
+                                  .encode("utf-8")).hexdigest()
+
+    def compute():
+        g = dict(f)
+        rows, info = serveBoard(cur, g)
+        return [dict(r) for r in rows], info, g
+    (rows, info, settled), _at = sharedcache.get(key, compute, ttl=TEAM_BOARD_TTL)
+    f.clear()
+    f.update(settled)
+    return [dict(r) for r in rows], dict(info)
+
+
 @app.route("/api/teams")
 @_publicBoard("teams")
 def api_teams():
@@ -11771,7 +11822,7 @@ def api_teams():
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             try:
-                rows, info = serveBoard(cur, f)
+                rows, info = _sharedTeamBoard(cur, f)
             except psycopg2.errors.UndefinedTable:
                 # ! THE HONEST 400 THE RANKINGS ROUTE ALREADY LEARNED TO GIVE.
                 #   Unhandled, Flask answers with its debug PAGE and the
@@ -12790,9 +12841,16 @@ def _upcomingChampsCached():
                 {"meet_id": m["meet_id"], "src": m["source"], "date": m["date"],
                  "pick": "predicted", **({"course": m["course"]} if m.get("course") else {})})
         return out
+    # ★ ONCE FOR THE BOX (2026-11-12, as weekend.comingUpCached): the
+    #   worker's copy in front, the first worker's answer shared behind it; a
+    #   failure (None) is not shared, so the next worker tries again
+    def shared():
+        import sharedcache
+        return sharedcache.get(f"predict-upcoming-{_dt.date.today().isoformat()}",
+                               compute, ttl=6 * 3600, keep=lambda v: v is not None)[0]
     try:
         rows, _ = ttlcache.get(("predict_upcoming", _dt.date.today().isoformat()),
-                               compute, ttl=6 * 3600,
+                               shared, ttl=6 * 3600,
                                ttl_of=lambda v: 6 * 3600 if v is not None else 600)
     except Exception:                                   # noqa: BLE001
         app.logger.exception("upcoming championships failed")
@@ -13303,6 +13361,8 @@ def _athleteSearchRows(where, params, tokens=()):
     with getConn() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("SET LOCAL statement_timeout = " + str(int(ATHLETE_SEARCH_TIMEOUT_MS)))
+            if params.get("gender") in ("M", "F") and tokens and _pickValid(cur):
+                return _athleteSearchPick(cur, tokens, params)
             source = "athlete_season s JOIN athletes a ON a.athlete_id = s.person_id"
             name_col = _ATHLETE_NAME_SQL
             conds = list(where)
@@ -13324,6 +13384,8 @@ def _athleteSearchRows(where, params, tokens=()):
                     conds = [w if k is None else "m.name ILIKE " + k
                              for w, k in zip(where, is_name)
                              if not (k and keys[k] >= 3)]
+            if source.startswith("athlete_season s JOIN"):
+                return _athleteSearchWalk(cur, where, is_name, params)
             cur.execute(f"""
                 SELECT * FROM (
                     SELECT DISTINCT ON (s.person_id)
@@ -13345,6 +13407,118 @@ def _athleteSearchRows(where, params, tokens=()):
 
 # the name as the select list and idx_athletes_name_trgm spell it
 _ATHLETE_NAME_SQL = "COALESCE(a.first_name,'') || ' ' || COALESCE(a.last_name,'')"
+
+
+# ★ THE WALK THAT STOPS (2026-11-12: every search that took the walk hit the
+#   10 s cap -- "ty", "xa", and names past NAME_FIRST_CAP: "luke", "tyson",
+#   "zachary", "Alexand"). The old walk joined athlete_season to athletes and
+#   Postgres chose to read every athlete whose name matched before sorting
+#   for DISTINCT ON. This walks athletes in athlete_id order, takes each
+#   match's newest qualifying season (ORDER BY year DESC LIMIT 1), and stops
+#   at 200 people: the same 200 lowest person_ids, each with the same
+#   season, the DISTINCT ON defined (athlete_id is athletes' key). The plan
+#   is pinned to the key order (no seq or bitmap scan) so the LIMIT can stop
+#   it; a common name finds its 200 near the start (3M-athlete copy: "Smith"
+#   509 -> 18 ms, "jo li" 848 -> 88 ms). Only short tokens and names past the
+#   cap come here; a rare name goes name-first.
+_ATHLETE_WALK_SQL = """
+    SELECT * FROM (
+        SELECT s.person_id, s.school, s.year, s.mean_rating, s.pool,
+               {name} AS name
+        FROM   athletes a
+        CROSS  JOIN LATERAL (
+            SELECT s.person_id, s.school, s.year, s.mean_rating, s.pool
+            FROM   athlete_season s
+            WHERE  s.person_id = a.athlete_id AND {seasons}
+            ORDER  BY s.year DESC
+            LIMIT  1
+        ) s
+        WHERE  {names}
+        ORDER  BY a.athlete_id
+        LIMIT  200
+    ) x
+    ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s THEN 0 ELSE 1 END),
+              mean_rating DESC NULLS LAST,
+              person_id
+    LIMIT  40
+"""
+
+
+# ★ THE PICKER'S OWN TABLE (2026-11-12; racecast/build_athlete_pick.py): one
+#   row per rated runner, sport and gender, with the name and the newest
+#   qualifying season -- every row qualifies, so the walk by id stops 200
+#   matches in, and a rare name is read through its trigram index first as
+#   above. Used only while athletes and athlete_season are unchanged since
+#   the build (their oids and change stamps); else the paths above.
+_PICK_SQL = """
+    SELECT * FROM (
+        SELECT p.person_id, p.school, p.year, p.mean_rating, p.pool, p.name
+        FROM   athlete_pick p
+        WHERE  p.sport = %(sport)s AND p.g = %(gender)s AND {conds}
+        ORDER  BY p.person_id
+        LIMIT  200
+    ) x
+    ORDER  BY (CASE WHEN lower(name) LIKE %(prefix)s THEN 0 ELSE 1 END),
+              mean_rating DESC NULLS LAST,
+              person_id
+    LIMIT  40
+"""
+
+
+def _pickValid(cur):
+    try:
+        cur.execute("SAVEPOINT athlete_pick")
+        try:
+            cur.execute("SELECT src, oid, stamp FROM athlete_pick_meta")
+            meta = {(r["src"] if isinstance(r, dict) else r[0]):
+                    tuple(int(x) for x in (list(r.values())[1:] if isinstance(r, dict) else r[1:]))
+                    for r in cur.fetchall()}
+            from build_meet_counts import STAMP_SQL
+            now = {}
+            for t in ("athletes", "athlete_season"):
+                cur.execute(STAMP_SQL, (t,))
+                r = cur.fetchone()
+                now[t] = tuple(int(x) for x in (r.values() if isinstance(r, dict) else r)) if r else None
+            cur.execute("RELEASE SAVEPOINT athlete_pick")
+        except Exception:                               # noqa: BLE001
+            cur.execute("ROLLBACK TO SAVEPOINT athlete_pick")
+            return False
+    except Exception:                                   # noqa: BLE001
+        return False
+    return bool(meta) and all(meta.get(t) == now[t] for t in now)
+
+
+def _athleteSearchPick(cur, tokens, params):
+    conds = [f"p.name ILIKE %(t{i})s" for i in range(len(tokens))]
+    long_ = [f"p.name ILIKE %(t{i})s" for i, t in enumerate(tokens) if len(t) >= 3]
+    params = dict(params)
+    if long_:
+        cur.execute("SELECT p.person_id FROM athlete_pick p WHERE p.sport = %(sport)s"
+                    " AND p.g = %(gender)s AND " + " AND ".join(long_)
+                    + " LIMIT " + str(int(NAME_FIRST_CAP) + 1), params)
+        ids = [r["person_id"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+        if not ids:
+            return []
+        if len(ids) <= NAME_FIRST_CAP:
+            params["pk_ids"] = ids
+            cur.execute(_PICK_SQL.format(conds=" AND ".join(
+                conds + ["p.person_id = ANY(%(pk_ids)s)"])), params)
+            return cur.fetchall()
+    cur.execute("SET LOCAL enable_seqscan = off")
+    cur.execute("SET LOCAL enable_bitmapscan = off")
+    cur.execute(_PICK_SQL.format(conds=" AND ".join(conds)), params)
+    return cur.fetchall()
+
+
+def _athleteSearchWalk(cur, where, is_name, params):
+    names = [w for w, k in zip(where, is_name) if k] or ["TRUE"]
+    seasons = [w for w, k in zip(where, is_name) if not k] or ["TRUE"]
+    cur.execute("SET LOCAL enable_seqscan = off")
+    cur.execute("SET LOCAL enable_bitmapscan = off")
+    cur.execute(_ATHLETE_WALK_SQL.format(name=_ATHLETE_NAME_SQL,
+                                         seasons=" AND ".join(seasons),
+                                         names=" AND ".join(names)), params)
+    return cur.fetchall()
 
 
 @app.route("/api/predict/weather")

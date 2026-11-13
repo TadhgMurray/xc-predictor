@@ -603,6 +603,45 @@ def currentSeason(cur, school, sport, state=None, primary=None):
     return row["y"] if row else None
 
 
+# the query schoolBest ran before 2026-11-12, every row read whole: kept for
+# a school whose rows repeat a result_id (see schoolBest)
+_BEST_WHOLE_ROWS = """
+        WITH ranked AS (
+            SELECT rr.*, row_number() OVER (PARTITION BY rr.pool
+                                            ORDER BY rr.speed_rating DESC) AS rn
+            FROM   ranking_results rr
+            WHERE  rr.school = %(school)s
+              AND  rr.sport  = %(sport)s
+              AND  rr.speed_rating IS NOT NULL
+              {sf})
+        SELECT rr.person_id,
+               COALESCE(a.first_name, '') || ' '
+                   || COALESCE(a.last_name, '')  AS name,
+               rr.speed_rating                   AS rating,
+               rr.pool,
+               rr.distance,
+               (CASE WHEN rr.sport = 'TF' THEN rr.year + 1
+                     ELSE rr.year END)          AS year,
+               rr.grade,
+               rr.race_date,
+               rr.meet_id,
+               rr.div_id,
+               rr.event_id,
+               rr.result_id
+        FROM   ranked rr
+        LEFT JOIN LATERAL (
+            SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
+                   NULLIF(TRIM(x.last_name),  '') AS last_name
+            FROM   athletes x
+            WHERE  x.athlete_id = rr.person_id
+            ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
+            LIMIT  1
+        ) a ON TRUE
+        WHERE  rr.rn <= %(lim)s
+        ORDER  BY rr.speed_rating DESC
+"""
+
+
 def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
     """The school's best single performances, all time.
 
@@ -615,15 +654,32 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
     # ★ THE CAP IS PER POOL (2026-09-29): one table per pool on the page, so
     #   each pool keeps its own best `limit` (capped.fetchCappedPerPool).
     #   Ranked first, names joined only for the rows kept.
+    # ★ RANKED ON THE INDEX, FETCHED FOR THE KEPT ROWS (2026-11-12, cold
+    #   reads): the window runs over (pool, speed_rating, result_id,
+    #   person_id), which rr_school_idx carries, so ranking a big school's
+    #   ~13,000 rows reads index pages only; then only the kept rows (the
+    #   best `lim` of each pool) are read whole, by result_id.
     cur.execute(f"""
         WITH ranked AS (
-            SELECT rr.*, row_number() OVER (PARTITION BY rr.pool
-                                            ORDER BY rr.speed_rating DESC) AS rn
+            SELECT rr.result_id,
+                   row_number() OVER (PARTITION BY rr.pool
+                                      ORDER BY rr.speed_rating DESC) AS rn,
+                   -- ! nothing makes result_id unique here: a copy would
+                   --   multiply in the join back, so it is counted, and a
+                   --   kept row with one sends this page to the old query
+                   count(*) OVER (PARTITION BY rr.result_id) AS dup
             FROM   ranking_results rr
             WHERE  rr.school = %(school)s
               AND  rr.sport  = %(sport)s
               AND  rr.speed_rating IS NOT NULL
-              {sf})
+              {sf}),
+        kept AS (
+            SELECT rr.*, k.rn, k.dup
+            FROM   ranked k
+            JOIN   ranking_results rr ON rr.result_id = k.result_id
+                                     AND rr.sport = %(sport)s
+                                     AND rr.school = %(school)s
+            WHERE  k.rn <= %(lim)s)
         SELECT rr.person_id,
                COALESCE(a.first_name, '') || ' '
                    || COALESCE(a.last_name, '')  AS name,
@@ -641,8 +697,9 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
                rr.event_id,
                -- ★ THE PIN (sweep 2026-10-10): school.html links ?r= with
                --   it, and it was never selected, so no link ever pinned
-               rr.result_id
-        FROM   ranked rr
+               rr.result_id,
+               rr.dup AS _dup
+        FROM   kept rr
         LEFT JOIN LATERAL (
             SELECT NULLIF(TRIM(x.first_name), '') AS first_name,
                    NULLIF(TRIM(x.last_name),  '') AS last_name
@@ -651,10 +708,15 @@ def schoolBest(cur, school, sport, limit=25, state=None, primary=None):
             ORDER  BY (NULLIF(TRIM(x.last_name), '') IS NOT NULL) DESC
             LIMIT  1
         ) a ON TRUE
-        WHERE  rr.rn <= %(lim)s
         ORDER  BY rr.speed_rating DESC
     """, {"school": school, "sport": sport, "lim": limit + 1, **sfp})
     rows = fetchCappedPerPool(cur, limit)
+    if any((r.get("_dup") or 1) > 1 for r in rows):
+        cur.execute(_BEST_WHOLE_ROWS.format(sf=sf),
+                    {"school": school, "sport": sport, "lim": limit + 1, **sfp})
+        rows = fetchCappedPerPool(cur, limit)
+    for r in rows:
+        r.pop("_dup", None)
     # ! the athletes lateral has no row for most college ids: the feed's
     #   own name, as the roster (sweep 2026-10-10: "Unknown" on college pages)
     _fillRowNames(cur, rows)
@@ -739,6 +801,9 @@ def schoolTopAthletes(cur, school, sport, limit=12,
 # ! A DEGRADED ANSWER IS NOT SHARED: a header whose count ran out of budget
 #   (athletes None) or a missing school (None) is computed again next time.
 SCHOOL_SHARED_TTL = 1800.0
+# the calls build_school_pages.py stores (the page's history half)
+PRECOMPUTED = ("schoolHeader", "schoolYears", "currentSeason", "schoolBest",
+               "schoolTopAthletes")
 
 
 def _plain(v):
@@ -773,6 +838,14 @@ def sharedSchool(cur, fn, *args, **kw):
             sharedcache.tableOid(cur, "ranking_results"))
     if None in oids:
         return fn(cur, *args, **kw)
+    # ★ THE PIPELINE'S COPY FIRST (school_pages.py, build_school_pages.py):
+    #   a big school's history computed overnight by these same functions,
+    #   served only for the boards it was read from and the code that read it
+    if fn.__name__ in PRECOMPUTED:
+        import school_pages
+        hit = school_pages.storedValue(cur, fn.__name__, args, kw, oids)
+        if hit is not None:
+            return hit
     key = repr((fn.__name__, args, sorted(kw.items()), oids,
                 datetime.date.today().isoformat()))
     name = "school-" + hashlib.sha1(key.encode("utf-8")).hexdigest()

@@ -2303,13 +2303,28 @@ _CANONICAL_INDEXES = {
          "(event_kind, mark DESC) WHERE event_kind IS NOT NULL"),
 
         # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
-        ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+        # ★ AND THE RANKING READS THE INDEX ALONE (2026-11-12, cold reads):
+        #   schoolBest ranks a school's every rated row by pool to keep the
+        #   best 100 of each -- ~13,000 rows for a big programme, each one a
+        #   heap page read when cold. With pool, result_id and person_id (the
+        #   state chip's key) carried, the ranking is index-only and only the
+        #   kept rows are fetched whole.
+        ("rr_school_idx", "(school, sport, speed_rating DESC) INCLUDE (pool, result_id, person_id)"),
         # ★ THE ROSTER CARRY-FORWARD WINDOW (roster.racesRun, 2026-09-16):
         #   count(DISTINCT meet_id) per school for ONE season. Asked of every
         #   school in a field -- 396 at a championship -- and without `year`
         #   in the key each one's whole history is read to count one season.
         #   meet_id rides along so the count is index-only.
-        ("rr_school_season_idx", "(school, sport, year, meet_id)"),
+        # ★ AND THE SCHOOL PAGES' WHOLE-HISTORY READS FROM THE INDEX ALONE
+        #   (2026-11-12, cold reads): the meet list (school.schoolMeets) and
+        #   the PRs (school_prs.runningSql) read every row of a school, each
+        #   a heap page when cold -- ~13,000 for a big programme. Every
+        #   column the two read rides here, so both are index-only scans of
+        #   one contiguous range; racesRun's count of meets still reads only
+        #   the key and meet_id.
+        ("rr_school_season_idx", "(school, sport, year, meet_id) INCLUDE ("
+         "result_id, race_date, div_id, speed_rating, pool, distance, person_id, "
+         "time_seconds, grade, event_id, event_kind)"),
         # ★ THE PAGE INDEXES, HERE AND NOT ONLY IN 11b (2026-09-06). These
         #   three were add_page_indexes' (step 11b), built AFTER the swap;
         #   run12's finish was re-run by hand after a crash, 11b never

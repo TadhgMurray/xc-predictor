@@ -891,6 +891,8 @@ ENV_RULES = {
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
     **_all("XCP_BOARD_SEEK XCP_STATIC_PAGES", "INFRA",
            "speed pass 2026-11-08: the deep-page seek table, nginx static pages"),
+    **_all("XCP_SCHOOL_PAGES XCP_MEET_COUNTS XCP_ATHLETE_PICK", "INFRA",
+           "speed pass 2026-11-12: the big schools' page history, precomputed (step 13f3)"),
     **_all("XCP_PREWARM XCP_SEASON_EV XCP_VACUUM_RESULTS XCP_RANK_PARTS XCP_RANK_STREAMS "
            "XCP_REPORT_STREAMS XCP_RESTAMP_BY_KEY", "INFRA",
            "speed pass 2026-11-06/07: prewarm, the events precompute, the results vacuum, "
