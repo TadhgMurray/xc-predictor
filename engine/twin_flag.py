@@ -1600,6 +1600,30 @@ def _stageRule(connect, sport, table, reason, fn):
                         "from the last run")
 
 
+_RULE_SECONDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
+                             "twin_rule_seconds.json")
+
+
+def _ruleSeconds():
+    try:
+        import json
+        with open(_RULE_SECONDS) as fh:
+            return {str(k): float(v) for k, v in json.load(fh).items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def _saveRuleSeconds(took):
+    try:
+        import json
+        tmp = f"{_RULE_SECONDS}.{os.getpid()}.tmp"
+        with open(tmp, "w") as fh:
+            json.dump(took, fh, sort_keys=True)
+        os.replace(tmp, _RULE_SECONDS)
+    except OSError:
+        pass
+
+
 def _buildPooled(conn, cur, skip, connect, workers):
     """Every (sport, rule) in a pool of sessions, then the stages into
     result_twin_new in RULES order (TWIN_WORKERS says why)."""
@@ -1608,10 +1632,26 @@ def _buildPooled(conn, cur, skip, connect, workers):
             for sport, table in sorted(TABLES.items(), key=lambda kv: kv[0] != "TF")
             for reason, fn in RULES if reason not in skip]
     conn.commit()
+    # ★ THE LONGEST RULES START FIRST (2026-11-12; run 20261111_200338: TF
+    #   dup_race_copy 1,012 s and XC xc_track_meet 605 s were jobs 9 and 34
+    #   of the pool, so they started late and set the step's length). Each
+    #   rule writes its own stage, and the stages go into result_twin_new in
+    #   RULES order below, so the order they RUN in changes nothing but the
+    #   clock. Last run's seconds per rule, kept beside the engine data.
+    secs = _ruleSeconds()
+    order = sorted(range(len(jobs)), key=lambda i: -secs.get(f"{jobs[i][0]}:{jobs[i][2]}", 0.0))
+
+    def timed(j):
+        t0 = time.time()
+        return _stageRule(connect, *j), time.time() - t0
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(_stageRule, connect, *j) for j in jobs]
-        for f in futs:
-            print(f.result(), flush=True)
+        futs = {i: ex.submit(timed, jobs[i]) for i in order}
+        took = {}
+        for i in range(len(jobs)):
+            line, dt = futs[i].result()
+            took[f"{jobs[i][0]}:{jobs[i][2]}"] = round(dt, 1)
+            print(line, flush=True)
+    _saveRuleSeconds(took)
     for sport in TABLES:
         for reason, _fn in RULES:
             if reason in skip:
