@@ -4000,6 +4000,36 @@ def recentIds(cols, keep, dates, asof, days=SNAPSHOT_DAYS):
             for code, name in ((0, "XC"), (1, "TF"))}
 
 
+def snapshotDue(names, day, every):
+    """Is a snapshot for `day` (date) due: none in the folder (asof_<date>.npz
+    names) within `every` days before it, and `every` > 0. Pure."""
+    import datetime as _d
+    if every <= 0:
+        return False
+    have = []
+    for n in names:
+        try:
+            have.append(_d.date.fromisoformat(n[len("asof_"):-len(".npz")]))
+        except ValueError:
+            continue
+    return not any(0 <= (day - h).days < every for h in have)
+
+
+def goliveSnapshot(live, cols, keep, pack_date):
+    """The go-live's solve as the snapshot for its pack's day (above)."""
+    every = int(os.environ.get("XCP_GOLIVE_SNAPSHOT_DAYS", "7"))
+    folder = os.path.join(os.environ.get("XCP_PRED_DIR", "/srv/pred"), "asof")
+    names = os.listdir(folder) if os.path.isdir(folder) else []
+    if not snapshotDue(names, pack_date, every):
+        return
+    asof = pack_date.isoformat()
+    dates, _pack_day, _agree = fh.rowDates(cols)
+    # only rows dated before the day, as a replay's cutoff holds
+    before = keep & (dates < np.datetime64(asof))
+    writeSnapshot(live, os.path.join(folder, f"asof_{asof}.npz"), asof,
+                  recentIds(cols, before, dates, asof))
+
+
 def writeSnapshot(live, path, asof, keep_ids=None):
     """The replay's output, to an npz and nowhere else (--snapshot)."""
     arrays = snapshotArrays(live, asof, keep_ids)
@@ -4332,6 +4362,18 @@ def main():
                 import traceback
                 traceback.print_exc()
                 print("[joint/live] race_day_suspect_division NOT written (above)")
+            # ★ AND THE SAME SOLVE AS A SNAPSHOT, ONCE A WEEK (owner, 2026-11-13:
+            #   "is this replay thing something we gotta do pretty often?").
+            #   The go-live IS a solve on every row before the pack's day, so
+            #   it is the replay's cutoff for that day at no cost: written to
+            #   $XCP_PRED_DIR/asof like engine_replay's, when the newest there
+            #   is XCP_GOLIVE_SNAPSHOT_DAYS (7) old or more. A failure here
+            #   only says so: the go-live is done. XCP_GOLIVE_SNAPSHOT_DAYS=0
+            #   stops it.
+            try:
+                goliveSnapshot(live, cols, keep, pack_date)
+            except Exception as exc:                             # noqa: BLE001
+                print(f"[joint/live] snapshot NOT written ({type(exc).__name__}: {exc})")
         else:
             print("[joint/live] --golive-dry: nothing written to the database")
 
