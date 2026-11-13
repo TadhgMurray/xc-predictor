@@ -849,15 +849,46 @@ step 02_drop_old      "$PY" -u engine/drop_old.py
 #   their own (age_band_div). Each keeps its own --from / --skip / summary
 #   line (stepsN), and a failed 03 or 03b still stops the run at the people
 #   gate. XCP_STREAMS=1 runs them one after another.
-stepsN 02b_tf_venues "$PY -u scripts/backfill_tf_venues.py --write" \
-       03_pro_flag "$PY -u engine/pro_flag.py --skip-dist --write" \
-       03b_age_bands "$PY -u engine/age_band_grades.py --write"
-# ★ THE TEAM POOLS, EVERY RUN (pooling review P2, 2026-10-26). team_pool
-#   (a club with a pro is pro, a team of under 15 athletes ever is pro) was
-#   built only by overnight_fit_pool_solve.sh, so the pack and the fill read
-#   a table as old as that run, keyed on team ids and pros since changed.
-#   After 03 because it reads pro_athlete_season; the pack reads it at 08.
-step 03a_team_pool    "$PY" -u engine/build_team_pool.py --write
+# ★ 03 BESIDE THE 04a LINKING CHAIN, ON A SNAPSHOT TAKEN BEFORE IT (2026-11-13;
+#   ~25 min off the line). 03, 03b and 03a must read the people as they were
+#   before 04a moves ids; scripts/snapshot_hold.py exports a REPEATABLE READ
+#   snapshot and every connection those three open imports it
+#   (XCP_PG_SNAPSHOT_FILE, scripts/database.py). They write only their own
+#   tables (pro_athlete_season, ncaa_first_season, age_band_*, team_pool),
+#   none of which the 04a chain reads or writes. Collected after 04a3c,
+#   before grade_sanity (age_band_result), 04h1 (ncaa_first_season) and the
+#   04g chain. 02b stays in line first: it and 04a both write results_tf
+#   rows. XCP_SNAPSHOT_03=0, or a holder that cannot start: today's order.
+#   tests/test_snapshot_03_beside_04a.py.
+step 02b_tf_venues "$PY" -u scripts/backfill_tf_venues.py --write
+_SNAP03=""; _SNAP03_FILE="$LOGDIR/.snapshot_03"; _SNAP03_REL="$LOGDIR/.snapshot_03.release"
+if [ "${XCP_SNAPSHOT_03:-1}" != "0" ] && [ "$DRY" -eq 0 ] \
+   && { willRun 03_pro_flag || willRun 03b_age_bands || willRun 03a_team_pool; }; then
+  rm -f "$_SNAP03_FILE" "$_SNAP03_REL"
+  "$PY" -u scripts/snapshot_hold.py "$_SNAP03_FILE" --release "$_SNAP03_REL" \
+       --max-seconds "${XCP_SNAPSHOT_03_MAX:-14400}" --parent $$ > "$LOGDIR/03_snapshot_hold.log" 2>&1 9>&- &
+  _SNAP03_PID=$!
+  for _i in $(seq 1 120); do [ -s "$_SNAP03_FILE" ] && break; kill -0 "$_SNAP03_PID" 2>/dev/null || break; sleep 0.5; done
+  if [ -s "$_SNAP03_FILE" ]; then _SNAP03="$_SNAP03_FILE"
+  else echo "  03 snapshot not taken (see 03_snapshot_hold.log): 03 runs before 04a" | tee -a "$SUMMARY"
+       kill "$_SNAP03_PID" 2>/dev/null; wait "$_SNAP03_PID" 2>/dev/null; fi
+fi
+_group03() {
+  local _e=""; [ -n "$_SNAP03" ] && _e="XCP_PG_SNAPSHOT_FILE='$_SNAP03' "
+  stepsN 03_pro_flag "${_e}$PY -u engine/pro_flag.py --skip-dist --write" \
+         03b_age_bands "${_e}$PY -u engine/age_band_grades.py --write"
+  # ★ THE TEAM POOLS, EVERY RUN (pooling review P2, 2026-10-26). team_pool
+  #   (a club with a pro is pro, a team of under 15 athletes ever is pro) was
+  #   built only by overnight_fit_pool_solve.sh, so the pack and the fill read
+  #   a table as old as that run, keyed on team ids and pros since changed.
+  #   After 03 because it reads pro_athlete_season; the pack reads it at 08.
+  if [ -n "$_SNAP03" ]; then
+    step 03a_team_pool env XCP_PG_SNAPSHOT_FILE="$_SNAP03" "$PY" -u engine/build_team_pool.py --write
+  else
+    step 03a_team_pool "$PY" -u engine/build_team_pool.py --write
+  fi
+}
+if [ -n "$_SNAP03" ]; then bgchain 03_group _group03; else _group03; fi
 # every new tfrrs row gets a person: its athlete id's existing person, its own
 # high school career (a freshman), or one minted from the id -- see the script
 step 04a_link_tfrrs   "$PY" -u scripts/link_tfrrs_rows.py --apply
@@ -916,6 +947,13 @@ step 04a3b_merges     "$PY" -u scripts/link_profile_school.py --reapply
 #   Detaches go through person_pins (04a3 re-applies them); undo one with
 #   scripts/person_pins.py --undo-detach RESULT_ID.
 step 04a3c_gender_split "$PY" -u scripts/gender_split_people.py --write --show 40
+# the 03 group (on the pre-04a snapshot), collected; the snapshot released
+if [ -n "$_SNAP03" ]; then
+  bgchainjoin 03_group
+  touch "$_SNAP03_REL"
+  wait "$_SNAP03_PID" 2>/dev/null || echo "  03 snapshot hold ended early (03_snapshot_hold.log)" | tee -a "$SUMMARY"
+  tail -n 1 "$LOGDIR/03_snapshot_hold.log"; rm -f "$_SNAP03_FILE" "$_SNAP03_REL"
+fi
 
 # ★★ THE DISTANCE CHECKS BESIDE THE PEOPLE VERDICTS (2026-11-07, owner-
 #    approved: data_checks ~30 min and wrong_distance 20-60 min used to run

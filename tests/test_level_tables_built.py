@@ -33,7 +33,8 @@ class LevelTablesBuilt(unittest.TestCase):
 
     def test_the_staged_graph_goes_live_before_anything_reads_it(self):
         swap = self.at(r"^step 00c_level_swap .*level_graph\.py --swap-staged")
-        for reader in (r"^\s*03_pro_flag \"\$PY", r"^\s*(step|stepsN|bgstep) 04_grade_sanity", r"steps2 05_backfill_xc"):
+        for reader in (r"^\s*stepsN 03_pro_flag ", r"snapshot_hold\.py", r"^\s*(step|stepsN|bgstep) 04_grade_sanity",
+                       r"steps2 05_backfill_xc"):
             self.assertLess(swap, self.at(reader))
 
     def test_the_graph_is_rebuilt_in_the_background_as_next(self):
