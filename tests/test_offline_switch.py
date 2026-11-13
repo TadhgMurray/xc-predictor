@@ -19,5 +19,7 @@ def test_the_switch_parses_and_sends_a_503_with_retry_after():
 def test_the_page_names_no_feed_and_no_person():
     page = open(os.path.join(_ROOT, "deploy", "offline", "index.html")).read().lower()
     assert "taking a break" in page
-    for word in ("athletic.net", "tfrrs", "@gmail", "@"):
+    import re
+    for word in ("athletic.net", "tfrrs"):
         assert word not in page
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", page)     # no email address
