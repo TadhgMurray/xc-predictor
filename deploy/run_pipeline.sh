@@ -1275,6 +1275,15 @@ fi
 #   the loader whose WHERE needs normalized_time (05 writes it), and 07_pack
 #   resolves the pools, so a table built after 07 is read a run late.
 step 05c_pro_ability  "$PY" -u engine/build_pro_ability.py --write
+# ★ THE CLUB TABLES IN THE BACKGROUND FROM HERE (2026-11-13, the 05-08
+#   review): 07_pack built them in line before it forked, ~7-10 min. Their
+#   inputs -- the rows' person, date, team, school and grade,
+#   pro_athlete_season (03) and anet_team's levels -- are not written by
+#   05c, 06*, or 06c (05c writes pro_ability_season; 06 meet names and
+#   places; 06c impossible_*). Saved to the run's copy (_runCached) for 07
+#   and 09b; collected before 07. --from 7 skips this and 07 builds them.
+export XCP_CLUB_CACHE="$LOGDIR/.club_cache"
+bgstep 05d_club_tables "$PY" -u -c 'import sys; sys.path.insert(0, "engine"); import speed_ratings as S; S.loadClubPros(); S.loadClubMajority()'
 
 if [ "$FROM" -le 7 ]; then
   if [ "$DRY" -eq 1 ]; then
@@ -1357,6 +1366,7 @@ bgstep 10e_meet_units "$PY" -u racecast/build_meet_units.py
 #   after every step that writes their inputs (03 pro seasons, 04 links,
 #   05 backfill), so no earlier step can save a copy the later ones outdate.
 export XCP_CLUB_CACHE="$LOGDIR/.club_cache"
+bgjoin 05d_club_tables
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 bgjoin 13c0_person_redirects
 bgjoin 13c0_search_helpers
