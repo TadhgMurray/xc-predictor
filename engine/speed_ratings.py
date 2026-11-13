@@ -1895,6 +1895,12 @@ def _packParallel(sports, today, merge):
     sys.stdout.flush(); sys.stderr.flush()
     tmp = tempfile.mkdtemp(prefix="pack_", dir=_CACHE_DIR)
     kids = []
+    # ★ gc.freeze() BEFORE THE FORKS (2026-11-13): a collection in a child
+    #   writes to every inherited object's header and copies its page --
+    #   the parent's whole heap, per child. Frozen, the inherited objects
+    #   are left alone (gunicorn.conf.py does the same). Memory only.
+    import gc
+    gc.freeze()
     for sp in sports:
         path = os.path.join(tmp, f"{sp}.pkl")
         pid = os.fork()

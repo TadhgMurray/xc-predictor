@@ -3864,6 +3864,12 @@ def _drainParallel(cfg, row_fn, target, n):
     tmp = tempfile.mkdtemp(prefix=f"backfill_{cfg.sport.lower()}_")
     sys.stdout.flush(); sys.stderr.flush()
     kids = []
+    # ★ gc.freeze() BEFORE THE FORKS (2026-11-13): a collection in a child
+    #   writes to every inherited object's header and copies its page --
+    #   the parent's whole heap, per child. Frozen, the inherited objects
+    #   are left alone (gunicorn.conf.py does the same). Memory only.
+    import gc
+    gc.freeze()
     for k in range(n):
         path = os.path.join(tmp, f"{k}.pkl")
         pid = os.fork()

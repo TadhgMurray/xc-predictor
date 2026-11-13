@@ -163,7 +163,10 @@ def _indexes(cur, table):
               SELECT 1 FROM pg_constraint c
               WHERE c.conrelid = i.tablename::regclass
                 AND c.conindid = (i.schemaname||'.'||i.indexname)::regclass)
-        ORDER BY i.indexname
+        -- the largest first (2026-11-13): built a few at a time, the big
+        -- ones started last set the finish; the same indexes either way
+        ORDER BY pg_relation_size((i.schemaname||'.'||i.indexname)::regclass) DESC,
+                 i.indexname
     """, (table,))
     out = []
     for name, ddl in cur.fetchall():
