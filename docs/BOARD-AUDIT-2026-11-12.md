@@ -42,3 +42,20 @@ from a feed).
 
 Owners by area: 1-3 the rating model (solver chat); 4-5 the copy and
 track-in-XC checks (data-cleaning chat).
+
+## After run 20261112_173033 (2026-11-13), rows new since the audit above
+
+The five suspects above are unchanged. New ones:
+
+6. **ms_f #1 (performance and ability), 175.5 -- 12 points clear of #2.**
+   Summer Wilson, Pacific Coast Shockwave (CA), grade 8, 2021-10-03,
+   4,699 m in 15:19.2. A middle-school girl at that pace is far past any
+   girls' board; the likely classes are a boys' or mixed race filed as
+   girls', or a wrong distance. Check the race's field.
+7. **hs_m #19-#20, the Hendrix twins, grade 9, 2011-09-10, 4,828 m in
+   14:48 / 14:49 (147.1 / 147.0).** Two freshmen at a 3-mile pace that
+   puts them among the all-time best -- the short-course class (#1).
+
+Other new rows (college Sept 2026 meets, Daphne Weller 16:52 at the
+Indiana state meet, Cheserek, Bairu) look right. Tony Truax shows grade
+"2002" (a class year where a grade belongs) -- a label, not a rating.
