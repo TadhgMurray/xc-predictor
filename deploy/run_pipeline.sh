@@ -2222,13 +2222,29 @@ if [ "${XCP_COURSE_BG:-1}" = "1" ]; then bgchain courses _courseChain; else _cou
 #   run, biggest first). ! AFTER 11b and 12b on purpose: CREATE INDEX
 #   CONCURRENTLY waits on every older open transaction (see 10f2 above).
 # (13j_record_books starts after the course chain is collected, below)
+# ★ THE PANELS' HEAD FIRST, THEN 13f..13g IN LINE BESIDE THE PANELS
+#   (2026-11-13). The steps below read only homepage_recent (breakouts.
+#   latestDates) and season_year_<sport> (predict._currentSeason); `panels.py
+#   --head` writes exactly those (and span_<sport>), with the full build's own
+#   functions, in about a minute. The two full builds then run as a
+#   background chain with --after-head, which takes the head's season and
+#   span and never rewrites them or homepage_recent -- so every step below
+#   reads the values the page ends with. Joined before 13_panels_facts.
+#   XCP_PANELS_HEAD=0, a failed head, or a --skip of the head or either
+#   panels step runs them all in line, as before.
+_panelsPair() {
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels
-steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
-       13_panels_tf "$PY -u racecast/panels.py --sport TF"
-# the home page's hero numbers from BOTH sports' spans (each process above
-# wrote its own; panels.combineFacts, 2026-11-12) -- a second, cheap read
-step 13_panels_facts "$PY" -u racecast/panels.py --combine-facts
+steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC$_PANELS_AFTER_HEAD" \
+       13_panels_tf "$PY -u racecast/panels.py --sport TF$_PANELS_AFTER_HEAD"
+}
+_PANELS_AFTER_HEAD=""
+if [ "${XCP_PANELS_HEAD:-1}" = "1" ] && willRun 13_panels_head \
+   && willRun 13_panels_xc && willRun 13_panels_tf; then
+  step 13_panels_head "$PY" -u racecast/panels.py --head
+  failed 13_panels_head || _PANELS_AFTER_HEAD=" --after-head"
+fi
+if [ -n "$_PANELS_AFTER_HEAD" ]; then bgchain panels _panelsPair; else _panelsPair; fi
 # Breakouts, precomputed: reads ranking_results and the panels' newest dates
 step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
 # ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py):
@@ -2263,20 +2279,27 @@ fi
 if [ "${XCP_ATHLETE_PICK:-1}" != "0" ]; then
   step 13f5_athlete_pick "$PY" -u racecast/build_athlete_pick.py || true
 fi
+# ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
+#   from the week's boards (10g2 snapshots, the breakouts above), picked up
+#   at /account/admin/social. A report step: it never fails the run. Off with
+#   XCP_SOCIAL=0; photos from XCP_SOCIAL_PHOTOS; see racecast/build_social.py.
+#   (Before 13f6 now: it reads nothing the vacuum touches.)
+if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_social.py; fi
+bgchainjoin panels                        # 13_panels_xc/tf, before the facts read their spans
+# the home page's hero numbers from BOTH sports' spans (each process above
+# wrote its own; panels.combineFacts, 2026-11-12) -- a second, cheap read
+step 13_panels_facts "$PY" -u racecast/panels.py --combine-facts
 # ★ THE SMALL REBUILT TABLES' VISIBILITY MAPS, AFTER THE BUILDS (2026-11-12:
 #   season_comps and athletes at 0% all-visible on the server). A VACUUM can
 #   only mark a page all-visible once no older transaction is open, and a
 #   build's own vacuum runs beside the rest of the run -- so season_comps'
 #   index-only band read (comps.py) went to the table for every row. These
 #   are small (a few GB in all) and are done at the trickle's pace.
+# ! AFTER THE PANELS' JOIN, NOT BESIDE THEM (2026-11-13): their long scans
+#   hold the snapshot horizon this vacuum needs to pass.
 bgjoin 10f3_comps                        # its season_comps swap, before the vacuum reads it
 step 13f6_vacuum_small "$PY" -u scripts/gentle_vacuum.py --table season_comps --table athletes \
      --table athlete_pick --table school_page --table meet_counts || true
-# ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
-#   from the week's boards (10g2 snapshots, the breakouts above), picked up
-#   at /account/admin/social. A report step: it never fails the run. Off with
-#   XCP_SOCIAL=0; photos from XCP_SOCIAL_PHOTOS; see racecast/build_social.py.
-if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_social.py; fi
 # ★ STATE ODDS (owner, 2026-10-10): each state's season simulated into
 #   state_odds_* (racecast/build_state_odds.py). After the boards and units
 #   it reads; its own line, not chained, so a failure costs nothing else. OFF until
