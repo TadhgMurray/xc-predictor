@@ -64,34 +64,45 @@ location @racecast_offline {
 }
 if (-f $FLAG) { return 503; }
 CONF
-  if ! grep -q "include $SNIPPET;" "$SITE"; then
-    cp -p "$SITE" "$SITE.bak-offline"
-    python3 - "$SITE" "$SNIPPET" "$MARK" <<'PYEOF'
+  # ★ EVERY SERVER BLOCK THAT FORWARDS TO THE APP, IN EVERY ENABLED FILE
+  #   (2026-11-13, the server: only the port-80 block named 127.0.0.1:8000;
+  #   the TLS block certbot wrote, the one Cloudflare talks to, answered 502).
+  #   A block counts when it has a proxy_pass of any kind.
+  local f files=""
+  for f in "$SITE" /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+    [ -e "$f" ] || continue
+    f=$(readlink -f "$f")
+    case " $files " in *" $f "*) continue ;; esac
+    grep -q "proxy_pass" "$f" 2>/dev/null || continue
+    files="$files $f"
+  done
+  for f in $files; do
+    [ -f "$f.bak-offline" ] || cp -p "$f" "$f.bak-offline"
+    python3 - "$f" "$SNIPPET" "$MARK" <<'PYEOF'
 import re, sys
 path, snippet, mark = sys.argv[1:4]
 s = open(path).read()
+inc = f"include {snippet};"
 out, i, n = [], 0, 0
-# every "server {" whose block proxies to the app gets the include as its first line
 for m in re.finditer(r'(^|\n)([ \t]*)server[ \t]*\{', s):
     start = m.end()
     depth, j = 1, start
     while j < len(s) and depth:
         depth += {"{": 1, "}": -1}.get(s[j], 0)
         j += 1
-    if "127.0.0.1:8000" in s[start:j]:
-        out.append(s[i:start] + f"\n    include {snippet};  {mark}")
+    block = s[start:j]
+    if "proxy_pass" in block and inc not in block:
+        out.append(s[i:start] + f"\n    {inc}  {mark}")
         i = start
         n += 1
 out.append(s[i:])
-if not n:
-    sys.exit("no server block proxies to 127.0.0.1:8000 -- nothing patched")
 open(path, "w").write("".join(out))
-print(f"  patched {n} server block(s) in {path}")
+print(f"  {path}: {n} server block(s) patched")
 PYEOF
-  fi
+  done
   if ! nginx -t 2>/dev/null; then
-    echo "  ! nginx -t failed -- restoring the site file"
-    [ -f "$SITE.bak-offline" ] && cp -p "$SITE.bak-offline" "$SITE"
+    echo "  ! nginx -t failed -- restoring the site files"
+    for f in $files; do [ -f "$f.bak-offline" ] && cp -p "$f.bak-offline" "$f"; done
     nginx -t
     exit 1
   fi
@@ -102,8 +113,10 @@ case "${1:-status}" in
     install
     touch "$FLAG"
     systemctl reload nginx
+    sleep 2                     # the reload hands over to new workers
     echo "  site: $(check) (503 means offline)"
-    systemctl disable --now $TIMERS 2>/dev/null || true
+    for t in $TIMERS; do systemctl disable --now "$t" 2>/dev/null || true; done
+    echo "  timers still scheduled: $(systemctl list-timers --all --no-legend 2>/dev/null | grep -o 'xcp-[a-z-]*\.timer' | sort -u | tr '\n' ' ')"
     systemctl stop xcp-nightly.service xcp-kailo-record.service xcp-race-model.service 2>/dev/null || true
     systemctl disable --now xc-predictor.socket 2>/dev/null || true
     systemctl disable --now xc-predictor 2>/dev/null || true
@@ -120,8 +133,9 @@ case "${1:-status}" in
     done
     rm -f "$FLAG"
     systemctl reload nginx
+    sleep 2                     # the reload hands over to new workers
     echo "  site: $(check) (200 means back)"
-    systemctl enable --now $TIMERS 2>/dev/null || true
+    for t in $TIMERS; do systemctl enable --now "$t" 2>/dev/null || true; done
     purge
     echo "ONLINE. Then: rebuild + resubmit the sitemap, run scripts/indexnow_submit.py"
     ;;
