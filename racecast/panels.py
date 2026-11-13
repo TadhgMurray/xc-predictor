@@ -1551,6 +1551,9 @@ def _siteFacts(conn, sports):
         total, first, last = 0, None, None
         for sport in sports:
             n, y0, y1 = _ratedSpan(conn, sport)
+            # this sport's own span, for combineFacts (the pipeline runs one
+            # process per sport, and the hero numbers are both sports')
+            facts[f"span_{sport}"] = f"{int(n)},{y0 or ''},{y1 or ''}"
             total += n
             if y0 and (first is None or y0 < first):
                 first = y0
@@ -1647,11 +1650,52 @@ def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
 #  10. MAIN
 # ===================================================================== #
 
+def combineFacts(conn):
+    """fact_results / fact_years from every sport's stored span. ★ BOTH SPORTS
+    (2026-11-12): the pipeline builds the panels in one process per sport and
+    each wrote the hero numbers from its own sport alone -- whichever
+    committed last set the page's "results" and "years". Each process now
+    also stores its span (span_XC / span_TF); this sums them. Run after both
+    (pipeline 13_panels_facts), and by each process after its own write."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT key, value FROM homepage_meta WHERE key LIKE 'span\\_%'")
+        spans = dict(cur.fetchall())
+        total, first, last = 0, None, None
+        for v in spans.values():
+            try:
+                n, y0, y1 = (v.split(",") + ["", ""])[:3]
+                total += int(n)
+                if y0 and (first is None or int(y0) < first):
+                    first = int(y0)
+                if y1 and (last is None or int(y1) > last):
+                    last = int(y1)
+            except ValueError:
+                continue
+        out = {}
+        if total:
+            out["fact_results"] = _formatCount(total)
+        if first and last:
+            out["fact_years"] = str(last - first + 1)
+        if out:
+            psycopg2.extras.execute_values(cur,
+                "INSERT INTO homepage_meta (key, value) VALUES %s "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                list(out.items()))
+    conn.commit()
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Rebuild landing-page panels.")
     ap.add_argument("--sport", choices=["XC", "TF"], action="append",
                     help="limit to one sport (repeatable). Default: both.")
+    ap.add_argument("--combine-facts", action="store_true",
+                    help="only recompute the hero numbers from both sports' spans")
     args = ap.parse_args()
+    if args.combine_facts:
+        with getConn() as conn:
+            print(f"[panels] hero facts, both sports: {combineFacts(conn)}")
+        return 0
     sports = args.sport or ["XC", "TF"]
 
     buckets = defaultdict(list)      # (board, scope, sport, pool) -> heap
@@ -1721,6 +1765,11 @@ def main():
                           if k.startswith("fact_")) or "[panels] hero facts: none")
 
         written = _writePanels(conn, buckets, meta, recent, sports=sports)
+        try:
+            combineFacts(conn)              # with the other sport's span, if stored
+        except Exception as exc:            # noqa: BLE001 -- the page keeps its numbers
+            conn.rollback()
+            print(f"[panels] hero facts not combined ({exc})")
         print(f"wrote {written:,} panel rows across {len(buckets)} buckets "
               f"+ {len(recent)} recent-meet rows")
 

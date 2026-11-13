@@ -2216,6 +2216,9 @@ if [ "${XCP_COURSE_BG:-1}" = "1" ]; then bgchain courses _courseChain; else _cou
 # process on run12); each writes only its own sport's panels
 steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
        13_panels_tf "$PY -u racecast/panels.py --sport TF"
+# the home page's hero numbers from BOTH sports' spans (each process above
+# wrote its own; panels.combineFacts, 2026-11-12) -- a second, cheap read
+step 13_panels_facts "$PY" -u racecast/panels.py --combine-facts
 # Breakouts, precomputed: reads ranking_results and the panels' newest dates
 step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
 # ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py):
