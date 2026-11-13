@@ -20,3 +20,14 @@ def test_held_and_chain_lines(tmp_path):
                          capture_output=True, text=True, check=True).stdout
     assert "2,690 s in line" in out and "1,500 s held for background steps" in out
     assert any(l.startswith("08a_holdout") and " bg " in l for l in out.splitlines())
+
+
+def test_gaps_name_the_long_silences(tmp_path):
+    run = tmp_path / "20261113_010101"
+    run.mkdir()
+    (run / "summary.log").write_text("  07_pack ok (700s, peak 68.6 GB)\n")
+    (run / "07_pack.log").write_text("10:00:00 start\n10:00:10 a\n10:05:00 [pack] streamed\n"
+                                     "10:11:40 [pack] cell_days\n")
+    out = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "pipeline_profile.py"),
+                          str(run), "--gaps", "300"], capture_output=True, text=True, check=True).stdout
+    assert "== 07_pack" in out and "400 s before: 10:11:40 [pack] cell_days" in out

@@ -309,6 +309,15 @@ summarise() {
   echo ""
   echo "======================================================================"
   echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m" | tee -a "$SUMMARY"
+  # ★ THE RUN'S OWN DIAGNOSIS (owner, 2026-11-13: "diagnose and look over
+  #   every step after each run"): every step against the last finished run,
+  #   what each background step held the run, and the longest pauses inside
+  #   every step that ran 5 minutes or more -- one file to read afterwards.
+  _prev=$(ls -dt "$ROOT"/logs/2*/ 2>/dev/null | grep -v "$(basename "$LOGDIR")" \
+          | while read -r d; do grep -q "finished in" "$d/summary.log" 2>/dev/null && { echo "$d"; break; }; done)
+  "$PY" "$ROOT/scripts/pipeline_profile.py" ${_prev:+"$_prev"} "$LOGDIR" --gaps 300 \
+      > "$LOGDIR/profile.txt" 2>&1 || true
+  echo "  step-by-step diagnosis: $LOGDIR/profile.txt"
   if [ -n "$FAILED" ]; then
     echo "  FAILED STEPS:$FAILED"
     echo "  logs: $LOGDIR"
