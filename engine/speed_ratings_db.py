@@ -1218,6 +1218,12 @@ def loadClubPros(min_pros=1):
     a season they raced for the team. Empty without the table."""
     by_team, by_school = {}, {}
     with getConn() as conn, conn.cursor() as cur:
+        # ★ UNDER AN EXPORTED SNAPSHOT (03a beside 04a, XCP_PG_SNAPSHOT_FILE)
+        #   the results are read as before 04a, but pro_athlete_season must
+        #   be the one 03 wrote AFTER the snapshot: a TEMP copy of the live
+        #   table stands in for it. A no-op otherwise (database.shadowLive).
+        from database import shadowLive
+        shadowLive(cur, "pro_athlete_season")
         cur.execute("SELECT to_regclass('pro_athlete_season')")
         if cur.fetchone()[0] is None:
             return by_team, by_school

@@ -375,6 +375,15 @@ def _buildClubMajority():
         from speed_ratings_db import loadClubMajority as _load
         levels = loadAnetLevels()
         by_team, by_school = loadClubPros()
+        # ! NOT FROM EMPTY INPUTS: loadAnetLevels and loadClubPros say a
+        #   failed read and hand back empties; built from those, this set is
+        #   empty too, and saved for the run (_runCached) it would switch
+        #   the club rules off for every later step. Not saved; each step
+        #   builds again.
+        if not levels or not (by_team or by_school):
+            print("[engine] club seasons: team levels or clubs unavailable -- "
+                  "built from nothing, not kept for the run")
+            return out, False
         club_ids = [t for t, lv in levels.items() if lv == "club"]
         out = _load(club_ids, list(by_team), list(by_school))
         print(f"[engine] club seasons: {len(out):,} athlete-years race mostly "
@@ -1886,6 +1895,12 @@ def _packParallel(sports, today, merge):
     sys.stdout.flush(); sys.stderr.flush()
     tmp = tempfile.mkdtemp(prefix="pack_", dir=_CACHE_DIR)
     kids = []
+    # ★ gc.freeze() BEFORE THE FORKS (2026-11-13): a collection in a child
+    #   writes to every inherited object's header and copies its page --
+    #   the parent's whole heap, per child. Frozen, the inherited objects
+    #   are left alone (gunicorn.conf.py does the same). Memory only.
+    import gc
+    gc.freeze()
     for sp in sports:
         path = os.path.join(tmp, f"{sp}.pkl")
         pid = os.fork()

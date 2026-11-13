@@ -21,7 +21,10 @@ def test_pipeline_order_and_shards():
             < sh.index("step 12b_finish"))
     assert "shards() {" in sh and '--shard "$k/$n"' in sh
     assert "13c_search_index" in sh and "search_index.py --only units" not in sh
-    assert sh.index("13b_pool_consts") < sh.index("13c_search_index")
+    # after 11b (its long reads would stall 11b's concurrent index builds),
+    # collected before the sitemap, which reads its meet_agg tables (2026-11-12)
+    assert sh.index("step 11b_indexes") < sh.index("bgstep 13c_search_index")
+    assert sh.index("bgjoin 13c_search_index") < sh.index("_G13=(13d_sitemap")
 
 
 def test_course_boards_cli_modes():

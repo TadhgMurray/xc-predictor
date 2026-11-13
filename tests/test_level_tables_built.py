@@ -33,7 +33,8 @@ class LevelTablesBuilt(unittest.TestCase):
 
     def test_the_staged_graph_goes_live_before_anything_reads_it(self):
         swap = self.at(r"^step 00c_level_swap .*level_graph\.py --swap-staged")
-        for reader in (r"^\s*03_pro_flag \"\$PY", r"^\s*(step|stepsN|bgstep) 04_grade_sanity", r"steps2 05_backfill_xc"):
+        for reader in (r"^\s*stepsN 03_pro_flag ", r"snapshot_hold\.py", r"^\s*(step|stepsN|bgstep) 04_grade_sanity",
+                       r"steps2 05_backfill_xc"):
             self.assertLess(swap, self.at(reader))
 
     def test_the_graph_is_rebuilt_in_the_background_as_next(self):
@@ -47,9 +48,14 @@ class LevelTablesBuilt(unittest.TestCase):
         self.assertLess(main.index("conn.commit()"), main.index("propagate(cur)"))
 
     def test_the_season_levels_run_after_the_person_steps_and_before_05(self):
-        start = self.at(r"^bgstep 04h_season_levels .*college_flag\.py --write.*season_level\.py --write")
-        self.assertLess(self.at(r"^\s*(step|stepsN|bgstep) 04_grade_sanity"), start)
-        self.assertLess(self.sh.index("engine/person_gender.py"), start)
+        # college_flag beside grade_sanity (it reads no grade_fix and no
+        # gender), season_level after grade_sanity's join (2026-11-12)
+        cf = self.at(r"^bgstep 04h1_college_flags .*college_flag\.py --write")
+        self.assertLess(self.sh.index("gender_split_people.py"), cf)
+        self.assertLess(self.at(r"^\s*(step|stepsN|bgstep) 04_grade_sanity"), cf)
+        start = self.at(r"^  bgstep 04h_season_levels .*season_level\.py --write")
+        self.assertLess(self.at(r"^bgjoin 04_grade_sanity"), start)
+        self.assertLess(self.at(r"^bgjoin 04h1_college_flags"), start)
         join = self.at(r"^bgjoin 04h_season_levels")
         self.assertLess(join, self.at(r"steps2 05_backfill_xc"))
 

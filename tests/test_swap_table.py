@@ -13,7 +13,10 @@ def _load():
     # the helper alone: database.py imports the server config at import time
     i = _SRC.index("def swapTable(")
     j = _SRC.index("\ndef _liveColumns")
-    ns = {"time": time}
+    # snapshotOff is a no-op on a plain connection (scripts/database.py,
+    # "Reading an exported snapshot"); the fake stands in for one
+    import contextlib
+    ns = {"time": time, "snapshotOff": contextlib.nullcontext}
     exec(_SRC[i:j], ns)
     return ns["swapTable"]
 

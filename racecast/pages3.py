@@ -757,11 +757,7 @@ def unit_page(kind, name):
                         state="AND s.state = %(state)s" if not college else ""),
                         {"pool": pool, "sport": sport, "year": year, "spell": spell, "state": st})
                     athletes = [dict(r) for r in cur.fetchall()]
-                    cur.execute(f"""SELECT DISTINCT year FROM team_season
-                                    WHERE span = 'season' AND scope = 'usa' AND pool = %s
-                                      AND sport = %s AND upper({kind}) = ANY(%s)
-                                    ORDER BY year DESC LIMIT 12""", (pool, sport, spell))
-                    years = [r["year"] for r in cur.fetchall()]
+                    years = _unitYears(cur, kind, pool, sport, spell)
                     ids = sorted({t["best_person_id"] for t in teams if t.get("best_person_id")})
                     if ids:
                         cur.execute(f"""SELECT s.person_id, a.name FROM unnest(%s::bigint[]) AS s(person_id)
@@ -809,3 +805,28 @@ def unit_page(kind, name):
         top25=sum(1 for t in teams if t.get("rank") and int(t["rank"]) <= UB.TOP_TEAMS),
         self_href=lambda p=pool, s=sport, y=None: UB.unitHref(kind, stored, st, p, s)
         + (f"&year={y}" if y else ""))
+
+
+# ★ A UNIT'S SEASONS ONCE FOR THE BOX (2026-11-12: 464 runs over 250 ms in 72 h,
+#   the same dozen years for every visitor of a league or section page).
+#   Shared by every worker (sharedcache) for UNIT_YEARS_TTL, keyed by the unit
+#   and team_season's oid (a rebuilt board is a new copy).
+UNIT_YEARS_TTL = 3600.0
+
+
+def _unitYears(cur, kind, pool, sport, spell):
+    def compute():
+        cur.execute(f"""SELECT DISTINCT year FROM team_season
+                        WHERE span = 'season' AND scope = 'usa' AND pool = %s
+                          AND sport = %s AND upper({kind}) = ANY(%s)
+                        ORDER BY year DESC LIMIT 12""", (pool, sport, spell))
+        return [r["year"] if isinstance(r, dict) else r[0] for r in cur.fetchall()]
+    import hashlib
+    import sharedcache
+    oid = sharedcache.tableOid(cur, "team_season")
+    if oid is None:
+        return compute()
+    key = "unit-years-" + hashlib.sha1(repr((kind, pool, sport, list(spell), oid))
+                                       .encode("utf-8")).hexdigest()
+    years, _at = sharedcache.get(key, compute, ttl=UNIT_YEARS_TTL)
+    return list(years)

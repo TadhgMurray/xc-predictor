@@ -2886,6 +2886,77 @@ class _HistoryRead:
         return out
 
 
+# ★ A RUNNER'S HISTORY ONCE FOR THE BOX (2026-11-12, diag_predict_time on a
+#   282-runner field: the history read 2.8 s of a 6.2 s cold prediction).
+#   The same runners turn up field after field, and the corpus query filters
+#   by id, so a runner's rows do not depend on who else is in the batch:
+#   each runner's rows -- read and put on the model's scale, as before -- are
+#   filed under them (sharedcache buckets by id, HISTORY_TTL_S), and a batch
+#   queries only the runners no one has read lately. Keyed by the sport, the
+#   weather table's presence, the model's scale, the hour and floor, the
+#   results tables' oids and the feature code, so nothing outlives the data
+#   or the code that made it.
+HISTORY_TTL_S = 600
+_HIST_STAMP = {}
+
+
+def _historyStamp(cur, sport):
+    import hashlib
+    import sharedcache
+    table = "results" if sport == "XC" else "results_tf"
+    oid = sharedcache.tableOid(cur, table)
+    if oid is None:
+        return None
+    if "code" not in _HIST_STAMP:
+        h = hashlib.sha1()
+        for rel in ("model/feature_extraction.py", "engine/corrections.py",
+                    "racecast/predict.py"):
+            try:
+                st = os.stat(os.path.join(_ROOT, rel))
+                h.update(f"{rel}:{st.st_size}:{st.st_mtime_ns}".encode())
+            except OSError:
+                h.update(rel.encode())
+        _HIST_STAMP["code"] = h.hexdigest()[:12]
+    return (oid, _HIST_STAMP["code"])
+
+
+def _historyShared(c, sport, hour, some, has_weather, scale, read):
+    import sharedcache
+    stamp = _historyStamp(c, sport)
+    if stamp is None:
+        return read(c, sport, hour, some)
+    fx = _fx()
+    base = ("hist", sport, bool(has_weather), scale, hour, fx.MIN_NORMALIZED_TIME, stamp)
+    have = {}
+    for pid, (cols, tuples) in sharedcache.peekKeys(base, [int(p) for p in some],
+                                                    ttl=HISTORY_TTL_S).items():
+        have[pid] = [dict(zip(cols, t)) for t in tuples]
+    missing = [int(p) for p in some if int(p) not in have]
+    out = [r for p in some if int(p) in have for r in have[int(p)]]
+    if not missing:
+        return out
+    rows = read(c, sport, hour, missing)
+    got = {p: [] for p in missing}
+    for r in rows:
+        pid = r.get("person_id") or r.get("athlete_id")
+        if pid in got:
+            got[pid].append(r)
+
+    def pack(rs):
+        cols = tuple(rs[0]) if rs else ()
+        return cols, [tuple(r[k] for k in cols) for r in rs]
+    # ! ONLY A RUNNER WHOSE ROWS SHARE ONE SET OF KEYS IS PACKED (2026-11-12;
+    #   run 20261112_173033, 10f2_projection: KeyError 'norm_unshifted').
+    #   Some keys are set on some rows only (feature_extraction marks a row
+    #   whose pool it cannot tell); the first row's keys then fail on a later
+    #   row, or would invent a key on it. Such a runner is not cached: the
+    #   rows just read are returned as they are, and the next call reads again.
+    same = {p: got[p] for p in missing
+            if all(tuple(r) == tuple(got[p][0]) for r in got[p][1:])}
+    sharedcache.putKeys(base, {p: pack(rs) for p, rs in same.items()})
+    return out + rows
+
+
 def _historyRows(cur, person_ids):
     """{person_id: [corpus rows, chronological]} for a whole field --
     feature_extraction's own row SQL with an id filter, both sports merged
@@ -2956,7 +3027,7 @@ def _historyStart(cur, person_ids):
     scale = _normScale()
     memo = {}
 
-    def _plainRows(c, sport, hour, some):
+    def _readRows(c, sport, hour, some):
         c.execute(fx.personResultsSql(sport, has_weather=has_weather),
                   (hour, fx.MIN_NORMALIZED_TIME, some, some))
         cols = [d[0] for d in c.description]
@@ -2964,6 +3035,9 @@ def _historyStart(cur, person_ids):
         for row in rows:
             fx.toCommonScale(row, scale=scale, memo=memo)
         return rows
+
+    def _plainRows(c, sport, hour, some):
+        return _historyShared(c, sport, hour, some, has_weather, scale, _readRows)
 
     hours = {"XC": fx.XC_DEFAULT_HOUR, "TF": fx.TF_DEFAULT_HOUR}
     queues = {sp: _IdQueue(ids) for sp in ("XC", "TF")}
@@ -6179,19 +6253,38 @@ def _raceEntrants(cur, schools, sport, year, gender=None, levels=None):
 
 def _raceEntrantRowsShared(cur, key):
     """_raceEntrantRows once for the box, not once per worker (2026-11-08:
-    1.1 s a run, p95 2.3 s, in the slow log under /api/predict/field). The
-    first worker to need a field reads it and shares it (sharedcache) for
-    _ENTRANTS_TTL_S, the same ten minutes each worker already kept it; the
-    others read that copy. The key is the sorted schools, sport and year."""
-    import hashlib
+    1.1 s a run, p95 2.3 s, in the slow log under /api/predict/field).
+
+    ★ PER SCHOOL, NOT PER FIELD (2026-11-12: a meet's boys' and girls' races
+      were read one after the other at 1.5 s each -- their school lists
+      differ by a few names, so a copy keyed by the whole list was never the
+      other's). The query groups by school and runner, so a school's rows do
+      not depend on which other schools are asked with it: each school's rows
+      are filed under it (sharedcache.putKeys, one file per school, by the
+      school's name, for _ENTRANTS_TTL_S), a field reads those it finds and
+      queries only the rest, in one statement as before."""
     import sharedcache
     schools, sport, year = key
-    name = "entrants-%s-%s-%s" % (sport, year, hashlib.sha1(
-        repr(schools).encode("utf-8")).hexdigest()[:20])
-    rows, _at = sharedcache.get(
-        name, lambda: _raceEntrantRows(cur, list(schools), sport, year),
-        ttl=_ENTRANTS_TTL_S)
-    return rows
+
+    prefix = ("entrants", sport, year)
+    have = {}
+    for sc, (cols, tuples) in sharedcache.peekKeys(prefix, list(schools),
+                                                   ttl=_ENTRANTS_TTL_S).items():
+        have[sc] = [dict(zip(cols, t)) for t in tuples]
+    missing = [sc for sc in schools if sc not in have]
+    if missing:
+        got = {sc: [] for sc in missing}
+        for r in _raceEntrantRows(cur, missing, sport, year):
+            got.setdefault(r["school"], []).append(dict(r))
+
+        def pack(rows):
+            cols = tuple(rows[0]) if rows else ()
+            return cols, [tuple(r[c] for c in cols) for r in rows]
+        sharedcache.putKeys(prefix, {sc: pack(got[sc]) for sc in missing})
+        have.update(got)
+    return [dict(r) for sc in schools for r in have.get(sc, ())]
+
+
 
 
 def _entrantsKeep(key, rows, now):

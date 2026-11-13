@@ -152,6 +152,10 @@ def proTeams(cur, verbose=True):
         if verbose:
             print(f"  loadClubPros unavailable ({type(exc).__name__}) -- "
                   f"counting pro_athlete_season directly", flush=True)
+    # 03's table, written after an exported snapshot (XCP_PG_SNAPSHOT_FILE):
+    # read live, beside the snapshot's results (database.shadowLive)
+    from database import shadowLive
+    shadowLive(cur, "pro_athlete_season")
     if not _tableExists(cur, "pro_athlete_season"):
         return {}
     # the same question, asked plainly: a pro athlete-season on a team's rows

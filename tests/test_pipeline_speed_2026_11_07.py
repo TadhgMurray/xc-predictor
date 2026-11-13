@@ -259,10 +259,12 @@ def test_rowguard_chain_from_09d_joined_before_11b_and_16():
 
 
 def test_early_block_in_parallel_then_team_pool():
-    i = at('stepsN 02b_tf_venues "$PY -u scripts/backfill_tf_venues.py --write"')
-    assert i < at('03_pro_flag "$PY -u engine/pro_flag.py --skip-dist --write"') \
-        < at('03b_age_bands "$PY -u engine/age_band_grades.py --write"') \
-        < at("step 03a_team_pool") < at("bgstep 04_grade_sanity")
+    # 02b first, then 03 / 03b side by side (on the pre-04a snapshot since
+    # 2026-11-13), then 03a, all collected before grade_sanity
+    i = at('step 02b_tf_venues "$PY" -u scripts/backfill_tf_venues.py --write')
+    assert i < at('03_pro_flag "${_e}$PY -u engine/pro_flag.py --skip-dist --write"') \
+        < at('03b_age_bands "${_e}$PY -u engine/age_band_grades.py --write"') \
+        < at("step 03a_team_pool") < at("bgchainjoin 03_group") < at("bgstep 04_grade_sanity")
     # 03 reads no venue name and 03b no pro table: nothing in common
     assert "venue_name" not in re.sub(r"#.*", "", read("engine", "pro_flag.py"))
     assert "pro_athlete_season" not in read("engine", "age_band_grades.py")

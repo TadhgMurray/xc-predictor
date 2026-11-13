@@ -162,47 +162,118 @@ def _meetNames(cur, meet_ids):
     return {r["meet_id"]: r.get("name") for r in cur.fetchall()}
 
 
-def replay(rows, school, weeks):
+def _byPerson(rows, cut):
+    """{person_id: {school, grade, ratings}} of the races up to `cut`; a
+    runner's school is the one on their first race (rows sorted by day)."""
+    by = {}
+    for r in rows:
+        if r["day"] > cut:
+            break
+        by.setdefault(r["person_id"], {"school": r["school"], "grade": r.get("grade"),
+                                       "ratings": []})["ratings"].append(float(r["rating"]))
+    return by
+
+
+def _fieldOf(by, school=None):
+    """The field entries (season rating not None); only `school`'s when given
+    -- a runner's season rating does not depend on anyone else's."""
+    field = []
+    for pid, a in by.items():
+        if school is not None and a["school"] != school:
+            continue
+        sr = seasonRating(a["ratings"])
+        if sr is not None:
+            field.append({"person_id": pid, "name": None, "school": a["school"],
+                          "school_state": None, "grade": a["grade"], "pool": None,
+                          "rating": sr, "n_races": len(a["ratings"])})
+    return field
+
+
+def _standing(field):
+    """(n_teams, {team: (place, score)}) of the field scored as one meet."""
+    from projections import scoreField, topPerSchool
+    teams, _fin = scoreField(topPerSchool(field))
+    scored = [t for t in teams if t.get("score") is not None]
+    places = {}
+    for i, t in enumerate(scored):
+        places.setdefault(t["team"], (i + 1, t["score"]))
+    return len(scored), places
+
+
+def fieldStandings(rows, weeks):
+    """{cut: (n_teams, {team: (place, score)})} for every week -- the part of
+    replay that is the same for every school of the field.
+
+    ★ ONCE PER FIELD (2026-11-12: /school/:name/season at a 0.95 s median).
+      replay scored the WHOLE field every week to read one school's place, and
+      every school of a division did it again; the week grid is calendar
+      Sundays, so a school's weeks are a tail of its field's."""
+    rows = sorted(rows, key=lambda r: r["day"])
+    return {wk.isoformat(): _standing(_fieldOf(_byPerson(rows, wk.isoformat())))
+            for wk in weeks}
+
+
+def replay(rows, school, weeks, standings=None):
     """The weekly points for `school` from the field's race rows -- pure,
-    so the tests can run a season without a database.
+    so the tests can run a season without a database. `standings`
+    (fieldStandings) skips scoring the field again; a week it lacks is
+    scored here, as before.
 
     rows: [{person_id, school, grade, day, rating, meet_id}]."""
-    from projections import scoreField, topPerSchool
     rows = sorted(rows, key=lambda r: r["day"])
     out = []
     for wk in weeks:
         cut = wk.isoformat()
-        by = {}
-        for r in rows:
-            if r["day"] > cut:
-                break
-            by.setdefault(r["person_id"], {"school": r["school"], "grade": r.get("grade"),
-                                           "ratings": []})["ratings"].append(float(r["rating"]))
-        field = []
-        for pid, a in by.items():
-            sr = seasonRating(a["ratings"])
-            if sr is not None:
-                field.append({"person_id": pid, "name": None, "school": a["school"],
-                              "school_state": None, "grade": a["grade"], "pool": None,
-                              "rating": sr, "n_races": len(a["ratings"])})
+        by = _byPerson(rows, cut)
+        known = standings is not None and cut in standings
+        field = _fieldOf(by, school if known else None)
         mine = sorted((f for f in field if f["school"] == school),
                       key=lambda f: -f["rating"])
         point = {"date": cut, "n_runners": len(mine),
                  "top7_ids": [f["person_id"] for f in mine[:7]]}
         point.update(teamWeek([f["rating"] for f in mine]))
-        teams, _fin = scoreField(topPerSchool(field))
-        scored = [t for t in teams if t.get("score") is not None]
-        point["n_teams"] = len(scored)
-        point["place"], point["score"] = None, None
-        for i, t in enumerate(scored):
-            if t["team"] == school:
-                point["place"], point["score"] = i + 1, t["score"]
-                break
+        n_teams, places = standings[cut] if known else _standing(field)
+        point["n_teams"] = n_teams
+        point["place"], point["score"] = places.get(school, (None, None))
         point["meets"] = sorted({r["meet_id"] for r in rows
                                  if r["school"] == school
                                  and (out[-1]["date"] if out else "") < r["day"] <= cut})
         out.append(point)
     return out
+
+
+# ★ THE FIELD ONCE FOR THE BOX (2026-11-12): every school of a division
+#   read the same field and scored the same weeks. Its rows and its weekly
+#   standings are shared by every worker (sharedcache) for FIELD_TTL, keyed
+#   by the field (state, pool, season, division), ranking_results' oid and
+#   the day (the rows stop at today). None key: no sharing, as before.
+FIELD_TTL = 3600.0
+
+
+def _sharedRows(cur, state, pool, year, division, cols):
+    import hashlib
+    import sharedcache
+    oid = sharedcache.tableOid(cur, "ranking_results")
+    if oid is None:
+        return _rows(cur, state, pool, year, division, cols), None
+    key = "tt-field-" + hashlib.sha1(repr((
+        state, pool, year, (division or {}).get("value"), tuple(cols or ()), oid,
+        datetime.date.today().isoformat())).encode("utf-8")).hexdigest()
+    rows, _at = sharedcache.get(key + "-rows",
+                                lambda: _rows(cur, state, pool, year, division, cols),
+                                ttl=FIELD_TTL)
+    return [dict(r) for r in rows], key
+
+
+def _sharedStandings(rows, field_key):
+    if field_key is None or not rows:
+        return None
+    import sharedcache
+    days = [r["day"] for r in rows]
+    weeks = weekEnds(min(days), max(days))
+    got, _at = sharedcache.get(field_key + "-standings",
+                               lambda: fieldStandings(rows, weeks), ttl=FIELD_TTL)
+    return got
 
 
 def teamSeason(cur, school, state, pool, year=None):
@@ -216,7 +287,7 @@ def teamSeason(cur, school, state, pool, year=None):
         try:
             cur.execute("SAVEPOINT tt")
             division, cols = _division(cur, school, state, pool, y)
-            rows = _rows(cur, state, pool, y, division, cols)
+            rows, field_key = _sharedRows(cur, state, pool, y, division, cols)
             cur.execute("RELEASE SAVEPOINT tt")
         except Exception as exc:                        # noqa: BLE001
             cur.execute("ROLLBACK TO SAVEPOINT tt")
@@ -226,7 +297,7 @@ def teamSeason(cur, school, state, pool, year=None):
         if not mine:
             return {"year": y, "weeks": [], "division": division}
         weeks = weekEnds(min(r["day"] for r in mine), max(r["day"] for r in rows))
-        points = replay(rows, school, weeks)
+        points = replay(rows, school, weeks, _sharedStandings(rows, field_key))
         ids = {pid for p in points for pid in p["top7_ids"]}
         names = _names(cur, ids)
         meets = _meetNames(cur, {m for p in points for m in p["meets"]})

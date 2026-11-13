@@ -713,7 +713,8 @@ RULES = {
                "_SWAP_BACKOFF _COLUMNS _TF_DISTANCE _UNIT_COLS _UNITS _TEAM_CACHE _SCHOOL_OK _COPY_ESCAPES "
                "_GATE _TIMED_KIND _LOAD_TABLE _LOAD_SEASON _CANONICAL_INDEXES _BOARD_SIZE_SPORTS "
                "_BOARD_SIZE_BOARDS _ANCHOR _SEASON_WORK_MEM _SEASON_SHARDS _SEASON_SHARD_WORK_MEM "
-               "_EVENT_ID _NARROW_TABLES _ORDERED_ROOM", "INFRA",
+               "_EVENT_ID _NARROW_TABLES _ORDERED_ROOM _SEASON_UNITS_IN_REWRITE _SEASON_UNIT_KEYS "
+               "_SEASON_BESIDE_INDEXES _SEASON_OVERLAP_SHARDS _VACUUM_PARALLEL", "INFRA",
                "plumbing: batches, swaps, caches, indexes, counters"),
         **_all("_RATING_MIN _RATING_MAX", "DISPLAY", "board rails: a rating outside 20..200 is not shown"),
         "RACE_MARGIN": ("DISPLAY", "board gate: one race may sit 10 above the pool ceiling; §5: an SD gate "
@@ -885,12 +886,15 @@ ENV_RULES = {
            "DISPLAY", "site products built from ratings (optional pipeline steps)"),
     **_all("XCP_JOINT XCP_JOINT_LIVE", "INFRA", "engine selector (joint go-live vs the legacy linkage path)"),
     **_all("XCP_FROM_STATE XCP_PROBES XCP_OUTER XCP_THREADS XCP_STREAMS XCP_COURSE_SHARDS XCP_SEASON_SHARDS "
+           "XCP_SEASON_UNITS_IN_REWRITE XCP_SEASON_BESIDE_INDEXES XCP_SEASON_OVERLAP_SHARDS XCP_VACUUM_PARALLEL "
            "XCP_NICE XCP_EVIDENCE_NICE XCP_PYTHON XCP_WXPYTHON XCP_ROOT XCP_ENV XCP_DB_QUIET XCP_LIVE "
            "XCP_SWAP_ATTEMPTS XCP_PACK_PREFETCH XCP_PRECOND XCP_SCHUR XCP_CG_TRACE XCP_RANK_SEAM "
            "XCP_BACKFILL_XC XCP_RUNG_TIMEOUT XCP_IGNORE_BACKFILL_FAIL XCP_IGNORE_GOLIVE_FAIL "
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
     **_all("XCP_BOARD_SEEK XCP_STATIC_PAGES", "INFRA",
            "speed pass 2026-11-08: the deep-page seek table, nginx static pages"),
+    **_all("XCP_SCHOOL_PAGES XCP_MEET_COUNTS XCP_ATHLETE_PICK", "INFRA",
+           "speed pass 2026-11-12: the big schools' page history, precomputed (step 13f3)"),
     **_all("XCP_PREWARM XCP_SEASON_EV XCP_VACUUM_RESULTS XCP_RANK_PARTS XCP_RANK_STREAMS "
            "XCP_REPORT_STREAMS XCP_RESTAMP_BY_KEY", "INFRA",
            "speed pass 2026-11-06/07: prewarm, the events precompute, the results vacuum, "

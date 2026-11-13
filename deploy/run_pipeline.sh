@@ -309,6 +309,15 @@ summarise() {
   echo ""
   echo "======================================================================"
   echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m" | tee -a "$SUMMARY"
+  # ★ THE RUN'S OWN DIAGNOSIS (owner, 2026-11-13: "diagnose and look over
+  #   every step after each run"): every step against the last finished run,
+  #   what each background step held the run, and the longest pauses inside
+  #   every step that ran 5 minutes or more -- one file to read afterwards.
+  _prev=$(ls -dt "$ROOT"/logs/2*/ 2>/dev/null | grep -v "$(basename "$LOGDIR")" \
+          | while read -r d; do grep -q "finished in" "$d/summary.log" 2>/dev/null && { echo "$d"; break; }; done)
+  "$PY" "$ROOT/scripts/pipeline_profile.py" ${_prev:+"$_prev"} "$LOGDIR" --gaps 300 \
+      > "$LOGDIR/profile.txt" 2>&1 || true
+  echo "  step-by-step diagnosis: $LOGDIR/profile.txt"
   if [ -n "$FAILED" ]; then
     echo "  FAILED STEPS:$FAILED"
     echo "  logs: $LOGDIR"
@@ -840,15 +849,46 @@ step 02_drop_old      "$PY" -u engine/drop_old.py
 #   their own (age_band_div). Each keeps its own --from / --skip / summary
 #   line (stepsN), and a failed 03 or 03b still stops the run at the people
 #   gate. XCP_STREAMS=1 runs them one after another.
-stepsN 02b_tf_venues "$PY -u scripts/backfill_tf_venues.py --write" \
-       03_pro_flag "$PY -u engine/pro_flag.py --skip-dist --write" \
-       03b_age_bands "$PY -u engine/age_band_grades.py --write"
-# ★ THE TEAM POOLS, EVERY RUN (pooling review P2, 2026-10-26). team_pool
-#   (a club with a pro is pro, a team of under 15 athletes ever is pro) was
-#   built only by overnight_fit_pool_solve.sh, so the pack and the fill read
-#   a table as old as that run, keyed on team ids and pros since changed.
-#   After 03 because it reads pro_athlete_season; the pack reads it at 08.
-step 03a_team_pool    "$PY" -u engine/build_team_pool.py --write
+# ★ 03 BESIDE THE 04a LINKING CHAIN, ON A SNAPSHOT TAKEN BEFORE IT (2026-11-13;
+#   ~25 min off the line). 03, 03b and 03a must read the people as they were
+#   before 04a moves ids; scripts/snapshot_hold.py exports a REPEATABLE READ
+#   snapshot and every connection those three open imports it
+#   (XCP_PG_SNAPSHOT_FILE, scripts/database.py). They write only their own
+#   tables (pro_athlete_season, ncaa_first_season, age_band_*, team_pool),
+#   none of which the 04a chain reads or writes. Collected after 04a3c,
+#   before grade_sanity (age_band_result), 04h1 (ncaa_first_season) and the
+#   04g chain. 02b stays in line first: it and 04a both write results_tf
+#   rows. XCP_SNAPSHOT_03=0, or a holder that cannot start: today's order.
+#   tests/test_snapshot_03_beside_04a.py.
+step 02b_tf_venues "$PY" -u scripts/backfill_tf_venues.py --write
+_SNAP03=""; _SNAP03_FILE="$LOGDIR/.snapshot_03"; _SNAP03_REL="$LOGDIR/.snapshot_03.release"
+if [ "${XCP_SNAPSHOT_03:-1}" != "0" ] && [ "$DRY" -eq 0 ] \
+   && { willRun 03_pro_flag || willRun 03b_age_bands || willRun 03a_team_pool; }; then
+  rm -f "$_SNAP03_FILE" "$_SNAP03_REL"
+  "$PY" -u scripts/snapshot_hold.py "$_SNAP03_FILE" --release "$_SNAP03_REL" \
+       --max-seconds "${XCP_SNAPSHOT_03_MAX:-14400}" --parent $$ > "$LOGDIR/03_snapshot_hold.log" 2>&1 9>&- &
+  _SNAP03_PID=$!
+  for _i in $(seq 1 120); do [ -s "$_SNAP03_FILE" ] && break; kill -0 "$_SNAP03_PID" 2>/dev/null || break; sleep 0.5; done
+  if [ -s "$_SNAP03_FILE" ]; then _SNAP03="$_SNAP03_FILE"
+  else echo "  03 snapshot not taken (see 03_snapshot_hold.log): 03 runs before 04a" | tee -a "$SUMMARY"
+       kill "$_SNAP03_PID" 2>/dev/null; wait "$_SNAP03_PID" 2>/dev/null; fi
+fi
+_group03() {
+  local _e=""; [ -n "$_SNAP03" ] && _e="XCP_PG_SNAPSHOT_FILE='$_SNAP03' "
+  stepsN 03_pro_flag "${_e}$PY -u engine/pro_flag.py --skip-dist --write" \
+         03b_age_bands "${_e}$PY -u engine/age_band_grades.py --write"
+  # ★ THE TEAM POOLS, EVERY RUN (pooling review P2, 2026-10-26). team_pool
+  #   (a club with a pro is pro, a team of under 15 athletes ever is pro) was
+  #   built only by overnight_fit_pool_solve.sh, so the pack and the fill read
+  #   a table as old as that run, keyed on team ids and pros since changed.
+  #   After 03 because it reads pro_athlete_season; the pack reads it at 08.
+  if [ -n "$_SNAP03" ]; then
+    step 03a_team_pool env XCP_PG_SNAPSHOT_FILE="$_SNAP03" "$PY" -u engine/build_team_pool.py --write
+  else
+    step 03a_team_pool "$PY" -u engine/build_team_pool.py --write
+  fi
+}
+if [ -n "$_SNAP03" ]; then bgchain 03_group _group03; else _group03; fi
 # every new tfrrs row gets a person: its athlete id's existing person, its own
 # high school career (a freshman), or one minted from the id -- see the script
 step 04a_link_tfrrs   "$PY" -u scripts/link_tfrrs_rows.py --apply
@@ -907,6 +947,13 @@ step 04a3b_merges     "$PY" -u scripts/link_profile_school.py --reapply
 #   Detaches go through person_pins (04a3 re-applies them); undo one with
 #   scripts/person_pins.py --undo-detach RESULT_ID.
 step 04a3c_gender_split "$PY" -u scripts/gender_split_people.py --write --show 40
+# the 03 group (on the pre-04a snapshot), collected; the snapshot released
+if [ -n "$_SNAP03" ]; then
+  bgchainjoin 03_group
+  touch "$_SNAP03_REL"
+  wait "$_SNAP03_PID" 2>/dev/null || echo "  03 snapshot hold ended early (03_snapshot_hold.log)" | tee -a "$SUMMARY"
+  tail -n 1 "$LOGDIR/03_snapshot_hold.log"; rm -f "$_SNAP03_FILE" "$_SNAP03_REL"
+fi
 
 # ★★ THE DISTANCE CHECKS BESIDE THE PEOPLE VERDICTS (2026-11-07, owner-
 #    approved: data_checks ~30 min and wrong_distance 20-60 min used to run
@@ -994,6 +1041,13 @@ fi
 #    --skip and _ALWAYS per name, as stepsN), joined before the swap.
 skipped 04b_wheelchair && _skipCost 04b_wheelchair
 bgstep 04_grade_sanity "$PY" -u engine/grade_sanity.py --write
+# ★ COLLEGE FLAGS BESIDE GRADE_SANITY (2026-11-12; run 20261112_173033: 04h
+#   held the run 1,589 s -- started after grade_sanity's join and collected
+#   21 s later). college_flag reads results' school and grade, the
+#   ncaa_first_season of 03 and pair_athlete_season; nothing from here to 05
+#   writes those (grade_sanity writes grade_fix, 04c/04d/04b their own
+#   tables). season_level reads grade_fix, so it alone waits (below).
+bgstep 04h1_college_flags "$PY" -u engine/college_flag.py --write
 bgstep 04b_wheelchair  "$PY" -u engine/wheelchair_flag.py --write
 step 04d_gender "$PY" -u engine/person_gender.py --write
 step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
@@ -1009,7 +1063,12 @@ fi
 #   read them. After the person steps (both read person ids and dates) and
 #   04_grade_sanity, in the background while 04g runs (which reads neither),
 #   and collected before 05, their first reader.
-bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
+bgjoin 04h1_college_flags                 # season_level reads college_first_season
+if failed 04h1_college_flags; then
+  bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
+else
+  bgstep 04h_season_levels "$PY" -u engine/season_level.py --write
+fi
 # ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
 #   2025-12-31 because nothing in the pipeline ever extended it, so the
 #   whole 2026 season was rated with no weather. The fetcher is resumable:
@@ -1254,6 +1313,15 @@ fi
 #   the loader whose WHERE needs normalized_time (05 writes it), and 07_pack
 #   resolves the pools, so a table built after 07 is read a run late.
 step 05c_pro_ability  "$PY" -u engine/build_pro_ability.py --write
+# ★ THE CLUB TABLES IN THE BACKGROUND FROM HERE (2026-11-13, the 05-08
+#   review): 07_pack built them in line before it forked, ~7-10 min. Their
+#   inputs -- the rows' person, date, team, school and grade,
+#   pro_athlete_season (03) and anet_team's levels -- are not written by
+#   05c, 06*, or 06c (05c writes pro_ability_season; 06 meet names and
+#   places; 06c impossible_*). Saved to the run's copy (_runCached) for 07
+#   and 09b; collected before 07. --from 7 skips this and 07 builds them.
+export XCP_CLUB_CACHE="$LOGDIR/.club_cache"
+bgstep 05d_club_tables "$PY" -u -c 'import sys; sys.path.insert(0, "engine"); import speed_ratings as S; S.loadClubPros(); S.loadClubMajority()'
 
 if [ "$FROM" -le 7 ]; then
   if [ "$DRY" -eq 1 ]; then
@@ -1336,6 +1404,7 @@ bgstep 10e_meet_units "$PY" -u racecast/build_meet_units.py
 #   after every step that writes their inputs (03 pro seasons, 04 links,
 #   05 backfill), so no earlier step can save a copy the later ones outdate.
 export XCP_CLUB_CACHE="$LOGDIR/.club_cache"
+bgjoin 05d_club_tables
 step 07_pack          "$PY" -u engine/speed_ratings.py --sport merged --cache --pack-only
 bgjoin 13c0_person_redirects
 bgjoin 13c0_search_helpers
@@ -2130,6 +2199,16 @@ step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
 #   never beside it (11b's concurrent index builds wait on open
 #   transactions). Collected by bgwait.
 bgstep 10f3_comps "$PY" -u racecast/build_comps.py
+# ★ THE SEARCH INDEX FROM HERE (2026-11-12; run 20261112_173033: started
+#   after 13b, it held the run 340 s at its join). Its inputs are final by
+#   now (13c0 joined before the go-live; 10b/10d done) and nothing from 12
+#   to 13b feeds it (it imports panels.isTeamName, courses, unit_board as
+#   functions). After 11b, never beside it: its long transactions would
+#   stall 11b's concurrent index builds. It builds search_index_new AND the
+#   meet_agg_xc/tf tables the sitemap reads, so it is joined before the
+#   sitemap group -- which, from 2026-11-10 until now, could read the last
+#   run's meet_agg while 13c rebuilt them.
+bgstep 13c_search_index "$PY" -u racecast/search_index.py
 # ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
 #   nothing below waits on it. Collected by bgwait before 17.
 # ! AND STARTED AFTER 11b, NOT BEFORE (2026-09-26). CREATE INDEX CONCURRENTLY
@@ -2181,10 +2260,29 @@ if [ "${XCP_COURSE_BG:-1}" = "1" ]; then bgchain courses _courseChain; else _cou
 #   run, biggest first). ! AFTER 11b and 12b on purpose: CREATE INDEX
 #   CONCURRENTLY waits on every older open transaction (see 10f2 above).
 # (13j_record_books starts after the course chain is collected, below)
+# ★ THE PANELS' HEAD FIRST, THEN 13f..13g IN LINE BESIDE THE PANELS
+#   (2026-11-13). The steps below read only homepage_recent (breakouts.
+#   latestDates) and season_year_<sport> (predict._currentSeason); `panels.py
+#   --head` writes exactly those (and span_<sport>), with the full build's own
+#   functions, in about a minute. The two full builds then run as a
+#   background chain with --after-head, which takes the head's season and
+#   span and never rewrites them or homepage_recent -- so every step below
+#   reads the values the page ends with. Joined before 13_panels_facts.
+#   XCP_PANELS_HEAD=0, a failed head, or a --skip of the head or either
+#   panels step runs them all in line, as before.
+_panelsPair() {
 # the two sports' full passes side by side (14 minutes for both in one
 # process on run12); each writes only its own sport's panels
-steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC" \
-       13_panels_tf "$PY -u racecast/panels.py --sport TF"
+steps2 13_panels_xc "$PY -u racecast/panels.py --sport XC$_PANELS_AFTER_HEAD" \
+       13_panels_tf "$PY -u racecast/panels.py --sport TF$_PANELS_AFTER_HEAD"
+}
+_PANELS_AFTER_HEAD=""
+if [ "${XCP_PANELS_HEAD:-1}" = "1" ] && willRun 13_panels_head \
+   && willRun 13_panels_xc && willRun 13_panels_tf; then
+  step 13_panels_head "$PY" -u racecast/panels.py --head
+  failed 13_panels_head || _PANELS_AFTER_HEAD=" --after-head"
+fi
+if [ -n "$_PANELS_AFTER_HEAD" ]; then bgchain panels _panelsPair; else _panelsPair; fi
 # Breakouts, precomputed: reads ranking_results and the panels' newest dates
 step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
 # ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py):
@@ -2194,11 +2292,52 @@ step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
 #   build costs nothing else: the site computes a state live when its row is
 #   missing or older than cuts.MAX_AGE_S.
 step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py
+# ★ THE BIG SCHOOLS' PAGES, PRECOMPUTED (2026-11-12; racecast/build_school_pages.py):
+#   the history half of /school/:name (header, year bar, current season,
+#   best, top athletes) for schools with XCP_SCHOOL_PAGE_MIN_SEASONS+ seasons,
+#   by the page's own functions, served only for tonight's boards and code
+#   (school_pages.py). A failure costs nothing: the page computes live.
+#   XCP_SCHOOL_PAGES=0 skips it.
+if [ "${XCP_SCHOOL_PAGES:-1}" != "0" ]; then
+  step 13f3_school_pages "$PY" -u racecast/build_school_pages.py || true
+fi
+# ★ EVERY MEET'S NEWEST DATE AND RESULT COUNT (2026-11-12;
+#   racecast/build_meet_counts.py): /meets reads them by key instead of
+#   counting each candidate meet's results, while results is unchanged since
+#   (its oid and change stamp). A failure costs nothing: /meets counts live.
+#   XCP_MEET_COUNTS=0 skips it.
+if [ "${XCP_MEET_COUNTS:-1}" != "0" ]; then
+  step 13f4_meet_counts "$PY" -u racecast/build_meet_counts.py || true
+fi
+# ★ THE "ADD ANYONE" PICKER'S TABLE (2026-11-12; racecast/build_athlete_pick.py):
+#   one row per rated runner, sport and gender with the newest season, used
+#   by /api/predict/athletes while athletes and athlete_season are unchanged
+#   since. A failure costs nothing: the search runs as before.
+#   XCP_ATHLETE_PICK=0 skips it.
+if [ "${XCP_ATHLETE_PICK:-1}" != "0" ]; then
+  step 13f5_athlete_pick "$PY" -u racecast/build_athlete_pick.py || true
+fi
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up
 #   at /account/admin/social. A report step: it never fails the run. Off with
 #   XCP_SOCIAL=0; photos from XCP_SOCIAL_PHOTOS; see racecast/build_social.py.
+#   (Before 13f6 now: it reads nothing the vacuum touches.)
 if [ "${XCP_SOCIAL:-1}" != "0" ]; then step 13g_social "$PY" -u racecast/build_social.py; fi
+bgchainjoin panels                        # 13_panels_xc/tf, before the facts read their spans
+# the home page's hero numbers from BOTH sports' spans (each process above
+# wrote its own; panels.combineFacts, 2026-11-12) -- a second, cheap read
+step 13_panels_facts "$PY" -u racecast/panels.py --combine-facts
+# ★ THE SMALL REBUILT TABLES' VISIBILITY MAPS, AFTER THE BUILDS (2026-11-12:
+#   season_comps and athletes at 0% all-visible on the server). A VACUUM can
+#   only mark a page all-visible once no older transaction is open, and a
+#   build's own vacuum runs beside the rest of the run -- so season_comps'
+#   index-only band read (comps.py) went to the table for every row. These
+#   are small (a few GB in all) and are done at the trickle's pace.
+# ! AFTER THE PANELS' JOIN, NOT BESIDE THEM (2026-11-13): their long scans
+#   hold the snapshot horizon this vacuum needs to pass.
+bgjoin 10f3_comps                        # its season_comps swap, before the vacuum reads it
+step 13f6_vacuum_small "$PY" -u scripts/gentle_vacuum.py --table season_comps --table athletes \
+     --table athlete_pick --table school_page --table meet_counts || true
 # ★ STATE ODDS (owner, 2026-10-10): each state's season simulated into
 #   state_odds_* (racecast/build_state_odds.py). After the boards and units
 #   it reads; its own line, not chained, so a failure costs nothing else. OFF until
@@ -2217,12 +2356,8 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 #   never goes dark.
 # (13c0_person_redirects and 13c0_search_helpers, its three source tables,
 #  ran in the background beside the pack since 2026-11-07)
-# ★ IN THE BACKGROUND SINCE 2026-11-10 (run 20261108_155220: 729 s in line).
-#   It builds search_index_new and swaps it in; no step until the watchdog
-#   (17d, started after 16) reads the table -- the sitemap takes only pure
-#   functions from search_index.py (meetAltIndex, meetLink, isTwinCopy) --
-#   so it is joined just before 17d starts. Prewarm (19b) comes after bgwait.
-bgstep 13c_search_index "$PY" -u racecast/search_index.py
+# (13c_search_index now starts after 11b and is joined before the sitemap;
+#  see the note there)
 # ★ THE WEEK'S FROZEN COPY (owner, 2026-11-06: "is this done in the pipeline?"):
 #   both sports' season ratings and the course difficulties as a dated
 #   snapshot on /data, the newest 8 weeks kept (data_snapshots.py). A full
@@ -2237,6 +2372,7 @@ fi
 #   13h_raw stays after the group: it can share 13h's daily inputs file.
 #   13e (IndexNow) reads the sitemap, so it runs after. XCP_LATE_PARALLEL=0
 #   runs them one after another, as before.
+bgjoin 13c_search_index                  # the sitemap reads its meet_agg tables
 # the sitemap for Google: every ranked athlete, school, course and meet
 _G13=(13d_sitemap "$PY -u racecast/build_sitemap.py")
 # ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless XCP_ALERTS=1.
@@ -2292,7 +2428,6 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 #   the vacuum). Every step that writes what readers see is done by here;
 #   report only. FAILED is the run's failures so far (17* are reports).
 # the search index (13c, in the background): the watchdog below counts it
-bgjoin 13c_search_index
 if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
   bgstep 17d_watchdog "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind full \
                       --step-name 17d_watchdog --failed "$FAILED" --send --ensure-indexes

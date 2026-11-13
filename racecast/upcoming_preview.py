@@ -802,7 +802,25 @@ def hostPattern(name, source, date):
 def hostCourse(cur, pattern):
     """The courses list's name for a host pattern: one the predictor can set
     (predict._applyCourse reads meets.course_name), preferring one with a
-    difficulty, then the one most meets ran on. None when nothing matches."""
+    difficulty, then the one most meets ran on. None when nothing matches.
+
+    ★ ONCE AN HOUR FOR THE BOX (2026-11-12: the slow log's second costliest
+      statement, 1,529 runs over 250 ms in 72 h -- a regex over every meet,
+      on every /predictions view, for the same three host patterns). Shared
+      by every worker (sharedcache) for HOST_COURSE_TTL; a pattern that
+      matches nothing is read again next time."""
+    import hashlib
+    import sharedcache
+    key = "host-course-" + hashlib.sha1(str(pattern).encode("utf-8")).hexdigest()
+    name, _at = sharedcache.get(key, lambda: _hostCourseRead(cur, pattern),
+                                ttl=HOST_COURSE_TTL, keep=lambda v: v is not None)
+    return name
+
+
+HOST_COURSE_TTL = 3600.0
+
+
+def _hostCourseRead(cur, pattern):
     cur.execute("""
         SELECT m.course_name AS name, count(DISTINCT m.meet_id) AS n,
                bool_or(cd.difficulty IS NOT NULL) AS has_cell

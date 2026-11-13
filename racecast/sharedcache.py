@@ -32,6 +32,7 @@ import pickle
 import re
 import stat
 import tempfile
+import threading
 import time
 
 DIR = os.environ.get("XCP_SHARED_CACHE_DIR") or os.path.join(
@@ -221,13 +222,16 @@ def _sweepMany(d, t):
     except OSError:
         return
     for n in names:
-        age = SWEEP_AGE if n.startswith("many-") else SWEEP_AGE_ANY
+        age = SWEEP_AGE if n.startswith(("many-", "one-")) else SWEEP_AGE_ANY
         p = os.path.join(d, n)
         try:
             if t - os.stat(p).st_mtime > age:
                 os.unlink(p)
         except OSError:
             pass
+
+
+_SAID = {}
 
 
 def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
@@ -262,7 +266,13 @@ def putMany(bucket, values, ttl, now=time.time, path=None, max_entries=None):
                 with open(tmp, "wb") as fh:
                     pickle.dump(data, fh, protocol=pickle.HIGHEST_PROTOCOL)
                 os.replace(tmp, pkl)
-            except Exception:                           # noqa: BLE001
+            except Exception as exc:                    # noqa: BLE001
+                # ! SAID ONCE, NOT SWALLOWED (2026-11-12: a bucket that never
+                #   stores looks exactly like a cold one from outside)
+                if not _SAID.get("putMany"):
+                    _SAID["putMany"] = True
+                    print(f"[sharedcache] putMany {str(bucket)[:60]}: not stored "
+                          f"({type(exc).__name__}: {exc})", flush=True)
                 try:
                     os.unlink(tmp)
                 except OSError:
@@ -301,3 +311,61 @@ def tableOid(cur, table, now=time.time):
         oid = None
     _OIDS[table] = (t, oid)
     return oid
+
+
+# ★ ONE FILE PER KEY, FOR MANY SMALL VALUES (2026-11-12: a prediction's
+#   history read 282 runners from buckets other fields had filled -- a bucket
+#   is loaded whole, so most of what it read was other runners'). peekKeys /
+#   putKeys keep each key in its own file, named by a digest of (prefix, key),
+#   written by atomic rename (no lock: two writers of one key write the same
+#   value, and the last rename wins). The same rules as get(): our own 0700
+#   directory or nothing; an unreadable or expired file is a miss. Swept with
+#   the many-* files (SWEEP_AGE after their last write).
+def _keyPath(d, prefix, key):
+    import hashlib
+    return os.path.join(d, "one-" + hashlib.sha1(
+        repr((prefix, key)).encode("utf-8")).hexdigest() + ".pkl")
+
+
+def peekKeys(prefix, keys, ttl, now=time.time, path=None):
+    """{key: value} for those of `keys` stored under `prefix` younger than
+    `ttl` seconds. Never computes."""
+    d = _safeDir(path)
+    if d is None:
+        return {}
+    t = now()
+    out = {}
+    for k in keys:
+        p = _keyPath(d, prefix, k)
+        try:
+            if t - os.stat(p).st_mtime > ttl:
+                continue
+            with open(p, "rb") as fh:
+                out[k] = pickle.load(fh)
+        except Exception:                               # noqa: BLE001
+            continue
+    return out
+
+
+def putKeys(prefix, values, now=time.time, path=None):
+    """File each of {key: value} under `prefix`, one file per key."""
+    d = _safeDir(path)
+    if d is None or not values:
+        return
+    _sweepMany(d, now())
+    for k, v in values.items():
+        p = _keyPath(d, prefix, k)
+        tmp = f"{p}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            with open(tmp, "wb") as fh:
+                pickle.dump(v, fh, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, p)
+        except Exception as exc:                        # noqa: BLE001
+            if not _SAID.get("putKeys"):
+                _SAID["putKeys"] = True
+                print(f"[sharedcache] putKeys {str(prefix)[:60]}: not stored "
+                      f"({type(exc).__name__}: {exc})", flush=True)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass

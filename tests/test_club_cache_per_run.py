@@ -36,3 +36,11 @@ def test_off_without_the_run_folder(monkeypatch):
     for _ in range(2):
         sr._runCached("club_pros", lambda: (calls.append(1) or ({}, {}), True))
     assert len(calls) == 2
+
+
+def test_a_majority_built_from_empty_inputs_is_not_kept(tmp_path, monkeypatch):
+    monkeypatch.setenv("XCP_CLUB_CACHE", str(tmp_path / ".club_cache"))
+    monkeypatch.setattr(sr, "loadAnetLevels", lambda: {})
+    monkeypatch.setattr(sr, "loadClubPros", lambda: ({}, {}))
+    out, ok = sr._buildClubMajority()
+    assert out == set() and ok is False

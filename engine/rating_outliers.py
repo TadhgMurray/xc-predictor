@@ -779,8 +779,35 @@ def _insertRows(cur, sql_many, sql_values, rows):
         cur.executemany(sql_many, rows)
 
 
-def write(cur, rows, calib):
+# ★ NO TABLE LOCK ON A NORMAL RUN (2026-11-12: the site's slow log, 188
+#   athlete pages each waiting exactly 5.00 s -- its lock_timeout -- on
+#   "SELECT ... FROM rating_outlier"). The DDL's `ALTER TABLE ... ADD COLUMN
+#   IF NOT EXISTS` takes ACCESS EXCLUSIVE even when the column is there, and
+#   write() runs in the transaction that then deletes, inserts 1.3M rows and
+#   the rules' rows before it commits -- every reader blocked the whole
+#   time. The DDL runs only when the table or a column is missing (a first
+#   run); otherwise the DELETE + INSERT take row locks only, and readers go
+#   on seeing the old rows until the commit swaps in the new ones.
+_COLUMNS = {"result_id", "sport", "person_id", "season", "rating", "med", "sigma",
+            "n_races", "z", "side", "built", "span_days", "cut"}
+
+
+def ensureTables(cur):
+    cur.execute("""SELECT column_name FROM information_schema.columns
+                   WHERE table_name = 'rating_outlier'
+                     AND table_schema = current_schema()""")
+    have = {r[0] if not isinstance(r, dict) else r["column_name"] for r in cur.fetchall()}
+    cur.execute("SELECT to_regclass('rating_outlier_calib') IS NOT NULL")
+    r = cur.fetchone()
+    calib = r[0] if not isinstance(r, dict) else list(r.values())[0]
+    if _COLUMNS <= have and calib:
+        return False
     cur.execute(DDL)
+    return True
+
+
+def write(cur, rows, calib):
+    ensureTables(cur)
     cur.execute("DELETE FROM rating_outlier")
     cut = {"fast": calib["fast_cut"], "slow": calib["slow_cut"]}
     head = """

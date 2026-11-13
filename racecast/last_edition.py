@@ -368,10 +368,24 @@ def _candidates(cur, sport, source, name):
             SELECT meet_id, meet_name, state, venue_name AS venue
             FROM   meets_tf_meta
             WHERE  source = %(src)s AND {likes}"""
-    cur.execute(sql, params)
-    return [{"meet_id": r["meet_id"], "name": r["meet_name"],
-             "state": r.get("state"), "venue": r.get("venue")}
-            for r in cur.fetchall()]
+    def compute():
+        cur.execute(sql, params)
+        return [{"meet_id": r["meet_id"], "name": r["meet_name"],
+                 "state": r.get("state"), "venue": r.get("venue")}
+                for r in cur.fetchall()]
+    # ★ ONCE AN HOUR FOR THE BOX (2026-11-12: 295 runs over 250 ms in 72 h --
+    #   a word-by-word ILIKE over every meet, the same for every view of the
+    #   same upcoming meet). Shared by every worker for CANDIDATES_TTL, keyed
+    #   by the statement and its parameters; an empty answer is read again.
+    import hashlib
+    import sharedcache
+    key = "lastedition-" + hashlib.sha1(repr((sql, sorted(params.items())))
+                                        .encode("utf-8")).hexdigest()
+    rows, _at = sharedcache.get(key, compute, ttl=CANDIDATES_TTL, keep=bool)
+    return [dict(r) for r in rows]
+
+
+CANDIDATES_TTL = 3600.0
 
 
 def findLastEdition(cur, meet_id, sport, up):

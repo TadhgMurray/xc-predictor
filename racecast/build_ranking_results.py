@@ -2303,13 +2303,28 @@ _CANONICAL_INDEXES = {
          "(event_kind, mark DESC) WHERE event_kind IS NOT NULL"),
 
         # school.py: WHERE school = %s AND sport = %s ORDER BY speed_rating DESC
-        ("rr_school_idx", "(school, sport, speed_rating DESC)"),
+        # ★ AND THE RANKING READS THE INDEX ALONE (2026-11-12, cold reads):
+        #   schoolBest ranks a school's every rated row by pool to keep the
+        #   best 100 of each -- ~13,000 rows for a big programme, each one a
+        #   heap page read when cold. With pool, result_id and person_id (the
+        #   state chip's key) carried, the ranking is index-only and only the
+        #   kept rows are fetched whole.
+        ("rr_school_idx", "(school, sport, speed_rating DESC) INCLUDE (pool, result_id, person_id)"),
         # ★ THE ROSTER CARRY-FORWARD WINDOW (roster.racesRun, 2026-09-16):
         #   count(DISTINCT meet_id) per school for ONE season. Asked of every
         #   school in a field -- 396 at a championship -- and without `year`
         #   in the key each one's whole history is read to count one season.
         #   meet_id rides along so the count is index-only.
-        ("rr_school_season_idx", "(school, sport, year, meet_id)"),
+        # ★ AND THE SCHOOL PAGES' WHOLE-HISTORY READS FROM THE INDEX ALONE
+        #   (2026-11-12, cold reads): the meet list (school.schoolMeets) and
+        #   the PRs (school_prs.runningSql) read every row of a school, each
+        #   a heap page when cold -- ~13,000 for a big programme. Every
+        #   column the two read rides here, so both are index-only scans of
+        #   one contiguous range; racesRun's count of meets still reads only
+        #   the key and meet_id.
+        ("rr_school_season_idx", "(school, sport, year, meet_id) INCLUDE ("
+         "result_id, race_date, div_id, speed_rating, pool, distance, person_id, "
+         "time_seconds, grade, event_id, event_kind)"),
         # ★ THE PAGE INDEXES, HERE AND NOT ONLY IN 11b (2026-09-06). These
         #   three were add_page_indexes' (step 11b), built AFTER the swap;
         #   run12's finish was re-run by hand after a crash, 11b never
@@ -2919,7 +2934,7 @@ def _roomErrors():
                  if isinstance(getattr(psycopg2.errors, n, None), type))
 
 
-def orderedRewrite(conn, table, like):
+def orderedRewrite(conn, table, like, units_from=None):
     """★ XCP_RR_ORDERED (docs/TABLE-LAYOUT-EXPERIMENTS.md, step 2): the
     unlogged shadow copied into a LOGGED table in board order, in place of
     SET LOGGED. True when done; False when it stood down (no room), and the
@@ -2948,7 +2963,15 @@ def orderedRewrite(conn, table, like):
     ⚠ THE SORT NEEDS ROOM: about 1x the heap of temp files beside the 1x new
       heap. Checked first against the data disk when this box can see it,
       and a sort that runs out anyway (DiskFull, temp_file_limit, memory)
-      rolls back and the build falls back to SET LOGGED, saying so."""
+      rolls back and the build falls back to SET LOGGED, saying so.
+    ★ units_from (athlete_season, _SEASON_UNITS_IN_REWRITE): a key table
+      _buildUnitKeys made and _stampSeasonUnits stamped. The copy takes
+      every row's unit columns from its key (LEFT JOIN on _keyMatch, one
+      key per row) in place of the shadow's empty ones -- the season-units
+      UPDATE folded into the rewrite. Every other column is the shadow's.
+      Standing down (False) leaves the shadow unstamped: the caller copies
+      the keys on (_applyUnitKeys) before SET LOGGED. A shadow already
+      logged gets the keys copied on here."""
     order = rr_layout.BOARD_ORDER[like]
     tmp = f"{table}_sorted"
     with conn.cursor() as cur:
@@ -2958,13 +2981,16 @@ def orderedRewrite(conn, table, like):
         if persistence == "p":
             conn.rollback()
             print(f"    {table}: already logged (a resumed finish) -- left in its order")
+            if units_from:
+                _applyUnitKeys(conn, table, units_from)
             return True
         free = _freeBytes(cur)
         cur.execute("""SELECT a.attname FROM pg_attribute a
                        WHERE a.attrelid = to_regclass(%s) AND a.attnum > 0
                          AND NOT a.attisdropped ORDER BY a.attnum""",
                     (f"public.{table}",))
-        cols = ", ".join(f'"{r[0]}"' for r in cur.fetchall())
+        names = [r[0] for r in cur.fetchall()]
+        cols = ", ".join(f'"{n}"' for n in names)
         cur.execute(f"DROP TABLE IF EXISTS {tmp}")
     conn.commit()
     if free is not None and free < _ORDERED_ROOM * size:
@@ -2979,8 +3005,18 @@ def orderedRewrite(conn, table, like):
             got = _seasonWorkMem(conn, cur, _SEASON_WORK_MEM, quiet_log=True)
             cur.execute(f"CREATE TABLE {tmp} (LIKE {table} INCLUDING DEFAULTS "
                         f"INCLUDING CONSTRAINTS) WITH (autovacuum_enabled = false)")
-            cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table} "
-                        f"ORDER BY {order}")
+            if units_from:
+                # the shadow's columns, its unit columns from the key; named
+                # in a subquery so the board order's bare names stay its own
+                pick = ", ".join(f'k."{n}"' if n in _UNIT_COLS else f's."{n}"'
+                                 for n in names)
+                cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM "
+                            f"(SELECT {pick} FROM {table} s "
+                            f"LEFT JOIN {units_from} k ON {_keyMatch('s', 'k')}) q "
+                            f"ORDER BY {order}")
+            else:
+                cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table} "
+                            f"ORDER BY {order}")
             n_out = cur.rowcount
             cur.execute(f"DROP TABLE {table}")
             cur.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
@@ -2992,7 +3028,8 @@ def orderedRewrite(conn, table, like):
               f"SET LOGGED instead (rows in stream order)")
         return False
     print(f"    [{time.time() - t0:7.1f}s] {table}: logged, {n_out:,} rows in board "
-          f"order ({order}; work_mem {got})")
+          f"order ({order}; work_mem {got})"
+          + (f"; unit columns from {units_from}" if units_from else ""))
     return True
 
 
@@ -3467,10 +3504,43 @@ _SEASON_WORK_MEM = (("512MB", "256MB") if dbQuiet()
 _SEASON_SHARDS = max(1, int(os.environ.get("XCP_SEASON_SHARDS", "8")))
 _SEASON_SHARD_WORK_MEM = ("1GB", "512MB", "256MB")
 
+# ★ THE SEASON UNITS IN THE ORDERED COPY (2026-11-13; run 20261112_173033:
+#   "season units" 369 s, an UPDATE of every athlete_season_new row, then a
+#   91 s ordered rewrite that copied them all again). Under XCP_RR_ORDERED
+#   the stamping runs on one row per (school, state, college-ness) key --
+#   the restamp-by-key argument above: every pass decides a row's columns
+#   from its key alone, and a fresh shadow row's unit columns are as empty
+#   as the key's -- and the board-order copy takes each row's columns from
+#   its key (orderedRewrite's units_from). One write of the table, not two.
+#   XCP_SEASON_UNITS_IN_REWRITE=0, or XCP_RR_ORDERED off, stamps the shadow
+#   with the UPDATE passes as before.
+_SEASON_UNITS_IN_REWRITE = os.environ.get("XCP_SEASON_UNITS_IN_REWRITE", "1") != "0"
+_SEASON_UNIT_KEYS = "tmp_season_unit_keys"
 
-def _shardWhere(col, k):
+# ★ athlete_season BUILT BESIDE ranking_results' INDEXES (2026-11-13; run
+#   20261112_173033: ~470 s of index builds, then the season build after
+#   them). The season build reads ranking_results_new by sequential scans
+#   only -- its aggregate, its home-state count -- and none of its answers
+#   depend on an index; it starts once the board-order rewrite has renamed
+#   the table into place and ANALYZE has given it the statistics the index
+#   build's ANALYZE used to give it. The swap waits for both.
+#   XCP_SEASON_BESIDE_INDEXES=0 builds it after the indexes, as before.
+# ! THE SAME SHARD COUNT BY DEFAULT. The shard count decides which rows
+#   share a sort, and so the order a season's float sums add in; keeping it
+#   keeps the sums' inputs as they were. XCP_SEASON_OVERLAP_SHARDS lowers it
+#   while the indexes build (fewer sessions and sort memory beside them).
+_SEASON_BESIDE_INDEXES = os.environ.get("XCP_SEASON_BESIDE_INDEXES", "1") != "0"
+_SEASON_OVERLAP_SHARDS = max(0, int(os.environ.get("XCP_SEASON_OVERLAP_SHARDS") or 0))
+
+# ★ THE TWO POST-SWAP VACUUMs ON TWO CONNECTIONS AT ONCE (2026-11-13: 78 s
+#   one after the other). Two tables, nothing shared. XCP_VACUUM_PARALLEL=0
+#   runs them in series on the build's connection.
+_VACUUM_PARALLEL = os.environ.get("XCP_VACUUM_PARALLEL", "1") != "0"
+
+
+def _shardWhere(col, k, shards=None):
     """This shard's people: every row of a person, so every season, in one."""
-    return f"mod(abs(COALESCE({col}, 0)), {_SEASON_SHARDS}) = {int(k)}"
+    return f"mod(abs(COALESCE({col}, 0)), {int(shards or _SEASON_SHARDS)}) = {int(k)}"
 
 
 def _seasonWorkMem(conn, cur, ladder, quiet_log=False):
@@ -3487,13 +3557,14 @@ def _seasonWorkMem(conn, cur, ladder, quiet_log=False):
     return None
 
 
-def refreshAthleteSeason(conn):
+def refreshAthleteSeason(conn, shards=None):
     """Rebuild athlete_season from ranking_results.
 
     Runs AFTER the load. It reads ranking_results, so a stale or partial one
     yields a stale athlete_season with no error. The two are always rebuilt
-    together.
+    together. `shards`: the aggregate's shard count (default _SEASON_SHARDS).
     """
+    n_shards = max(1, int(shards or _SEASON_SHARDS))
     print("\n  building athlete_season...")
     createShadow(conn, _LOAD_SEASON, "athlete_season")
     # ⚠ THE RATING COLUMNS MUST BE NULLABLE, and this is checked BEFORE the
@@ -3530,7 +3601,7 @@ def refreshAthleteSeason(conn):
               f"{', '.join(bad)} (a season with no rated race writes NULL); "
               f"the swap carries the fix to athlete_season")
     t0 = time.time()
-    if _SEASON_SHARDS > 1:
+    if n_shards > 1:
         # ★ IN SHARDS, SIDE BY SIDE (2026-10-07; run 20261006_120609: 1,036 s
         #   in this one statement). Its ordered-set aggregates get no
         #   parallel plan and its sort spilled at the quiet 512MB. Split by
@@ -3540,8 +3611,8 @@ def refreshAthleteSeason(conn):
         def _shard(k):
             sql_k = _ATHLETE_SEASON_SQL.format(
                 load_table=_LOAD_TABLE, season_table=_LOAD_SEASON,
-                shard_where=_shardWhere("person_id", k),
-                shard_where_base=_shardWhere("base.person_id", k))
+                shard_where=_shardWhere("person_id", k, n_shards),
+                shard_where_base=_shardWhere("base.person_id", k, n_shards))
             t_k = time.time()
             with getConn() as c:
                 with c.cursor() as cur:
@@ -3549,14 +3620,14 @@ def refreshAthleteSeason(conn):
                     cur.execute(sql_k)
                 c.commit()
             return k, time.time() - t_k
-        with cf.ThreadPoolExecutor(max_workers=_SEASON_SHARDS) as pool:
-            for k, dt in pool.map(_shard, range(_SEASON_SHARDS)):
-                print(f"    [{dt:7.1f}s] shard {k + 1}/{_SEASON_SHARDS}")
+        with cf.ThreadPoolExecutor(max_workers=n_shards) as pool:
+            for k, dt in pool.map(_shard, range(n_shards)):
+                print(f"    [{dt:7.1f}s] shard {k + 1}/{n_shards}")
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
                                      season_table=_LOAD_SEASON,
                                      shard_where="TRUE", shard_where_base="TRUE")
     with conn.cursor() as cur:
-        if _SEASON_SHARDS <= 1:
+        if n_shards <= 1:
             # ★ ASK FOR ROOM BEFORE THE STATEMENT, NOT AFTER IT. See
             #   _SEASON_WORK_MEM: this is the sort that decides the step.
             _seasonWorkMem(conn, cur, _SEASON_WORK_MEM)
@@ -3573,7 +3644,14 @@ def refreshAthleteSeason(conn):
     conn.commit()
 
     _homeStates(conn, _LOAD_SEASON)
-    _stampSeasonUnits(conn, _LOAD_SEASON)
+    # ★ _SEASON_UNITS_IN_REWRITE: stamped on the keys, copied by the rewrite
+    fold = (_SEASON_UNITS_IN_REWRITE and rr_layout.ordered()
+            and _unitColsEmpty(conn, _LOAD_SEASON))
+    if fold:
+        _buildUnitKeys(conn, _LOAD_SEASON, _SEASON_UNIT_KEYS)
+        _stampSeasonUnits(conn, _SEASON_UNIT_KEYS)
+    else:
+        _stampSeasonUnits(conn, _LOAD_SEASON)
     analyze(conn, _LOAD_SEASON)
     pct = (100.0 * n_unrated / n) if n else 0.0
     print(f"  athlete_season: {n:,} person-seasons "
@@ -3583,9 +3661,38 @@ def refreshAthleteSeason(conn):
     #   and this call was missing -- so every run since swapped in a
     #   12.9M-row table with no index on it at all.
     # ★ XCP_RR_ORDERED: rewritten in board order instead (relog), which
-    #   also leaves the unit stamping's dead row versions behind
-    relog(conn, _LOAD_SEASON, "athlete_season")
+    #   also leaves the unit stamping's dead row versions behind -- and,
+    #   folded, writes the unit columns from the keys as it copies
+    if fold:
+        if not orderedRewrite(conn, _LOAD_SEASON, "athlete_season",
+                              units_from=_SEASON_UNIT_KEYS):
+            _applyUnitKeys(conn, _LOAD_SEASON, _SEASON_UNIT_KEYS)
+            setLogged(conn, _LOAD_SEASON)
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {_SEASON_UNIT_KEYS}")
+        conn.commit()
+    else:
+        relog(conn, _LOAD_SEASON, "athlete_season")
     buildIndexes(conn, _LOAD_SEASON, "athlete_season")
+
+
+def _unitColsEmpty(conn, season_table):
+    """Every unit column is on the shadow with no default, so a freshly
+    aggregated row holds NULL in each (the INSERT names none of them) --
+    the state the keys start from. Else the fold stands down."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT a.attname, d.adbin IS NOT NULL
+                       FROM pg_attribute a
+                       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                       WHERE a.attrelid = to_regclass(%s) AND a.attnum > 0
+                         AND NOT a.attisdropped""", (f"public.{season_table}",))
+        got = dict(cur.fetchall())
+    conn.commit()
+    ok = all(c in got and not got[c] for c in _UNIT_COLS)
+    if not ok:
+        print(f"    {season_table}: a unit column is missing or has a default -- "
+              f"units stamped by UPDATE, not in the ordered copy")
+    return ok
 
 
 def _homeStates(conn, season_table):
@@ -3838,19 +3945,31 @@ def _restampInPlace(conn, season_table):
     _stampSeasonUnits(conn, season_table)
 
 
-def _restampByKey(conn, season_table):
-    """_restampInPlace's columns, computed per key and copied once (see
-    _RESTAMP_BY_KEY). Returns the rows changed, or None when the stamping
-    failed and nothing was written."""
+def _keyMatch(s, k):
+    """Equality of a season row `s` and a key row `k` on every key part,
+    NULLs included, in a form a hash join can use: (x IS NULL,
+    COALESCE(x, '')) is one-to-one with x."""
+    return (f"({s}.school IS NULL) = ({k}.school IS NULL)"
+            f" AND COALESCE({s}.school, '') = COALESCE({k}.school, '')"
+            f" AND ({s}.state IS NULL) = ({k}.state IS NULL)"
+            f" AND COALESCE({s}.state, '') = COALESCE({k}.state, '')"
+            f" AND COALESCE(({_restampPool(s + '.')}), '-') = COALESCE({k}.pool, '-')")
+
+
+def _buildUnitKeys(conn, season_table, keys):
+    """`keys`: one row per distinct (school, state, college-ness) of
+    `season_table`, its unit columns empty (the restamp's clear, and what a
+    freshly aggregated shadow row holds), counted and indexed. Committed, so
+    the keys outlive a failed stamping's rollback. Returns the key count."""
     cols = ", ".join(f'"{c}"' for c in _UNIT_COLS)
     t0 = time.time()
     with conn.cursor() as cur:
-        cur.execute(f"DROP TABLE IF EXISTS {_RESTAMP_KEYS}")
+        cur.execute(f"DROP TABLE IF EXISTS {keys}")
         # the unit columns' own types, empty: the restamp's clear
-        cur.execute(f"""CREATE TEMP TABLE {_RESTAMP_KEYS} AS
+        cur.execute(f"""CREATE TEMP TABLE {keys} AS
                         SELECT school, state, ({_restampPool('')}) AS pool, {cols}
                         FROM   {season_table} WITH NO DATA""")
-        cur.execute(f"""INSERT INTO {_RESTAMP_KEYS} (school, state, pool)
+        cur.execute(f"""INSERT INTO {keys} (school, state, pool)
                         SELECT DISTINCT school, state, ({_restampPool('')})
                         FROM   {season_table}""")
         n_keys = cur.rowcount
@@ -3860,33 +3979,46 @@ def _restampByKey(conn, season_table):
         #   10_rankings_finish). A temp table is never auto-analysed, so the
         #   passes' joins to school_unit and their per-row subqueries were
         #   planned on a guess. A plan, not a change: the rows are the rows.
-        cur.execute(f"CREATE INDEX ON {_RESTAMP_KEYS} (school, state)")
-        cur.execute(f"ANALYZE {_RESTAMP_KEYS}")
+        cur.execute(f"CREATE INDEX ON {keys} (school, state)")
+        cur.execute(f"ANALYZE {keys}")
     conn.commit()                 # the keys outlive a failed stamping's rollback
     print(f"    [{time.time() - t0:7.1f}s] {n_keys:,} (school, state, college) keys")
-    if _stampSeasonUnits(conn, _RESTAMP_KEYS) is False:
-        print("    restamp: nothing written (the stamping failed)")
-        return None
+    return n_keys
+
+
+def _applyUnitKeys(conn, season_table, keys):
+    """One UPDATE: each row's unit columns from its key, where they differ
+    (IS DISTINCT FROM, so NULLs compare as values). Returns the rows changed."""
     t0 = time.time()
     sets = ", ".join(f'"{c}" = k."{c}"' for c in _UNIT_COLS)
     mine = ", ".join(f's."{c}"' for c in _UNIT_COLS)
     theirs = ", ".join(f'k."{c}"' for c in _UNIT_COLS)
     with conn.cursor() as cur:
-        # equality on every key part, NULLs included, in a form a hash join
-        # can use: (x IS NULL, COALESCE(x, '')) is one-to-one with x
         cur.execute(f"""
             UPDATE {season_table} s SET {sets}
-            FROM   {_RESTAMP_KEYS} k
-            WHERE  (s.school IS NULL) = (k.school IS NULL)
-              AND  COALESCE(s.school, '') = COALESCE(k.school, '')
-              AND  (s.state IS NULL) = (k.state IS NULL)
-              AND  COALESCE(s.state, '') = COALESCE(k.state, '')
-              AND  COALESCE(({_restampPool('s.')}), '-') = COALESCE(k.pool, '-')
+            FROM   {keys} k
+            WHERE  {_keyMatch('s', 'k')}
               AND  ({mine}) IS DISTINCT FROM ({theirs})""")
         n = cur.rowcount
+    conn.commit()
+    print(f"    [{time.time() - t0:7.1f}s] {season_table}: unit columns copied "
+          f"from the keys onto {n:,} rows")
+    return n
+
+
+def _restampByKey(conn, season_table):
+    """_restampInPlace's columns, computed per key and copied once (see
+    _RESTAMP_BY_KEY). Returns the rows changed, or None when the stamping
+    failed and nothing was written."""
+    _buildUnitKeys(conn, season_table, _RESTAMP_KEYS)
+    if _stampSeasonUnits(conn, _RESTAMP_KEYS) is False:
+        print("    restamp: nothing written (the stamping failed)")
+        return None
+    n = _applyUnitKeys(conn, season_table, _RESTAMP_KEYS)
+    with conn.cursor() as cur:
         cur.execute(f"DROP TABLE IF EXISTS {_RESTAMP_KEYS}")
     conn.commit()
-    print(f"    [{time.time() - t0:7.1f}s] restamp: {n:,} season rows changed")
+    print(f"    restamp: {n:,} season rows changed")
     return n
 
 
@@ -3983,6 +4115,121 @@ def seamsFor(conn, sport, parts):
 # ------------------------------------------------------------------ #
 #  4. ENTRY POINT
 # ------------------------------------------------------------------ #
+
+class _Lines:
+    """sys.stdout while two threads print: each thread's text is held until
+    its newline and written as whole lines, the season thread's marked, so
+    the step log never splices half a line of one into the other."""
+
+    def __init__(self, out, tag, tagged):
+        import threading
+        self.out, self.tag, self.tagged = out, tag, tagged
+        self.lock, self.local = threading.Lock(), threading.local()
+
+    def write(self, text):
+        import threading
+        buf = getattr(self.local, "buf", "") + text
+        *done, self.local.buf = buf.split("\n")
+        if done:
+            mark = self.tag if threading.current_thread().name.startswith(self.tagged) else ""
+            with self.lock:
+                self.out.write("".join(f"{mark}{ln}\n" for ln in done))
+        return len(text)
+
+    def flush(self):
+        with self.lock:
+            self.out.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.out, name)
+
+
+def _seasonBeside():
+    """refreshAthleteSeason on a connection of its own (the season thread)."""
+    t0 = time.time()
+    with getConn() as c:
+        tuneSession(c, quiet=True)
+        with phase("athlete_season (beside the ranking_results indexes)"):
+            refreshAthleteSeason(c, shards=_SEASON_OVERLAP_SHARDS or _SEASON_SHARDS)
+        c.commit()
+    print(f"    [{time.time() - t0:7.1f}s] athlete_season built (beside the indexes)")
+
+
+def indexAndSeason(conn):
+    """ranking_results_new's rewrite and indexes, and athlete_season_new.
+
+    Off (_SEASON_BESIDE_INDEXES false): one after the other, as before.
+    On: the rewrite, an ANALYZE (the statistics the season aggregate was
+    planned on when it ran after buildIndexes' own ANALYZE), then the
+    season build in a thread on its own connection while this one builds
+    the indexes. Returns when both are done; either one's error is raised
+    after both have stopped, so nothing is left writing a shadow."""
+    if not _SEASON_BESIDE_INDEXES:
+        with phase("index ranking_results"):
+            # ★ XCP_RR_ORDERED: rewritten in board order instead (relog)
+            relog(conn, _LOAD_TABLE, "ranking_results")
+            buildIndexes(conn, _LOAD_TABLE, "ranking_results")
+        with phase("athlete_season"):
+            refreshAthleteSeason(conn)
+        return
+    with phase("ranking_results: rewrite + ANALYZE"):
+        # ★ XCP_RR_ORDERED: rewritten in board order instead (relog). It
+        #   drops and renames the table, so the season build starts after it.
+        relog(conn, _LOAD_TABLE, "ranking_results")
+        analyze(conn, _LOAD_TABLE)
+    t0 = time.time()
+    real = sys.stdout
+    sys.stdout = _Lines(real, "  [season] ", "season")
+    try:
+        with cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="season") as ex:
+            season = ex.submit(_seasonBeside)
+            with phase("index ranking_results (athlete_season beside it)"):
+                buildIndexes(conn, _LOAD_TABLE, "ranking_results")
+            t_idx = time.time()
+            print(f"    [{t_idx - t0:7.1f}s] ranking_results indexes built; "
+                  f"waiting for athlete_season")
+            with phase("athlete_season (wait after the indexes)"):
+                season.result()
+            print(f"    [{time.time() - t_idx:7.1f}s] waited for athlete_season; "
+                  f"[{time.time() - t0:7.1f}s] indexes + athlete_season together")
+    finally:
+        sys.stdout.flush()
+        sys.stdout = real
+
+
+def vacuumBoth(conn):
+    """VACUUM (ANALYZE) of both swapped-in tables, outside a transaction:
+    side by side on two connections (_VACUUM_PARALLEL), else in series."""
+    def vac(c, table):
+        t1 = time.time()
+        was = c.autocommit
+        c.autocommit = True
+        try:
+            with c.cursor() as cur:
+                cur.execute(f"VACUUM (ANALYZE) {table}")
+        finally:
+            c.autocommit = was
+        print(f"    [{time.time() - t1:7.1f}s] VACUUM ANALYZE {table}")
+
+    def vacPooled(table):
+        with getConn() as c:
+            tuneSession(c, quiet=True)
+            vac(c, table)
+
+    t0 = time.time()
+    if _VACUUM_PARALLEL:
+        with cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="vacuum") as ex:
+            other = ex.submit(vacPooled, "athlete_season")
+            try:
+                vac(conn, "ranking_results")
+            finally:
+                other.result()
+    else:
+        vac(conn, "ranking_results")
+        vac(conn, "athlete_season")
+    print(f"    [{time.time() - t0:7.1f}s] VACUUM ANALYZE both tables"
+          + (" (side by side)" if _VACUUM_PARALLEL else ""))
+
 
 def main():
     global RACE_MARGIN
@@ -4134,13 +4381,8 @@ def main():
         #   at a time. Built here, each is a sequential scan plus a sort, and
         #   refreshAthleteSeason below reads this table, so they have to exist
         #   before it runs.
-        with phase("index ranking_results"):
-            # ★ XCP_RR_ORDERED: rewritten in board order instead (relog)
-            relog(conn, _LOAD_TABLE, "ranking_results")
-            buildIndexes(conn, _LOAD_TABLE, "ranking_results")
-
-        with phase("athlete_season"):
-            refreshAthleteSeason(conn)
+        # ★ _SEASON_BESIDE_INDEXES: athlete_season builds while the indexes do
+        indexAndSeason(conn)
         with phase("verify the new tables"):
             verifyShadow(conn, (_LOAD_TABLE, _LOAD_SEASON))
         with phase("swap in + drop old"):
@@ -4150,15 +4392,9 @@ def main():
         #   board scan visits the heap until the first vacuum; autovacuum may
         #   take hours to get to a table this size. Minutes here buy the fast
         #   counts Last relies on for every filtered board.
-        try:
-            conn.autocommit = True
-            with conn.cursor() as cur:
-                t0 = time.time()
-                cur.execute("VACUUM (ANALYZE) ranking_results")
-                cur.execute("VACUUM (ANALYZE) athlete_season")
-                print(f"    [{time.time() - t0:7.1f}s] VACUUM ANALYZE both tables")
-        finally:
-            conn.autocommit = False
+        # ★ _VACUUM_PARALLEL: the two side by side
+        with phase("VACUUM ANALYZE"):
+            vacuumBoth(conn)
         buildBoardSizes(conn)
 
     elapsed = (datetime.datetime.now() - started).total_seconds()

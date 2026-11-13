@@ -107,6 +107,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("runs", nargs="+")
     ap.add_argument("--top", type=int, default=0, help="only the N slowest")
+    ap.add_argument("--gaps", type=int, default=0, metavar="SECS",
+                    help="also list, for every step that ran this long or longer, "
+                         "the longest pauses inside its log (the last run given)")
     a = ap.parse_args()
     runs = [load(r) for r in a.runs[:2]]
     names = list(dict.fromkeys(n for r in runs for n in r))
@@ -139,7 +142,38 @@ def main():
             fin = []
         if fin:
             print("  " + fin[-1].strip())
+    if a.gaps:
+        _printGaps(a.runs[min(len(a.runs), 2) - 1], runs[-1], a.gaps)
     return 0
+
+
+def _printGaps(run, steps, min_ran, per_step=6):
+    """The longest silences inside each long step's log, with the line that
+    ended each one -- what the step was doing when the time went. A step
+    whose time is spread evenly shows few; then its own phase lines say it."""
+    print(f"\nInside the steps that ran {min_ran:,} s or more ({os.path.basename(run.rstrip('/'))}):")
+    for name, e in sorted(steps.items(), key=lambda kv: -((kv[1].get("ran") or kv[1]["s"]))):
+        if (e.get("ran") or e["s"]) < min_ran or e["kind"] == "wait":
+            continue
+        try:
+            with open(os.path.join(run, f"{name}.log"), errors="replace") as fh:
+                lines = fh.read().splitlines()
+        except OSError:
+            continue
+        gaps, prev = [], None
+        for ln in lines:
+            m = _STAMP.match(ln)
+            if not m:
+                continue
+            t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+            if prev is not None:
+                gaps.append(((t - prev) % 86400, ln[:150]))
+            prev = t
+        gaps.sort(key=lambda g: -g[0])
+        print(f"  == {name} ({e.get('ran') or e['s']:,} s)")
+        for g, ln in gaps[:per_step]:
+            if g >= 30:
+                print(f"     {g:6,} s before: {ln}")
 
 
 if __name__ == "__main__":
