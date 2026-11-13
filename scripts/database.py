@@ -350,10 +350,16 @@ def _initPoolLocked():
         global _slots
         _slots = threading.BoundedSemaphore(MAX_CONN)
         # built first, published last: a thread that sees _pool sees _slots
+        # ★ A PROCESS THAT READS AN EXPORTED SNAPSHOT (XCP_PG_SNAPSHOT_FILE)
+        #   gets SnapshotConnection; any other process the plain class, so
+        #   unset is exactly the old pool
+        kw = dict(_PG_CONFIG_WITH_TIMEOUT)
+        if snapshotId() is not None:
+            kw["connection_factory"] = SnapshotConnection
         pool = psycopg2.pool.ThreadedConnectionPool(
             min(MIN_CONN, MAX_CONN),
             MAX_CONN,
-            **_PG_CONFIG_WITH_TIMEOUT
+            **kw
         )
         _pool = pool
         print(f"[DB] Connection pool created ({MIN_CONN}-{MAX_CONN} connections)")
@@ -427,7 +433,9 @@ def getConn():
       (XCP_DB_APP, XCP_DB_READ_APPS) and under XCP_DB_QUIET (the pipeline),
       so a read DSN that lands in the shared env file cannot send a
       builder's reads to a replica that is minutes behind."""
-    if os.environ.get("XCP_DB_READ_DSN"):
+    # ! never a replica under an imported snapshot: the snapshot lives on
+    #   the primary, and a routed connection could not import it
+    if os.environ.get("XCP_DB_READ_DSN") and not os.environ.get(SNAPSHOT_ENV):
         import read_routing
         if read_routing.active():
             with read_routing.routedConn(_primaryConn) as conn:
@@ -522,6 +530,222 @@ def _lend(conn):
         # a broken connection is closed and dropped; the pool opens a fresh
         # one on the next request instead of handing the corpse out again
         _pool.putconn(conn, close=broken or conn.closed)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reading an exported snapshot (XCP_PG_SNAPSHOT_FILE)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ★ 03 BESIDE 04a, READING THE DATABASE AS IT WAS BEFORE 04a (2026-11-13).
+#   03_pro_flag, 03b_age_bands and 03a_team_pool read who every row belongs
+#   to; the 04a linkers move person ids. They ran one after the other (03
+#   group 1,642 s + 03a 61 s, then 04a ~1,850 s). scripts/snapshot_hold.py
+#   opens a REPEATABLE READ transaction before the 03 group, exports its
+#   snapshot (pg_export_snapshot) to a file and keeps the transaction open.
+#   A process started with XCP_PG_SNAPSHOT_FILE=<that file> runs EVERY
+#   transaction on EVERY connection of this pool as REPEATABLE READ with SET
+#   TRANSACTION SNAPSHOT as its first statement -- so it reads the database
+#   as it was when the holder took the snapshot, whatever 04a commits
+#   meanwhile, and a commit does not let the next transaction see later
+#   data (it imports the same snapshot again).
+#
+#   How: the pool's connections are SnapshotConnection, whose cursor() hands
+#   out a cursor class (any cursor_factory, RealDictCursor included) whose
+#   execute / executemany / callproc / copy_* first import the snapshot when
+#   the connection has no transaction open (psycopg2's implicit BEGIN goes
+#   out with that import). execute_values and execute_batch use execute.
+#
+# ! WHAT THE SNAPSHOT CANNOT SEE, AND THE TWO WAYS OUT:
+#   - A row committed after the snapshot is invisible -- including rows THIS
+#     process wrote and committed in an earlier transaction, and every row
+#     of a table (re)created after it. So 03a reads 03's pro_athlete_season
+#     through shadowLive() (a TEMP copy of the live table, in its snapshot
+#     transaction), and swapTable runs under snapshotOff() (its pg_indexes
+#     read must see the index committed a moment before).
+#   - Autocommit cannot import a snapshot: under XCP_PG_SNAPSHOT_FILE a
+#     statement on an autocommit connection is an error, not a silent read
+#     of today's data. liveConn() / snapshotOff() are the ways around.
+# ! A MISSING OR MALFORMED FILE IS AN ERROR, not a quiet fallback to live
+#   reads, and so is a holder that has gone away (Postgres: "invalid
+#   snapshot identifier"): the step fails in the summary instead of
+#   computing from data 04a has half moved.
+# ! Unset (or empty) XCP_PG_SNAPSHOT_FILE is the old code path exactly: the
+#   plain connection class, read routing as before.
+SNAPSHOT_ENV = "XCP_PG_SNAPSHOT_FILE"
+_SNAP_RE = re.compile(r"[0-9A-Fa-f]+-[0-9A-Fa-f]+(-[0-9]+)?")
+_SNAP_CACHE = {}       # path -> snapshot id, read once per process
+
+
+def snapshotId():
+    """The exported snapshot id this process reads through, or None when
+    XCP_PG_SNAPSHOT_FILE is unset or empty. Raises when it names a file that
+    cannot be read or does not hold a snapshot id."""
+    path = (os.environ.get(SNAPSHOT_ENV) or "").strip()
+    if not path:
+        return None
+    got = _SNAP_CACHE.get(path)
+    if got is None:
+        try:
+            with open(path) as fh:
+                got = fh.read().strip()
+        except OSError as exc:
+            raise RuntimeError(f"[DB] {SNAPSHOT_ENV}={path}: cannot read the "
+                               f"snapshot file ({exc})") from exc
+        if not _SNAP_RE.fullmatch(got):
+            raise RuntimeError(f"[DB] {SNAPSHOT_ENV}={path}: {got[:40]!r} is "
+                               f"not a snapshot id")
+        _SNAP_CACHE[path] = got
+    return got
+
+
+def _importSnapshot(conn):
+    """Before a statement on `conn`: when no transaction is open, open one
+    on the exported snapshot. A no-op on a live (liveConn / snapshotOff)
+    connection or inside an open transaction."""
+    if getattr(conn, "xcp_live", True):
+        return
+    sid = snapshotId()
+    if sid is None:
+        return
+    if conn.autocommit:
+        raise RuntimeError(f"[DB] an autocommit statement cannot read the "
+                           f"exported snapshot ({SNAPSHOT_ENV}); run it in a "
+                           f"transaction, or under database.snapshotOff()")
+    if conn.info.transaction_status != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+        return
+    # the base cursor class: no hook, no recursion. psycopg2 sends BEGIN
+    # first; both SETs must precede any query of the transaction.
+    cur = psycopg2.extensions.cursor(conn)
+    try:
+        cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; "
+                    "SET TRANSACTION SNAPSHOT %s", (sid,))
+    finally:
+        cur.close()
+
+
+class _SnapshotCursorMixin:
+    """Imports the snapshot before every statement that can open a
+    transaction (see _importSnapshot)."""
+
+    def execute(self, query, vars=None):
+        _importSnapshot(self.connection)
+        return super().execute(query, vars)
+
+    def executemany(self, query, vars_list):
+        _importSnapshot(self.connection)
+        return super().executemany(query, vars_list)
+
+    def callproc(self, procname, *args, **kwargs):
+        _importSnapshot(self.connection)
+        return super().callproc(procname, *args, **kwargs)
+
+    def copy_expert(self, *args, **kwargs):
+        _importSnapshot(self.connection)
+        return super().copy_expert(*args, **kwargs)
+
+    def copy_from(self, *args, **kwargs):
+        _importSnapshot(self.connection)
+        return super().copy_from(*args, **kwargs)
+
+    def copy_to(self, *args, **kwargs):
+        _importSnapshot(self.connection)
+        return super().copy_to(*args, **kwargs)
+
+
+_SNAP_CURSORS = {}
+_SNAP_CURSORS_LOCK = threading.Lock()
+
+
+def _snapshotCursorClass(base):
+    """`base` with _SnapshotCursorMixin in front, one class per base."""
+    if issubclass(base, _SnapshotCursorMixin):
+        return base
+    with _SNAP_CURSORS_LOCK:
+        cls = _SNAP_CURSORS.get(base)
+        if cls is None:
+            cls = type("Snapshot" + base.__name__, (_SnapshotCursorMixin, base), {})
+            _SNAP_CURSORS[base] = cls
+    return cls
+
+
+class SnapshotConnection(psycopg2.extensions.connection):
+    """A pool connection whose every transaction reads the exported
+    snapshot (unless xcp_live is set: liveConn, snapshotOff)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.xcp_live = False
+
+    def cursor(self, name=None, cursor_factory=None, *args, **kwargs):
+        base = cursor_factory or self.cursor_factory or psycopg2.extensions.cursor
+        return super().cursor(name, _snapshotCursorClass(base), *args, **kwargs)
+
+
+def snapshotActive(conn):
+    """Does `conn` read through an exported snapshot right now?"""
+    return (isinstance(conn, SnapshotConnection) and not conn.xcp_live
+            and snapshotId() is not None)
+
+
+@contextmanager
+def snapshotOff(conn):
+    """Inside this block `conn`'s transactions read and write the live
+    database, as without XCP_PG_SNAPSHOT_FILE (swapTable; a read of a table
+    this run rebuilt). `conn` must have no transaction open on entry; one
+    left open on exit is rolled back. A no-op on a plain connection."""
+    if not isinstance(conn, SnapshotConnection):
+        yield conn
+        return
+    if conn.info.transaction_status != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+        raise RuntimeError("[DB] snapshotOff: commit or roll back first")
+    prev = conn.xcp_live
+    conn.xcp_live = True
+    try:
+        yield conn
+    finally:
+        try:
+            if (not conn.closed and conn.info.transaction_status
+                    != psycopg2.extensions.TRANSACTION_STATUS_IDLE):
+                conn.rollback()
+        finally:
+            conn.xcp_live = prev
+
+
+@contextmanager
+def liveConn():
+    """getConn, but reading the live database even under
+    XCP_PG_SNAPSHOT_FILE. Without the variable it is getConn."""
+    with getConn() as conn:
+        with snapshotOff(conn):
+            yield conn
+
+
+def shadowLive(cur, table):
+    """Under an exported snapshot, give `cur`'s transaction a TEMP copy of
+    the LIVE `table` under the same name (pg_temp is searched first, so
+    every unqualified reference reads it) -- for a table this run rebuilt
+    after the snapshot was taken (03a reads 03's pro_athlete_season). ON
+    COMMIT DROP: it ends with the transaction. Returns True when it made
+    the copy; False (and nothing done) without a snapshot or without the
+    live table."""
+    if not snapshotActive(cur.connection):
+        return False
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", table):
+        raise ValueError(f"shadowLive: {table!r} is not a plain table name")
+    import io
+    buf = io.BytesIO()
+    with liveConn() as lc, lc.cursor() as lcur:
+        lcur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+        if lcur.fetchone()[0] is None:
+            return False
+        lcur.copy_expert(f"COPY public.{table} TO STDOUT", buf)
+    cur.execute(f"DROP TABLE IF EXISTS pg_temp.{table}")
+    cur.execute(f"CREATE TEMP TABLE {table} (LIKE public.{table} "
+                f"INCLUDING DEFAULTS) ON COMMIT DROP")
+    buf.seek(0)
+    cur.copy_expert(f"COPY pg_temp.{table} FROM STDIN", buf)
+    cur.execute(f"ANALYZE pg_temp.{table}")
+    return True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Write helpers
@@ -804,8 +1028,17 @@ def swapTable(conn, table, new, lock_ms=3000, tries=40, pause=3.0,
               verbose=True):
     """Replace `table` with `new` (DROP + RENAME) in one short transaction,
     retrying while readers hold the old table. Returns the attempts used."""
-    from psycopg2 import errors as _pgerr
     conn.commit()
+    # ★ LIVE, EVEN UNDER XCP_PG_SNAPSHOT_FILE: the swap is catalogue work on
+    #   tables this run built after the snapshot (pg_indexes must see `new`'s
+    #   indexes, or they keep their _new names). snapshotOff is a no-op on a
+    #   plain connection.
+    with snapshotOff(conn):
+        return _swapTableLive(conn, table, new, lock_ms, tries, pause, verbose)
+
+
+def _swapTableLive(conn, table, new, lock_ms, tries, pause, verbose):
+    from psycopg2 import errors as _pgerr
     for attempt in range(1, tries + 1):
         try:
             with conn.cursor() as cur:
