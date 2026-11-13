@@ -2151,6 +2151,16 @@ step 11b_indexes      "$PY" -u scripts/add_page_indexes.py
 #   never beside it (11b's concurrent index builds wait on open
 #   transactions). Collected by bgwait.
 bgstep 10f3_comps "$PY" -u racecast/build_comps.py
+# ★ THE SEARCH INDEX FROM HERE (2026-11-12; run 20261112_173033: started
+#   after 13b, it held the run 340 s at its join). Its inputs are final by
+#   now (13c0 joined before the go-live; 10b/10d done) and nothing from 12
+#   to 13b feeds it (it imports panels.isTeamName, courses, unit_board as
+#   functions). After 11b, never beside it: its long transactions would
+#   stall 11b's concurrent index builds. It builds search_index_new AND the
+#   meet_agg_xc/tf tables the sitemap reads, so it is joined before the
+#   sitemap group -- which, from 2026-11-10 until now, could read the last
+#   run's meet_agg while 13c rebuilt them.
+bgstep 13c_search_index "$PY" -u racecast/search_index.py
 # ! IN THE BACKGROUND: only the recruiting page reads recruit_projection, so
 #   nothing below waits on it. Collected by bgwait before 17.
 # ! AND STARTED AFTER 11b, NOT BEFORE (2026-09-26). CREATE INDEX CONCURRENTLY
@@ -2246,6 +2256,7 @@ fi
 #   build's own vacuum runs beside the rest of the run -- so season_comps'
 #   index-only band read (comps.py) went to the table for every row. These
 #   are small (a few GB in all) and are done at the trickle's pace.
+bgjoin 10f3_comps                        # its season_comps swap, before the vacuum reads it
 step 13f6_vacuum_small "$PY" -u scripts/gentle_vacuum.py --table season_comps --table athletes \
      --table athlete_pick --table school_page --table meet_counts || true
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
@@ -2271,12 +2282,8 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 #   never goes dark.
 # (13c0_person_redirects and 13c0_search_helpers, its three source tables,
 #  ran in the background beside the pack since 2026-11-07)
-# ★ IN THE BACKGROUND SINCE 2026-11-10 (run 20261108_155220: 729 s in line).
-#   It builds search_index_new and swaps it in; no step until the watchdog
-#   (17d, started after 16) reads the table -- the sitemap takes only pure
-#   functions from search_index.py (meetAltIndex, meetLink, isTwinCopy) --
-#   so it is joined just before 17d starts. Prewarm (19b) comes after bgwait.
-bgstep 13c_search_index "$PY" -u racecast/search_index.py
+# (13c_search_index now starts after 11b and is joined before the sitemap;
+#  see the note there)
 # ★ THE WEEK'S FROZEN COPY (owner, 2026-11-06: "is this done in the pipeline?"):
 #   both sports' season ratings and the course difficulties as a dated
 #   snapshot on /data, the newest 8 weeks kept (data_snapshots.py). A full
@@ -2291,6 +2298,7 @@ fi
 #   13h_raw stays after the group: it can share 13h's daily inputs file.
 #   13e (IndexNow) reads the sitemap, so it runs after. XCP_LATE_PARALLEL=0
 #   runs them one after another, as before.
+bgjoin 13c_search_index                  # the sitemap reads its meet_agg tables
 # the sitemap for Google: every ranked athlete, school, course and meet
 _G13=(13d_sitemap "$PY -u racecast/build_sitemap.py")
 # ★ THE FOLLOW DIGEST (owner, 2026-10-10), OPTIONAL: off unless XCP_ALERTS=1.
@@ -2346,7 +2354,6 @@ step 16_rowguard_apply     "$PY" -u scripts/apply_triage.py
 #   the vacuum). Every step that writes what readers see is done by here;
 #   report only. FAILED is the run's failures so far (17* are reports).
 # the search index (13c, in the background): the watchdog below counts it
-bgjoin 13c_search_index
 if [ "${XCP_WATCHDOG:-1}" != "0" ]; then
   bgstep 17d_watchdog "$PY" -u racecast/watchdog.py --log-dir "$LOGDIR" --kind full \
                       --step-name 17d_watchdog --failed "$FAILED" --send --ensure-indexes
