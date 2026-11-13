@@ -523,7 +523,45 @@ SEASON_MIN_SHARE = 0.25
 SEASON_LOOKBACK  = 12        # years of history used to judge "normal volume"
 
 
-def _yearCounts(conn, sport):
+# ★ ONE GROUPED SCAN FOR THE SEASON HISTOGRAM AND THE HERO SPAN (2026-11-13).
+#   _yearCounts and _ratedSpan each read every rated row of the sport with
+#   the same predicate (speed_rating IS NOT NULL AND date ~ _SANE_YEAR), and
+#   differ only in the CALENDAR-year guard: 1995..2026 for the histogram,
+#   1990..2036 for the span. Grouping once by (season year, calendar year)
+#   over the WIDER guard holds both: the histogram is the cells whose
+#   calendar year is in the narrower range, summed per season; the span is
+#   every cell, with the min/max calendar year. One full scan per sport
+#   instead of two. tests/test_panels_head.py runs the old two queries
+#   beside this and compares.
+# ! THE GUARDS STAY TEXT COMPARISONS. Every cal here matched ^(19|20)[0-9]{2},
+#   so it is four digits, and four-digit strings order the same in Python
+#   and in any Postgres collation.
+SEASON_CAL_YEARS = ("1995", "2026")      # _yearCounts' calendar guard
+SPAN_CAL_YEARS   = ("1990", "2036")      # _ratedSpan's calendar guard
+
+_RATED_SCAN_SQL = """
+    SELECT {season}                    AS yr,
+           substring(date, 1, 4)       AS cal,
+           count(*)                    AS n
+    FROM   {table}
+    WHERE  speed_rating IS NOT NULL
+      AND  date ~ %s
+      AND  substring(date, 1, 4) BETWEEN %s AND %s
+    GROUP  BY 1, 2
+"""
+
+
+def ratedScan(conn, sport):
+    """[(season_year, calendar_year, rated rows)] for one sport, one scan.
+    The input of _yearCounts and _ratedSpan (pass it as scan=)."""
+    table = "results" if sport == "XC" else "results_tf"
+    sql = _RATED_SCAN_SQL.format(season=seasonYearSql(sport, "date"), table=table)
+    with conn.cursor() as cur:
+        cur.execute(sql, (_SANE_YEAR,) + SPAN_CAL_YEARS)
+        return [(yr, cal, int(n)) for yr, cal, n in cur.fetchall()]
+
+
+def _yearCounts(conn, sport, scan=None):
     """Rated rows per SEASON year, newest first, junk years already excluded.
 
     ⚠ TWO DIFFERENT YEARS IN ONE QUERY, ON PURPOSE.
@@ -538,25 +576,22 @@ def _yearCounts(conn, sport):
                 only job is to reject 2222 and friends. Rolling it too would
                 make a real 2026-12 TF race fail the '2026' ceiling for being
                 season 2027 and vanish from the histogram entirely.
+
+    From ratedScan's (season, calendar) cells: the cells whose calendar year
+    is within SEASON_CAL_YEARS, summed per season, the newest
+    SEASON_LOOKBACK seasons.
     """
-    table = "results" if sport == "XC" else "results_tf"
-    season = seasonYearSql(sport, "date")
-    sql = f"""
-        SELECT {season} AS yr, COUNT(*) AS n
-        FROM   {table}
-        WHERE  speed_rating IS NOT NULL
-          AND  date ~ %s
-          AND  substring(date, 1, 4) BETWEEN '1995' AND '2026'
-        GROUP  BY 1
-        ORDER  BY 1 DESC
-        LIMIT  %s
-    """
-    with conn.cursor() as cur:
-        cur.execute(sql, (_SANE_YEAR, SEASON_LOOKBACK))
-        return cur.fetchall()          # [(yr, n), ...] newest first
+    if scan is None:
+        scan = ratedScan(conn, sport)
+    lo, hi = SEASON_CAL_YEARS
+    by = Counter()
+    for yr, cal, n in scan:
+        if lo <= cal <= hi:
+            by[yr] += n
+    return sorted(by.items(), reverse=True)[:SEASON_LOOKBACK]   # newest first
 
 
-def _seasonYear(conn, sport):
+def _seasonYear(conn, sport, scan=None):
     """The most recent year that held a REAL season.
 
     Not max(date): junk years (2222, 2223) exist. Not 'most recent year with
@@ -566,11 +601,33 @@ def _seasonYear(conn, sport):
     Instead: compare each year against the busiest year in living memory and
     take the newest one that's within a quarter of it.
     """
-    rows = _yearCounts(conn, sport)
+    rows = _yearCounts(conn, sport, scan)
     if not rows:
         return None
     return pickSeason(rows, sport, datetime.date.today(),
                       lambda yr, cutoff: _rowsToDate(conn, sport, yr, cutoff))
+
+
+def seasonLabel(sport, season_year):
+    """What homepage_meta.season_year_<sport> holds for a stored season year.
+
+    ! THE META CARRIES THE LABEL, NOT THE STORED YEAR. A TF season is STORED
+      under the year it opens in (Dec 2025 - Jul 2026 is 2025) but NAMED
+      year + 1 everywhere a person reads it -- and /rankings' year filter
+      takes the label (rankings._yearClause). Publishing the stored year made
+      the home page head a season "TF -- 2025" that /rankings calls 2026."""
+    label = season_year
+    if sport == "TF" and season_year:
+        label = str(int(season_year) + 1)
+    return label or ""
+
+
+def seasonFromLabel(sport, label):
+    """seasonLabel undone: the stored season year (text, as _seasonYear
+    returns it), or None for an empty label."""
+    if not label:
+        return None
+    return str(int(label) - 1) if sport == "TF" else str(label)
 
 
 def pickSeason(rows, sport, today, rows_to_date):
@@ -1488,16 +1545,8 @@ def _recentMeets(conn, sport):
 #   owns the LABEL; this owns the NUMBER.
 
 # Same guards _yearCounts uses: the regex rejects malformed dates and the range
-# rejects the junk years (2222, 2223) that survive it.
-_FACT_SPAN_SQL = """
-    SELECT count(*)                    AS n,
-           min(substring(date, 1, 4))  AS y0,
-           max(substring(date, 1, 4))  AS y1
-    FROM   {table}
-    WHERE  speed_rating IS NOT NULL
-      AND  date ~ %s
-      AND  substring(date, 1, 4) BETWEEN '1990' AND '2036'
-"""
+# rejects the junk years (2222, 2223) that survive it -- SPAN_CAL_YEARS here,
+# one grouped scan shared with the season histogram (ratedScan).
 
 
 def _formatCount(n):
@@ -1509,19 +1558,36 @@ def _formatCount(n):
     return str(n)
 
 
-def _ratedSpan(conn, sport):
+def _ratedSpan(conn, sport, scan=None):
     """(rows, first_year, last_year) for one sport, in ONE scan.
 
     Count and span together because they come from the same predicate over the
-    same 34M rows -- asking twice would scan twice for no reason.
+    same 34M rows -- asking twice would scan twice for no reason. And from
+    ratedScan's cells, so the season histogram shares that scan too.
     """
-    table = "results" if sport == "XC" else "results_tf"
-    with conn.cursor() as cur:
-        cur.execute(_FACT_SPAN_SQL.format(table=table), (_SANE_YEAR,))
-        n, y0, y1 = cur.fetchone()
+    if scan is None:
+        scan = ratedScan(conn, sport)
+    n = sum(c for _yr, _cal, c in scan)
+    cals = [cal for _yr, cal, c in scan if c]
+    y0, y1 = (min(cals), max(cals)) if cals else (None, None)
     return (n or 0,
             int(y0) if y0 else None,
             int(y1) if y1 else None)
+
+
+def spanText(span):
+    """homepage_meta.span_<sport> for a _ratedSpan tuple."""
+    n, y0, y1 = span
+    return f"{int(n)},{y0 or ''},{y1 or ''}"
+
+
+def spanFromText(text):
+    """spanText undone, or None when it does not parse."""
+    try:
+        n, y0, y1 = ((text or "").split(",") + ["", ""])[:3]
+        return (int(n), int(y0) if y0 else None, int(y1) if y1 else None)
+    except ValueError:
+        return None
 
 
 def _courseCount(conn):
@@ -1539,21 +1605,31 @@ def _courseCount(conn):
         return cur.fetchone()[0]
 
 
-def _siteFacts(conn, sports):
+def _siteFacts(conn, sports, scans=None, spans=None):
     """The three hero numbers, pre-formatted, as meta keys.
+
+    scans: {sport: ratedScan rows} already read this run (the season
+    histogram's), so the span costs no second scan. spans: {sport: span}
+    that --head already computed AND stored as span_<sport> -- used, and
+    not written again (the head's write is the only one).
 
     Returns a PARTIAL dict on any failure rather than raising. A fact that
     cannot be computed becomes an em-dash on the page; a fact that raises
     would take the whole panel rebuild down with it.
     """
     facts = {}
+    scans = scans or {}
+    spans = spans or {}
     try:
         total, first, last = 0, None, None
         for sport in sports:
-            n, y0, y1 = _ratedSpan(conn, sport)
-            # this sport's own span, for combineFacts (the pipeline runs one
-            # process per sport, and the hero numbers are both sports')
-            facts[f"span_{sport}"] = f"{int(n)},{y0 or ''},{y1 or ''}"
+            if sport in spans:
+                n, y0, y1 = spans[sport]
+            else:
+                n, y0, y1 = _ratedSpan(conn, sport, scans.get(sport))
+                # this sport's own span, for combineFacts (the pipeline runs
+                # one process per sport, and the hero numbers are both sports')
+                facts[f"span_{sport}"] = spanText((n, y0, y1))
             total += n
             if y0 and (first is None or y0 < first):
                 first = y0
@@ -1576,11 +1652,37 @@ def _siteFacts(conn, sports):
     return facts
 
 
-def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
+def _upsertMeta(cur, meta):
+    """homepage_meta keys, upserted (see the note in _writePanels)."""
+    if meta:
+        psycopg2.extras.execute_values(cur,
+            "INSERT INTO homepage_meta (key, value) VALUES %s "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            list(meta.items()))
+
+
+def _replaceRecent(cur, recent, sports):
+    """homepage_recent for these sports, DELETE + INSERT in the caller's
+    transaction (readers see the old rows until it commits, never none)."""
+    cur.execute("DELETE FROM homepage_recent WHERE sport = ANY(%s)", (list(sports),))
+    if recent:
+        psycopg2.extras.execute_values(cur, """
+            INSERT INTO homepage_recent
+                (sport, rank, meet_id, meet_name, course_name,
+                 state, date, n_results)
+            VALUES %s
+        """, list(recent))
+
+
+def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF"),
+                 recent_sports=None):
     """Swap in the new panels atomically.
 
     DELETE + INSERT inside ONE transaction: the site either sees the whole old
-    snapshot or the whole new one, never a half-empty front page mid-write."""
+    snapshot or the whole new one, never a half-empty front page mid-write.
+    recent_sports: the sports whose homepage_recent rows are replaced
+    (default: sports). --after-head leaves out each sport --head wrote, so
+    its rows stay exactly as the head wrote them."""
     rows = []
     for (board, scope, sport, pool), heap in buckets.items():
         cap = 1 if board == "athlete" else None
@@ -1626,22 +1728,14 @@ def _writePanels(conn, buckets, meta, recent=(), sports=("XC", "TF")):
         #   (built_at, default_sport, the facts) are the same numbers either
         #   way. ! A key this build does not write (a fact whose count
         #   failed) keeps its last value instead of vanishing from the page.
-        psycopg2.extras.execute_values(cur,
-            "INSERT INTO homepage_meta (key, value) VALUES %s "
-            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            list(meta.items()))
+        _upsertMeta(cur, meta)
 
         # Same transaction, same all-or-nothing swap (and the same caveat a
         # --sport run already has for the panels: the other sport's rows go
         # too, so partial runs are partial pages).
-        cur.execute("DELETE FROM homepage_recent WHERE sport = ANY(%s)", (list(sports),))
-        if recent:
-            psycopg2.extras.execute_values(cur, """
-                INSERT INTO homepage_recent
-                    (sport, rank, meet_id, meet_name, course_name,
-                     state, date, n_results)
-                VALUES %s
-            """, list(recent))
+        recent_sports = sports if recent_sports is None else recent_sports
+        if recent_sports:
+            _replaceRecent(cur, recent, recent_sports)
     conn.commit()          # one commit: DELETE + INSERT land together or not at all
     return len(rows)
 
@@ -1685,18 +1779,109 @@ def combineFacts(conn):
     return out
 
 
+# ★ THE HEAD: WHAT THE STEPS AFTER THE PANELS READ, FIRST (2026-11-13).
+#   13f_breakouts reads homepage_recent (breakouts.latestDates: the newest
+#   meet date per sport); 13f2/13f3 and 13g read season_year_<sport>
+#   (predict._currentSeasonUncached); 13g reads latestDates too. Nothing
+#   else the full build writes. `--head` computes only those -- the season
+#   (one grouped scan, ratedScan, which also gives the span) and the recent
+#   meets -- and writes season_year_<sport>, span_<sport> and homepage_recent
+#   with the same functions the full build uses, in one transaction. The
+#   pipeline runs it first (a minute or so), then the full builds with
+#   --after-head beside those steps.
+# ! --after-head MAKES THE HEAD'S WRITE THE ONLY ONE. The full build reads
+#   the season and span back from homepage_meta instead of recomputing them
+#   and leaves homepage_recent alone. A second computation could differ --
+#   _RECENT_SQL orders by date alone (ties in either order), and both the
+#   season and the window read the clock -- and a reader beside the panels
+#   would then have used values the page no longer shows.
+
+def headFor(sport):
+    """(meta, recent rows) for one sport: the head's whole computation."""
+    with getConn() as conn:
+        tuneSession(conn, quiet=True)
+        with conn.cursor() as _pcur:
+            from season_year import loadProSeasons as _lps
+            _lps(_pcur)
+        scan = ratedScan(conn, sport)
+        season_year = _seasonYear(conn, sport, scan)
+        meta = {f"season_year_{sport}": seasonLabel(sport, season_year),
+                f"span_{sport}": spanText(_ratedSpan(conn, sport, scan))}
+        recent = _recentMeets(conn, sport)
+        conn.rollback()
+    print(f"[{sport}] head: season year = {season_year} (displayed as "
+          f"{meta[f'season_year_{sport}']}), {len(recent)} recent meets",
+          flush=True)
+    return meta, recent
+
+
+def writeHead(conn, meta, recent, sports):
+    """The head's keys and rows, one transaction (the same writers as
+    _writePanels)."""
+    with conn.cursor() as cur:
+        cur.execute(_DDL)
+        _upsertMeta(cur, meta)
+        _replaceRecent(cur, recent, sports)
+    conn.commit()
+
+
+def buildHead(sports):
+    """Both sports side by side (a thread and a connection each: the time
+    is all in the database), then one write."""
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=len(sports)) as ex:
+        parts = list(ex.map(headFor, sports))
+    meta, recent = {}, []
+    for m, r in parts:
+        meta.update(m)
+        recent += r
+    with getConn() as conn:
+        writeHead(conn, meta, recent, sports)
+    return meta, recent
+
+
+def readHead(conn, sports):
+    """{sport: (stored season year, span)} from what --head stored, for the
+    sports it stored both keys of. A sport missing either is computed by the
+    full build as before."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('homepage_meta')")
+        if cur.fetchone()[0] is None:
+            return {}
+        cur.execute("SELECT key, value FROM homepage_meta WHERE key = ANY(%s)",
+                    ([f"{k}_{s}" for s in sports for k in ("season_year", "span")],))
+        kv = dict(cur.fetchall())
+    out = {}
+    for sport in sports:
+        label = kv.get(f"season_year_{sport}")
+        span = spanFromText(kv.get(f"span_{sport}"))
+        if label is not None and span is not None:
+            out[sport] = (seasonFromLabel(sport, label), span)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Rebuild landing-page panels.")
     ap.add_argument("--sport", choices=["XC", "TF"], action="append",
                     help="limit to one sport (repeatable). Default: both.")
     ap.add_argument("--combine-facts", action="store_true",
                     help="only recompute the hero numbers from both sports' spans")
+    ap.add_argument("--head", action="store_true",
+                    help="only the season years, spans and homepage_recent "
+                         "(what the steps after the panels read)")
+    ap.add_argument("--after-head", action="store_true",
+                    help="take the season year and span --head stored, and "
+                         "leave homepage_recent as --head wrote it")
     args = ap.parse_args()
     if args.combine_facts:
         with getConn() as conn:
             print(f"[panels] hero facts, both sports: {combineFacts(conn)}")
         return 0
     sports = args.sport or ["XC", "TF"]
+    if args.head:
+        meta, recent = buildHead(sports)
+        print(f"[panels] head written: {sorted(meta)} + {len(recent)} recent-meet rows")
+        return 0
 
     buckets = defaultdict(list)      # (board, scope, sport, pool) -> heap
     stats = defaultdict(int)
@@ -1718,27 +1903,29 @@ def main():
         #   here rather than as a confusing "relation ath does not exist" in
         #   the middle of a scan.
         _buildAthleteTemp(conn)
+        head = readHead(conn, sports) if args.after_head else {}
+        scans, spans = {}, {}
 
         for sport in sports:
-            season_year = _seasonYear(conn, sport)
-            # ! THE META CARRIES THE LABEL, NOT THE STORED YEAR. A TF season
-            #   is STORED under the year it opens in (Dec 2025 - Jul 2026 is
-            #   2025) but NAMED year + 1 everywhere a person reads it -- and
-            #   /rankings' year filter takes the label (rankings._yearClause).
-            #   Publishing the stored year here made the home page head a
-            #   season "TF -- 2025" that /rankings calls 2026, and its
-            #   View-all link's year=2025 then filtered the season BEFORE the
-            #   one on screen.
-            #
-            # ⚠ season_year itself stays stored: every query below compares
-            #   it against stored columns. Only what leaves for the reader is
-            #   relabelled.
-            label = season_year
-            if sport == "TF" and season_year:
-                label = str(int(season_year) + 1)
-            meta[f"season_year_{sport}"] = label or ""
-            print(f"[{sport}] season year = {season_year} "
-                  f"(displayed as {label})")
+            if sport in head:
+                # --head's season and span, as it stored them; it alone
+                # writes them (and homepage_recent) this run
+                season_year, spans[sport] = head[sport]
+                label = seasonLabel(sport, season_year)
+                print(f"[{sport}] season year = {season_year} "
+                      f"(displayed as {label}; from --head)")
+            else:
+                if args.after_head:
+                    print(f"[{sport}] --after-head: no stored head -- computing it here")
+                scans[sport] = ratedScan(conn, sport)
+                season_year = _seasonYear(conn, sport, scans[sport])
+                # ⚠ season_year itself stays stored: every query below
+                #   compares it against stored columns. Only what leaves for
+                #   the reader is relabelled (seasonLabel).
+                label = seasonLabel(sport, season_year)
+                meta[f"season_year_{sport}"] = label
+                print(f"[{sport}] season year = {season_year} "
+                      f"(displayed as {label})")
 
             _collectPerformances(conn, sport, season_year, buckets, stats)
             print(f"[{sport}] performances scanned: {stats['perf_seen']:,} "
@@ -1749,22 +1936,26 @@ def main():
             print(f"[{sport}] athlete-seasons scanned: {stats['ath_seen']:,} "
                   f"(no pool: {stats['ath_nopool']:,})")
 
-            recent += _recentMeets(conn, sport)
-            print(f"[{sport}] recent meets: "
-                  f"{sum(1 for r in recent if r[0] == sport)}")
+            if sport not in head:
+                recent += _recentMeets(conn, sport)
+                print(f"[{sport}] recent meets: "
+                      f"{sum(1 for r in recent if r[0] == sport)}")
 
         meta["built_at"] = datetime.datetime.now().isoformat(timespec="seconds")
         meta["default_sport"] = _defaultSport(datetime.date.today().month)
 
         # Hero facts. Last, so a slow or failing count cannot delay the scans
         # that actually matter, and so `meta` is otherwise complete already.
-        meta.update(_siteFacts(conn, sports))
+        meta.update(_siteFacts(conn, sports, scans=scans, spans=spans))
         print(f"[panels] hero facts: "
               + ", ".join(f"{k.removeprefix('fact_')}={v}"
                           for k, v in sorted(meta.items())
                           if k.startswith("fact_")) or "[panels] hero facts: none")
 
-        written = _writePanels(conn, buckets, meta, recent, sports=sports)
+        # a sport the head covered keeps the head's homepage_recent rows;
+        # the others are replaced as before
+        written = _writePanels(conn, buckets, meta, recent, sports=sports,
+                               recent_sports=[s for s in sports if s not in head])
         try:
             combineFacts(conn)              # with the other sport's span, if stored
         except Exception as exc:            # noqa: BLE001 -- the page keeps its numbers
