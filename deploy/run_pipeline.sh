@@ -994,6 +994,13 @@ fi
 #    --skip and _ALWAYS per name, as stepsN), joined before the swap.
 skipped 04b_wheelchair && _skipCost 04b_wheelchair
 bgstep 04_grade_sanity "$PY" -u engine/grade_sanity.py --write
+# ★ COLLEGE FLAGS BESIDE GRADE_SANITY (2026-11-12; run 20261112_173033: 04h
+#   held the run 1,589 s -- started after grade_sanity's join and collected
+#   21 s later). college_flag reads results' school and grade, the
+#   ncaa_first_season of 03 and pair_athlete_season; nothing from here to 05
+#   writes those (grade_sanity writes grade_fix, 04c/04d/04b their own
+#   tables). season_level reads grade_fix, so it alone waits (below).
+bgstep 04h1_college_flags "$PY" -u engine/college_flag.py --write
 bgstep 04b_wheelchair  "$PY" -u engine/wheelchair_flag.py --write
 step 04d_gender "$PY" -u engine/person_gender.py --write
 step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
@@ -1009,7 +1016,12 @@ fi
 #   read them. After the person steps (both read person ids and dates) and
 #   04_grade_sanity, in the background while 04g runs (which reads neither),
 #   and collected before 05, their first reader.
-bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
+bgjoin 04h1_college_flags                 # season_level reads college_first_season
+if failed 04h1_college_flags; then
+  bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
+else
+  bgstep 04h_season_levels "$PY" -u engine/season_level.py --write
+fi
 # ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
 #   2025-12-31 because nothing in the pipeline ever extended it, so the
 #   whole 2026 season was rated with no weather. The fetcher is resumable:

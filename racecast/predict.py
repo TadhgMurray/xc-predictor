@@ -2945,7 +2945,15 @@ def _historyShared(c, sport, hour, some, has_weather, scale, read):
     def pack(rs):
         cols = tuple(rs[0]) if rs else ()
         return cols, [tuple(r[k] for k in cols) for r in rs]
-    sharedcache.putKeys(base, {p: pack(got[p]) for p in missing})
+    # ! ONLY A RUNNER WHOSE ROWS SHARE ONE SET OF KEYS IS PACKED (2026-11-12;
+    #   run 20261112_173033, 10f2_projection: KeyError 'norm_unshifted').
+    #   Some keys are set on some rows only (feature_extraction marks a row
+    #   whose pool it cannot tell); the first row's keys then fail on a later
+    #   row, or would invent a key on it. Such a runner is not cached: the
+    #   rows just read are returned as they are, and the next call reads again.
+    same = {p: got[p] for p in missing
+            if all(tuple(r) == tuple(got[p][0]) for r in got[p][1:])}
+    sharedcache.putKeys(base, {p: pack(rs) for p, rs in same.items()})
     return out + rows
 
 

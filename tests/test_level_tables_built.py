@@ -47,9 +47,14 @@ class LevelTablesBuilt(unittest.TestCase):
         self.assertLess(main.index("conn.commit()"), main.index("propagate(cur)"))
 
     def test_the_season_levels_run_after_the_person_steps_and_before_05(self):
-        start = self.at(r"^bgstep 04h_season_levels .*college_flag\.py --write.*season_level\.py --write")
-        self.assertLess(self.at(r"^\s*(step|stepsN|bgstep) 04_grade_sanity"), start)
-        self.assertLess(self.sh.index("engine/person_gender.py"), start)
+        # college_flag beside grade_sanity (it reads no grade_fix and no
+        # gender), season_level after grade_sanity's join (2026-11-12)
+        cf = self.at(r"^bgstep 04h1_college_flags .*college_flag\.py --write")
+        self.assertLess(self.sh.index("gender_split_people.py"), cf)
+        self.assertLess(self.at(r"^\s*(step|stepsN|bgstep) 04_grade_sanity"), cf)
+        start = self.at(r"^  bgstep 04h_season_levels .*season_level\.py --write")
+        self.assertLess(self.at(r"^bgjoin 04_grade_sanity"), start)
+        self.assertLess(self.at(r"^bgjoin 04h1_college_flags"), start)
         join = self.at(r"^bgjoin 04h_season_levels")
         self.assertLess(join, self.at(r"steps2 05_backfill_xc"))
 
