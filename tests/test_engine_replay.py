@@ -53,3 +53,12 @@ def test_the_replay_lists_its_cutoffs_with_the_go_lives_flags(tmp_path):
                          env=env, capture_output=True, text=True, check=True).stdout
     assert "2024-08-15  to do" in out and "2024-09-01  done" in out
     assert "--difficulty bracket" in out
+
+
+def test_the_go_live_keeps_a_snapshot_once_a_week():
+    import datetime as dt
+    day = dt.date(2026, 11, 20)
+    assert RJ.snapshotDue([], day, 7)
+    assert not RJ.snapshotDue(["asof_2026-11-15.npz"], day, 7)       # five days old
+    assert RJ.snapshotDue(["asof_2026-11-13.npz", "notes.txt"], day, 7)
+    assert not RJ.snapshotDue([], day, 0)                             # switched off
