@@ -368,8 +368,26 @@ def matchRunners(kailo_rows, athletes, ours):
 #  the two modes
 # ------------------------------------------------------------------ #
 
+def loadDump(path):
+    """race_trees --dump-val's file -> {(meet_id, div_id): {person_id:
+    seconds}} of the college feed's races (the ones Kailo predicts). The race
+    key is race_rows' (meet, div, source, day[, lead]); lead 0 rows only."""
+    import ast
+    import numpy as np
+    z = np.load(path, allow_pickle=False)
+    out = {}
+    for key, pid, sec in zip(z["key"], z["pid"], z["model_s"]):
+        k = ast.literal_eval(str(key))
+        if len(k) > 4 and k[4]:
+            continue
+        if str(k[2]) != "tfrrs":
+            continue
+        out.setdefault((int(k[0]), int(k[1])), {})[int(pid)] = float(sec)
+    return out
+
+
 def compareSeason(cur, season, sleep, show, csv_path=None, basis=None, since=None,
-                  recorded_only=False):
+                  recorded_only=False, dump=None):
     tr = fetch("/track-record", sleep, params={"season": season} if season else None)
     today = datetime.date.today().isoformat()
     races = [r for r in tr.get("races", []) if r.get("state") in SCORED
@@ -411,7 +429,15 @@ def compareSeason(cur, season, sleep, show, csv_path=None, basis=None, since=Non
         store = os.path.join(STORE, f"{r['race_key'].replace(':', '_')}.json")
         how = "rebuilt"
         recorded, detail = {}, {}
-        if os.path.exists(store):
+        # ★ THE HONEST MODEL'S OWN PREDICTIONS (--dump): trained and scored on
+        #   the engine as of each day, so nothing in them saw the race
+        if dump is not None:
+            recorded = dict(dump.get((int(mid), int(div))) or {})
+            if not recorded:
+                print(f"  ✗ {label}: not in the dump (not a validation race of the table)")
+                continue
+            how = "honest"
+        elif os.path.exists(store):
             try:
                 saved = json.load(open(store))
                 # ! A BASIS THE RECORDING DOES NOT HAVE IS REBUILT, not read
@@ -616,6 +642,9 @@ def main():
     ap.add_argument("--show", type=int, default=0, help="races listed (0 = all)")
     ap.add_argument("--sleep", type=float, default=1.0)
     ap.add_argument("--csv", default=None, help="write every runner's row here")
+    ap.add_argument("--dump", default=None, metavar="NPZ",
+                    help="score the honest model's predictions (race_trees --dump-val) "
+                         "instead of recordings or a rebuild")
     ap.add_argument("--from", dest="since", default=None,
                     help="only races on or after this date (YYYY-MM-DD)")
     ap.add_argument("--recorded-only", action="store_true",
@@ -633,7 +662,7 @@ def main():
             recordUpcoming(cur, a.season, a.sleep)
         else:
             compareSeason(cur, a.season, a.sleep, a.show, a.csv, a.basis, a.since,
-                          a.recorded_only)
+                          a.recorded_only, loadDump(a.dump) if a.dump else None)
         conn.rollback()
 
 
