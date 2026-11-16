@@ -1891,7 +1891,9 @@ def _mergePackStates(states):
 #   the TF child exactly as before.
 def _packShards():
     try:
-        return max(1, int(os.environ.get("XCP_PACK_TF_SHARDS", "3")))
+        # 2 by default (2026-11-16): each worker can hold its own copy of the
+        # lookups it reads, and 07 already peaks near 69 GB beside the site
+        return max(1, int(os.environ.get("XCP_PACK_TF_SHARDS", "2")))
     except ValueError:
         return 1
 
