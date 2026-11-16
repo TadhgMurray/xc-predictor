@@ -69,7 +69,7 @@ def test_select_field_uses_the_meetings():
 
     def meetings(squads):
         seen.update(squads)
-        return {("E2", "W1"): 1, ("W1", "E2"): -1, ("E2", "E1"): 1, ("E1", "E2"): -1}
+        return {("E2", "W1"): 1, ("E2", "E1"): 1}
     why = {}
     field = Q.selectField(rule, rounds, explain=why, meetings=meetings)
     assert set(seen) == {"W1", "W2", "E1", "E2"}
@@ -113,7 +113,7 @@ def test_season_meetings_follow_the_runners_and_skip_regionals():
              2: "NCAA Division III Midwest Region Cross Country Championships"}
     squads = {"Washington U.": set(range(200, 205)), "U. of Chicago": set(range(100, 105))}
     rec = Q.seasonMeetings(_Cur(res, names), rule, "2026-11-21", squads)
-    assert rec == {("Washington U.", "U. of Chicago"): 1, ("U. of Chicago", "Washington U."): -1}
+    assert rec == {("Washington U.", "U. of Chicago"): 1}
 
 
 def test_modes_differ_on_a_busy_loser():
@@ -137,3 +137,40 @@ def test_ratings_stay_the_default(monkeypatch):
     import inspect
     src = inspect.getsource(Q.fieldFromRounds)
     assert 'os.environ.get("XCP_ATLARGE_BY", "rating")' in src
+
+
+def test_bradley_terry_weighs_who_you_beat():
+    # S beat the two best teams once; C beat two weak teams; T1 > T2 > W1, W2
+    games = {("T1", "T2"): 3, ("T1", "W1"): 3, ("T2", "W1"): 3, ("T1", "W2"): 3, ("T2", "W2"): 3,
+             ("S", "T1"): 1, ("S", "T2"): 1, ("T1", "S"): 1,
+             ("C", "W1"): 1, ("C", "W2"): 1}
+    bt = Q.bradleyTerry(games)
+    assert bt["T1"] > bt["T2"] > bt["W1"]
+    assert bt["S"] > bt["C"]
+
+
+def test_bradley_terry_mode_picks_by_it():
+    queues = {"x": ["S"], "y": ["C"]}
+    rank = {"S": 0.5, "C": 0.1}
+    got = Q.atLargeTeams(queues, 1, lambda k, s: {"S": 40.0, "C": 60.0}[s],
+                         record={("C", "W"): 2, ("W", "C"): -2}, mode="bt", rank=rank)
+    assert got == [("x", "S")]
+
+
+def test_select_field_by_bradley_terry():
+    rule = {"teams_auto": 1, "teams_at_large": 1, "at_large_by": "wins", "at_large_mode": "bt",
+            "ind_auto": 0, "ind_at_large": 0, "team_size": 7}
+
+    def region(tag, schools, base):
+        rows, pid, t = [], 0, base
+        for _lap in range(7):
+            for s in schools:
+                pid += 1
+                rows.append((f"{tag}{pid}", s, t, 50.0))
+                t += 1.0
+        return rows
+    rounds = {"w": region("w", ["W1", "W2"], 900.0), "e": region("e", ["E1", "E2"], 950.0)}
+    why = {}
+    Q.selectField(rule, rounds, explain=why,
+                  meetings=lambda squads: {("W2", "E1"): 2, ("W2", "W1"): 1, ("E1", "E2"): 1})
+    assert why["at_large"] == [("w", "W2")] and why["by"] == "bt"
