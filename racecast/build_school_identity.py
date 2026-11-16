@@ -22,6 +22,7 @@ Swap discipline: build into _new, rename over the old -- readers keep
 the previous tables until the new ones are whole.
 """
 
+import os
 import re
 import sys
 import time
@@ -438,8 +439,55 @@ def _teamRows(cur):
             tables.append(table)
     if built:
         return tables
+    # ★ BUILT AHEAD WHEN THE PIPELINE CAN (2026-11-16; run 20261116_154245:
+    #   this scan was ~530 s of 10b's 1,039, in line). Its inputs -- results'
+    #   person_id, school and team_id, and anet_team -- are final once the 09
+    #   fills are done, so 09e_si_team_rows fills a table of the same rows
+    #   beside 09d and the rankings streams (--team-rows-into), and the
+    #   pipeline names it here (XCP_SI_TEAM_RAW) only if that step passed.
+    #   It is copied whole and dropped; without it, the scan runs as before.
+    pre = (os.environ.get("XCP_SI_TEAM_RAW") or "").strip()
+    if pre:
+        cur.execute("SELECT to_regclass(%s)", (pre,))
+        if cur.fetchone()[0] is not None:
+            _t = time.time()
+            cur.execute("CREATE TEMP TABLE si_team_raw AS "
+                        f"SELECT src, person_id, school, state, n FROM {pre}")
+            n = cur.rowcount
+            cur.execute(f"DROP TABLE {pre}")
+            print(f"    anet team rows: {n:,} from {pre}, built beside the "
+                  f"rankings ({time.time() - _t:.0f}s)", flush=True)
+            return tables
     cur.execute("CREATE TEMP TABLE si_team_raw (src text, person_id bigint, "
                 "school text, state text, n bigint)")
+    _fillTeamRows(cur, "si_team_raw", tables)
+    return tables
+
+
+def _teamTables(cur):
+    tables = []
+    for table in ("results", "results_tf"):
+        cur.execute("""SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = %s
+                         AND column_name = 'team_id'""", (table,))
+        if cur.fetchone() is not None:
+            tables.append(table)
+    return tables
+
+
+def teamRowsInto(target):
+    """--team-rows-into: si_team_raw's rows into an unlogged table of their
+    own, for 10b to copy (see _teamRows). Committed."""
+    with getConn() as conn:
+        cur = conn.cursor()
+        cur.execute(f"DROP TABLE IF EXISTS {target}")
+        cur.execute(f"CREATE UNLOGGED TABLE {target} (src text, person_id bigint, "
+                    "school text, state text, n bigint)")
+        _fillTeamRows(cur, target, _teamTables(cur))
+        conn.commit()
+
+
+def _fillTeamRows(cur, target, tables):
     for table in tables:
         # ! IT SAYS WHERE IT IS. This is a full pass over results
         #   (39M rows / 12 GB) and then results_tf (191M / 72 GB), and
@@ -450,7 +498,7 @@ def _teamRows(cur):
         print(f"    anet team rows: scanning {table} for the anet teams its "
               f"rows use...", flush=True)
         cur.execute(f"""
-            INSERT INTO si_team_raw (src, person_id, school, state, n)
+            INSERT INTO {target} (src, person_id, school, state, n)
             -- ⚠⚠ anet_state FIRST. `anet_team.state` IS OUR GUESS, NOT
             --    anet's (anet_teams.storeTeam: `state` is the queue's
             --    (school, state) pair, inferred from where the athletes
@@ -473,7 +521,6 @@ def _teamRows(cur):
         """, (table,))
         print(f"      {cur.rowcount:,} rows ({time.time() - _t:.0f}s)",
               flush=True)
-    return tables
 
 
 # ⚠⚠ NO NAME FILTER ANY MORE (owner, 2026-09-17: "isn't this quite easy to
@@ -1539,4 +1586,7 @@ def buildCollegePersonState(conn):
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--team-rows-into":
+        teamRowsInto(sys.argv[2])            # 09e_si_team_rows (see _teamRows)
+    else:
+        main()

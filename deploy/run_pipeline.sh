@@ -1978,6 +1978,11 @@ fi
 stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
        09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG" \
        09c_school_names "$PY -u scripts/merge_school_names.py --write"
+# ★ 10b's TEAM-ROW SCAN FROM HERE, IN THE BACKGROUND (2026-11-16; ~530 s of
+#   10b in line on run 20261116_154245). It reads results' person_id, school
+#   and team_id and anet_team, none written after the fills; 10b copies the
+#   table only when this step passed (XCP_SI_TEAM_RAW, set at the join).
+bgstep 09e_si_team_rows "$PY" -u racecast/build_school_identity.py --team-rows-into si_team_raw_pre
 
 
 # ---- boards and pages ----------------------------------------------- #
@@ -2194,6 +2199,11 @@ if [ "${XCP_KAILO:-1}" != "0" ]; then
   bgstep 16c_kailo_record "$PY" -u scripts/kailo_compare.py --record
 fi
 # (10e_meet_units ran in the background beside the pack since 2026-11-07)
+bgjoin 09e_si_team_rows
+# only a table this run built and passed (never one an earlier run left)
+if [ "$DRY" -eq 0 ] && willRun 09e_si_team_rows && ! failed 09e_si_team_rows; then
+  export XCP_SI_TEAM_RAW=si_team_raw_pre
+fi
 stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
        10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
        10g_season_ranks "$PY -u racecast/build_season_ranks.py"
