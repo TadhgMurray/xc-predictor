@@ -3529,7 +3529,13 @@ _SEASON_UNIT_KEYS = "tmp_season_unit_keys"
 #   share a sort, and so the order a season's float sums add in; keeping it
 #   keeps the sums' inputs as they were. XCP_SEASON_OVERLAP_SHARDS lowers it
 #   while the indexes build (fewer sessions and sort memory beside them).
-_SEASON_BESIDE_INDEXES = os.environ.get("XCP_SEASON_BESIDE_INDEXES", "1") != "0"
+# ⚠ OFF BY DEFAULT SINCE 2026-11-16 (run 20261113_150959): the indexes were
+#   done at 20:10 and the season thread had printed no shard by 20:59 -- the
+#   eight shards, which normally finish in ~7 min, never reported, and the
+#   run went no further. Cause not yet found (a lock wait or the overlap's
+#   load); the proven order -- indexes, then the season -- is the default
+#   again. XCP_SEASON_BESIDE_INDEXES=1 turns the overlap back on.
+_SEASON_BESIDE_INDEXES = os.environ.get("XCP_SEASON_BESIDE_INDEXES", "0") == "1"
 _SEASON_OVERLAP_SHARDS = max(0, int(os.environ.get("XCP_SEASON_OVERLAP_SHARDS") or 0))
 
 # ★ THE TWO POST-SWAP VACUUMs ON TWO CONNECTIONS AT ONCE (2026-11-13: 78 s

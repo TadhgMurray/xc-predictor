@@ -233,6 +233,33 @@ fi
 FAILED=""
 T_START=$(date +%s)
 
+# ★ THE STALL WATCHER (2026-11-16; three silent stalls in a week: 03_pro_flag
+#   20 h, 06c 3 h, 10_rankings_finish's season build an hour+ -- each time
+#   nothing recorded what the database was doing). Every 5 minutes: when no
+#   log in this run's folder has changed for XCP_STALL_MIN (45) minutes, it
+#   writes scripts/stall_snapshot.py's picture of every session -- what runs,
+#   for how long, what it waits on, who blocks it -- to stall_<HHMM>.txt and
+#   a line to the summary, then again every 15 minutes while it lasts.
+#   Report only: it kills nothing. XCP_STALL_MIN=0 turns it off.
+_stallWatch() {
+  local last_dump=0 now newest age
+  while kill -0 "$1" 2>/dev/null; do
+    sleep 300
+    now=$(date +%s)
+    newest=$(find "$LOGDIR" -maxdepth 1 -name '*.log' ! -name summary.log -newermt "@$(( now - ${XCP_STALL_MIN:-45} * 60 ))" -print -quit 2>/dev/null)
+    [ -n "$newest" ] && continue
+    [ $(( now - last_dump )) -lt 900 ] && continue
+    last_dump=$now
+    age=$(( (now - $(stat -c %Y "$(ls -t "$LOGDIR"/*.log | head -1)")) / 60 ))
+    "$PY" "$ROOT/scripts/stall_snapshot.py" "$LOGDIR/stall_$(date +%H%M).txt" >/dev/null 2>&1
+    echo "  STALL? no step log has changed for ${age} min (newest: $(basename "$(ls -t "$LOGDIR"/*.log | grep -v summary | head -1)")); the database's sessions: stall_$(date +%H%M).txt" >> "$SUMMARY"
+  done
+}
+if [ "$DRY" -eq 0 ] && [ "${XCP_STALL_MIN:-45}" != "0" ]; then
+  _stallWatch $$ 9>&- &
+  _STALL_PID=$!
+fi
+
 # _stampTo <file> -- copy stdin to stdout unchanged, and to <file> with the
 # wall-clock time in front of every line.
 # ★ WHY (2026-10-05, owner: "speed up first"): 08_golive took 2.6 h of a
@@ -301,6 +328,7 @@ summarise() {
   #   printed above the banner on every finish, failed or not. Edit the
   #   file as items are done or added.
   rm -f "$LOGDIR"/.club_cache.*            # the run's club tables (07_pack), done with
+  [ -n "${_STALL_PID:-}" ] && kill "$_STALL_PID" 2>/dev/null
   if [ -s deploy/AFTER_PIPELINE.md ]; then
     echo ""
     echo "==== AFTER THIS RUN (deploy/AFTER_PIPELINE.md) ===="
