@@ -616,7 +616,8 @@ if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   #   file exists (a missing one would record the ratings under its name).
   #   XCP_FORECAST_RAW=0 skips it.
   RAW_MODEL="${XCP_RACE_MODEL_RAW:-$(dirname "${XCP_RACE_MODEL:-$ROOT/model/data/race_trees.pkl}")/race_trees_raw.pkl}"
-  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then
+  # ! off since the honest run (2026-11-16): XCP_FORECAST_RAW=1 freezes it again
+  if [ "${XCP_FORECAST_RAW:-0}" = "1" ] && [ -f "$RAW_MODEL" ]; then
     step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
       "$PY" -u racecast/build_meet_forecasts.py
   fi
