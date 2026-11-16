@@ -581,6 +581,57 @@ def raceTable(X, y_abs, base_abs, slices, fidx, level_features=LEVEL_FEATURES,
     return R, L
 
 
+# ★ WHERE COLLEGE LOSES (owner, 2026-11-16: "we are consistently doing worse
+#   than lacctic and kailo ... we must do something else"). The honest run:
+#   college fields of 100+ 4.36% mean, every college race 11.85%, against
+#   Kailo's published 2.84%. This splits the college race-morning miss into
+#   the race's level and the runners against each other, by what might
+#   cause it: a course with no difficulty number, a runner still on a
+#   high-school form, few races in the form, a small field.
+def collegeReport(XvA, fidx, tv, sl, tot_m, yav, lead_r):
+    import numpy as np
+    out = ["\nCOLLEGE, where the miss is (race morning; mean |% miss| = Kailo's statistic):"]
+    err = tot_m - yav                                   # ln, + = said slower
+    level = np.empty_like(err)
+    for s, e in sl:
+        level[s:e] = err[s:e].mean()
+    within = err - level
+    rows0 = np.repeat(lead_r == 0, [e - s for s, e in sl])
+    size = np.repeat(np.array([e - s for s, e in sl]), [e - s for s, e in sl])
+    col = (tv == 1) & rows0
+    if not col.any():
+        return out + ["  no college rows"]
+
+    def pct(x):
+        return 100.0 * (np.exp(np.abs(x)) - 1.0)
+
+    def col_(name):
+        return XvA[:, fidx[name]] if name in fidx else np.full(len(err), np.nan)
+    cell = col_("has_cell")
+    change = col_("level_change")
+    form_n = col_("form_n")
+    groups = [("all college", col),
+              ("course has a difficulty", col & (cell == 1)),
+              ("course has none", col & (cell != 1)),
+              ("runner on a high-school form", col & (change > 0)),
+              ("runner on a college form", col & ~(change > 0)),
+              ("form from 1-2 races", col & (form_n <= 2)),
+              ("form from 3-5 races", col & (form_n >= 3) & (form_n <= 5)),
+              ("form from 6+ races", col & (form_n >= 6)),
+              ("field under 100", col & (size < 100)),
+              ("field 100+", col & (size >= 100))]
+    out.append(f"  {'':32}{'runners':>9}{'mean':>8}{'median':>8}{'level':>8}{'within':>8}{'bias':>8}")
+    for name, m in groups:
+        if m.sum() < 50:
+            continue
+        out.append(f"  {name:32}{int(m.sum()):>9,}{pct(err[m]).mean():>7.2f}%"
+                   f"{np.median(pct(err[m])):>7.2f}%{pct(level[m]).mean():>7.2f}%"
+                   f"{pct(within[m]).mean():>7.2f}%{100 * np.median(err[m]):>+7.2f}%")
+    out.append("  (level = the race's own mean miss, the same for its whole field; within = "
+               "the runner against that; their means need not add up)")
+    return out
+
+
 def levelTarget(y_abs, base_abs, stat="mean"):
     """One race's level target. Pure but for numpy."""
     import numpy as np
@@ -1047,6 +1098,9 @@ def main():
     ap.add_argument("--train-frac", type=float, default=1.0,
                     help="fit on this share of the training races (whole races); the "
                          "validation season stays whole. 0.35 for a quick test")
+    ap.add_argument("--dump-val", default=None, metavar="NPZ",
+                    help="write every race-morning validation prediction here "
+                         "(kailo_compare.py --dump)")
     ap.add_argument("--site", default=None, metavar="NPZ",
                     help="model/race_site.py's file: the transformer and the site's blend "
                          "beside every other basis, on the races it sampled")
@@ -1180,6 +1234,21 @@ def main():
     #   (race_rows.pageBase) wherever page_base is 1, so "page" is the served
     #   clock with no correction at all
     page = base_page_abs[val].copy()
+    # ★ EVERY VALIDATION PREDICTION, FOR A FAIR HEAD-TO-HEAD (owner,
+    #   2026-11-16: "we are consistently doing worse than lacctic and kailo
+    #   (to my knowledge)"). --dump-val writes each race-morning row of the
+    #   validation season: its race key, the runner, our seconds, the
+    #   page's and the actual; scripts/kailo_compare.py --dump scores Kailo's
+    #   races on them. On a table built --asof-dir nothing in them saw the race.
+    if a.dump_val:
+        rows0 = lead[val] == 0
+        keys_all = z["race_keys"]
+        np.savez_compressed(
+            a.dump_val, key=np.array([str(keys_all[int(i)]) for i in rv[rows0]]),
+            pid=pid[val][rows0].astype(np.int64),
+            model_s=np.exp(tot_m[rows0]), page_s=np.exp(page[rows0]),
+            actual_s=np.exp(yav[rows0]))
+        print(f"  validation predictions -> {a.dump_val} ({int(rows0.sum()):,} rows)")
     lines.append("\nTIMES, the validation season: mean |% miss| is Kailo's statistic")
     lines.append(f"  {'':18} {'median':>7} {'mean':>7} {'college':>8} {'clean races':>12} "
                  f"{'known dist':>11} {'college 100+':>13} {'published':>10}")
@@ -1223,6 +1292,7 @@ def main():
         parts.append(f"  bias, {lab}: {np.median(sm[sel]):+.2f}% ({by})")
     lines.append("  median signed miss on published races, + = said slower than they ran:")
     lines += parts
+    lines += collegeReport(XvA, fidx, tv, sl, tot_m, yav, lead_r)
     leads_seen = sorted(set(lead_r.tolist()) - {0})
     if leads_seen:
         lines.append("  by how far ahead (trees; median / mean on races with a known distance):")
