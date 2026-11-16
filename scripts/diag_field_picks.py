@@ -89,9 +89,12 @@ def main(argv=None):
     print("\nautomatic:")
     for k, schools in (picks.get("auto") or {}).items():
         print(f"  {rname(k):<70} {', '.join(schools)}")
-    print("\nat-large, in pick order:")
+    pts = picks.get("points") or []
+    print(f"\nat-large, in pick order (by {picks.get('by') or 'ratings'}; "
+          f"wins-losses against the board and the teams already in):")
     for i, (k, school) in enumerate(picks.get("at_large") or [], 1):
-        print(f"  {i:>2}. {school:<34} from {rname(k)}")
+        wl = f"{pts[i - 1][0]}-{pts[i - 1][1]}" if i <= len(pts) else ""
+        print(f"  {i:>2}. {school:<34} {wl:<6} from {rname(k)}")
     if a.school and field:
         by = collections.Counter(field.values())
         print()

@@ -18,9 +18,12 @@ qualifiers from its rounds, by the meet's published rules.
   a committee makes -- approximated (atLargeTeams, atLargeIndividuals):
     teams        regional finish order is kept within a region (no team ahead
                  of one that beat it at its regional, every manual says so);
-                 across regions, the strongest next team by its top five's
-                 season ratings (the committees count wins over qualified
-                 teams, which the ratings stand in for)
+                 across regions, for the NCAA rules (at_large_by "wins"),
+                 the next team with the most season wins over the teams
+                 on the board and already in -- the "Kolas" count
+                 (seasonMeetings); else, or with no meetings, the
+                 strongest by its top five's season ratings.
+                 XCP_ATLARGE_BY=rating puts the ratings back
     individuals  NCAA DII's published ratio, [team qualifiers from the
                  region] / [regional place], for every rule with at-large
                  individuals
@@ -60,7 +63,7 @@ RULES = (
     {"key": "ncaa_d1", "source": "tfrrs",
      "meet": rf"ncaa.*{_D1}.*champ", "round": rf"ncaa.*{_D1}.*region",
      "not": r"region|pre-?nat|pre-?champ", "window": 21,
-     "teams_auto": 2, "teams_at_large": 14, "ind_auto": 4, "ind_auto_within": 25,
+     "at_large_by": "wins", "teams_auto": 2, "teams_at_large": 14, "ind_auto": 4, "ind_auto_within": 25,
      "ind_at_large": 2, "team_size": 7,
      "cite": "2025-26 NCAA DI Cross Country Pre-Championships Manual, sections 2.1 and 2.4: "
              "9 regions; top 2 teams each; 14 at-large; first 4 not on a qualifying team "
@@ -68,7 +71,7 @@ RULES = (
     {"key": "ncaa_d2", "source": "tfrrs",
      "meet": rf"ncaa.*{_D2}.*champ", "round": rf"ncaa.*{_D2}.*region",
      "not": r"region|pre-?nat|pre-?champ", "window": 21,
-     "teams_auto": 3, "teams_at_large": 10, "ind_auto": 2, "ind_auto_top": 5,
+     "at_large_by": "wins", "teams_auto": 3, "teams_at_large": 10, "ind_auto": 2, "ind_auto_top": 5,
      "ind_at_large": 8, "team_size": 7,
      "cite": "2026 NCAA DII Cross Country Championships Selection Procedures: 8 regions; "
              "top 3 teams each; 10 at-large; top 2 not on a qualifying team and anyone "
@@ -76,7 +79,7 @@ RULES = (
     {"key": "ncaa_d3", "source": "tfrrs",
      "meet": rf"ncaa.*{_D3}.*champ", "round": rf"ncaa.*{_D3}.*region",
      "not": r"region|pre-?nat|pre-?champ", "window": 21,
-     "teams_auto": 1, "teams_at_large": 22, "ind_auto": 7, "ind_at_large": 0,
+     "at_large_by": "wins", "teams_auto": 1, "teams_at_large": 22, "ind_auto": 7, "ind_at_large": 0,
      "team_size": 7,
      "cite": "2025-26 NCAA DIII Cross Country Pre-Championships Manual, section 2.1: "
              "10 regions; 1 team each; 22 at-large; top 7 not on a qualifying team"},
@@ -219,24 +222,84 @@ def teamStrength(rows, school):
     return sum(rs) / len(rs) if rs else -math.inf
 
 
-def atLargeTeams(queues, n, strength, taken=()):
+def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None):
     """n picks from per-round queues of teams in regional finish order: each
     pick the strongest team at the head of any queue, so no team goes
     ahead of one that beat it at its own round. queues: {round: [school]};
-    a school already in (`taken`, or picked from another queue) is passed."""
+    a school already in (`taken`, or picked from another queue) is passed.
+
+    ★ BY SEASON WINS WHEN THERE IS A RECORD (owner, 2026-11-16, after the
+      D3 projection sent 7 West women's teams for 5 and missed Amherst,
+      Stevens Point, St. Olaf, Colby: "do the kolas fix"). The committees
+      compare the teams on the board by results -- head to head, against
+      ranked teams -- not by ratings. record: {(a, b): net meetings a won
+      over b this season}; each head scores a point for every team on the
+      board or already in that it beat on balance (the "Kolas" count),
+      fewer losses next, then strength. A team that met none of them has
+      no points and falls back on strength among its equals. points_out, a
+      list, gets (points, losses) of each pick."""
     q = {k: list(v) for k, v in queues.items()}
     out, seen = [], set(taken)
     for _ in range(n):
         for v in q.values():
             while v and v[0] in seen:
                 v.pop(0)
-        heads = [(strength(k, v[0]), k) for k, v in q.items() if v]
-        if not heads:
+        if not any(q.values()):
             break
-        _s, k = max(heads, key=lambda h: (h[0], str(h[1])))
+        board = [v[0] for v in q.values() if v]
+        rivals = set(board) | seen
+
+        def tally(s):
+            if not record:
+                return (0, 0)
+            nets = [record.get((s, t), 0) for t in rivals if t != s]
+            return (sum(1 for x in nets if x > 0), sum(1 for x in nets if x < 0))
+        heads = []
+        for k, v in q.items():
+            if v:
+                w, l = tally(v[0])
+                heads.append(((w, -l, strength(k, v[0])), k, (w, l)))
+        _s, k, wl = max(heads, key=lambda h: (h[0], str(h[1])))
         out.append((k, q[k].pop(0)))
+        if points_out is not None:
+            points_out.append(wl)
         seen.add(out[-1][1])
     return out
+
+
+def seasonRecord(races, teams):
+    """{(a, b): a's wins over b minus b's over a} from this season's races.
+    races: [[(school spelling, seconds)]] -- every finisher of each race;
+    teams: {spelling: candidate school}. A race counts for a pair when both
+    put five finishers in it; places are among teams of five or more, the
+    sum of each team's top five (teamOrder's scoring). Pure."""
+    rec = collections.Counter()
+    for rows in races:
+        by = collections.defaultdict(list)
+        for sp, sec in rows:
+            if sp:
+                by[sp].append(sec)
+        scoring = {sp for sp, v in by.items() if len(v) >= 5 and isTeam(sp)}
+        mine = {}
+        for sp in scoring:
+            if sp in teams and teams[sp] not in mine.values():
+                mine[sp] = teams[sp]
+        if len(mine) < 2:
+            continue
+        pts, place = collections.defaultdict(list), 0
+        for sp, sec in sorted(((sp, sec) for sp, sec in rows if sp in scoring), key=lambda x: x[1]):
+            place += 1
+            if len(pts[sp]) < 5:
+                pts[sp].append(place)
+        score = {mine[sp]: sum(pts[sp]) for sp in mine}
+        names = sorted(score)
+        for i, a in enumerate(names):
+            for b in names[i + 1:]:
+                if score[a] != score[b]:
+                    w = 1 if score[a] < score[b] else -1
+                    rec[(a, b)] += w
+                    rec[(b, a)] -= w
+    return dict(rec)
 
 
 def atLargeIndividuals(queues, n, n_teams):
@@ -254,14 +317,16 @@ def atLargeIndividuals(queues, n, n_teams):
     return out
 
 
-def selectField(rule, rounds, pools=None, labels=None, explain=None):
+def selectField(rule, rounds, pools=None, labels=None, explain=None, meetings=None):
     """{person_id: school}: the championship's field from its rounds by the
     rule. rounds: {round key: [(pid, school, seconds, rating)]}; pools: other
     races at-large teams may also come from (rule["at_large_from"]), same
     shape -- no automatic places and no individuals from them. explain, a
     dict, is told how each team got in (owner, 2026-11-10: "can it tell
     at-larges?"): {"auto": {round: [school]}, "at_large": [(round, school)]
-    in pick order}."""
+    in pick order}. meetings({school: {pid}}) -> {(a, b): net wins}, the
+    season's record of the teams (seasonMeetings), for a rule whose
+    at-large teams go by wins (atLargeTeams)."""
     size = rule.get("team_size", 7)
     rounds, pools = _oneSpelling(rounds, pools or {})
     orders = {k: teamOrder(v) for k, v in rounds.items()}
@@ -274,11 +339,28 @@ def selectField(rule, rounds, pools=None, labels=None, explain=None):
     if explain is not None:
         explain["auto"] = {k: list(v) for k, v in qualified.items()}
         explain["at_large"] = []
+    record = None
+    if meetings is not None and rule.get("at_large_by") == "wins" and rule.get("teams_at_large"):
+        squads = collections.defaultdict(set)
+        for rows in rows_of.values():
+            for r in rows:
+                if r[1] and isTeam(r[1]):
+                    squads[r[1]].add(r[0])
+        try:
+            record = meetings(dict(squads)) or None
+        except Exception as exc:                        # noqa: BLE001
+            print(f"qualifying: season record unavailable ({type(exc).__name__}: {exc}); "
+                  f"at-large by ratings", flush=True)
+            record = None
+    points = [] if explain is not None else None
     field = {}
     for k, school in atLargeTeams(queues, rule.get("teams_at_large", 0),
-                                  lambda k, s: teamStrength(rows_of[k], s), taken=auto):
+                                  lambda k, s: teamStrength(rows_of[k], s), taken=auto,
+                                  record=record, points_out=points):
         if explain is not None:
             explain["at_large"].append((k, school))
+            explain["by"] = "wins" if record else "ratings"
+            explain["points"] = points
         if k in qualified:
             qualified[k].append(school)
         else:
@@ -621,7 +703,90 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     explain = None
     if info is not None:
         explain = info.setdefault("picks", {})
-    return selectField(rule, rounds, pools, labels, explain), n_pred
+    meetings = None
+    if (cur is not None and rule.get("at_large_by") == "wins"
+            and os.environ.get("XCP_ATLARGE_BY", "wins") != "rating"):
+        skip = set(rounds) | {m for m, _n, _d in seen}
+
+        def meetings(squads):
+            # its own savepoint: a failed read must not abort the caller's
+            # transaction (selectField then picks by ratings)
+            cur.execute("SAVEPOINT q_meetings")
+            try:
+                got = seasonMeetings(cur, rule, day, squads, skip=skip)
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT q_meetings")
+                raise
+            cur.execute("RELEASE SAVEPOINT q_meetings")
+            return got
+    return selectField(rule, rounds, pools, labels, explain, meetings), n_pred
+
+
+# ★ THE SEASON'S HEAD TO HEAD, FOR THE AT-LARGE PICKS (owner, 2026-11-16:
+#   "do the kolas fix"). A team is found by its runners, not its name
+#   (WashU raced as "Washington U." last year and "Washington (Mo.)" now):
+#   the spelling most of a squad's runners raced under this season is that
+#   squad's, at every meet of the season before the championship -- but not
+#   the rounds themselves, whose order the queues already keep.
+def seasonMeetings(cur, rule, day, squads, skip=()):
+    """{(a, b): net wins} among `squads` ({school: {pid}}) this season, from
+    every race before `day` (ISO) but the rule's rounds and championship
+    and the meets in `skip`."""
+    pid_to = {}
+    for school, pids in squads.items():
+        for p in pids:
+            pid_to.setdefault(int(p), school)
+    if len(squads) < 2 or not pid_to:
+        return {}
+    season = _seasonOf(day)
+    lo = f"{int(season)}-07-01"
+    cur.execute("""
+        SELECT person_id, meet_id, div_id, school
+        FROM   results
+        WHERE  source = %s AND person_id = ANY(%s) AND time_seconds > 0
+          AND  date >= %s AND date < %s""",
+                (rule["source"], list(pid_to), lo, str(day)[:10]))
+    votes = collections.defaultdict(collections.Counter)
+    races = set()
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        pid, mid, div, sp = int(row[0]), int(row[1]), int(row[2]), row[3]
+        if mid in skip or not sp:
+            continue
+        votes[sp][pid_to[pid]] += 1
+        races.add((mid, div))
+    teams = {}
+    for sp, c in votes.items():
+        school, n = c.most_common(1)[0]
+        if n >= 3:
+            teams[sp] = school
+    if not races or len(set(teams.values())) < 2:
+        return {}
+    meet_ids = sorted({m for m, _d in races})
+    names = {}
+    if rule["source"] == "tfrrs":
+        cur.execute("SELECT meet_id, meet_name FROM meets_tfrrs WHERE sport = 'XC' AND meet_id = ANY(%s)",
+                    (meet_ids,))
+    else:
+        cur.execute("SELECT DISTINCT meet_id, meet_name FROM meets WHERE meet_id = ANY(%s)", (meet_ids,))
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        names[int(row[0])] = (row[1] or "").lower()
+    drop = {m for m, n in names.items()
+            if re.search(rule["round"], n) or re.search(rule["meet"], n)}
+    keep = {(m, d) for m, d in races if m not in drop}
+    cur.execute("""
+        SELECT meet_id, div_id, school, time_seconds
+        FROM   results
+        WHERE  source = %s AND meet_id = ANY(%s) AND time_seconds > 0""",
+                (rule["source"], sorted({m for m, _d in keep})))
+    by = collections.defaultdict(list)
+    for row in cur.fetchall():
+        row = tuple(row.values()) if isinstance(row, dict) else tuple(row)
+        key = (int(row[0]), int(row[1]))
+        if key in keep:
+            by[key].append((row[2], float(row[3])))
+    return seasonRecord(list(by.values()), teams)
 
 
 # ★ LAST YEAR'S ROUNDS, RUN THIS YEAR (owner's nightly, 2026-11-04: the
