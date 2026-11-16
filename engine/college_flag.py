@@ -36,6 +36,8 @@ Writes college_first_season (person_id, first_season). Changes no pool itself.
 """
 
 import sys
+import time
+from contextlib import contextmanager
 sys.path.insert(0, 'scripts')
 
 def loadSchools(cur):
@@ -351,22 +353,38 @@ def report(cur):
             print(f"    {pool:<12} {seasons:>8,}   top rating {top}")
 
 
+# ★ ONE TIMING LINE PER PHASE (2026-11-16), as engine/season_level.py:
+#   04h1 runs in the background and only its total was in the summary.
+@contextmanager
+def _phase(label):
+    t0 = time.time()
+    try:
+        yield
+    finally:
+        print(f"    [time] {label}: {time.time() - t0:.0f}s", flush=True)
+
+
 def main(write=False):
     from database import getConn
 
+    t_all = time.time()
     with getConn() as conn:
         with conn.cursor() as cur:
-            schools = loadSchools(cur)
+            with _phase("load schools"):
+                schools = loadSchools(cur)
             print(f"[college] {len(schools):,} distinct school strings")
-            coll = collegeSchools(schools)
+            with _phase("classify schools"):
+                coll = collegeSchools(schools)
             print(f"[college] {len(coll):,} resolve to a university "
                   f"(school alone -- grade and source cannot decide)")
             if not coll:
                 print("[college] none -- check school_levels.pkl is loaded")
                 return
 
-            coll_grades, upper_grades = gradeSets(cur)
-            veto_grades = schoolGradeVeto(cur)
+            with _phase("grade sets"):
+                coll_grades, upper_grades = gradeSets(cur)
+            with _phase("school-grade veto"):
+                veto_grades = schoolGradeVeto(cur)
             print(f"[college] {len(veto_grades):,} grade spellings mean a "
                   f"school grade 1-12 and VETO a collegiate row")
             print(f"[college] grades: {len(upper_grades):,} spellings mean "
@@ -374,18 +392,22 @@ def main(write=False):
             print(f"[college]         {len(coll_grades):,} spellings look like a "
                   f"college class -- NOT used, see the note in buildFlags")
 
-            made = buildFlags(cur, coll, coll_grades, upper_grades,
-                              veto_grades)
+            with _phase("build flags"):
+                made = buildFlags(cur, coll, coll_grades, upper_grades,
+                                  veto_grades)
             for name, n in made.items():
                 print(f"[college] {name}: {n:,} athletes")
-            report(cur)
+            with _phase("report"):
+                report(cur)
 
             if write:
-                conn.commit()
+                with _phase("commit"):
+                    conn.commit()
                 print("[college] committed")
             else:
                 conn.rollback()
                 print("[college] DRY RUN -- pass --write to keep the table")
+            print(f"    [time] total: {time.time() - t_all:.0f}s", flush=True)
 
 
 if __name__ == "__main__":
