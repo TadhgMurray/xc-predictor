@@ -33,7 +33,11 @@ def main(argv=None):
     ap.add_argument("--day", required=True, help="this year's date of the championship (ISO)")
     ap.add_argument("--div", type=int, required=True)
     ap.add_argument("--school", action="append", default=[])
+    ap.add_argument("--compare", action="store_true",
+                    help="also list the at-large picks by ratings and by each wins mode")
     a = ap.parse_args(argv)
+    if a.compare:
+        os.environ.setdefault("XCP_ATLARGE_BY", "wins")
 
     import psycopg2.extras
     from database import getConn
@@ -55,9 +59,22 @@ def main(argv=None):
         seen_rounds = {}
         _orig = Q.selectField
 
+        call = {}
+
         def _spy(rule, rounds, *a, **k):
             seen_rounds.update(rounds)
-            return _orig(rule, rounds, *a, **k)
+            args = list(a)
+            if len(args) >= 4 and args[3] is not None:
+                # the season's record, read once, for the variants below
+                real, memo = args[3], {}
+
+                def once(squads):
+                    if "r" not in memo:
+                        memo["r"] = real(squads)
+                    return memo["r"]
+                args[3] = once
+            call.update(rule=rule, rounds=rounds, args=args, kw=k)
+            return _orig(rule, rounds, *args, **k)
         Q.selectField = _spy
         why = {}
         try:
@@ -95,6 +112,17 @@ def main(argv=None):
     for i, (k, school) in enumerate(picks.get("at_large") or [], 1):
         wl = f"{pts[i - 1][0]}-{pts[i - 1][1]}" if i <= len(pts) else ""
         print(f"  {i:>2}. {school:<34} {wl:<6} from {rname(k)}")
+    if a.compare and call.get("args") and len(call["args"]) >= 4:
+        print("\nat-large picks by each method:")
+        for mode in ("rating",) + Q.AT_LARGE_MODES:
+            ex = {}
+            args = list(call["args"])
+            args[2] = ex
+            rule = dict(call["rule"], at_large_mode=mode)
+            if mode == "rating":
+                args[3] = None
+            Q.selectField(rule, call["rounds"], *args, **call["kw"])
+            print(f"  {mode:<7} " + ", ".join(s for _k, s in ex.get("at_large") or []))
     if a.school and field:
         by = collections.Counter(field.values())
         print()

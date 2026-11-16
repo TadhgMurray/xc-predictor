@@ -114,3 +114,26 @@ def test_season_meetings_follow_the_runners_and_skip_regionals():
     squads = {"Washington U.": set(range(200, 205)), "U. of Chicago": set(range(100, 105))}
     rec = Q.seasonMeetings(_Cur(res, names), rule, "2026-11-21", squads)
     assert rec == {("Washington U.", "U. of Chicago"): 1, ("U. of Chicago", "Washington U."): -1}
+
+
+def test_modes_differ_on_a_busy_loser():
+    # B raced everyone: 3 wins, 6 losses; A met two teams and beat both
+    queues = {"x": ["A"], "y": ["B"]}
+    rec = {}
+    for t in ("T1", "T2"):
+        rec[("A", t)], rec[(t, "A")] = 1, -1
+    for t in ("T1", "T2", "T3"):
+        rec[("B", t)], rec[(t, "B")] = 1, -1
+    for t in ("T4", "T5", "T6", "T7", "T8", "T9"):
+        rec[("B", t)], rec[(t, "B")] = -1, 1
+    taken = {f"T{i}" for i in range(1, 10)}
+    pick = lambda m: Q.atLargeTeams(queues, 1, lambda k, s: 50.0, taken=taken, record=rec, mode=m)[0][1]
+    assert pick("wins") == "B"
+    assert pick("net") == "A" and pick("pct") == "A"
+
+
+def test_ratings_stay_the_default(monkeypatch):
+    monkeypatch.delenv("XCP_ATLARGE_BY", raising=False)
+    import inspect
+    src = inspect.getsource(Q.fieldFromRounds)
+    assert 'os.environ.get("XCP_ATLARGE_BY", "rating")' in src

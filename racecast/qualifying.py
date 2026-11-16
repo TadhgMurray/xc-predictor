@@ -21,9 +21,9 @@ qualifiers from its rounds, by the meet's published rules.
                  across regions, for the NCAA rules (at_large_by "wins"),
                  the next team with the most season wins over the teams
                  on the board and already in -- the "Kolas" count
-                 (seasonMeetings); else, or with no meetings, the
-                 strongest by its top five's season ratings.
-                 XCP_ATLARGE_BY=rating puts the ratings back
+                 (seasonMeetings), with XCP_ATLARGE_BY=wins|net|pct;
+                 by default, or with no meetings, the strongest by its
+                 top five's season ratings
     individuals  NCAA DII's published ratio, [team qualifiers from the
                  region] / [regional place], for every rule with at-large
                  individuals
@@ -222,7 +222,10 @@ def teamStrength(rows, school):
     return sum(rs) / len(rs) if rs else -math.inf
 
 
-def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None):
+AT_LARGE_MODES = ("wins", "net", "pct")
+
+
+def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None, mode="wins"):
     """n picks from per-round queues of teams in regional finish order: each
     pick the strongest team at the head of any queue, so no team goes
     ahead of one that beat it at its own round. queues: {round: [school]};
@@ -237,7 +240,11 @@ def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None):
       board or already in that it beat on balance (the "Kolas" count),
       fewer losses next, then strength. A team that met none of them has
       no points and falls back on strength among its equals. points_out, a
-      list, gets (points, losses) of each pick."""
+      list, gets (points, losses) of each pick. mode: "wins" (most wins,
+      fewest losses), "net" (wins - losses), "pct" (wins / meetings,
+      smoothed) -- ! on 2026's D3 fields "wins" did no better than the
+      ratings (men 28 of 32 both ways, women 27 against 29), so it is not
+      the default (XCP_ATLARGE_BY) until a mode beats them."""
     q = {k: list(v) for k, v in queues.items()}
     out, seen = [], set(taken)
     for _ in range(n):
@@ -258,7 +265,9 @@ def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None):
         for k, v in q.items():
             if v:
                 w, l = tally(v[0])
-                heads.append(((w, -l, strength(k, v[0])), k, (w, l)))
+                st = strength(k, v[0])
+                key = {"net": (w - l, w, st), "pct": ((w + 1) / (w + l + 2), st)}.get(mode, (w, -l, st))
+                heads.append((key, k, (w, l)))
         _s, k, wl = max(heads, key=lambda h: (h[0], str(h[1])))
         out.append((k, q[k].pop(0)))
         if points_out is not None:
@@ -356,10 +365,11 @@ def selectField(rule, rounds, pools=None, labels=None, explain=None, meetings=No
     field = {}
     for k, school in atLargeTeams(queues, rule.get("teams_at_large", 0),
                                   lambda k, s: teamStrength(rows_of[k], s), taken=auto,
-                                  record=record, points_out=points):
+                                  record=record, points_out=points,
+                                  mode=rule.get("at_large_mode", "wins")):
         if explain is not None:
             explain["at_large"].append((k, school))
-            explain["by"] = "wins" if record else "ratings"
+            explain["by"] = rule.get("at_large_mode", "wins") if record else "ratings"
             explain["points"] = points
         if k in qualified:
             qualified[k].append(school)
@@ -704,8 +714,9 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
     if info is not None:
         explain = info.setdefault("picks", {})
     meetings = None
-    if (cur is not None and rule.get("at_large_by") == "wins"
-            and os.environ.get("XCP_ATLARGE_BY", "wins") != "rating"):
+    by = os.environ.get("XCP_ATLARGE_BY", "rating")
+    if cur is not None and rule.get("at_large_by") == "wins" and by in AT_LARGE_MODES:
+        rule = dict(rule, at_large_mode=by)
         skip = set(rounds) | {m for m, _n, _d in seen}
 
         def meetings(squads):
