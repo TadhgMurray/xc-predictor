@@ -96,7 +96,33 @@ def main(argv=None):
                     print(f"        {row.get('name')!s:<28} {row.get('pool')!s:<12} "
                           f"rating {row.get('rating')!s:<8} grade {row.get('grade')!s}")
             if a.predict:
-                pred = U.livePrediction(cur, a.meet, div, a.source, on=a.on)
+                # ★ THE RAW MODEL ROWS TOO (2026-11-16: the selection ranked a
+                #   round on "times" of ~70 s for an 8K): _trim keeps only the
+                #   page's keys, so its input is caught here
+                raw = {}
+                _trim0 = U._trim
+
+                def _catch(out, target):
+                    raw["out"], raw["target"] = out, target
+                    return _trim0(out, target)
+                U._trim = _catch
+                try:
+                    pred = U.livePrediction(cur, a.meet, div, a.source, on=a.on)
+                finally:
+                    U._trim = _trim0
+                tg = raw.get("target") or {}
+                print(f"   target: distance {tg.get('distance')!r} {tg.get('distance_units') or tg.get('units') or ''} "
+                      f"course {tg.get('course_id') or tg.get('venue') or tg.get('location_id')!r} "
+                      f"date {tg.get('date')!r} mode {tg.get('mode')!r}")
+                rows = (raw.get("out") or {}).get("runners") or []
+                for s in pick:
+                    mine = sorted((x for x in rows if x.get("school") == s),
+                                  key=lambda x: x.get("place") or 9999)[:5]
+                    for x in mine:
+                        print(f"     {s[:18]:<18} {x.get('name')!s:<24} place {x.get('place')!s:<4} "
+                              f"secs {x.get('seconds')!s:<8} norm {x.get('normalized')!s:<8} "
+                              f"race_time {x.get('is_race_time')!s:<5} ratio {x.get('clock_ratio')!s:<8} "
+                              f"basis {x.get('time_basis')!s} pool {x.get('time_pool')!s}")
                 if not pred.get("available"):
                     print(f"4. prediction: not available ({pred.get('reason')})")
                     continue
