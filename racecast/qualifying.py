@@ -395,12 +395,39 @@ def oneSpellingField(field):
     for s in field.values():
         if s:
             counts[nameKey(s) or s][s] += 1
+    spell = _spellings(counts)
+    return {p: spell.get(s, s) for p, s in field.items()}
+
+
+def _spellings(counts):
+    """{spelling: the one to use} from {name key: Counter(spelling)}: the
+    commonest spelling of each key -- but never across two states a
+    spelling writes for itself.
+
+    ★ (owner, 2026-11-16: the D3 women's field listed "Trinity (Conn.)"
+      from the West regional -- Trinity (Tex.) under Connecticut's name;
+      nameKey drops the bracket, so the two Trinitys were one key.) A key
+      whose spellings name two or more states splits by state; a spelling
+      naming none joins its key's one state (or its key's other unstated
+      spellings), else stays as it is. Pure."""
+    from school_name import statedState
     spell = {}
     for c in counts.values():
-        if len(c) > 1:
-            best = min(c.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))[0]
-            spell.update({n: best for n in c})
-    return {p: spell.get(s, s) for p, s in field.items()}
+        if len(c) < 2:
+            continue
+        by = collections.defaultdict(dict)
+        for name, n in c.items():
+            by[statedState(name)][name] = n
+        states = [st for st in by if st]
+        if len(states) < 2:
+            groups = [dict(c)]
+        else:
+            groups = [g for st, g in by.items() if st] + [{n: by[None][n]} for n in by.get(None, {})]
+        for g in groups:
+            if len(g) > 1:
+                best = min(g.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))[0]
+                spell.update({n: best for n in g})
+    return spell
 
 
 def _oneSpelling(rounds, pools):
@@ -420,11 +447,7 @@ def _oneSpelling(rounds, pools):
         for r in rows:
             if r[1]:
                 counts[nameKey(r[1]) or r[1]][r[1]] += 1
-    spell = {}
-    for _k, c in counts.items():
-        if len(c) > 1:
-            best = min(c.items(), key=lambda kv: (-kv[1], len(kv[0]), kv[0]))[0]
-            spell.update({name: best for name in c})
+    spell = _spellings(counts)
 
     def fix(rows):
         return [(r[0], spell.get(r[1], r[1])) + tuple(r[2:]) for r in rows]
