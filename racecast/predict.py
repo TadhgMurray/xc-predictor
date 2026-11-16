@@ -6114,6 +6114,22 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
             merged = sorted(squads.get(sch, []) + add,
                             key=lambda r: -(r.get("rating") or 0))
             squads[sch] = _bestFirst(merged, sport)
+    # ★ A RUNNER FOUND BY THE SCHOOL'S OLD NAME KEEPS THEIR RATING (owner,
+    #   2026-11-16: WashU left out of the D3 nationals projection). Last
+    #   year's regional said "Washington U."; this season's rated rows say
+    #   "Washington (Mo.)". The results above found the runners under the old
+    #   name -- with no rating, so the prediction could not use one of them.
+    #   A rating belongs to the person and the season, not to the string the
+    #   school went by: an unrated entrant takes their own season row,
+    #   whatever school name it is filed under, same sport, gender and level.
+    try:
+        _rateByPerson(cur, [r for rows in squads.values() for r in rows],
+                      sport, now, gender=gender, levels=levels)
+        for sch in list(squads):
+            squads[sch] = _bestFirst(sorted(squads[sch], key=lambda r: -(r.get("rating") or 0)),
+                                     sport)
+    except Exception:                                   # noqa: BLE001
+        _rollback(cur)
     # ★ AND NOT TWO COPIES OF ONE RUNNER AMONG THE NEW ONES EITHER (owner,
     #   2026-10-08, NESCAC: "Jonah Schulman" twice, "Lysander Duffield"
     #   twice, "John Disturco" / "John DiSturco"). The check above compares
@@ -6131,6 +6147,41 @@ def _currentSquads(cur, schools, sport, season_year, gender=None,
     if ahead:
         _ageForward(squads, ahead, now + ahead)
     return squads
+
+
+def _rateByPerson(cur, rows, sport, year, gender=None, levels=None):
+    """Fill rating / pool / n_races in place for rows that have none, from
+    the person's own athlete_season row of `year` (any school name). Rows
+    that already carry a rating are left alone."""
+    need = {int(r["person_id"]) for r in rows
+            if r.get("rating") is None and r.get("person_id") is not None}
+    if not need or year is None:
+        return
+    gender_clause = ("AND upper(right(split_part(pool, '|', 1), 1)) = %(gender)s "
+                     if gender in ("M", "F") else "")
+    level_clause = ("AND split_part(split_part(pool, '|', 1), '_', 1) = ANY(%(levels)s) "
+                    if levels else "")
+    cur.execute(f"""
+        SELECT DISTINCT ON (person_id) person_id, pool, mean_rating, n_races
+        FROM   athlete_season
+        WHERE  person_id = ANY(%(ids)s) AND sport = %(sport)s AND year = %(yr)s
+          AND  mean_rating IS NOT NULL
+          {gender_clause}{level_clause}
+        ORDER  BY person_id, n_races DESC NULLS LAST, mean_rating DESC""",
+                {"ids": sorted(need), "sport": sport, "yr": year,
+                 "gender": gender, "levels": sorted(levels or ())})
+    got = {}
+    for row in cur.fetchall():
+        rr = row if isinstance(row, dict) else dict(zip(
+            ("person_id", "pool", "mean_rating", "n_races"), row))
+        got[int(rr["person_id"])] = rr
+    for r in rows:
+        g = got.get(int(r["person_id"])) if r.get("person_id") is not None else None
+        if g is None or r.get("rating") is not None:
+            continue
+        r["rating"] = round(float(g["mean_rating"]), 1)
+        r["pool"] = r.get("pool") or g.get("pool")
+        r["n_races"] = r.get("n_races") or g.get("n_races")
 
 
 def _dedupeByName(rows):
