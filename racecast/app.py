@@ -273,7 +273,7 @@ def not_found(_err):
 # This is a decorator, it connects a URL to a function.
 @app.route("/hello")
 def yay():
-    return "Hello from Flask"
+    return render_template("hello.html")
 
 def get_homepage_panels(cur):
     """Every visible panel row, flat. panels.py already ranked and filtered
