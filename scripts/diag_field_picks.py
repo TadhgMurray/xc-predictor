@@ -49,14 +49,40 @@ def main(argv=None):
         cur.execute("SELECT meet_id, meet_name FROM meets_tfrrs WHERE sport = 'XC'")
         for r in cur.fetchall():
             names[int(r["meet_id"])] = r["meet_name"]
+        # ★ EACH ROUND AS THE SELECTION SAW IT: its rows (pid, school,
+        #   seconds, rating) and the team order made from them
+        import qualifying as Q
+        seen_rounds = {}
+        _orig = Q.selectField
+
+        def _spy(rule, rounds, pools=None, labels=None, explain=None):
+            seen_rounds.update(rounds)
+            return _orig(rule, rounds, pools, labels, explain)
+        Q.selectField = _spy
         why = {}
-        field, info = U.qualifiedFieldInfo(cur, plan, a.div, live=True, why=why)
+        try:
+            field, info = U.qualifiedFieldInfo(cur, plan, a.div, live=True, why=why)
+        finally:
+            Q.selectField = _orig
         conn.rollback()
 
     def rname(k):
         mid = k[1] if isinstance(k, tuple) else k
         return names.get(int(mid), str(mid)) if str(mid).lstrip("-").isdigit() else str(k)
 
+    import qualifying as Q
+
+    def clock(sec):
+        return f"{int(sec // 60)}:{sec % 60:04.1f}" if sec else "?"
+    if seen_rounds:
+        print("\neach round's team order, as the selection made it (top 6):")
+        for k, rows in seen_rounds.items():
+            order = Q.teamOrder(rows)
+            print(f"  {rname(k)}  ({len(rows)} runners)")
+            ranked = sorted(rows, key=lambda r: r[2])
+            for s in order[:6]:
+                mine = [(i + 1, r) for i, r in enumerate(ranked) if r[1] == s][:5]
+                print(f"     {s:<28} " + "  ".join(f"#{p} {clock(r[2])}" for p, r in mine))
     picks = why.get("picks") or {}
     print(f"{plan.get('name')} on {a.day}, race {a.div}: "
           f"{len(field or {})} runners, info {info}")
