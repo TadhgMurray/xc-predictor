@@ -52,6 +52,8 @@
 
 import os
 import sys
+import time
+from contextlib import contextmanager
 
 # ★ scripts/ ON THE PATH AT IMPORT TIME, NOT INSIDE __main__. `database` and
 #   `corrections` live there, and a module imported BY another script never
@@ -100,6 +102,18 @@ from season_year import seasonYearSqlInt, seasonYearFromIso, seasonYearFor
 #   qualifies and he stays broken. Raise this only if the audit shows one-race
 #   overrides going wrong.
 MIN_DECIDED_RACES = 1
+
+
+# ★ ONE TIMING LINE PER PHASE (2026-11-16). The step's log carried counts
+#   and no times, so the 1,344 s it held run 20261113_150959 had to be read
+#   off the log's line stamps. Each phase now says its own seconds.
+@contextmanager
+def _phase(label):
+    t0 = time.time()
+    try:
+        yield
+    finally:
+        print(f"    [time] {label}: {time.time() - t0:.0f}s", flush=True)
 
 # ------------------------------------------------------------------ #
 # CHUNK 1 -- ACADEMIC YEAR
@@ -154,32 +168,72 @@ def _collectVotes(cur):
     cur.execute("""CREATE TEMP TABLE tmp_season_vote
                    (person_id bigint, ay int, sport text, level text, n int,
                     n_school int, n_class int)""")
-    _gradeKinds(cur)
+    with _phase("grade kinds"):
+        _gradeKinds(cur)
 
     for table, sport in (("results", "XC"), ("results_tf", "TF")):
-        cur.execute(f"""
-            INSERT INTO tmp_season_vote
-                   (person_id, ay, sport, level, n, n_school, n_class)
-            SELECT r.person_id,
-                   {_academicYearExpr('r', sport)} AS ay,
-                   '{sport}',
-                   rl.level,
-                   count(*),
-                   count(*) FILTER (WHERE gk.school),
-                   count(*) FILTER (WHERE NOT gk.school)
-            FROM {table} r
-            JOIN race_level rl ON rl.race = {_raceKeyExpr('r')}
-            LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade
-            WHERE r.person_id IS NOT NULL
-              AND r.date IS NOT NULL
-            GROUP BY 1, 2, 3, 4
-        """)
-        print(f"    {table}: {cur.rowcount:,} season-level votes")
+        with _phase(f"{table} season-level votes"):
+            cur.execute(_raceVoteSql(table, sport))
+            print(f"    {table}: {cur.rowcount:,} season-level votes")
 
     _collectMaskVotes(cur)
 
     cur.execute("CREATE INDEX ON tmp_season_vote (person_id, ay, sport)")
     cur.execute("ANALYZE tmp_season_vote")
+
+
+# ★ ONE SQL FOR BOTH PATHS (2026-11-16, the split of 04h). The vote INSERTs
+#   come in two shapes from one builder:
+#     classified (raw=False): today's -- into tmp_season_vote, the grade
+#       already classified through tmp_grade_kind (count FILTER school /
+#       NOT school);
+#     raw (raw=True): into season_vote_raw, the grade STRING kept as a
+#       group key and not classified, so it can be collected before
+#       grade_sanity has written tonight's grade_fix (_gradeKinds reads
+#       grade_fix's spellings; nothing else here does) and classified after.
+#   Same FROM, same joins, same WHERE in both; the raw shape drops the one
+#   LEFT JOIN to the small tmp_grade_kind and groups by one more column.
+def _voteTarget(raw):
+    if raw:
+        return (f"INSERT INTO {_RAW_VOTES} "
+                "(person_id, ay, sport, level, grade, pass, n)")
+    return ("INSERT INTO tmp_season_vote "
+            "(person_id, ay, sport, level, n, n_school, n_class)")
+
+
+def _voteCounts(raw, pass_):
+    if raw:
+        return f"r.grade, '{pass_}', count(*)"
+    return """count(*),
+                   count(*) FILTER (WHERE gk.school),
+                   count(*) FILTER (WHERE NOT gk.school)"""
+
+
+def _voteGroup(raw):
+    # raw: the 5th output is r.grade; the 6th is a constant
+    return "GROUP BY 1, 2, 3, 4, 5" if raw else "GROUP BY 1, 2, 3, 4"
+
+
+def _raceVoteSql(table, sport, raw=False):
+    gk = "" if raw else "LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade"
+    return f"""
+            {_voteTarget(raw)}
+            SELECT r.person_id,
+                   {_academicYearExpr('r', sport)} AS ay,
+                   '{sport}',
+                   rl.level,
+                   {_voteCounts(raw, 'race')}
+            FROM {table} r
+            JOIN race_level rl ON rl.race = {_raceKeyExpr('r')}
+            {gk}
+            WHERE r.person_id IS NOT NULL
+              AND r.date IS NOT NULL
+            {_voteGroup(raw)}
+        """
+
+
+# The table between the two halves of the split (--votes-only, --from-votes).
+_RAW_VOTES = "season_vote_raw"
 
 
 def _gradeKinds(cur):
@@ -242,7 +296,7 @@ def _gradeKinds(cur):
 _MASK_TO_LEVEL = {2: "ms", 4: "hs", 8: "college"}
 
 
-def _collectMaskVotes(cur):
+def _collectMaskVotes(cur, raw=False):
     """Add votes from meets.level_mask, ONLY for races race_level could not
     decide.
 
@@ -271,18 +325,26 @@ def _collectMaskVotes(cur):
       is: if two events disagree on level the OR sets two bits, `& 14` is no
       longer a single bit, and the row does not vote.
     """
+    for table, sport in (("results", "XC"), ("results_tf", "TF")):
+        with _phase(f"{table} mask-fallback votes"):
+            cur.execute(_maskVoteSql(table, sport, raw))
+            print(f"    {table}: {cur.rowcount:,} mask-fallback votes")
+
+
+def _maskVoteSql(table, sport, raw=False):
+    """One table's mask-fallback INSERT (see _collectMaskVotes); `raw` as
+    _raceVoteSql's."""
     level_case = " ".join(f"WHEN {bit} THEN '{lvl}'"
                           for bit, lvl in _MASK_TO_LEVEL.items())
-
-    sources = (
-        # (results table, meet source expression, needs a source match)
-        ("results", """
+    if table == "results":
+        join_sql, mask_col = """
             JOIN meets mm
               ON mm.meet_id = r.meet_id
              AND mm.div_id  = r.div_id
              AND mm.source  = r.source
-         """, "mm.level_mask"),
-        ("results_tf", """
+         """, "mm.level_mask"
+    else:
+        join_sql, mask_col = """
             JOIN (SELECT meet_id, div_id,
                          bit_or(CASE WHEN level_mask BETWEEN 0 AND 1023
                                      THEN level_mask END) AS mask
@@ -290,27 +352,18 @@ def _collectMaskVotes(cur):
                    GROUP BY 1, 2) mm
               ON mm.meet_id = r.meet_id
              AND mm.div_id  = r.div_id
-         """, "mm.mask"),
-    )
-
-    # The sport is implied by the table, so it is derived here rather than
-    # added as a fourth tuple element -- one place to be wrong instead of two.
-    for table, join_sql, mask_col in sources:
-        sport = "XC" if table == "results" else "TF"
-
-        cur.execute(f"""
-            INSERT INTO tmp_season_vote
-                   (person_id, ay, sport, level, n, n_school, n_class)
+         """, "mm.mask"
+    gk = "" if raw else "LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade"
+    return f"""
+            {_voteTarget(raw)}
             SELECT r.person_id,
                    {_academicYearExpr('r', sport)} AS ay,
                    '{sport}',
                    CASE {mask_col} & 14 {level_case} END AS level,
-                   count(*),
-                   count(*) FILTER (WHERE gk.school),
-                   count(*) FILTER (WHERE NOT gk.school)
+                   {_voteCounts(raw, 'mask')}
             FROM {table} r
             {join_sql}
-            LEFT JOIN tmp_grade_kind gk ON gk.g = r.grade
+            {gk}
             -- The anti-join: only races race_level could NOT decide.
             LEFT JOIN race_level rl ON rl.race = {_raceKeyExpr('r')}
             WHERE r.person_id IS NOT NULL
@@ -323,9 +376,102 @@ def _collectMaskVotes(cur):
             --   still said 1,2,3 -- so it grouped by (person, ay, sport) and
             --   left the CASE ungrouped. Postgres caught it; an ordinal that
             --   shifts onto another valid column would not have been caught.
-            GROUP BY 1, 2, 3, 4
+            --   (raw: 5 is r.grade.)
+            {_voteGroup(raw)}
+        """
+
+
+# ------------------------------------------------------------------ #
+# CHUNK 2c -- THE SPLIT: VOTES EARLY, CLASSIFIED AFTER grade_sanity
+# ------------------------------------------------------------------ #
+#
+# ★ WHY (run 20261113_150959: 04h held the run 1,344 s, ~880 s of it the
+#   four vote passes). The passes read results*/race_level/meets* -- all
+#   final once the 04a person steps are done -- and grade_fix only through
+#   _gradeKinds, which turns grade SPELLINGS into school/class. So the
+#   passes run early (--votes-only, beside grade_sanity) with the spelling
+#   kept, and after grade_sanity (--from-votes) the spellings are
+#   classified with tonight's grade_fix and the stored counts summed into
+#   tmp_season_vote -- row for row what _collectVotes would have built:
+#   one row per (person, ay, sport, level, pass), n = the sum over grades,
+#   n_school / n_class = the sums over the grades that classify so.
+#
+# ! UNLOGGED, SO A CRASH EMPTIES IT. The row count goes in the table's
+#   COMMENT (the catalog is logged); --from-votes counts the rows against it
+#   and collects in line on any mismatch, a missing table or a missing
+#   comment, so a truncated table can never become an empty
+#   athlete_season_level. And --from-votes --write drops it once the
+#   season levels are committed, so nothing reads it on a later run.
+
+def collectRawVotes(cur):
+    """season_vote_raw: the four vote passes with the grade spelling kept.
+    Returns the row count (also stored in the table's COMMENT)."""
+    cur.execute(f"DROP TABLE IF EXISTS {_RAW_VOTES}")
+    cur.execute(f"""CREATE UNLOGGED TABLE {_RAW_VOTES}
+                    (person_id bigint, ay int, sport text, level text,
+                     grade text, pass text, n bigint)""")
+    for table, sport in (("results", "XC"), ("results_tf", "TF")):
+        with _phase(f"{table} season-level votes (raw)"):
+            cur.execute(_raceVoteSql(table, sport, raw=True))
+            print(f"    {table}: {cur.rowcount:,} season-level vote groups")
+    _collectMaskVotes(cur, raw=True)
+    with _phase("count + analyze"):
+        cur.execute(f"SELECT count(*) FROM {_RAW_VOTES}")
+        n = cur.fetchone()[0]
+        cur.execute(f"COMMENT ON TABLE {_RAW_VOTES} IS %s",
+                    (f"rows={n}",))
+        cur.execute(f"ANALYZE {_RAW_VOTES}")
+    print(f"    {n:,} raw vote rows in {_RAW_VOTES}")
+    return n
+
+
+def rawVotesReady(cur):
+    """True when season_vote_raw exists and holds the rows its COMMENT says
+    it was built with (an unlogged table comes back empty after a crash)."""
+    cur.execute("SELECT to_regclass(%s)", (f"public.{_RAW_VOTES}",))
+    if cur.fetchone()[0] is None:
+        print(f"    ⚠ {_RAW_VOTES} not found")
+        return False
+    cur.execute("SELECT obj_description(%s::regclass, 'pg_class')",
+                (f"public.{_RAW_VOTES}",))
+    note = cur.fetchone()[0] or ""
+    if not note.startswith("rows="):
+        print(f"    ⚠ {_RAW_VOTES} has no row count -- not finished")
+        return False
+    cur.execute(f"SELECT count(*) FROM {_RAW_VOTES}")
+    have = cur.fetchone()[0]
+    if str(have) != note[len("rows="):]:
+        print(f"    ⚠ {_RAW_VOTES} holds {have:,} rows, built with "
+              f"{note[len('rows='):]} -- emptied by a crash?")
+        return False
+    return True
+
+
+def votesFromRaw(cur):
+    """tmp_season_vote from season_vote_raw, with tonight's grade kinds --
+    the same rows _collectVotes builds."""
+    cur.execute("DROP TABLE IF EXISTS tmp_season_vote")
+    cur.execute("""CREATE TEMP TABLE tmp_season_vote
+                   (person_id bigint, ay int, sport text, level text, n int,
+                    n_school int, n_class int)""")
+    with _phase("grade kinds"):
+        _gradeKinds(cur)
+    with _phase("classify stored votes"):
+        # ! COALESCE: count(*) FILTER is 0 over no rows, sum() is NULL
+        cur.execute(f"""
+            INSERT INTO tmp_season_vote
+                   (person_id, ay, sport, level, n, n_school, n_class)
+            SELECT v.person_id, v.ay, v.sport, v.level,
+                   sum(v.n),
+                   COALESCE(sum(v.n) FILTER (WHERE gk.school), 0),
+                   COALESCE(sum(v.n) FILTER (WHERE NOT gk.school), 0)
+            FROM {_RAW_VOTES} v
+            LEFT JOIN tmp_grade_kind gk ON gk.g = v.grade
+            GROUP BY v.person_id, v.ay, v.sport, v.level, v.pass
         """)
-        print(f"    {table}: {cur.rowcount:,} mask-fallback votes")
+        print(f"    {cur.rowcount:,} season-level votes from {_RAW_VOTES}")
+    cur.execute("CREATE INDEX ON tmp_season_vote (person_id, ay, sport)")
+    cur.execute("ANALYZE tmp_season_vote")
 
 
 # ------------------------------------------------------------------ #
@@ -406,6 +552,7 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
                        n_class      int     NOT NULL DEFAULT 0,
                        refused      text,
                        PRIMARY KEY (person_id, ay, sport))""")
+    _t0 = time.time()
     cur.execute(f"""
         INSERT INTO athlete_season_level
               (person_id, ay, sport, level, n_decided, n_levels, chosen_share,
@@ -459,9 +606,12 @@ def _resolveSeasons(cur, min_decided=MIN_DECIDED_RACES,
                           AND p.sport = t.sport
     """)
     total = cur.rowcount
-    refuseCollegeBeforeCollege(cur)
-    cur.execute("CREATE INDEX ON athlete_season_level (level)")
-    cur.execute("ANALYZE athlete_season_level")
+    print(f"    [time] resolve: {time.time() - _t0:.0f}s", flush=True)
+    with _phase("refuse college before college"):
+        refuseCollegeBeforeCollege(cur)
+    with _phase("index + analyze"):
+        cur.execute("CREATE INDEX ON athlete_season_level (level)")
+        cur.execute("ANALYZE athlete_season_level")
 
     cur.execute("""SELECT count(*) FILTER (WHERE level IS NOT NULL),
                           count(*) FILTER (WHERE level IS NOT NULL
@@ -677,9 +827,13 @@ def audit(cur, limit=25):
 # CHUNK 7 -- ENTRY POINT
 # ------------------------------------------------------------------ #
 
-def main(live=False):
+def main(live=False, mode="all"):
+    """mode: 'all' (today's one go), 'votes' (--votes-only: season_vote_raw
+    and stop) or 'resolve' (--from-votes: classify season_vote_raw with
+    tonight's grade_fix, then resolve, refuse and write as 'all' does)."""
     from database import getConn
 
+    t_all = time.time()
     with getConn() as conn:
         with conn.cursor() as cur:
             cur.execute("""SELECT count(*) FROM information_schema.tables
@@ -689,8 +843,31 @@ def main(live=False):
                       "level_graph.py --write first.")
                 return
 
-            print("[season] collecting race verdicts per athlete-season...")
-            _collectVotes(cur)
+            if mode == "votes":
+                print("[season] collecting raw race votes (grade spelling "
+                      f"kept) into {_RAW_VOTES}...")
+                collectRawVotes(cur)
+                if live:
+                    conn.commit()
+                    print(f"\n[season] wrote {_RAW_VOTES}; "
+                          "season_level.py --write --from-votes resolves it")
+                else:
+                    conn.rollback()
+                    print("\n[season] DRY RUN -- pass --write to save")
+                print(f"    [time] total: {time.time() - t_all:.0f}s",
+                      flush=True)
+                return
+
+            if mode == "resolve" and rawVotesReady(cur):
+                print(f"[season] classifying the votes in {_RAW_VOTES}...")
+                votesFromRaw(cur)
+            else:
+                if mode == "resolve":
+                    print("[season] no usable stored votes -- collecting "
+                          "them in line")
+                print("[season] collecting race verdicts per athlete-season...")
+                _collectVotes(cur)
+                mode = "all"
 
             print("\n[season] resolving...")
             _resolveSeasons(cur)
@@ -698,10 +875,16 @@ def main(live=False):
             # ★ THE WRITE BEFORE THE AUDIT (2026-10-29): the audit is a
             #   printout, and a crash in it rolled back four hours of work
             if live:
-                conn.commit()
+                with _phase("commit"):
+                    conn.commit()
                 print("\n[season] wrote athlete_season_level")
+                if mode == "resolve":
+                    # used; a later run must collect its own
+                    cur.execute(f"DROP TABLE IF EXISTS {_RAW_VOTES}")
+                    conn.commit()
             try:
-                audit(cur)
+                with _phase("audit"):
+                    audit(cur)
             except Exception as exc:                     # noqa: BLE001
                 print(f"[season] audit failed ({type(exc).__name__}: {exc}); "
                       f"the table is {'written' if live else 'not written (dry run)'}")
@@ -710,7 +893,17 @@ def main(live=False):
             if not live:
                 conn.rollback()
                 print("\n[season] DRY RUN -- pass --write to save")
+            print(f"    [time] total: {time.time() - t_all:.0f}s", flush=True)
 
 
 if __name__ == "__main__":
-    main(live="--write" in sys.argv)
+    # --votes-only : the vote passes into season_vote_raw (needs no grade_fix;
+    #                04h0_season_votes, beside grade_sanity)
+    # --from-votes : classify season_vote_raw with tonight's grade_fix and
+    #                resolve (04h_season_levels); in line if it is unusable
+    # neither      : today's one go
+    if "--votes-only" in sys.argv and "--from-votes" in sys.argv:
+        sys.exit("[season] --votes-only and --from-votes are two stages")
+    main(live="--write" in sys.argv,
+         mode=("votes" if "--votes-only" in sys.argv else
+               "resolve" if "--from-votes" in sys.argv else "all"))
