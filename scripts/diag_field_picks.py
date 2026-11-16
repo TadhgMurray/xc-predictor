@@ -55,9 +55,9 @@ def main(argv=None):
         seen_rounds = {}
         _orig = Q.selectField
 
-        def _spy(rule, rounds, pools=None, labels=None, explain=None):
+        def _spy(rule, rounds, *a, **k):
             seen_rounds.update(rounds)
-            return _orig(rule, rounds, pools, labels, explain)
+            return _orig(rule, rounds, *a, **k)
         Q.selectField = _spy
         why = {}
         try:
