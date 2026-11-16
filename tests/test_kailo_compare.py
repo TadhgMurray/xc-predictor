@@ -82,3 +82,14 @@ def test_level_line_splits_out_each_races_level():
     assert K.levelLine([]) is None
     lv = K.levelLine([(2.0, -0.5), (-0.3, 1.0), (0.1, 0.2), (None, 1.0)])
     assert lv == (0.3, 0.5, 2, 3)
+
+
+def test_the_honest_dump_is_read_by_college_race(tmp_path):
+    import numpy as np
+    p = tmp_path / "val.npz"
+    np.savez(p, key=np.array(["(28639, 7, 'tfrrs', '2026-10-31')",
+                              "(28639, 7, 'tfrrs', '2026-10-31', 28)",
+                              "(500, 9, 'anet', '2026-10-31')"]),
+             pid=np.array([1, 1, 2]), model_s=np.array([1500.0, 1600.0, 1000.0]),
+             page_s=np.array([0.0, 0.0, 0.0]), actual_s=np.array([0.0, 0.0, 0.0]))
+    assert K.loadDump(str(p)) == {(28639, 7): {1: 1500.0}}     # race morning, college feed only

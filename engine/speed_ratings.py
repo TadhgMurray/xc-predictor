@@ -1585,10 +1585,15 @@ def attachCourseGeometry(cols):
 #            The athlete key is (person_id, pool) with the sport already inside
 #            the pool string, so an athlete's XC and TF abilities are separate
 #            unknowns. The venue key is namespaced by sport for the same reason.
-def _packLoop(batches, today, merge=False):
+def _packLoop(batches, today, merge=False, marks=None):
     """packResults' row loop: the batches into typed chunks and the
     athlete / venue / team code tables, in encounter order. Split out so
-    the two sports can run it side by side (_packParallel)."""
+    the two sports can run it side by side (_packParallel).
+
+    marks: a list to which, after each batch, the loop appends (chunks,
+    athlete keys, venue keys, team keys, census keys) -- how many of each
+    it holds so far. _mergeShardStates reads them to put the batches of
+    several loops back in stream order (_packShardedTF)."""
     census = defaultdict(int)
     # Counts what the TF rollover moved. Folded into `census` at the end so it
     # rides the existing "[engine] ... census: {...}" line rather than adding a
@@ -1773,6 +1778,9 @@ def _packLoop(batches, today, merge=False):
                 np.asarray(divs, dtype=np.int64),    # div_id, -1 = none
                 np.asarray(teams, dtype=np.int32),   # team code, -1 = none
             ))
+        if marks is not None:
+            marks.append((len(chunks), len(a_uniq), len(v_uniq), len(t_uniq),
+                          len(census)))
 
     _us = 1e6 / max(n_rows, 1)
     print(f"[time] pack: {t_fetch:.0f}s waiting on the database, "
@@ -1855,6 +1863,183 @@ def _mergePackStates(states):
     return out
 
 
+# ★ TF'S ROW LOOP ON SEVERAL CORES (2026-11-16; run 20261113_150959's
+#   07_pack was 1,687 s, the TF child the long pole -- ~25M rows through the
+#   one Python loop while XC had long finished).
+# ! THE QUERY IS NOT SPLIT. _tfQuery has no ORDER BY: the row order is
+#   whatever the plan gives the ONE named cursor, and K cursors over K
+#   slices of it could not promise the same rows in the same order (and
+#   adding an ORDER BY would itself reorder the pack). So the TF child still
+#   reads the one cursor, in its order, and only HANDS each 200k batch to
+#   whichever of XCP_PACK_TF_SHARDS forked workers is free.
+# ★ WHY THAT IS THE SAME PACK, BYTE FOR BYTE. Nothing in _packLoop carries
+#   from row to row but the athlete / venue / team code tables and the
+#   census, all in first-seen order (the pool, season and team lookups are
+#   read-only tables and memo caches; the rollover ledger only counts).
+#   Each worker records, per batch, how many keys of each it held
+#   (_packLoop's marks): a key new to the whole stream at batch b is new to
+#   b's worker there too, in the same relative order. _mergeShardStates
+#   walks the batches in stream order, appends each range's unseen keys --
+#   the one loop's order exactly -- and re-codes each batch's chunk. The
+#   census keys go back the same way; the counts are sums
+#   (tf_rollover_moved / tf_rows_seen are per-worker totals).
+#   tests/test_pack_parallel.py compares the packs.
+# ⚠ MEMORY: each worker is a fork of the TF child and reads the shared
+#   lookups (season levels, grade gate, ...); reading touches refcounts, so
+#   a worker can come to own a copy of the pages it reads. gc.freeze()
+#   before the forks keeps the collector off them. XCP_PACK_TF_SHARDS=1 is
+#   the TF child exactly as before.
+def _packShards():
+    try:
+        # 2 by default (2026-11-16): each worker can hold its own copy of the
+        # lookups it reads, and 07 already peaks near 69 GB beside the site
+        return max(1, int(os.environ.get("XCP_PACK_TF_SHARDS", "2")))
+    except ValueError:
+        return 1
+
+
+def _shardWorker(conn, today, merge, path):
+    import pickle
+    code = 1
+    try:
+        order, marks = [], []
+
+        def batches():
+            while True:
+                conn.send(None)                       # ready for a batch
+                item = conn.recv()
+                if item is None:
+                    return
+                order.append(item[0])
+                yield item[1]
+
+        st = _packLoop(batches(), today, merge, marks=marks)
+        st["census"] = dict(st["census"])
+        st["order"], st["marks"] = order, marks
+        with open(path, "wb") as fh:
+            pickle.dump(st, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        code = 0
+    except BaseException:                             # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+    sys.stdout.flush(); sys.stderr.flush()
+    os._exit(code)
+
+
+def _mergeShardStates(states):
+    """The workers' _packLoop results -> the one loop's, batch by batch in
+    stream order (see above)."""
+    kinds = ("a_uniq", "v_uniq", "t_uniq")
+    out = {"chunks": [], "a_uniq": [], "v_uniq": [], "t_uniq": [],
+           "census": {}}
+    look = {k: {} for k in kinds}
+    maps = [{k: np.full(len(st[k]), -1, dtype=np.int64) for k in kinds}
+            for st in states]
+    ckeys = [list(st["census"]) for st in states]
+    where = {}
+    for w, st in enumerate(states):
+        for j, b in enumerate(st["order"]):
+            where[b] = (w, j)
+    if sorted(where) != list(range(len(where))):
+        raise RuntimeError("[pack] the TF workers lost a batch")
+    zero = (0, 0, 0, 0, 0)
+    for b in range(len(where)):
+        w, j = where[b]
+        st, m = states[w], maps[w]
+        lo = st["marks"][j - 1] if j else zero
+        hi = st["marks"][j]
+        for i, k in enumerate(kinds, start=1):
+            keys, lk, uq, mk = st[k], look[k], out[k], m[k]
+            for p in range(lo[i], hi[i]):
+                key = keys[p]
+                c = lk.get(key)
+                if c is None:
+                    c = lk[key] = len(uq)
+                    uq.append(key)
+                mk[p] = c
+        for key in ckeys[w][lo[4]:hi[4]]:
+            out["census"].setdefault(key, 0)
+        for ch in st["chunks"][lo[0]:hi[0]]:
+            ch = list(ch)
+            ch[1] = _applyMap(ch[1], m["a_uniq"])
+            ch[2] = _applyMap(ch[2], m["v_uniq"])
+            ch[12] = _applyMap(ch[12], m["t_uniq"])
+            out["chunks"].append(tuple(ch))
+    for st in states:
+        for k, v in st["census"].items():
+            out["census"][k] += v
+    return out
+
+
+def _packSharded(make_batches, today, merge, shards):
+    """_packLoop over make_batches() (the one cursor, opened AFTER the forks
+    so no worker inherits its connection or its prefetch thread) in
+    `shards` forked workers, merged back into the one loop's state."""
+    import gc
+    import pickle
+    import shutil
+    import tempfile
+    from multiprocessing.connection import Pipe, wait
+    tmp = tempfile.mkdtemp(prefix="packtf_", dir=_CACHE_DIR)
+    sys.stdout.flush(); sys.stderr.flush()
+    gc.freeze()
+    kids = []
+    try:
+        for w in range(shards):
+            mine, theirs = Pipe(duplex=True)
+            path = os.path.join(tmp, f"shard{w}.pkl")
+            pid = os.fork()
+            if pid == 0:
+                mine.close()
+                for _, _, c, _ in kids:
+                    c.close()
+                _shardWorker(theirs, today, merge, path)   # never returns
+            theirs.close()
+            kids.append((w, pid, mine, path))
+        print(f"[pack] TF row loop in {shards} workers: pids "
+              + ", ".join(str(pid) for _, pid, _, _ in kids), flush=True)
+        conns = [c for _, _, c, _ in kids]
+        n = 0
+        for rows in make_batches():
+            c = wait(conns)[0]                        # whichever is free
+            c.recv()                                  # its ready token
+            c.send((n, rows))
+            n += 1
+        for c in conns:                               # every worker: done
+            c.recv()
+            c.send(None)
+    except BaseException as exc:
+        for _, pid, _, _ in kids:
+            try:
+                os.kill(pid, 9)
+            except OSError:
+                pass
+            try:
+                os.waitpid(pid, 0)
+            except OSError:
+                pass
+        shutil.rmtree(tmp, ignore_errors=True)
+        if isinstance(exc, (EOFError, OSError)):
+            raise RuntimeError(f"[pack] a TF worker died ({type(exc).__name__}); its "
+                               "traceback is above; XCP_PACK_TF_SHARDS=1 packs TF "
+                               "in one loop") from exc
+        raise
+    states, bad = [], []
+    for w, pid, c, path in kids:
+        _, status = os.waitpid(pid, 0)
+        c.close()
+        if status != 0 or not os.path.exists(path):
+            bad.append(w)
+            continue
+        with open(path, "rb") as fh:
+            states.append(pickle.load(fh))
+    shutil.rmtree(tmp, ignore_errors=True)
+    if bad:
+        raise RuntimeError(f"[pack] TF worker(s) {bad} failed (traceback above); "
+                           "XCP_PACK_TF_SHARDS=1 packs TF in one loop")
+    return _mergeShardStates(states)
+
+
 def _packChild(sport, today, merge, path):
     import pickle
     try:
@@ -1862,7 +2047,12 @@ def _packChild(sport, today, merge, path):
         _PARKED.append((_db._pool, _db._slots))       # never closed here
         _db._pool = None
         _db._slots = None
-        st = _packLoop(_prefetched(streamResults(sport)), today, merge)
+        shards = _packShards() if sport == "TF" else 1
+        if shards > 1:
+            st = _packSharded(lambda: _prefetched(streamResults(sport)),
+                              today, merge, shards)
+        else:
+            st = _packLoop(_prefetched(streamResults(sport)), today, merge)
         st["census"] = dict(st["census"])
         with open(path, "wb") as fh:
             pickle.dump(st, fh, protocol=pickle.HIGHEST_PROTOCOL)

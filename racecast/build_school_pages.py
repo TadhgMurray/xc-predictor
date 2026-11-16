@@ -139,6 +139,57 @@ def computeAll(schools, jobs, getConn, oids, log=print):
     return rows, failed
 
 
+_PARKED = []
+
+
+def _procInit():
+    """A forked worker opens connections of its own. The parent's pool is
+    PARKED, never dropped: garbage-collected here, its connections would
+    close and tell the server to end sessions the parent is still using
+    (engine/speed_ratings._packChild does the same; workers leave by
+    os._exit, so nothing closes it on the way out either)."""
+    import database as _db
+    _PARKED.append((_db._pool, _db._slots))
+    _db._pool = None
+    _db._slots = None
+
+
+def _procChunk(names, oids):
+    from database import getConn
+    rows, failed = {}, []
+    for name in names:
+        try:
+            with getConn() as conn:
+                rows[name] = buildOne(conn, name, oids)
+        except Exception as exc:                        # noqa: BLE001
+            failed.append((name, f"{type(exc).__name__}: {exc}"))
+    return rows, failed
+
+
+def computeAllProcs(schools, jobs, oids, log=print):
+    """computeAll in `jobs` forked processes, every jobs-th school each.
+    ★ (2026-11-16; run 20261116_154245: 742 s with 4 threads). The page
+    functions are Python between their queries, and four threads share one
+    interpreter lock; four processes do not. The same buildOne per school,
+    so the same rows -- the table is keyed by (call) key, not by order."""
+    import concurrent.futures as cf
+    import gc
+    import multiprocessing
+    t0 = time.time()
+    chunks = [schools[k::jobs] for k in range(jobs)]
+    gc.freeze()                                   # see engine/speed_ratings._packParallel
+    rows, failed = {}, []
+    with cf.ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("fork"),
+                                initializer=_procInit) as ex:
+        for got_rows, got_failed in ex.map(_procChunk, chunks, [oids] * jobs):
+            rows.update(got_rows)
+            for name, msg in got_failed:
+                failed.append(name)
+                log(f"  ! {name}: {msg}")
+            log(f"  {len(rows)}/{len(schools)} schools [{time.time() - t0:.0f}s]")
+    return rows, failed
+
+
 def _write(conn, name, rows, oids):
     import psycopg2.extras as E
     vals = [(key, text, school, payload, SP.oidText(oids), SP.CODE, at, len(payload))
@@ -202,7 +253,10 @@ def main(argv=None):
     jobs = dbJobs(args.jobs)
     print(f"computing {len(schools)} school(s) with {args.min_seasons}+ seasons, "
           f"{jobs} at once (code {SP.CODE}, oids {SP.oidText(oids)})", flush=True)
-    rows, failed = computeAll(schools, jobs, getConn, oids)
+    if jobs > 1 and len(schools) > jobs and os.environ.get("XCP_SCHOOL_PAGES_PROCS", "1") != "0":
+        rows, failed = computeAllProcs(schools, jobs, oids)
+    else:
+        rows, failed = computeAll(schools, jobs, getConn, oids)
     n_bytes = sum(len(p) for items in rows.values() for _k, _t, p, _a in items)
     print(f"computed {len(rows)}/{len(schools)} schools, {n_bytes:,} bytes, "
           f"{time.time() - t0:.0f} s", flush=True)
