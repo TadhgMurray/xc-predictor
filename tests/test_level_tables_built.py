@@ -53,7 +53,11 @@ class LevelTablesBuilt(unittest.TestCase):
         cf = self.at(r"^bgstep 04h1_college_flags .*college_flag\.py --write")
         self.assertLess(self.sh.index("gender_split_people.py"), cf)
         self.assertLess(self.at(r"^\s*(step|stepsN|bgstep) 04_grade_sanity"), cf)
-        start = self.at(r"^  bgstep 04h_season_levels .*season_level\.py --write")
+        start = self.at(r"^  bgstep 04h_season_levels .*season_level\.py (--write|\$_SV_ARGS)")
+        # the votes early (2026-11-16): after the person steps, joined before the resolve
+        votes = self.at(r"^  bgstep 04h0_season_votes .*season_level\.py --write --votes-only")
+        self.assertLess(self.sh.index("gender_split_people.py"), votes)
+        self.assertLess(self.at(r"^bgjoin 04h0_season_votes"), start)
         self.assertLess(self.at(r"^bgjoin 04_grade_sanity"), start)
         self.assertLess(self.at(r"^bgjoin 04h1_college_flags"), start)
         join = self.at(r"^bgjoin 04h_season_levels")

@@ -986,6 +986,17 @@ fi
 # tables open (04a's own 30-second try loses to the 03 readers; see
 # scripts/name_registry.py main). A failure costs only a log line.
 step 04a_registry_off "$PY" -u scripts/name_registry.py --uninstall || true
+# ★ season_level's VOTES FROM HERE, BESIDE grade_sanity (2026-11-16; ~880 s of
+#   04h's 1,344 held the run after grade_sanity on run 20261113_150959). The
+#   votes read results' person/date/grade/meet keys, race_level and
+#   meets.level_mask -- none written from here to 04h; grade_fix enters only
+#   through the grade-spelling classes, applied at --from-votes. Same table
+#   (tests/test_season_level_split.py). XCP_SEASON_VOTES_EARLY=0: as before.
+_SV_EARLY=0
+if [ "${XCP_SEASON_VOTES_EARLY:-1}" != "0" ] && willRun 04h0_season_votes && willRun 04h_season_levels; then
+  bgstep 04h0_season_votes "$PY" -u engine/season_level.py --write --votes-only
+  _SV_EARLY=1
+fi
 
 # ★★ THE DISTANCE CHECKS BESIDE THE PEOPLE VERDICTS (2026-11-07, owner-
 #    approved: data_checks ~30 min and wrong_distance 20-60 min used to run
@@ -1096,10 +1107,15 @@ fi
 #   04_grade_sanity, in the background while 04g runs (which reads neither),
 #   and collected before 05, their first reader.
 bgjoin 04h1_college_flags                 # season_level reads college_first_season
+bgjoin 04h0_season_votes
+_SV_ARGS="--write"
+if [ "$_SV_EARLY" = 1 ] && [ "$DRY" -eq 0 ] && ! failed 04h0_season_votes; then
+  _SV_ARGS="--write --from-votes"
+fi
 if failed 04h1_college_flags; then
-  bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py --write"
+  bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py $_SV_ARGS"
 else
-  bgstep 04h_season_levels "$PY" -u engine/season_level.py --write
+  bgstep 04h_season_levels "$PY" -u engine/season_level.py $_SV_ARGS
 fi
 # ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
 #   2025-12-31 because nothing in the pipeline ever extended it, so the
