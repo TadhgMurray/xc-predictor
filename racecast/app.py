@@ -1264,6 +1264,12 @@ def not_found(_err):
     return render_template("404.html"), 404
 
 
+# This is a decorator, it connects a URL to a function.
+@app.route("/hello")
+def yay():
+    return render_template("hello.html")
+
+
 def get_homepage_panels(cur):
     """Every visible panel row, flat. panels.py already ranked and filtered
     these, so the route does no work beyond reshaping. `visible` hides boards
