@@ -1061,3 +1061,29 @@ The honest model orders better than the hindsight-flattered ratings. Built:
   flags, distance overrides.
 - The switches for the same test round: `race_trees --runner-loss
   absolute_error`, `--level-median`.
+
+### 9c. The honest run (owner's, 2026-11-16)
+
+race_rows --asof-dir over the 30 snapshots (races from 2024-08-15), one
+table, validation 2025-26, 75,934 races; nothing in it saw anything after
+a race's cut:
+
+| | Median | Mean (Kailo's) | Pairs | Bias |
+|---|---|---|---|---|
+| The ratings alone | 3.67% | 5.40% | 86.75% | -0.01% |
+| **Race model** | **3.18%** | **4.75%** | **88.26%** | -0.15% (ms -1.47, hs +0.17, college -0.30) |
+| + --runner-loss absolute_error | 3.18% | 4.74% | 88.26% | -0.12% |
+| + --level-median | 3.17% | 4.76% | 88.26% | -0.42% |
+| No-ratings model | 3.18% | 5.10% | 87.75% | -0.09% |
+
+- The race model on the ratings wins: the ratings carry what raw times
+  cannot. The no-ratings track is switched off (weekly XCP_RACE_RAW,
+  nightly XCP_FORECAST_RAW, both default 0 now).
+- The hindsight was smaller than feared: against the same model on
+  today's numbers (2.96% / 4.58% / 88.84%), ~0.2 points of time, ~0.6 of
+  pairs.
+- The two switches buy nothing; left off.
+- Forecasts 90 / 180 / 330 days out: 4.23 / 4.19 / 4.36% median.
+- From now on the weekly model is TRAINED THIS WAY: race_model_weekly.sh
+  builds its table with --asof-dir (from 2023-08-15); the go-live adds a
+  snapshot a week (run_joint.goliveSnapshot), so no more replays.

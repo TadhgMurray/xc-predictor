@@ -89,10 +89,24 @@ if ! lock_take race_model queued $(( WAIT_MIN * 60 )) "race_rows table build (ab
   echo "[race model] the pipeline held $ROOT/.pipeline.lock for $WAIT_MIN min -- skipping this week"
   exit 0
 fi
+# ★ NO HINDSIGHT (owner, 2026-11-16, the honest run: trained and scored on
+#   the engine as of each day, the race model is 3.18% median / 4.75% mean /
+#   88.26% pairs, the no-ratings model 3.18% / 5.10% / 87.75%). The table is
+#   built from the snapshots (deploy/engine_replay.sh once; the go-live adds
+#   one a week, run_joint.goliveSnapshot): every race reads the ratings and
+#   course numbers as they stood the day it was predicted. Races before
+#   the first snapshot are left out (XCP_RACE_ASOF_FROM, 2023-08-15).
+#   XCP_RACE_ASOF=0, or no snapshots, builds from today's numbers as before.
+ASOF_DIR="${XCP_RACE_ASOF_DIR:-$DIR/asof}"
+ROWS_ASOF=()
+if [ "${XCP_RACE_ASOF:-1}" = "1" ] && ls "$ASOF_DIR"/asof_*.npz >/dev/null 2>&1; then
+  ROWS_ASOF=(--asof-dir "$ASOF_DIR" --from "${XCP_RACE_ASOF_FROM:-2023-08-15}")
+  say "the table reads the engine as of each day ($(ls "$ASOF_DIR"/asof_*.npz | wc -l) snapshots)"
+fi
 say "building the table (about 1.5 h): tail -f $LOGDIR/race_rows.log"
 "${JR[@]}" --name race_rows --gb "${XCP_RACE_ROWS_GB:-20}" --peak-out "$LOGDIR/race_rows.mem" -- \
   "$PY" -u model/race_rows.py --out "$ROWS_NEW" --to "$TO" --val-from "$VAL_FROM" \
-      --train-frac 1 > "$LOGDIR/race_rows.log" 2>&1 || fail race_rows
+      --train-frac 1 "${ROWS_ASOF[@]}" > "$LOGDIR/race_rows.log" 2>&1 || fail race_rows
 lock_release
 say "table built; lock released"
 
@@ -122,7 +136,10 @@ echo "[race model] swapped in $MODEL (the last one is $MODEL.prev)" | tee -a "$L
 #   with XCP_PREDICT_BASIS=race_raw or race_mix. A failure keeps the last
 #   file. XCP_RACE_RAW=0 skips it.
 RAW="${XCP_RACE_MODEL_RAW:-$(dirname "$MODEL")/race_trees_raw.pkl}"
-if [ "${XCP_RACE_RAW:-1}" = "1" ]; then
+# ! OFF BY DEFAULT since the honest run (2026-11-16): the no-ratings model
+#   lost on the mean miss (5.10% against 4.75%) and on order. XCP_RACE_RAW=1
+#   fits it again.
+if [ "${XCP_RACE_RAW:-0}" = "1" ]; then
   say "fitting the no-ratings model (about 1.5 h): tail -f $LOGDIR/race_trees_raw.log"
   if "${JR[@]}" --name race_trees_raw --gb "${XCP_RACE_TREES_GB:-30}" --peak-out "$LOGDIR/race_trees_raw.mem" -- \
        "$PY" -u model/race_trees.py --rows "$DIR/rows_weekly.npz" --val-from "$VAL_FROM" \
