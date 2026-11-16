@@ -110,3 +110,52 @@ def test_a_failed_child_fails_the_pack(fake, monkeypatch):
     monkeypatch.setattr(S, "streamResults", boom)
     with pytest.raises(RuntimeError, match="TF pack process failed"):
         S._packParallel(["XC", "TF"], TODAY, False)
+
+
+# --- XCP_PACK_TF_SHARDS (2026-11-16): TF's row loop in several workers fed
+#     from the one cursor, merged back batch by batch in stream order.
+
+def _sameState(a, b):
+    """Two _packLoop states identical: chunks, key lists, and the census
+    with its keys in the same ORDER (saveCols writes its repr)."""
+    assert list(a["census"].items()) == list(b["census"].items())
+    for k in ("a_uniq", "v_uniq", "t_uniq"):
+        assert a[k] == b[k], k
+    assert len(a["chunks"]) == len(b["chunks"])
+    for x, y in zip(a["chunks"], b["chunks"]):
+        for i, (p, q) in enumerate(zip(x, y)):
+            assert p.dtype == q.dtype and np.array_equal(p, q), i
+
+
+@pytest.mark.parametrize("shards", [2, 3, 5, 12])
+def test_tf_shards_give_the_one_loops_state(fake, shards):
+    one = S._packLoop(S.streamResults("TF"), TODAY)
+    one["census"] = dict(one["census"])
+    many = S._packSharded(lambda: S.streamResults("TF"), TODAY, False, shards)
+    _sameState(one, many)
+
+
+@pytest.mark.parametrize("shards", ["1", "3", "4"])
+def test_sharded_parallel_pack_is_the_one_loop_byte_for_byte(fake, monkeypatch, shards,
+                                                            tmp_path):
+    monkeypatch.setenv("XCP_PACK_TF_SHARDS", shards)
+    seq = S.packResults(S.chain(*(S.streamResults(s) for s in ("XC", "TF"))), TODAY)
+    par = S.packResults(None, TODAY, _state=S._packParallel(["XC", "TF"], TODAY, False))
+    _same(seq, par)
+    assert list(seq["census"]) == list(par["census"])
+    a, b = tmp_path / "a.npz", tmp_path / "b.npz"
+    S.saveCols(seq, str(a))
+    S.saveCols(par, str(b))
+    assert a.read_bytes() == b.read_bytes()
+
+
+def test_a_failed_tf_worker_fails_the_pack(fake, monkeypatch):
+    real = S._packLoop
+
+    def boom(batches, today, merge=False, marks=None):
+        if marks is not None:                       # in a worker
+            raise RuntimeError("worker broke")
+        return real(batches, today, merge, marks)
+    monkeypatch.setattr(S, "_packLoop", boom)
+    with pytest.raises(RuntimeError, match="TF worker"):
+        S._packSharded(lambda: S.streamResults("TF"), TODAY, False, 3)
