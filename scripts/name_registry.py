@@ -151,11 +151,11 @@ def refresh(cur):
     return n
 
 
-def uninstall(conn, quiet=False):
+def uninstall(conn, quiet=False, lock_wait="30s"):
     try:
         conn.rollback()
         with conn.cursor() as cur:
-            cur.execute("SET LOCAL lock_timeout = '30s'")
+            cur.execute(f"SET LOCAL lock_timeout = '{lock_wait}'")
             for table in TABLES:
                 cur.execute(f"DROP TRIGGER IF EXISTS lu_person_move ON {table}")
                 cur.execute(f"DROP TRIGGER IF EXISTS lu_person_move_id ON {table}")
@@ -166,3 +166,36 @@ def uninstall(conn, quiet=False):
             print(f"[name-registry] ! could not drop the triggers ({exc}); the next 04a "
                   "replaces them and the next backfill drops them", flush=True)
     _READY.pop(id(conn), None)
+
+
+def main():
+    """--uninstall: drop the triggers on their own (pipeline 04a_registry_off).
+    ★ (2026-11-16; runs 20261113_150959 and 20261116_154245 both logged "could
+    not drop the triggers (lock timeout)"): DROP TRIGGER needs the table to
+    itself, and while the 03 group's snapshot readers (or the site) hold
+    athletes/results open, 04a's 30-second try fails -- leaving athletes'
+    triggers logging every later person change into lu_person_moves. Run
+    again once the 03 group is collected, with a longer wait."""
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--uninstall", action="store_true")
+    ap.add_argument("--lock-wait", default="5min")
+    a = ap.parse_args()
+    if not a.uninstall:
+        ap.error("nothing to do (--uninstall)")
+    from database import getConn
+    with getConn() as conn:
+        uninstall(conn, lock_wait=a.lock_wait)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'lu_person_move%%'")
+            left = cur.fetchone()[0]
+            if not left:
+                cur.execute("DROP TABLE IF EXISTS lu_person_moves")
+        conn.commit()
+    print(f"[name-registry] triggers left: {left}")
+    return 1 if left else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

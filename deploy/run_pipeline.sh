@@ -982,6 +982,10 @@ if [ -n "$_SNAP03" ]; then
   wait "$_SNAP03_PID" 2>/dev/null || echo "  03 snapshot hold ended early (03_snapshot_hold.log)" | tee -a "$SUMMARY"
   tail -n 1 "$LOGDIR/03_snapshot_hold.log"; rm -f "$_SNAP03_FILE" "$_SNAP03_REL"
 fi
+# the 04a name registry's triggers, dropped again now nothing holds the
+# tables open (04a's own 30-second try loses to the 03 readers; see
+# scripts/name_registry.py main). A failure costs only a log line.
+step 04a_registry_off "$PY" -u scripts/name_registry.py --uninstall || true
 
 # ★★ THE DISTANCE CHECKS BESIDE THE PEOPLE VERDICTS (2026-11-07, owner-
 #    approved: data_checks ~30 min and wrong_distance 20-60 min used to run
