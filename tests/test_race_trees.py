@@ -277,3 +277,21 @@ def test_the_level_of_the_median_runner_is_not_dragged_by_walkers():
     got = RT.placeOnLevel(base, r, 0.01, "median")
     assert got[1] == pytest.approx(7.01)                   # the median runner sits on the level
     assert RT.placeOnLevel(base, r, 0.0).mean() == pytest.approx(7.0)
+
+
+def test_the_college_report_splits_level_from_within():
+    import numpy as np
+    import race_trees as RT
+    n = 120
+    fidx = {"has_cell": 0, "level_change": 1, "form_n": 2}
+    X = np.zeros((2 * n, 3))
+    X[:n, 0] = 1                      # race 1's course has a difficulty, race 2's none
+    X[:, 2] = 4
+    tv = np.ones(2 * n)
+    sl = [(0, n), (n, 2 * n)]
+    yav = np.zeros(2 * n)
+    tot = np.concatenate([np.full(n, 0.01), np.full(n, 0.05)])   # 1% and 5% slow, all alike
+    lines = "\n".join(RT.collegeReport(X, fidx, tv, sl, tot, yav, np.array([0, 0])))
+    assert "course has a difficulty" in lines and "course has none" in lines
+    row = next(l for l in lines.splitlines() if "course has none" in l)
+    assert "5.13%" in row and "0.00%" in row          # all of it is the race's level
