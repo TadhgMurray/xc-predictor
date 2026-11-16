@@ -2458,7 +2458,8 @@ if [ "${XCP_FORECASTS:-0}" = "1" ]; then
   #   XCP_FORECAST_RAW=0 skips it.
   RAW_MODEL="${XCP_RACE_MODEL_RAW:-$(dirname "${XCP_RACE_MODEL:-$ROOT/model/data/race_trees.pkl}")/race_trees_raw.pkl}"
   _RAW13=""
-  if [ "${XCP_FORECAST_RAW:-1}" = "1" ] && [ -f "$RAW_MODEL" ]; then _RAW13=1; fi
+  # ! off since the honest run (2026-11-16): XCP_FORECAST_RAW=1 freezes it again
+  if [ "${XCP_FORECAST_RAW:-0}" = "1" ] && [ -f "$RAW_MODEL" ]; then _RAW13=1; fi
 fi
 # ★ AND THE QUALIFIER FIELDS OF THE UPCOMING CHAMPIONSHIPS, as the nightly
 #   (racecast/build_qualified_fields.py); XCP_QUALIFIED_BUILD=0 skips it
