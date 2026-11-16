@@ -1007,12 +1007,30 @@ def byRating():
 #   search_index.schoolFold, SAME STATE ("Trinity (Conn.)" is not
 #   "Trinity (Texas)") -- under the round's spelling; ratedRows then keeps
 #   each school's best seven (or as many as it brought).
+def rosterFold(name):
+    """A school's spellings as one key for MERGING ROSTERS: schoolFold
+    without dropping a trailing "College" / "University" (owner, 2026-11-16:
+    the D3 nationals projection put Illinois's, Penn's and Colorado's
+    Division I runners on Illinois College, Penn College and Colorado
+    College -- same state, and schoolFold reads "Illinois College" as
+    "illinois"). "Wesleyan (Conn.)" is still "wesleyan", "Conn College"
+    still "connecticut college". Pure."""
+    import re
+    from search_index import _FOLD_WORDS
+    t = re.sub(r"\s*\([^)]*\)\s*", " ", str(name or "").lower())
+    t = re.sub(r"[^a-z0-9 ]+", " ", t)
+    words = [_FOLD_WORDS.get(w, {"u": "university"}.get(w, w)) for w in t.split()]
+    if len(words) > 2 and words[0] == "university" and words[1] == "of":
+        words = words[2:]
+    return " ".join(words)
+
+
 def spellingExtras(teams, candidates):
     """[(person_id, round school, rating, pool)] for season rows filed
     under another spelling of a round's school in its state, not already
     in the field. candidates: [(person_id, school, state, rating, pool)].
-    Pure but for search_index.schoolFold."""
-    from search_index import schoolFold
+    Pure but for search_index's fold words."""
+    schoolFold = rosterFold
     have = {int(r["person_id"]) for t in teams or [] for r in t.get("runners") or []
             if r.get("person_id") is not None}
     by = {(schoolFold(t["school"]), t["state"]): t["school"]
@@ -1220,13 +1238,33 @@ def _dictRows(cur):
 
 def _rowsOf(pred):
     """A stored or live race prediction as qualifying rows: [(person_id,
-    school, seconds, rating)] in predicted order, or []."""
+    school, seconds, rating)] in predicted order, or [].
+
+    ★ THE ORDER IS THE PREDICTED PLACE, NOT THE CLOCK TIME (owner,
+      2026-11-16: the D3 nationals projection sent Illinois College and Penn
+      College to nationals as regional champions, and Colorado College ran
+      its projected West regional ~10% faster than anyone in the country).
+      The selection (qualifying.teamOrder, the at-large squads, the
+      individuals) sorts these rows by their time, and a re-run round's
+      times went through a clock conversion that does not keep the model's
+      order -- ~70 s for an 8K, different runners converted differently --
+      while the predicted places were sound (the same round scored Wartburg
+      36, North Central 75 ...). So the round's own times are handed out in
+      place order: the same times, the places' order. A row without a place
+      keeps its time."""
     if not pred or not pred.get("available"):
         return []
-    return [(int(r["person_id"]), r.get("school"), float(r["seconds"]),
+    runners = [r for r in pred.get("runners") or []
+               if r.get("person_id") is not None and r.get("seconds")]
+    if runners and all(r.get("place") is not None for r in runners):
+        times = sorted(float(r["seconds"]) for r in runners)
+        runners = sorted(runners, key=lambda r: (float(r["place"]), float(r["seconds"])))
+        secs = times
+    else:
+        secs = [float(r["seconds"]) for r in runners]
+    return [(int(r["person_id"]), r.get("school"), t,
              float(r["rating"]) if r.get("rating") is not None else None)
-            for r in pred.get("runners") or []
-            if r.get("person_id") is not None and r.get("seconds")]
+            for r, t in zip(runners, secs)]
 
 
 def livePrediction(cur, meet_id, div_id, source=None, on=None, add=None):

@@ -39,3 +39,31 @@ def test_nothing_to_fill_asks_nothing():
     cur = _Cur([])
     P._rateByPerson(cur, [{"person_id": 1, "rating": 110.0}], "XC", 2026)
     assert cur.sql is None
+
+
+def test_a_projected_round_is_ordered_by_predicted_place_not_clock_time():
+    """2026-11-16: converted times put Illinois College ahead of Wartburg."""
+    import upcoming_preview as U
+    pred = {"available": True, "runners": [
+        {"person_id": 1, "school": "Wartburg", "seconds": 70.2, "place": 1, "rating": 118.4},
+        {"person_id": 2, "school": "Illinois College", "seconds": 69.1, "place": 9, "rating": 102.4},
+        {"person_id": 3, "school": "Wartburg", "seconds": 71.1, "place": 2, "rating": 116.7},
+        {"person_id": 4, "school": "Nobody", "seconds": None, "place": 3}]}
+    rows = U._rowsOf(pred)
+    assert [r[0] for r in rows] == [1, 3, 2]                  # place order
+    assert [r[2] for r in rows] == [69.1, 70.2, 71.1]         # the same times, in that order
+    unplaced = {"available": True, "runners": [{"person_id": 5, "school": "X", "seconds": 900.0}]}
+    assert U._rowsOf(unplaced) == [(5, "X", 900.0, None)]
+
+
+def test_a_college_is_not_merged_with_the_university_it_is_named_after():
+    """2026-11-16: Illinois's, Penn's and Colorado's Division I runners were
+    added to Illinois College, Penn College and Colorado College."""
+    import upcoming_preview as U
+    teams = [{"school": "Illinois College", "state": "IL", "runners": [{"person_id": 1}]},
+             {"school": "Wesleyan", "state": "CT", "runners": [{"person_id": 2}]}]
+    cands = [(10, "Illinois", "IL", 130.0, "college_m"),          # the Division I university
+             (11, "Wesleyan (Conn.)", "CT", 120.0, "college_m"),  # the same school, other feed
+             (12, "Illinois College", "IL", 100.0, "college_m")]  # already its own spelling
+    got = U.spellingExtras(teams, cands)
+    assert got == [(11, "Wesleyan", 120.0, "college_m")]
