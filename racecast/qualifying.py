@@ -222,10 +222,11 @@ def teamStrength(rows, school):
     return sum(rs) / len(rs) if rs else -math.inf
 
 
-AT_LARGE_MODES = ("wins", "net", "pct")
+AT_LARGE_MODES = ("wins", "net", "pct", "bt")
 
 
-def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None, mode="wins"):
+def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None, mode="wins",
+                 rank=None):
     """n picks from per-round queues of teams in regional finish order: each
     pick the strongest team at the head of any queue, so no team goes
     ahead of one that beat it at its own round. queues: {round: [school]};
@@ -244,7 +245,9 @@ def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None, mo
       fewest losses), "net" (wins - losses), "pct" (wins / meetings,
       smoothed) -- ! on 2026's D3 fields "wins" did no better than the
       ratings (men 28 of 32 both ways, women 27 against 29), so it is not
-      the default (XCP_ATLARGE_BY) until a mode beats them."""
+      the default (XCP_ATLARGE_BY) until a mode beats them. "bt": by
+      `rank` ({school: Bradley-Terry strength}, bradleyTerry), which weighs
+      each result by who it was against, then strength."""
     q = {k: list(v) for k, v in queues.items()}
     out, seen = [], set(taken)
     for _ in range(n):
@@ -266,7 +269,8 @@ def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None, mo
             if v:
                 w, l = tally(v[0])
                 st = strength(k, v[0])
-                key = {"net": (w - l, w, st), "pct": ((w + 1) / (w + l + 2), st)}.get(mode, (w, -l, st))
+                key = {"net": (w - l, w, st), "pct": ((w + 1) / (w + l + 2), st),
+                       "bt": ((rank or {}).get(v[0], 0.0), st)}.get(mode, (w, -l, st))
                 heads.append((key, k, (w, l)))
         _s, k, wl = max(heads, key=lambda h: (h[0], str(h[1])))
         out.append((k, q[k].pop(0)))
@@ -277,12 +281,58 @@ def atLargeTeams(queues, n, strength, taken=(), record=None, points_out=None, mo
 
 
 def seasonRecord(races, teams):
-    """{(a, b): a's wins over b minus b's over a} from this season's races.
+    """{(a, b): a's wins over b minus b's over a} from this season's races
+    (seasonGames, netted). Pure."""
+    return netRecord(seasonGames(races, teams))
+
+
+def netRecord(games):
+    """{(a, b): a's wins over b minus b's over a} from {(winner, loser):
+    count}. Pure."""
+    rec = collections.Counter()
+    for (a, b), n in (games or {}).items():
+        rec[(a, b)] += n
+        rec[(b, a)] -= n
+    return {k: v for k, v in rec.items() if v}
+
+
+def bradleyTerry(games, prior=1.0, iters=300):
+    """{school: log strength} fitted to {(winner, loser): count} -- Elo's
+    idea for a finished season (owner, 2026-11-16: "why is it not like
+    elo?"): a win over a strong team is worth more than one over a weak
+    team, and strength passes along chains of results. Each team also has
+    `prior` win and loss against a virtual team of strength 1, so a team
+    with few meetings stays near the middle and a team that never lost
+    stays finite (Hunter's MM iteration). Pure."""
+    teams = sorted({t for pair in (games or {}) for t in pair})
+    if not teams:
+        return {}
+    wins = collections.Counter()
+    met = collections.defaultdict(collections.Counter)
+    for (a, b), n in games.items():
+        wins[a] += n
+        met[a][b] += n
+        met[b][a] += n
+    p = {t: 1.0 for t in teams}
+    for _ in range(iters):
+        new = {}
+        for t in teams:
+            den = sum(n / (p[t] + p[o]) for o, n in met[t].items()) + 2 * prior / (p[t] + 1.0)
+            new[t] = (wins[t] + prior) / den
+        delta = max(abs(new[t] - p[t]) for t in teams)
+        p = new
+        if delta < 1e-9:
+            break
+    return {t: math.log(v) for t, v in p.items()}
+
+
+def seasonGames(races, teams):
+    """{(winner, loser): meetings won} from this season's races.
     races: [[(school spelling, seconds)]] -- every finisher of each race;
     teams: {spelling: candidate school}. A race counts for a pair when both
     put five finishers in it; places are among teams of five or more, the
     sum of each team's top five (teamOrder's scoring). Pure."""
-    rec = collections.Counter()
+    games = collections.Counter()
     for rows in races:
         by = collections.defaultdict(list)
         for sp, sec in rows:
@@ -305,10 +355,8 @@ def seasonRecord(races, teams):
         for i, a in enumerate(names):
             for b in names[i + 1:]:
                 if score[a] != score[b]:
-                    w = 1 if score[a] < score[b] else -1
-                    rec[(a, b)] += w
-                    rec[(b, a)] -= w
-    return dict(rec)
+                    games[(a, b) if score[a] < score[b] else (b, a)] += 1
+    return dict(games)
 
 
 def atLargeIndividuals(queues, n, n_teams):
@@ -333,7 +381,7 @@ def selectField(rule, rounds, pools=None, labels=None, explain=None, meetings=No
     shape -- no automatic places and no individuals from them. explain, a
     dict, is told how each team got in (owner, 2026-11-10: "can it tell
     at-larges?"): {"auto": {round: [school]}, "at_large": [(round, school)]
-    in pick order}. meetings({school: {pid}}) -> {(a, b): net wins}, the
+    in pick order}. meetings({school: {pid}}) -> {(winner, loser): meetings won}, the
     season's record of the teams (seasonMeetings), for a rule whose
     at-large teams go by wins (atLargeTeams)."""
     size = rule.get("team_size", 7)
@@ -348,7 +396,8 @@ def selectField(rule, rounds, pools=None, labels=None, explain=None, meetings=No
     if explain is not None:
         explain["auto"] = {k: list(v) for k, v in qualified.items()}
         explain["at_large"] = []
-    record = None
+    record, rank = None, None
+    mode = rule.get("at_large_mode", "wins")
     if meetings is not None and rule.get("at_large_by") == "wins" and rule.get("teams_at_large"):
         squads = collections.defaultdict(set)
         for rows in rows_of.values():
@@ -356,7 +405,9 @@ def selectField(rule, rounds, pools=None, labels=None, explain=None, meetings=No
                 if r[1] and isTeam(r[1]):
                     squads[r[1]].add(r[0])
         try:
-            record = meetings(dict(squads)) or None
+            games = meetings(dict(squads)) or {}
+            record = netRecord(games) or None
+            rank = bradleyTerry(games) if mode == "bt" else None
         except Exception as exc:                        # noqa: BLE001
             print(f"qualifying: season record unavailable ({type(exc).__name__}: {exc}); "
                   f"at-large by ratings", flush=True)
@@ -366,10 +417,10 @@ def selectField(rule, rounds, pools=None, labels=None, explain=None, meetings=No
     for k, school in atLargeTeams(queues, rule.get("teams_at_large", 0),
                                   lambda k, s: teamStrength(rows_of[k], s), taken=auto,
                                   record=record, points_out=points,
-                                  mode=rule.get("at_large_mode", "wins")):
+                                  mode=mode, rank=rank):
         if explain is not None:
             explain["at_large"].append((k, school))
-            explain["by"] = rule.get("at_large_mode", "wins") if record else "ratings"
+            explain["by"] = mode if record else "ratings"
             explain["points"] = points
         if k in qualified:
             qualified[k].append(school)
@@ -740,7 +791,7 @@ def fieldFromRounds(cur, rule, day, gender, predict=None, predict_past=None, inf
 #   squad's, at every meet of the season before the championship -- but not
 #   the rounds themselves, whose order the queues already keep.
 def seasonMeetings(cur, rule, day, squads, skip=()):
-    """{(a, b): net wins} among `squads` ({school: {pid}}) this season, from
+    """{(winner, loser): meetings won} among `squads` ({school: {pid}}) this season, from
     every race before `day` (ISO) but the rule's rounds and championship
     and the meets in `skip`."""
     pid_to = {}
@@ -797,7 +848,7 @@ def seasonMeetings(cur, rule, day, squads, skip=()):
         key = (int(row[0]), int(row[1]))
         if key in keep:
             by[key].append((row[2], float(row[3])))
-    return seasonRecord(list(by.values()), teams)
+    return seasonGames(list(by.values()), teams)
 
 
 # ★ LAST YEAR'S ROUNDS, RUN THIS YEAR (owner's nightly, 2026-11-04: the
