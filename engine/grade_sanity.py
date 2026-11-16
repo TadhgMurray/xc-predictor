@@ -455,10 +455,11 @@ def splitStatements(sql):
 #   the rest already were: the same rows, replaced by the next run.
 def runTimed(cur, sql, label="", slow=1.0):
     """Execute a script statement by statement, printing the ones that
-    take longer than `slow` seconds with their first meaningful line."""
+    take longer than `slow` seconds with their first meaningful line.
+    `sql` is a script, or a list of statements already split."""
     import time as _t
     t_all = _t.time()
-    for stmt in splitStatements(sql):
+    for stmt in (splitStatements(sql) if isinstance(sql, str) else sql):
         t0 = _t.time()
         cur.execute(stmt)
         dt = _t.time() - t0
@@ -467,6 +468,13 @@ def runTimed(cur, sql, label="", slow=1.0):
                          if ln.strip() and not ln.strip().startswith("--")), "?")
             print(f"    [{dt:7.1f}s] {head[:90]}", flush=True)
     print(f"    [{_t.time() - t_all:7.1f}s] {label} total", flush=True)
+
+
+def tick(label, t0):
+    """The [time] line for a phase that is not a runTimed script: its
+    seconds since t0, in runTimed's own format, so the log breaks the step
+    down end to end."""
+    print(f"    [{time.time() - t0:7.1f}s] {label}", flush=True)
 
 
 # ★ COPY, NOT INSERT ... VALUES (2026-10-25, run log: 349 s from "written as
@@ -1952,7 +1960,7 @@ _FOLD_SQL = """
 """
 
 
-def reportFold(cur):
+def reportFold(cur, rows=None):
     """How many seasons held both kinds, and which kind took them.
 
     ★ word_wins IS THE NUMBER TO WATCH. Those are seasons where class words
@@ -1961,15 +1969,17 @@ def reportFold(cur):
       large share of `mixed`, the tie rule is doing more work than intended
       and wants a second look.
     """
-    cur.execute(_FOLD_SQL)
-    mixed, num_wins, word_wins = cur.fetchone()
+    if rows is None:
+        cur.execute(_FOLD_SQL)
+        rows = cur.fetchall()
+    mixed, num_wins, word_wins = rows[0]
     print("\n[grade] seasons holding BOTH numbers and class words:")
     print(f"    mixed seasons            {mixed:>10,}")
     print(f"    number takes the season  {num_wins:>10,}")
     print(f"    word takes the season    {word_wins:>10,}")
 
 
-def reportUngraded(cur):
+def reportUngraded(cur, rows=None):
     """How much of the corpus edit 2's second arm now speaks for.
 
     ⚠ THE SECOND NUMBER IS THE ONE TO WATCH. Edit 2 puts no field-size floor
@@ -1980,8 +1990,10 @@ def reportUngraded(cur):
     Counts EVERY event, not only the ones needy athletes ran, so it is an
     upper bound on what the rule can reach.
     """
-    cur.execute(_UNGRADED_SQL)
-    n_ev, n_thin, n_rows = cur.fetchone()
+    if rows is None:
+        cur.execute(_UNGRADED_SQL)
+        rows = cur.fetchall()
+    n_ev, n_thin, n_rows = rows[0]
     print("\n[grade] events where nobody carried a grade (edit 2):")
     print(f"    events                   {n_ev:>10,}")
     print(f"    of those, under {MIN_FIELD_GRADED} entrants "
@@ -2554,20 +2566,15 @@ _NEVER_SCHOOL_SQL = """
     WHERE  s.person_id IS NULL"""
 
 
-def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
-    """{(person_id, acad): school} meeting rule 8's three signals. The
-    school is '' for a season moved on the unattached arm (no club row).
-
-    hs_grade: {(pid, acad): int grade} of the high school verdicts;
-    college_start: {pid: first college academic year} (rule 5b's start);
-    adult_from: {pid: first academic year past school} (priorAdultSeasons).
-    Pure apart from the reads; the decision is _adultClubDecide."""
-    adult_from = adult_from or {}
-    from level_graph import _raceKeyExpr
+def _clubPrep(cur):
+    """Rule 8's reads that need no verdict: the club rows (tmp_club_rows,
+    left for the facts query), the clubs per season with their initials
+    (tmp_club_alias, likewise), and the clubs the last build pooled adult
+    (athlete_season). {"absent": True} without race_top_level, as rule 8
+    skips; else {"club_seasons", "adult_pooled", "secs"}."""
     cur.execute("SELECT to_regclass('race_top_level')")
     if cur.fetchone()[0] is None:
-        print("    [8] race_top_level absent: skipped")
-        return {}
+        return {"absent": True}
     t0 = time.time()
     # every row on a club-shaped team, either sport -- the club side of the
     # question, small next to the corpus
@@ -2612,6 +2619,53 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
             JOIN   tmp_club_alias a ON a.person_id = r.person_id AND a.alias = r.team""")
         for pid, ay, club in cur.fetchall():
             club_seasons.setdefault((int(pid), int(ay)), set()).add(club)
+    # (b) of the adult share below: read here, with the club rows
+    adult_pooled = set()
+    cur.execute("SELECT to_regclass('athlete_season')")
+    if cur.fetchone()[0] is not None:
+        cur.execute(f"""
+            SELECT c.club,
+                   count(DISTINCT (c.person_id, c.acad))
+                       FILTER (WHERE s.pool ~ '^(pro|college)_')      AS adult,
+                   count(DISTINCT (c.person_id, c.acad))              AS n
+            FROM   (SELECT DISTINCT person_id, acad, club FROM tmp_club_rows) c
+            JOIN   athlete_season s ON s.person_id = c.person_id AND s.year = c.acad
+            GROUP  BY 1""")
+        adult_pooled = {c for c, a, n in cur.fetchall() if n and a / n > ADULT_CLUB_SHARE}
+    return {"club_seasons": club_seasons, "adult_pooled": adult_pooled,
+            "secs": time.time() - t0}
+
+
+def _clubPrepSide(cur):
+    """_clubPrep on a side connection, its two tables committed for the main
+    connection's facts query -- with autovacuum off, as the main
+    connection's early tables (tmp_club_alias is never ANALYZEd: an
+    autovacuum ANALYZE would hand the facts query statistics the sequential
+    path never had)."""
+    got = _clubPrep(cur)
+    noAutovacuum(cur, ("tmp_club_rows", "tmp_club_alias"))
+    return got
+
+
+def adultClubSeasons(cur, hs_grade, college_start, adult_from=None, prep=None):
+    """{(person_id, acad): school} meeting rule 8's three signals. The
+    school is '' for a season moved on the unattached arm (no club row).
+
+    hs_grade: {(pid, acad): int grade} of the high school verdicts;
+    college_start: {pid: first college academic year} (rule 5b's start);
+    adult_from: {pid: first academic year past school} (priorAdultSeasons).
+    prep: _clubPrep's answer when a side connection read it, else read here.
+    Pure apart from the reads; the decision is _adultClubDecide."""
+    adult_from = adult_from or {}
+    from level_graph import _raceKeyExpr
+    t0 = time.time()
+    if prep is None:
+        prep = _clubPrep(cur)
+    if prep.get("absent"):
+        print("    [8] race_top_level absent: skipped")
+        return {}
+    print(f"    [8] club rows read ({prep['secs']:.0f}s)", flush=True)
+    club_seasons = prep["club_seasons"]
     # the clubs' adult share, two ways, either enough:
     #   (a) of each club's (athlete, season)s, how many come after that
     #       athlete's college began;
@@ -2630,17 +2684,7 @@ def adultClubSeasons(cur, hs_grade, college_start, adult_from=None):
             m[1] += 1
             m[0] += int(cs is not None and ay >= cs)
     adult = {c for c, (a, n) in members.items() if n and a / n > ADULT_CLUB_SHARE}
-    cur.execute("SELECT to_regclass('athlete_season')")
-    if cur.fetchone()[0] is not None:
-        cur.execute(f"""
-            SELECT c.club,
-                   count(DISTINCT (c.person_id, c.acad))
-                       FILTER (WHERE s.pool ~ '^(pro|college)_')      AS adult,
-                   count(DISTINCT (c.person_id, c.acad))              AS n
-            FROM   (SELECT DISTINCT person_id, acad, club FROM tmp_club_rows) c
-            JOIN   athlete_season s ON s.person_id = c.person_id AND s.year = c.acad
-            GROUP  BY 1""")
-        adult |= {c for c, a, n in cur.fetchall() if n and a / n > ADULT_CLUB_SHARE}
+    adult |= prep["adult_pooled"]
     # the candidates: high school verdicts in a season with a club row, or
     # (the unattached arm) a season after the athlete was already past school
     grads = _graduations(hs_grade)
@@ -2836,7 +2880,24 @@ def _adultClubDecide(cand, facts, club_seasons, adult, hs_grade, adult_from=None
     return out
 
 
-def priorAdultSeasons(acad, cur=None):
+_ADULT_POOL_SQL = """
+                SELECT person_id, min(year),
+                       min(year) FILTER (WHERE pool ~ '^pro_')
+                FROM   athlete_season WHERE pool ~ '^(pro|college)_'
+                GROUP  BY 1"""
+
+
+def adultPoolRows(cur):
+    """The last build's pro_ / college_ pools per person (athlete_season),
+    or None without the table: priorAdultSeasons' read, done once."""
+    cur.execute("SELECT to_regclass('athlete_season')")
+    if cur.fetchone()[0] is None:
+        return None
+    cur.execute(_ADULT_POOL_SQL)
+    return cur.fetchall()
+
+
+def priorAdultSeasons(acad, cur=None, rows=None):
     """({pid: first adult academic year}, {pid: first professional one}).
 
     Adult is a verdict of level pro or college, or a college class word;
@@ -2855,18 +2916,14 @@ def priorAdultSeasons(acad, cur=None):
             _put(pro, pid, ay)
         elif v.get("level") == "college" or v.get("grade") in ("FR", "SO", "JR", "SR"):
             _put(adult, pid, ay)
-    if cur is not None:
-        cur.execute("SELECT to_regclass('athlete_season')")
-        if cur.fetchone()[0] is not None:
-            cur.execute("""
-                SELECT person_id, min(year),
-                       min(year) FILTER (WHERE pool ~ '^pro_')
-                FROM   athlete_season WHERE pool ~ '^(pro|college)_'
-                GROUP  BY 1""")
-            for pid, a, p in cur.fetchall():
-                _put(adult, int(pid), int(a))
-                if p is not None:
-                    _put(pro, int(pid), int(p))
+    # rows: adultPoolRows' answer, read once for both calls (the table does
+    # not change during the run); without it, read here with `cur`
+    if rows is None and cur is not None:
+        rows = adultPoolRows(cur)
+    for pid, a, p in rows or ():
+        _put(adult, int(pid), int(a))
+        if p is not None:
+            _put(pro, int(pid), int(p))
     return adult, pro
 
 
@@ -2971,34 +3028,319 @@ def thinFieldSeasons(cur, nuked_seasons):
     return out
 
 
-def resolve(cur, audit=False):
+# ================================================================== #
+#  SIDE BY SIDE (2026-11-16; run 20261113_150959: 2,500 s, the critical
+#  path of block 04, every phase one after another on one connection)
+#
+#  ★ WHAT DEPENDS ON WHAT. The build is a chain (gradenorm -> allraces ->
+#    pa_races -> raceKinds -> gradekind -> allraces folded); after it:
+#      reads of COMMITTED tables only, nothing acad-dependent:
+#        rule 7 (eliteFieldSeasons: results*, race_top_level, athletes,
+#        college_directory, ntschool -- never allraces), the fold report
+#        (gradekind), the ungraded report (allraces.grade), the three
+#        allraces indexes;
+#      reads of allraces BEFORE 2c's write-back (grade_folded as built):
+#        [2] corroborated, [2c] bare class words, [2c round 1] field;
+#      reads of allraces AFTER the write-back, and of nothing rule 4 or
+#        any later rule writes: [5] stale grades (grade_folded), [5b] and
+#        [5e]'s college starts (definite, raw_grade, acad -- columns the
+#        write-back never touches), rule 8's athlete_season pools and its
+#        club rows (results*, athlete_season; acad enters only after them).
+#    Everything else reads the verdicts (acad) or a table the rule before
+#    it made, and stays on the main connection in its old order.
+#  ! THE MERGE ORDER IS THE OLD ORDER. A side job returns the rows its
+#    query returned; the main connection applies them to acad exactly where
+#    the sequential path ran the query, so the precedence of the rules is
+#    the same code in the same order. No query's text changed.
+#  ! THE MAIN CONNECTION COMMITS THREE TIMES MID-RUN (after the build's
+#    tables, after allraces' ANALYZE, after the write-back) so the side
+#    connections can see them. The scratch tables committed early get
+#    autovacuum_enabled = off first: a mid-run autovacuum could re-sample
+#    their statistics or set their visibility map (relallvisible changes
+#    index-only scan costs) and plan the later queries differently from the
+#    sequential path, where nothing committed until the end.
+#  ! THE SAME SESSION SETTINGS. A side connection takes the main
+#    connection's session settings (pg_settings source 'session': the
+#    build's work_mem, parallel costs, enable_nestloop) as they are at the
+#    moment it starts -- each job starts at a point where they equal those
+#    in force where the sequential path ran it -- transaction-local, so they
+#    go back with the pooled connection. Plus statement_timeout (new work,
+#    so bounded: XCP_GRADE_SANITY_SIDE_TIMEOUT, 3h).
+#  ! A FAILED SIDE JOB IS RUN AGAIN ON THE MAIN CONNECTION where the
+#    sequential path ran it, with the main connection's settings there.
+#  XCP_GRADE_SANITY_PARALLEL=0: today's sequential path. Only with --write
+#  (a dry run commits nothing, so it stays on one connection), and never
+#  under an exported snapshot (XCP_PG_SNAPSHOT_FILE): a commit there does
+#  not let the next transaction see this process's own tables.
+# ================================================================== #
+
+SIDE_ENV = "XCP_GRADE_SANITY_PARALLEL"
+# five: the most started at once (after the write-back) -- so a job the
+# main connection is about to wait for never queues behind a report
+SIDE_STREAMS = int(os.environ.get("XCP_GRADE_SANITY_STREAMS") or 5)
+SIDE_TIMEOUT = os.environ.get("XCP_GRADE_SANITY_SIDE_TIMEOUT") or "3h"
+# the settings a side connection does not copy: transaction state and
+# identity, not planner or memory settings
+_SIDE_SKIP = ("transaction_isolation", "transaction_read_only",
+              "transaction_deferrable", "session_authorization", "role",
+              "statement_timeout")
+# the scratch tables the main connection commits after the build
+_SIDE_EARLY_TABLES = ("gradenorm", "allraces", "pa_races", "raceKinds",
+                      "gradekind", _NT_TABLE)
+
+
+def sideOn():
+    """Run the independent phases side by side? XCP_GRADE_SANITY_PARALLEL
+    (default on; 0 = the sequential path), never under an exported
+    snapshot."""
+    if os.environ.get(SIDE_ENV, "1").strip() == "0":
+        return False
+    if os.environ.get("XCP_PG_SNAPSHOT_FILE", "").strip():
+        return False
+    return True
+
+
+def noAutovacuum(cur, tables):
+    """autovacuum_enabled = off on scratch tables about to be committed
+    mid-run (see SIDE BY SIDE). Tables that do not exist are skipped."""
+    for t in tables:
+        cur.execute("SELECT to_regclass(%s)", (t,))
+        if cur.fetchone()[0] is not None:
+            cur.execute(f"ALTER TABLE {t} SET (autovacuum_enabled = false, "
+                        f"toast.autovacuum_enabled = false)")
+
+
+def _fetch(sql, params=None):
+    """A side job: the rows of one query."""
+    def run(cur):
+        cur.execute(sql, params)
+        return cur.fetchall()
+    return run
+
+
+def _exec(sql):
+    """A side job: one statement, no rows."""
+    def run(cur):
+        cur.execute(sql)
+    return run
+
+
+class SideWork:
+    """Jobs on their own connections beside the main one. submit() starts a
+    job now with the main connection's session settings; result() waits for
+    it, or runs it again on the main connection if it failed."""
+
+    def __init__(self, main_cur, connect, streams=SIDE_STREAMS,
+                 timeout=SIDE_TIMEOUT):
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        self.cur, self.connect, self.timeout = main_cur, connect, timeout
+        self.streams = max(1, int(streams))
+        self.pool = ThreadPoolExecutor(max_workers=self.streams)
+        self.futs, self.fns, self.live, self.pids = {}, {}, {}, {}
+        self.lock = threading.Lock()
+        print(f"[grade] side by side: up to {self.streams} jobs beside the main "
+              f"connection ({SIDE_ENV}=0 for one connection)", flush=True)
+
+    def settings(self):
+        self.cur.execute("SELECT name, current_setting(name) FROM pg_settings "
+                         "WHERE source = 'session' ORDER BY name")
+        return [(n, v) for n, v in self.cur.fetchall() if n not in _SIDE_SKIP]
+
+    def submit(self, label, fn, commit=False):
+        """Start fn(cur) on its own connection. commit: keep what it wrote
+        (tables the main connection reads next); otherwise rolled back."""
+        assert label not in self.futs, label
+        settings = self.settings()
+        self.fns[label] = fn
+        self.futs[label] = self.pool.submit(self._work, label, fn, commit, settings)
+
+    def _work(self, label, fn, commit, settings):
+        t0 = time.time()
+        with self.connect() as conn:
+            with self.lock:
+                self.live[label] = conn
+            try:
+                with conn.cursor() as wc:
+                    wc.execute("SELECT pg_backend_pid()")
+                    with self.lock:
+                        self.pids[label] = int(wc.fetchone()[0])
+                    for name, value in settings:
+                        wc.execute("SAVEPOINT side_set")
+                        try:
+                            wc.execute("SELECT set_config(%s, %s, true)", (name, value))
+                            wc.execute("RELEASE SAVEPOINT side_set")
+                        except Exception as exc:                   # noqa: BLE001
+                            wc.execute("ROLLBACK TO SAVEPOINT side_set")
+                            print(f"    [side] {label}: {name} not copied "
+                                  f"({type(exc).__name__})", flush=True)
+                    wc.execute("SELECT set_config('statement_timeout', %s, true)",
+                               (self.timeout,))
+                    got = fn(wc)
+                if commit:
+                    conn.commit()
+                else:
+                    conn.rollback()
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                with self.lock:
+                    self.live.pop(label, None)
+        tick(f"{label} (own connection)", t0)
+        return got
+
+    def pid(self, label):
+        with self.lock:
+            return self.pids.get(label)
+
+    def done(self, label):
+        return self.futs[label].done()
+
+    def result(self, label, fallback=None):
+        """The job's answer. A job that failed runs again here, on the main
+        connection: fallback(cur), or the job's own function."""
+        fut = self.futs.pop(label)
+        fn = self.fns.pop(label)
+        t0 = time.time()
+        try:
+            got = fut.result()
+        except Exception as exc:                                   # noqa: BLE001
+            msg = (str(exc).splitlines() or [""])[0][:160]
+            print(f"    [side] {label} failed on its own connection "
+                  f"({type(exc).__name__}: {msg}); running it on the main "
+                  f"connection", flush=True)
+            got = (fallback or fn)(self.cur)
+        if time.time() - t0 >= 1.0:
+            tick(f"{label}: waited for it", t0)
+        return got
+
+    def close(self):
+        """Cancel what still runs (after a failure) and wait for it."""
+        for f in self.futs.values():
+            f.cancel()
+        with self.lock:
+            conns = list(self.live.values())
+        for c in conns:
+            try:
+                c.cancel()
+            except Exception:                                      # noqa: BLE001
+                pass
+        self.pool.shutdown(wait=True)
+        self.futs.clear()
+
+
+_ALLRACES_INDEX_RE = re.compile(r"^CREATE INDEX ON allraces \(", re.I)
+
+
+def _indexColumns(stmt_or_def):
+    """'(a, b, c)' of a CREATE INDEX statement or pg_get_indexdef, spaces
+    dropped."""
+    m = re.search(r"\(([^()]*)\)\s*$", stmt_or_def.strip())
+    return m.group(1).replace(" ", "") if m else stmt_or_def
+
+
+def buildIndexesSide(cur, side, stmts):
+    """The allraces indexes, one connection each, after the build's commit.
+
+    ! IN THE SAME OID ORDER. The planner lists a table's indexes by OID and
+      keeps the first of two equally cheap paths, and two of these lead
+      with (person_id, acad). Each build starts only once the one before it
+      holds the AccessExclusiveLock index_create takes on its new index --
+      its OID is assigned by then -- and the order is checked afterwards;
+      out of order, all three are dropped and built again here, in order."""
+    t0 = time.time()
+    labels = []
+    for k, stmt in enumerate(stmts):
+        label = f"build: allraces index {k + 1} of {len(stmts)}"
+        side.submit(label, _exec(stmt), commit=True)
+        labels.append(label)
+        if k == len(stmts) - 1:
+            break
+        t_wait, seen = time.time(), False
+        while not seen and time.time() - t_wait < 600 and not side.done(label):
+            pid = side.pid(label)
+            if pid is not None:
+                cur.execute("""SELECT 1 FROM pg_locks
+                               WHERE  pid = %s AND locktype = 'relation'
+                                 AND  mode = 'AccessExclusiveLock' AND granted""",
+                            (pid,))
+                seen = cur.fetchone() is not None
+            if not seen:
+                time.sleep(0.05)
+        if not seen and not side.done(label):
+            from concurrent.futures import wait as _wait
+            _wait([side.futs[label]])       # never seen: wait for it instead
+    for label, stmt in zip(labels, stmts):
+        side.result(label, fallback=_exec(stmt))
+    cur.execute("""SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i
+                   WHERE  i.indrelid = 'allraces'::regclass ORDER BY i.indexrelid""")
+    got = [_indexColumns(d) for (d,) in cur.fetchall()]
+    want = [_indexColumns(s) for s in stmts]
+    if got != want:
+        print(f"    [side] allraces indexes in OID order {got}, not {want}: "
+              f"built again in order", flush=True)
+        cur.execute("""SELECT i.indexrelid::regclass::text FROM pg_index i
+                       WHERE  i.indrelid = 'allraces'::regclass""")
+        for (name,) in cur.fetchall():
+            cur.execute(f"DROP INDEX {name}")
+        runTimed(cur, list(stmts), label="build: allraces indexes again, in order")
+    tick("build: allraces indexes, side by side", t0)
+
+
+def _bareFieldArgs():
+    return {"minf": MIN_FIELD_GRADED, "share": _FIELD_SCHOOL_SHARE}
+
+
+def startBareClassReads(side):
+    """[2c]'s two reads, started beside [2]. ★ BOTH READ grade_folded AS
+    BUILT, as [2] does: nothing writes allraces until 2c's write-back, which
+    comes after both are applied, in their old order."""
+    side.submit("[2c] bare class words", _fetch(_BARE_CLASS_SQL))
+    side.submit("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bareFieldArgs()))
+    # and the ungraded report, after them: a report waits, they do not
+    side.submit("report: ungraded events", _fetch(_UNGRADED_SQL))
+
+
+def resolve(cur, audit=False, side=None):
     """{(person_id, calendar_year): {grade, level, method}}.
 
     Reasoned per academic year, then written to every calendar year that
     academic year touches. Where a calendar year receives two verdicts -- the
     graduating case -- the LATER academic year wins, because grades only move
     forward.
+
+    side: a SideWork, to run the independent phases on their own
+    connections (see SIDE BY SIDE; it commits mid-run), or None for one
+    connection and one transaction.
     """
-    buildRaces(cur, audit)
+    if not buildRaces(cur, audit, side=side):
+        side = None             # the build did not split: one connection
     # The academic-year verdicts, in precedence order.
-    return _resolve(cur)
+    return _resolve(cur, side=side)
 
 
-def buildRaces(cur, audit=False):
+def buildRaces(cur, audit=False, side=None):
     """The shared race table (allraces) and its companions, every rule's
     input."""
     print("[grade] building the shared race table...")
+    t0 = time.time()
     # ! SUBSTITUTED, NOT FORMATTED. _BUILD is already an f-string and its SQL
     #   carries `$$`-quoted function bodies; a second .format() pass over it
     #   would have to escape every brace in the file. A plain replace of two
     #   comment-shaped tokens touches nothing else.
     xc_join, tf_join = _ageBandJoins(cur)
+    tick("build: age-band joins", t0)
     # the build anti-joins result_twin, which 04c writes AFTER this step:
     # on a database that has never run 04c the table is created empty here
+    t0 = time.time()
     from twin_flag import ensureTable as _ensureTwin
     _ensureTwin(cur)
+    tick("build: result_twin ensured", t0)
     # the national-team strings the build's CASEs null (see ntschool)
+    t0 = time.time()
     _nationalTeamSchools(cur)
+    tick("build: national-team schools (ntschool)", t0)
     build = (_BUILD.replace(_AGE_BAND_TOKENS[0], xc_join)
                    .replace(_AGE_BAND_TOKENS[1], tf_join))
     for _tok in _AGE_BAND_TOKENS:
@@ -3008,19 +3350,62 @@ def buildRaces(cur, audit=False):
     #   line saying where; the log could not tell the 230M-row table from
     #   its indexes from the self-joins after it. Now every statement that
     #   takes over a second prints its first line and its seconds.
-    runTimed(cur, build, label="build")
+    stmts = splitStatements(build)
+    idx = [k for k, st in enumerate(stmts) if _ALLRACES_INDEX_RE.match(st)]
+    # ★ SIDE BY SIDE: the build up to its three indexes here, committed;
+    #   the indexes on three connections; the ANALYZE after them here. Only
+    #   when the build ends as it does today (indexes, then the ANALYZE).
+    split = (side is not None and len(idx) == 3 and idx == list(range(idx[0], idx[0] + 3))
+             and stmts[idx[-1] + 1:] == ["ANALYZE allraces"])
+    if not split:
+        if side is not None:
+            print("    [side] the build does not end in allraces' three indexes and "
+                  "its ANALYZE: one connection for this run", flush=True)
+        runTimed(cur, stmts, label="build")
+    else:
+        t_b = time.time()
+        runTimed(cur, stmts[:idx[0]], label="build: tables")
+        noAutovacuum(cur, _SIDE_EARLY_TABLES)
+        cur.connection.commit()
+        # ★ STARTED NOW, READ WHERE THE SEQUENTIAL PATH RAN THEM: rule 7
+        #   reads results*, race_top_level and ntschool, never allraces or
+        #   a verdict; the fold report reads gradekind.
+        side.submit("[7] elite field", eliteFieldSeasons)
+        buildIndexesSide(cur, side, stmts[idx[0]:idx[-1] + 1])
+        side.submit("report: mixed seasons", _fetch(_FOLD_SQL))
+        runTimed(cur, stmts[idx[-1] + 1:], label="build: allraces analyzed")
+        cur.connection.commit()
+        tick("build total (side by side)", t_b)
 
     # Reports only. reportRejected scans both results tables in full, so it
     # is opt-in; reportUngraded reads the temp table and is cheap.
     if audit:
+        t0 = time.time()
         reportRejected(cur)
-    reportFold(cur)
-    reportUngraded(cur)
+        tick("report: rejected numeric grades", t0)
+    if side is None or not split:
+        t0 = time.time()
+        reportFold(cur)
+        reportUngraded(cur)
+        tick("reports: mixed seasons, ungraded events", t0)
+    return split
 
 
-def _resolve(cur):
-    """The rules, in precedence order, over buildRaces' tables."""
+def _resolve(cur, side=None):
+    """The rules, in precedence order, over buildRaces' tables. side: a
+    SideWork whose build committed (see SIDE BY SIDE), or None."""
     acad = {}
+    _t_rules = time.time()
+
+    def _here(label, fn):
+        """fn(cur): here, or the answer of the side job of that label."""
+        if side is not None and label in side.futs:
+            return side.result(label, fallback=fn)
+        return fn(cur)
+
+    _bare_field_args = _bareFieldArgs()
+    if side is not None:
+        startBareClassReads(side)
 
     _tq = time.time()
     cur.execute(_CORROBORATED_SQL, {"minc": MIN_CORROBORATION})
@@ -3039,21 +3424,26 @@ def _resolve(cur):
     #   below that read a season's neighbours (3b, 5, 5b) see the pinned
     #   season as settled evidence; laid in AGAIN after trust, so no rule can
     #   overwrite it. method 'pinned', trust 'high'.
+    _tq = time.time()
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                     "scripts"))
     import person_pins as _PP
     grade_pins = _PP.loadGradePins(cur)
     n_pinned = _PP.applyGradePins(acad, grade_pins)
-    print(f"    [0] owner's grade pins laid in: {n_pinned:,}", flush=True)
+    print(f"    [0] owner's grade pins laid in: {n_pinned:,} ({time.time() - _tq:.0f}s)",
+          flush=True)
 
     # ! RULE 2c, BETWEEN 2 AND 4 ON PURPOSE. It rewrites grades rule 4 is
     #   about to read as field evidence; running it afterwards would leave
     #   every ungraded athlete in those fields pooled off the wrong mode.
     _tq = time.time()
-    cur.execute(_BARE_CLASS_SQL)
+    _bare_rows = _here("[2c] bare class words", _fetch(_BARE_CLASS_SQL))
     print(f"    [2c] bare class words read ({time.time() - _tq:.0f}s)", flush=True)
+    _tq = time.time()
     n_bare = _resolveBareClass(
-        acad, [(int(p), int(a)) for p, a in cur.fetchall()])
+        acad, [(int(p), int(a)) for p, a in _bare_rows])
+    del _bare_rows
+    tick(f"[2c] {n_bare:,} bare class words resolved by own grades", _tq)
 
     # ! TWO ROUNDS, WITH A WRITE-BACK BETWEEN THEM. Round one resolves the
     #   pockets it can see; the write-back makes those races visibly
@@ -3062,9 +3452,13 @@ def _resolve(cur):
     n_bare_field = 0
     for _round in (1, 2):
         _tq = time.time()
-        cur.execute(_BARE_FIELD_SQL, {"minf": MIN_FIELD_GRADED,
-                                      "share": _FIELD_SCHOOL_SHARE})
-        got = _resolveBareClassByField(acad, cur.fetchall())
+        if _round == 1:
+            _rows = _here("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bare_field_args))
+        else:
+            cur.execute(_BARE_FIELD_SQL, _bare_field_args)
+            _rows = cur.fetchall()
+        got = _resolveBareClassByField(acad, _rows)
+        del _rows
         n_bare_field += got
         _tw = time.time()
         # The last write-back also stands for rule 4, which reads the field
@@ -3075,6 +3469,22 @@ def _resolve(cur):
               f"({_tw - _tq:.0f}s field, {time.time() - _tw:.0f}s write-back)", flush=True)
         if not got:
             break
+
+    if side is not None:
+        # ★ THE WRITE-BACK COMMITTED, AND THE READS AFTER IT STARTED: [5]
+        #   reads grade_folded as the write-back left it, [5b] / [5e] read
+        #   columns it never touches, rule 8's athlete_season pools and club
+        #   rows read no allraces at all -- and nothing from here to where
+        #   each is applied writes what it reads (rule 4 writes fld_* only).
+        _tq = time.time()
+        noAutovacuum(cur, ("barefix",))
+        cur.connection.commit()
+        side.submit("[5] stale grades", _fetch(_STALE_SQL, {"maxy": MAX_YEARS_AT_GRADE}))
+        side.submit("[5b] seasons after a college start", _fetch(_COLLEGIATE_SQL))
+        side.submit("[5e] college starts", _fetch(_COLLEGE_START_SQL))
+        side.submit("[8] athlete_season adult pools", adultPoolRows)
+        side.submit("[8] club rows", _clubPrepSide, commit=True)
+        tick("[2c] write-back committed, the reads after it started", _tq)
 
     # ! THE METHOD NAME IS DERIVED FROM THE LEVEL, NOT ASKED FOR SEPARATELY.
     #   Edit 2 gives the field rule two ways to speak, and they are not the
@@ -3108,9 +3518,9 @@ def _resolve(cur):
     n_field = len(acad) - n_corr - n_nograde
 
     _tq = time.time()
-    cur.execute(_STALE_SQL, {"maxy": MAX_YEARS_AT_GRADE})
+    stale = {(int(p), int(a)): g for p, a, g in
+             _here("[5] stale grades", _fetch(_STALE_SQL, {"maxy": MAX_YEARS_AT_GRADE}))}
     print(f"    [5] stale grades read ({time.time() - _tq:.0f}s)", flush=True)
-    stale = {(int(p), int(a)): g for p, a, g in cur.fetchall()}
     n_stale = 0
     for key, g in stale.items():
         # ! STALE OVERRIDES A CORROBORATED GRADE, and it has to. A record that
@@ -3127,12 +3537,13 @@ def _resolve(cur):
     #   not a school grade -- on a club it is usually years with the club.
     #   Overrides a corroborated grade for the same reason rule 5 does: a
     #   club's "8" is consistent every season, which is not the same as true.
+    _tq = time.time()
     n_elite = 0
-    for key in eliteFieldSeasons(cur):
+    for key in _here("[7] elite field", eliteFieldSeasons):
         acad[key] = {"grade": None, "level": "pro", "method": "elite_field"}
         n_elite += 1
     print(f"    [7] {n_elite:,} seasons: a school grade that out-ran its own "
-          f"level in a college or pro race -> pro")
+          f"level in a college or pro race -> pro ({time.time() - _tq:.0f}s)", flush=True)
 
     # ============================================================== #
     #  RULE 3b: THE GRADE THAT DOES NOT FIT THE PROGRESSION
@@ -3156,6 +3567,7 @@ def _resolve(cur):
     #    -- a Senior in 2018 and a Senior in 2023 are both legitimately
     #    senior, which is exactly why unlink.py refuses word grades too.
     # ============================================================== #
+    _t3b = time.time()
     n_progress = 0
     by_person = {}
     for (pid, ay), v in acad.items():
@@ -3185,6 +3597,8 @@ def _resolve(cur):
                 acad[(pid, ay)] = {"grade": str(want), "level": None,
                                    "method": "progression"}
             n_progress += 1
+    del by_person
+    tick(f"[3b] {n_progress:,} grades off the progression", _t3b)
 
     # ! RULE 5b RUNS LAST, AND OVERRIDES A CORROBORATED GRADE. A record
     #   reading '12' for three post-collegiate years IS well corroborated --
@@ -3208,9 +3622,8 @@ def _resolve(cur):
     #   roughly 563,000 seasons behind these athletes.
     _SCHOOL_LEVELS = ("elem", "ms", "hs")
     t5b = time.time()
-    cur.execute(_COLLEGIATE_SQL)
     n_postcoll = 0
-    _coll_rows = cur.fetchall()
+    _coll_rows = _here("[5b] seasons after a college start", _fetch(_COLLEGIATE_SQL))
     print(f"    [5b] {len(_coll_rows):,} seasons after a college start "
           f"({time.time() - t5b:.0f}s)", flush=True)
     for pid, ay in _coll_rows:
@@ -3229,15 +3642,17 @@ def _resolve(cur):
     # ★ RULE 5e, PAST ELIGIBILITY (see pastEligibilitySeasons). With 5b,
     #   on the field verdicts 5b leaves alone; the college starts it reads
     #   are rule 8's too.
-    cur.execute(_COLLEGE_START_SQL)
-    college_start = {int(p): int(a) for p, a in cur.fetchall()}
+    del _coll_rows
+    _tq = time.time()
+    college_start = {int(p): int(a) for p, a in
+                     _here("[5e] college starts", _fetch(_COLLEGE_START_SQL))}
     moved5e = pastEligibilitySeasons(acad, college_start)
     for key in moved5e:
         acad[key] = {"grade": None, "level": "pro",
                      "method": "post_collegiate"}
     print(f"    [5e] {len(moved5e):,} field 'college' verdicts "
           f"{POST_ELIGIBILITY_SEASONS}+ seasons after a college start "
-          f"made professional", flush=True)
+          f"made professional ({time.time() - _tq:.0f}s)", flush=True)
 
     # ★ RULE 8, THE ADULT CLUB (see adultClubSeasons). After 5b, on the high
     #   school verdicts still standing; college starts are 5b's own.
@@ -3245,6 +3660,7 @@ def _resolve(cur):
     #   Royal City AC adult at Track Night NYC, "Grade 7", rated ms_m 159.7).
     #   A club's grade column is years with the club at any number; signal 2
     #   (only college and pro races) is what keeps a real middle schooler.
+    _t8 = time.time()
     hs_grade = {k: int(v["grade"]) for k, v in acad.items()
                 if v["grade"] and str(v["grade"]).isdigit() and 6 <= int(v["grade"]) <= 12}
     # ★ AND THE UNATTACHED ARM (owner, 2026-10-12, /athlete/2000002438 and
@@ -3259,8 +3675,14 @@ def _resolve(cur):
     #   school (graduated by their own grade, or an earlier adult season) is
     #   not a high school season. College when its field is college and no
     #   earlier season was professional; professional otherwise.
-    adult_from, pro_from = priorAdultSeasons(acad, cur)
-    moved8 = adultClubSeasons(cur, hs_grade, college_start, adult_from)
+    _pool_rows = _here("[8] athlete_season adult pools", adultPoolRows)
+    adult_from, pro_from = priorAdultSeasons(acad, cur, rows=_pool_rows)
+    tick("[8] adult seasons before (priorAdultSeasons)", _t8)
+    _club_prep = (_here("[8] club rows", _clubPrepSide)
+                  if side is not None else None)
+    moved8 = adultClubSeasons(cur, hs_grade, college_start, adult_from,
+                              prep=_club_prep)
+    del _club_prep
     n_unatt = 0
     for key, club in moved8.items():
         if club:
@@ -3273,10 +3695,14 @@ def _resolve(cur):
     #   and no earlier season was professional -- Jack Falkowski's redshirt
     #   year at college meets -- else professional, as before. The earlier
     #   professional seasons are read without these two methods' own.
+    _tq = time.time()
     _relevel = [k for k, v in acad.items() if v["method"] in _PAST_SCHOOL]
     _ceil = seasonCeilings(cur, _relevel)
+    tick(f"[8] race ceilings of {len(_relevel):,} seasons past school", _tq)
+    _tq = time.time()
     _keep = {k: v for k, v in acad.items() if v["method"] not in _PAST_SCHOOL}
-    _a, pro_before = priorAdultSeasons(_keep, cur)
+    _a, pro_before = priorAdultSeasons(_keep, cur, rows=_pool_rows)
+    del _pool_rows
     # the first academic year out of school: after the earliest graduation a
     # school grade implies, or the first college season
     school_out = dict(college_start)
@@ -3291,8 +3717,10 @@ def _resolve(cur):
         lvl = pastSchoolLevel(key, _ceil, pro_before, school_out)
         acad[key]["level"] = lvl
         n_to_college += lvl == "college"
+    del _keep
     print(f"    [8] {len(_relevel):,} seasons past school, {n_to_college:,} of "
-          f"them college by their races", flush=True)
+          f"them college by their races ({time.time() - _tq:.0f}s)", flush=True)
+    tick("[8] rule 8 total", _t8)
     n_adult = len(moved8)
     for (pid, ay), club in list(moved8.items())[:12]:
         print(f"        e.g. person {pid} season {ay}: {club}")
@@ -3343,6 +3771,7 @@ def _resolve(cur):
     #  ! IT ONLY FIRES ON MIXED SEASONS. A word-only season has nothing
     #    contradicting it and keeps its collegiate lean; a numeric-only
     #    season was never in doubt.
+    _t5c = time.time()
     cur.execute("""
         SELECT person_id, acad FROM gradekind
         WHERE  n_num > 0 AND n_word > n_num
@@ -3360,6 +3789,7 @@ def _resolve(cur):
             acad[key] = {"grade": None, "level": None,
                          "method": "contradicted"}
             n_nuked += 1
+    tick(f"[5c] {n_nuked:,} seasons that contradict themselves", _t5c)
 
     # ============================================================== #
     #  RULE 5d: A FIELD MOSTLY MADE OF NUKED SEASONS
@@ -3436,6 +3866,7 @@ def _resolve(cur):
         seasons_of[pid] = seasons_of.get(pid, 0) + 1
     print(f"    [5e] races per season counted: {len(race_count):,} seasons "
           f"({time.time() - t_rc:.0f}s)", flush=True)
+    _tq = time.time()
     n_lone = 0
     for key, races in race_count.items():
         if races != 1 or seasons_of[key[0]] != 1:
@@ -3444,6 +3875,7 @@ def _resolve(cur):
         if v is not None and v["grade"] in ("FR", "SO", "JR", "SR"):
             acad[key] = {"grade": None, "level": None, "method": "lone_word"}
             n_lone += 1
+    tick(f"[5e] {n_lone:,} lone words in lone races", _tq)
 
     # RULE 5f: a lone season on a high school team, in high school fields
     _tq = time.time()
@@ -3454,12 +3886,14 @@ def _resolve(cur):
     print(f"    [5f] {n_team:,} lone seasons on a high school team in high school "
           f"fields: grade below 9 set aside ({time.time() - _tq:.0f}s)", flush=True)
 
+    _tq = time.time()
     n_none = 0
     for key in race_count:
         if key in acad:
             continue
         acad[key] = {"grade": None, "level": None, "method": "no_evidence"}
         n_none += 1
+    tick(f"[6] {n_none:,} seasons with nothing to say", _tq)
 
     # ============================================================== #
     #  RULE 7: TRUST
@@ -3489,13 +3923,22 @@ def _resolve(cur):
     #    grade 11 in September is corroborated by the calendar, not by a
     #    second race: see trustByProgression.
     # the academic year still being raced (season_year's August clock)
+    _tq = time.time()
     import datetime as _dt
     from season_year import academicYear
     n_untrusted, n_vouched = trustByProgression(
         acad, race_count, open_ay=academicYear(_dt.date.today()))
+    tick(f"[trust] {n_untrusted:,} seasons untrusted, {n_vouched:,} vouched for", _tq)
 
     # ★ RULE 0 AGAIN: the pins win over every rule above (see the first pass)
     _PP.applyGradePins(acad, grade_pins)
+
+    # the reports the build started on their own connections, printed now
+    if side is not None:
+        _tq = time.time()
+        reportFold(cur, rows=_here("report: mixed seasons", _fetch(_FOLD_SQL)))
+        reportUngraded(cur, rows=_here("report: ungraded events", _fetch(_UNGRADED_SQL)))
+        tick("reports: mixed seasons, ungraded events", _tq)
 
     out = dict(acad)
 
@@ -3521,6 +3964,7 @@ def _resolve(cur):
           f"  (rated, kept off the boards)")
     print(f"    total                    {len(acad):>10,}")
     print(f"[grade] written as {len(out):,} academic-year rows")
+    tick("rules total", _t_rules)
     return out
 
 
@@ -3540,6 +3984,7 @@ def write(cur, resolved):
     #   commit, so every athlete page waited out the whole 31M-row COPY and
     #   then failed. The shadows load with nothing locked; the DROP and the
     #   RENAMEs come last, a moment before the caller's commit.
+    t0 = time.time()
     cur.execute("DROP TABLE IF EXISTS grade_fix_new")
     # ⚠ `trust` IS A COLUMN, NOT A SEPARATE TABLE. A consumer that does not
     #   know about it still reads grade and level exactly as before and is
@@ -3561,8 +4006,12 @@ def write(cur, resolved):
               ("person_id", "season", "grade", "level", "method", "trust"),
               ((p, s, v["grade"], v["level"], v["method"], v.get("trust", "high"))
                for (p, s), v in resolved.items()))
+    tick(f"write: {len(resolved):,} rows copied into grade_fix_new", t0)
+    t0 = time.time()
     cur.execute("ALTER TABLE grade_fix_new ADD PRIMARY KEY (person_id, season)")
     cur.execute("ANALYZE grade_fix_new")
+    tick("write: grade_fix_new keyed and analyzed", t0)
+    t0 = time.time()
 
     # ! FROM grade_fix, NOT FROM PYTHON AGAIN. Its rows are every key of
     #   `resolved` -- sorted(resolved.keys()) was exactly that set -- so the
@@ -3578,11 +4027,14 @@ def write(cur, resolved):
                    ORDER  BY person_id, season""")
     cur.execute("ALTER TABLE grade_untrusted_new ADD PRIMARY KEY (person_id, season)")
     cur.execute("ANALYZE grade_untrusted_new")
+    tick("write: grade_untrusted_new built", t0)
+    t0 = time.time()
 
     for t in ("grade_fix", "grade_untrusted"):
         cur.execute(f"DROP TABLE IF EXISTS {t}")
         cur.execute(f"ALTER TABLE {t}_new RENAME TO {t}")
         cur.execute(f"ALTER INDEX {t}_new_pkey RENAME TO {t}_pkey")
+    tick("write: renamed in", t0)
     return len(resolved)
 
 
@@ -3752,17 +4204,31 @@ def youthSigns(seasons_by_person, moved):
 def main(do_write=False, audit=False, do_compare=False):
     from database import getConn
 
+    t_all = time.time()
     with getConn() as conn:
         with conn.cursor() as cur:
-            resolved = resolve(cur, audit=audit)
+            # ★ SIDE BY SIDE only when writing: the side connections need the
+            #   main connection's tables committed, and a dry run commits
+            #   nothing (see SIDE BY SIDE)
+            side = SideWork(cur, getConn) if do_write and sideOn() else None
+            try:
+                resolved = resolve(cur, audit=audit, side=side)
+            finally:
+                if side is not None:
+                    side.close()
             if do_compare:
+                t0 = time.time()
                 compare(cur, resolved)
+                tick("compare with grade_fix", t0)
             if do_write:
+                t0 = time.time()
                 n = write(cur, resolved)
                 conn.commit()
+                tick("write: committed", t0)
                 print(f"\n[grade] wrote grade_fix ({n:,} rows)")
             else:
                 print("\n[grade] DRY RUN, pass --write to save")
+    tick("grade_sanity total", t_all)
 
 
 if __name__ == "__main__":
