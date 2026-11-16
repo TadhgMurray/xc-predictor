@@ -184,7 +184,7 @@ def test_balanced_seams_partition_inside_the_default_range():
 
 
 def _rankBlock():
-    return SH[at("_RANK=()\nfor _sp in XC TF; do"):at('XCP_STREAMS="${XCP_RANK_STREAMS:-8}" stepsN "${_RANK[@]}"')]
+    return SH[at("_RANK=()\nfor _sp in XC TF; do"):at('XCP_STREAMS="${XCP_RANK_STREAMS:-10}" stepsN "${_RANK[@]}"')]
 
 
 def _runRank(tmp_path, seams_out, env=""):
@@ -237,7 +237,7 @@ def test_rank_seam_override(tmp_path):
 
 
 def test_rank_streams_run_together():
-    assert 'XCP_STREAMS="${XCP_RANK_STREAMS:-8}" stepsN "${_RANK[@]}"' in SH
+    assert 'XCP_STREAMS="${XCP_RANK_STREAMS:-10}" stepsN "${_RANK[@]}"' in SH
     assert at("step 10_rankings_prepare") < at("_RANK=()") < at("step 10_rankings_finish")
 
 
@@ -793,7 +793,8 @@ def test_drop_old_and_the_backup_count_nothing_for_a_log_line():
     assert "SELECT count(*) FROM {table}" not in src and "SELECT count(*) FROM {backup}" not in src
 
 
-def test_rank_streams_follow_the_rows_two_for_xc_six_for_track(tmp_path):
+def test_rank_streams_follow_the_rows_two_for_xc_eight_for_track(tmp_path):
+    # TF 8 since 2026-11-16 (was 6)
     # 2026-11-10: the stub answers --parts with parts-1 seams, as the real one does
     stub = tmp_path / "py"
     stub.write_text('#!/bin/sh\nn=0; for a in "$@"; do [ "$prev" = "--parts" ] && n=$a; prev=$a; done\n'
@@ -807,7 +808,7 @@ def test_rank_streams_follow_the_rows_two_for_xc_six_for_track(tmp_path):
     args = [ln[4:] for ln in out.splitlines() if ln.startswith("ARG ")]
     pairs = list(zip(args[0::2], args[1::2]))
     xc, tf = _ranges(pairs, "XC"), _ranges(pairs, "TF")
-    assert len(xc) == 2 and len(tf) == 6 and len(pairs) == 8
+    assert len(xc) == 2 and len(tf) == 8 and len(pairs) == 10
     for r in (xc, tf):
         assert r[0][1] == "1990-01-01" and r[-1][2] == "2100-01-01"
         assert all(r[i][2] == r[i + 1][1] for i in range(len(r) - 1))

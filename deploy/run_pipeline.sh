@@ -2103,7 +2103,7 @@ _RANK=()
 for _sp in XC TF; do
   _lc=$(echo "$_sp" | tr 'A-Z' 'a-z')
   if [ "$_sp" = XC ]; then _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_XC:-2}}"
-  else _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_TF:-6}}"; fi
+  else _parts="${XCP_RANK_PARTS:-${XCP_RANK_PARTS_TF:-8}}"; fi
   _seams="${XCP_RANK_SEAM:-}"
   if [ -z "$_seams" ] && [ "$DRY" -eq 0 ] && ! beforeFrom 10_rankings_prepare \
      && [ "$_parts" -ge 2 ]; then
@@ -2120,7 +2120,12 @@ for _sp in XC TF; do
     _prev="$_s"; _i=$((_i + 1))
   done
 done
-XCP_STREAMS="${XCP_RANK_STREAMS:-8}" stepsN "${_RANK[@]}"
+# ★ TF 8 AND TEN AT ONCE (2026-11-16; run 20261116_154245: the XC streams
+#   693-772 s, the six TF ones 1,199-1,413 s -- track still set the group).
+#   Eight TF parts are ~21M rows each, an XC stream's share; the seams only
+#   divide the same rows, so the shadow tables are the same. Two more
+#   processes of ~0.6 GB and two more connections for the group.
+XCP_STREAMS="${XCP_RANK_STREAMS:-10}" stepsN "${_RANK[@]}"
 step 10_rankings_finish "$PY" -u racecast/build_ranking_results.py --stage finish
 # ★ THE EDGE FORGETS THE OLD BOARDS (2026-11-06, scripts/edge_purge.py):
 #   the swap just put new ratings live; without a purge Cloudflare keeps
