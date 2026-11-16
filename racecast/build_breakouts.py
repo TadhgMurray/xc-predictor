@@ -31,6 +31,7 @@
 
 import argparse
 import datetime
+import os
 import sys
 import time
 
@@ -223,16 +224,54 @@ def main():
             latest = B.latestDates(cur)
             cur.execute(_DDL.format(units="".join(f',\n    "{c}" text' for c in units)))
             meta = []
-            for sport in sports:
-                year = B.seasonFor(sport, latest)
-                for level in B.LEVELS:
-                    t1 = time.time()
-                    n_j, n_p, anchor = _level(cur, sport, level, year, units, has_kind)
-                    total += n_j + n_p
-                    meta.append((sport, level, year, anchor))
-                    print(f"  {sport} {level} {year}: {n_j:,} breakouts, {n_p:,} PRs "
-                          f"in the {max(B.WINDOW_CHOICES)} days to {anchor}  "
-                          f"[{time.time() - t1:.0f}s]", flush=True)
+            jobs = [(sport, level, B.seasonFor(sport, latest))
+                    for sport in sports for level in B.LEVELS]
+            # ★ THE LEVELS SIDE BY SIDE (2026-11-16; run 20261116_154245: 666 s,
+            #   one level after another, TF ms-boys alone 246 s). Each level
+            #   scores into its own session's bo_season and inserts its own
+            #   rows; the shadow is committed first so every session sees it.
+            #   The rows are the same; their order in the heap is not, and no
+            #   reader depends on it (the page orders by its key, then
+            #   result_id / person_id). A dry run keeps the one session.
+            #   XCP_BREAKOUT_JOBS (4); 1 is the old loop.
+            n_jobs = 1 if a.dry_run else max(1, int(os.environ.get("XCP_BREAKOUT_JOBS") or 4))
+            if n_jobs > 1:
+                conn.commit()
+            done = {}
+
+            def one(job):
+                sport, level, year = job
+                t1 = time.time()
+                if n_jobs == 1:
+                    got = _level(cur, sport, level, year, units, has_kind)
+                else:
+                    with getConn() as c:
+                        with c.cursor() as wc:
+                            wc.execute("SET statement_timeout = 0")
+                            wc.execute("SET jit = off")
+                            wc.execute("SET work_mem = '256MB'")
+                            got = _level(wc, sport, level, year, units, has_kind)
+                            wc.execute("DROP TABLE IF EXISTS bo_season")
+                        c.commit()
+                return got, time.time() - t1
+
+            if n_jobs > 1:
+                import concurrent.futures as cf
+                with cf.ThreadPoolExecutor(max_workers=n_jobs) as ex:
+                    futs = {j: ex.submit(one, j) for j in jobs}
+                    for j in jobs:
+                        done[j] = futs[j].result()
+            else:
+                for j in jobs:
+                    done[j] = one(j)
+            for j in jobs:                          # reported in the old order
+                sport, level, year = j
+                (n_j, n_p, anchor), dt = done[j]
+                total += n_j + n_p
+                meta.append((sport, level, year, anchor))
+                print(f"  {sport} {level} {year}: {n_j:,} breakouts, {n_p:,} PRs "
+                      f"in the {max(B.WINDOW_CHOICES)} days to {anchor}  "
+                      f"[{dt:.0f}s]", flush=True)
             if a.dry_run:
                 conn.rollback()
                 return

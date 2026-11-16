@@ -3019,7 +3019,9 @@ def _indexDefsFor(cur, table):
     cur.execute("""
         SELECT indexname, indexdef FROM pg_indexes
         WHERE schemaname = 'public' AND tablename = %s
-        ORDER BY indexname
+        -- the largest first (2026-11-16, as merge_column): built a few at a
+        -- time, the biggest no longer start last; the same indexes either way
+        ORDER BY pg_relation_size((schemaname||'.'||indexname)::regclass) DESC, indexname
     """, (table,))
     defs = []
     for name, ddl in cur.fetchall():
