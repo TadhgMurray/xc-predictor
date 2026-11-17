@@ -89,9 +89,29 @@ def ready(conn):
     return _READY.get(id(conn), False)
 
 
-def install(conn):
+def install(conn, tries=None, pause=20):
+    """_installOnce, retried while the trigger DDL only lost a lock wait.
+    ★ (2026-11-17; run 20261116_204106: "off (LockNotAvailable ...)", and
+    04a took 1,977 s against 919 -- every pass then read the corpus in full,
+    ~9 min each). CREATE TRIGGER waits behind any writer or vacuum on
+    athletes / results / results_tf; a 30-second wait can lose to one that
+    ends a minute later. XCP_LINK_REGISTRY_TRIES (8) tries, `pause` apart."""
+    import psycopg2.errors
+    tries = int(tries or os.environ.get("XCP_LINK_REGISTRY_TRIES") or 8)
+    for k in range(1, tries + 1):
+        try:
+            return _installOnce(conn, raise_lock=(k < tries))
+        except psycopg2.errors.LockNotAvailable:
+            print(f"[name-registry] the trigger lock was busy (try {k}/{tries}); "
+                  f"again in {pause}s", flush=True)
+            time.sleep(pause)
+    return False
+
+
+def _installOnce(conn, raise_lock=False):
     """Triggers on, registry built, committed. False (and the registry off)
-    on any failure -- gather() then reads the corpus in full, as before."""
+    on any failure -- gather() then reads the corpus in full, as before.
+    raise_lock: a lost lock wait is raised (install retries it), not turned off."""
     if not enabled():
         return False
     t0 = time.time()
@@ -123,6 +143,9 @@ def install(conn):
         conn.commit()
     except Exception as exc:                # noqa: BLE001 -- the full query still works
         conn.rollback()
+        import psycopg2.errors
+        if raise_lock and isinstance(exc, psycopg2.errors.LockNotAvailable):
+            raise
         uninstall(conn, quiet=True)
         print(f"[name-registry] off ({type(exc).__name__}: {exc}); every pass reads the corpus "
               "in full", flush=True)

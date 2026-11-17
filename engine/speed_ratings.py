@@ -1891,9 +1891,11 @@ def _mergePackStates(states):
 #   the TF child exactly as before.
 def _packShards():
     try:
-        # 2 by default (2026-11-16): each worker can hold its own copy of the
-        # lookups it reads, and 07 already peaks near 69 GB beside the site
-        return max(1, int(os.environ.get("XCP_PACK_TF_SHARDS", "2")))
+        # 1 BY DEFAULT (2026-11-17; run 20261116_204106: 07 took 1,650 s
+        # against 1,687 with two workers -- the one cursor's read, not the
+        # Python, sets the pace -- and the peak rose from 68.6 to 114.2 GB).
+        # XCP_PACK_TF_SHARDS=N turns the workers back on.
+        return max(1, int(os.environ.get("XCP_PACK_TF_SHARDS", "1")))
     except ValueError:
         return 1
 
