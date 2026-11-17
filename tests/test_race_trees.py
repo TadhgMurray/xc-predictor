@@ -295,3 +295,36 @@ def test_the_college_report_splits_level_from_within():
     assert "course has a difficulty" in lines and "course has none" in lines
     row = next(l for l in lines.splitlines() if "course has none" in l)
     assert "5.13%" in row and "0.00%" in row          # all of it is the race's level
+
+
+def test_recency_weights_and_level_groups():
+    w = T.recencyWeights(np.array([100, 90, 70]), 10)
+    assert w.tolist() == pytest.approx([1.0, 0.5, 0.125])
+    assert T.recencyWeights(np.array([1, 2]), 0) is None
+    assert [T.levelGroup(v) for v in (0, 1, 2, 3, 4, float("nan"))] == \
+        ["ms", "ms", "hs", "college", "college", None]
+
+
+def test_the_model_switches_train_save_and_route_by_level(tmp_path):
+    """(owner, 2026-11-17: "only by changing the models") --per-level,
+    --recency-days and the tuning flags run end to end, and the saved runner
+    model routes each row to its level's trees."""
+    import pickle
+    path = tmp_path / "rows.npz"
+    _table(str(path))
+    out = tmp_path / "m.pkl"
+    env = dict(os.environ, XCP_MIN_GROUP_ROWS="1000")
+    got = subprocess.run([sys.executable, os.path.join(_ROOT, "model", "race_trees.py"),
+                          "--rows", str(path), "--per-level", "--recency-days", "365",
+                          "--lr", "0.1", "--leaves", "31", "--min-leaf", "50",
+                          "--refit-all", "--out", str(out)],
+                         capture_output=True, text=True, timeout=600, env=env)
+    assert got.returncode == 0, got.stderr[-2000:]
+    assert "per level: hs" in got.stdout and "per level: ms has 0 rows" in got.stdout
+    sys.path.insert(0, os.path.join(_ROOT, "model"))
+    m = pickle.load(open(out, "rb"))
+    rm = m["runner"]
+    assert type(rm).__name__ == "LevelRouter" and set(rm.models) == {"hs"}
+    X = np.zeros((4, len(m["features"])), np.float32)
+    X[:, m["features"].index("level")] = [2, 2, 3, np.nan]
+    assert rm.predict(X).shape == (4,)

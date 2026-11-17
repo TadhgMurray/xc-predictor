@@ -527,16 +527,110 @@ def fieldFromBase(X, base, slices, fidx):
 RUNNER_LOSSES = ("squared_error", "absolute_error")
 
 
+# ★ THE MODEL ITSELF, NOT ITS INPUTS (owner, 2026-11-17: "only by changing the
+#   models, not the inputs"). Three switches for one test round on the honest
+#   table: TUNE (--lr, --leaves, --min-leaf, the trees' settings, unchanged
+#   since October), --recency-days (training rows weighted by age: a row
+#   that many days older counts half), and --per-level (a runner model for
+#   each of middle school, high school and college, beside the one for all).
+TUNE = {}
+
+
 def runnerModel(seed=0, big=False, loss="squared_error"):
     from sklearn.ensemble import HistGradientBoostingRegressor
     return HistGradientBoostingRegressor(
-        loss=loss, learning_rate=0.05, max_iter=8000 if big else 4000,
-        max_leaf_nodes=255 if big else 63, min_samples_leaf=200 if big else 400,
+        loss=loss, learning_rate=TUNE.get("lr", 0.05), max_iter=8000 if big else 4000,
+        max_leaf_nodes=TUNE.get("leaves", 255 if big else 63),
+        min_samples_leaf=TUNE.get("min_leaf", 200 if big else 400),
         l2_regularization=1.0, early_stopping=True,
         validation_fraction=0.1, n_iter_no_change=40, random_state=seed)
 
 
-def fitByRaces(model, X, y, race):
+def recencyWeights(day, half_life):
+    """Each row's training weight by age: 1 for the newest day, one half
+    `half_life` days before it. None when half_life is 0. Pure but numpy."""
+    import numpy as np
+    if not half_life:
+        return None
+    day = np.asarray(day, dtype=np.float64)
+    return np.power(0.5, (day.max() - day) / float(half_life))
+
+
+LEVEL_GROUPS = {"ms": (0, 1), "hs": (2,), "college": (3, 4)}
+MIN_GROUP_ROWS = int(os.environ.get("XCP_MIN_GROUP_ROWS", "100000"))   # tests set it low
+
+
+def levelGroup(level):
+    """'ms' / 'hs' / 'college' for race_rows' level code, or None. Pure."""
+    import math
+    try:
+        v = float(level)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(v):
+        return None                      # ! numpy's NaN too, not only Python's
+    for g, codes in LEVEL_GROUPS.items():
+        if int(round(v)) in codes:
+            return g
+    return None
+
+
+class LevelRouter:
+    """A runner model per level, the one for all levels for the rest: the
+    page calls predict() on it as on one model (race_model.predictField)."""
+    def __init__(self, models, col, default):
+        self.models, self.col, self.default = models, col, default
+
+    @property
+    def n_iter_(self):
+        return self.default.n_iter_
+
+    def predict(self, X):
+        import numpy as np
+        out = self.default.predict(X)
+        groups = np.array([levelGroup(v) for v in X[:, self.col]], dtype=object)
+        for g, m in self.models.items():
+            ix = groups == g
+            if ix.any():
+                out[ix] = m.predict(X[ix])
+        return out
+
+
+def perLevelFit(base, Xt, r, race, w, col, a):
+    """The LevelRouter: `base` for every level, and a model of each level
+    group's own rows where it has MIN_GROUP_ROWS of them."""
+    import numpy as np
+    import race_trees as _rt                # ! pickled by the module's name (Spread)
+    groups = np.array([levelGroup(v) for v in Xt[:, col]], dtype=object)
+    models = {}
+    for g in LEVEL_GROUPS:
+        ix = groups == g
+        if ix.sum() < MIN_GROUP_ROWS:
+            print(f"  per level: {g} has {int(ix.sum()):,} rows, uses the one for all", flush=True)
+            continue
+        m = fitByRaces(runnerModel(a.seed, a.big, a.runner_loss), Xt[ix], r[ix], race[ix],
+                       None if w is None else w[ix])
+        print(f"  per level: {g}, {int(ix.sum()):,} rows, {m.n_iter_} rounds", flush=True)
+        models[g] = m
+    return _rt.LevelRouter(models, col, base)
+
+
+def perLevelRefit(held, base2, Xall, r, w, a):
+    """The refit on every season, level by level, at the rounds each chose."""
+    import numpy as np
+    import race_trees as _rt
+    groups = np.array([levelGroup(v) for v in Xall[:, held.col]], dtype=object)
+    models = {}
+    for g, m in held.models.items():
+        ix = groups == g
+        m2 = runnerModel(a.seed, a.big, a.runner_loss).set_params(
+            max_iter=int(m.n_iter_), early_stopping=False)
+        m2.fit(Xall[ix], r[ix], sample_weight=None if w is None else w[ix])
+        models[g] = m2
+    return _rt.LevelRouter(models, held.col, base2)
+
+
+def fitByRaces(model, X, y, race, weight=None):
     """model.fit with early stopping on WHOLE races: every tenth race id is
     held back (owner, 2026-10-29). sklearn's own validation_fraction takes
     random rows, so a race's other runners sit on both sides and stopping
@@ -545,8 +639,11 @@ def fitByRaces(model, X, y, race):
     import numpy as np
     stop = (np.asarray(race) // 2) % 10 == 0      # // 2: the even/odd splits keep both
     if not stop.any() or stop.all():
-        return model.fit(X, y)
+        return model.fit(X, y, sample_weight=weight)
     try:
+        if weight is not None:
+            return model.fit(X[~stop], y[~stop], sample_weight=weight[~stop],
+                             X_val=X[stop], y_val=y[stop], sample_weight_val=weight[stop])
         return model.fit(X[~stop], y[~stop], X_val=X[stop], y_val=y[stop])
     except TypeError:
         print("  (this scikit-learn cannot hold out whole races for early stopping: "
@@ -1087,6 +1184,13 @@ def main():
     ap.add_argument("--importance", action="store_true",
                     help="permutation importance of the runner inputs (a few minutes)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--per-level", action="store_true",
+                    help="a runner model each for middle school, high school and college")
+    ap.add_argument("--recency-days", type=float, default=0.0,
+                    help="weight training rows by age: this many days older counts half (0: off)")
+    ap.add_argument("--lr", type=float, default=None, help="the runner trees' learning rate")
+    ap.add_argument("--leaves", type=int, default=None, help="the runner trees' max leaves")
+    ap.add_argument("--min-leaf", type=int, default=None, help="the runner trees' min rows a leaf")
     ap.add_argument("--runner-loss", choices=RUNNER_LOSSES, default="squared_error",
                     help="the runner trees' loss (absolute_error aims at Kailo's mean miss)")
     ap.add_argument("--level-median", action="store_true",
@@ -1132,7 +1236,13 @@ def main():
      excluded, order, pid, ctx_packs, clv_pack, course, _seq_ev, _seq_idx) = \
         (T[k] for k in _TABLE_KEYS)
     import numpy as np
-    rm = fitByRaces(runnerModel(a.seed, a.big, a.runner_loss), Xt, r[~val], race[~val])
+    for k in ("lr", "leaves", "min_leaf"):
+        if getattr(a, k) is not None:
+            TUNE[k] = getattr(a, k)
+    w_train = recencyWeights(day[~val], a.recency_days)
+    rm = fitByRaces(runnerModel(a.seed, a.big, a.runner_loss), Xt, r[~val], race[~val], w_train)
+    if a.per_level and "level" in feats:
+        rm = perLevelFit(rm, Xt, r[~val], race[~val], w_train, feats.index("level"), a)
     del Xt
     print(f"runner trees: {rm.n_iter_} rounds ({datetime.datetime.now() - t0})")
     Xv, yv, bv = X[val], y[val], base[val]
@@ -1430,7 +1540,11 @@ def main():
         t5 = datetime.datetime.now()
         rm2 = runnerModel(a.seed, a.big, a.runner_loss).set_params(max_iter=int(rm.n_iter_),
                                                     early_stopping=False)
-        rm2.fit(practiceBlanks(X, feats, a.seed + 1), r)
+        Xall = practiceBlanks(X, feats, a.seed + 1)
+        w_all = recencyWeights(day, a.recency_days)
+        rm2.fit(Xall, r, sample_weight=w_all)
+        if isinstance(rm, LevelRouter) or getattr(rm, "models", None):
+            rm2 = perLevelRefit(rm, rm2, Xall, r, w_all, a)
         lm2 = levelModel(a.seed).set_params(max_iter=int(lm.n_iter_), early_stopping=False)
         lm2.fit(R[known][:, lused], L[known])
         held = 100 * _mean(m[0] for m in model_s)
