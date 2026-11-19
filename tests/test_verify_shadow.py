@@ -39,6 +39,12 @@ class _Cur:
         return (250,)                            # 250 pages a table
 
 
+@pytest.fixture(autouse=True)
+def _oneStream(monkeypatch):
+    # the fake connection below; checkSegments' other streams open real ones
+    monkeypatch.setenv("XCP_INTEGRITY_STREAMS", "1")
+
+
 class _Conn:
     autocommit = False
 

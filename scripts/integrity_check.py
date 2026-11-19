@@ -119,6 +119,60 @@ def checkRange(cur, name, start, end):
     return checkRange(cur, name, start, mid) + checkRange(cur, name, mid + 1, end)
 
 
+# ★ SEGMENTS SIDE BY SIDE (2026-11-19). The check reads every page once and
+#   waits on the disk, one 1 GB segment at a time; 00_integrity, the
+#   rankings shadow check (build_ranking_results.verifyShadow) and 18b each
+#   read tens of GB that way. XCP_INTEGRITY_STREAMS connections take the
+#   segments in turn; results come back in the jobs' order, so every line
+#   printed and every block reported is the same as one at a time.
+def _streams():
+    return max(1, int(os.environ.get("XCP_INTEGRITY_STREAMS", "6")))
+
+
+def checkSegments(jobs, streams=None, conn=None):
+    """[checkRange result] for each (table, start, end) in `jobs`, in order.
+    One stream (or one job) runs on `conn` if given, as before."""
+    import threading
+    streams = min(streams or _streams(), max(1, len(jobs)))
+    out = [None] * len(jobs)
+    if streams == 1 and conn is not None:
+        with conn.cursor() as cur:
+            for i, (t, a, b) in enumerate(jobs):
+                out[i] = checkRange(cur, t, a, b)
+        return out
+    nxt = iter(range(len(jobs)))
+    lock = threading.Lock()
+    errs = []
+
+    def work():
+        try:
+            with getConn() as c:
+                was = c.autocommit
+                c.autocommit = True
+                try:
+                    with c.cursor() as cur:
+                        while not errs:
+                            with lock:
+                                i = next(nxt, None)
+                            if i is None:
+                                return
+                            t, a, b = jobs[i]
+                            out[i] = checkRange(cur, t, a, b)
+                finally:
+                    c.autocommit = was
+        except BaseException as exc:            # raised after every stream stops
+            errs.append(exc)
+
+    th = [threading.Thread(target=work, name=f"integrity{k}") for k in range(streams)]
+    for x in th:
+        x.start()
+    for x in th:
+        x.join()
+    if errs:
+        raise errs[0]
+    return out
+
+
 def checkIndexes(cur, tables):
     """[(index, message)] for every btree index on `tables` that
     bt_index_check rejects, printing as it goes."""
@@ -171,6 +225,11 @@ def main():
               f"({total_pages * bsz / 2**30:,.1f} GB), {seg:,} pages a segment")
 
         bad = {}                     # table -> {block: [count, first message]}
+        jobs = [(name, start, min(start + seg, pages) - 1)
+                for name, pages in tables for start in range(0, pages, seg)]
+        got = iter(checkSegments(jobs))
+        print(f"[integrity] {len(jobs):,} segments, {min(_streams(), max(1, len(jobs)))}"
+              f" at a time (XCP_INTEGRITY_STREAMS)", flush=True)
         for name, pages in tables:
             if pages == 0:
                 continue
@@ -178,7 +237,7 @@ def main():
             blocks = {}
             for start in range(0, pages, seg):
                 end = min(start + seg, pages) - 1
-                for blk, off, att, msg in checkRange(cur, name, start, end):
+                for blk, off, att, msg in next(got):
                     first = blocks.setdefault(blk, [0, None])
                     first[0] += 1
                     if first[1] is None:

@@ -3078,14 +3078,22 @@ def _verifyPages(conn, tables, checkRange):
                     " pg_size_bytes(current_setting('segment_size'))")
         bsz, seg_bytes = cur.fetchone()
         seg = seg_bytes // bsz
+        jobs = []
         for t in tables:
             cur.execute("SELECT pg_relation_size(%s::regclass) / %s", (t, bsz))
             pages = int(cur.fetchone()[0])
-            for start in range(0, pages, seg):
-                got = checkRange(cur, t, start, min(start + seg, pages) - 1)
-                if got:
-                    bad.setdefault(t, []).extend(got)
+            jobs += [(t, start, min(start + seg, pages) - 1) for start in range(0, pages, seg)]
+    # ★ SEGMENTS SIDE BY SIDE (integrity_check.checkSegments, 2026-11-19);
+    #   same jobs, same order, so the same list of damaged blocks
+    for (t, _a, _b), got in zip(jobs, _checkSegments(jobs, conn)):
+        if got:
+            bad.setdefault(t, []).extend(got)
     return bad
+
+
+def _checkSegments(jobs, conn):
+    from integrity_check import checkSegments
+    return checkSegments(jobs, conn=conn)
 
 
 def swapIn(conn):
