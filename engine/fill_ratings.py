@@ -38,6 +38,8 @@
 # column before this refills it, so filled values never go stale.
 
 import argparse
+import contextlib
+import os
 import sys
 import time
 
@@ -642,13 +644,66 @@ def fillSport(conn, sport, dry_run=False, venue=False):
     census = {"filled": 0, "no_pool": 0, "no_constant": 0, "bad_nt": 0,
               "at_course": 0, "field": 0}
     moved = []
-    offsets = fieldOffsets(conn, k_by_pool) if (venue and sport == "XC") else {}
     samples = []
     races = cells = None
-    if venue:
-        races, cells = venueMap(conn, sport)
-        print(f"  {sport}: --venue: {len(races):,} races with unrated rows, "
-              f"{len(cells):,} fitted courses")
+    # ★ THE SOURCE READ AHEAD, AND THE TWO LOOKUPS SIDE BY SIDE (2026-11-19,
+    #   run 20261116_204106: XC "COPYed 900,843 ratings into sr_staging_xc"
+    #   ~227 s -- for 900k rows, where track's 1,254,033 took 52 s). The
+    #   COPY text is not the cost (_copyChunk: ~1 us a row, and these rows
+    #   come from a generator, so _stagingLines' array path never applies);
+    #   this loop is. It took turns with the server: FETCH 50,000 rows of
+    #   the board query and wait, price them in Python (--venue's fixed
+    #   point alone is ~30 venueEffect calls, measured 65 us a row), FETCH
+    #   again -- and before it, the field anchor and the course map ran one
+    #   after the other on this connection. Now the board query is declared
+    #   first and a reader thread fetches it 2 blocks ahead
+    #   (scripts/prefetch_rows.Prefetch), so its joins run while
+    #   fieldOffsets and venueMap -- each on its own pooled connection, side
+    #   by side -- and then the pricing do.
+    # ! THE SAME RATINGS: the same SQL, the same rows in the same order into
+    #   the same loop on this thread; fieldOffsets and venueMap are the same
+    #   functions on the same committed tables (neither reads this
+    #   connection's temp tables), and the loop starts only once both are
+    #   back. The reader alone touches `conn` until the stream ends; then,
+    #   as before, the read transaction is committed. Memory: two blocks.
+    #   XCP_FILL_OVERLAP=0 is the old order on one connection.
+    side = os.environ.get("XCP_FILL_OVERLAP", "1") != "0"
+    src_cur = reader = None
+    if side:
+        from prefetch_rows import Prefetch
+        conn.commit()                             # the commit below, made first (see it)
+        sql = _sqlFor(sport, conn)
+        src_cur = conn.cursor(f"fill_{sport.lower()}_src",
+                              cursor_factory=psycopg2.extras.NamedTupleCursor)
+        src_cur.execute(sql, {"since": "1990-01-01", "until": "2100-01-01"})
+        reader = Prefetch(lambda: src_cur.fetchmany(50_000), depth=2,
+                          name=f"fill_read_{sport.lower()}")
+    try:
+        if side and venue:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _own(fn):
+                with getConn() as c:
+                    return fn(c)
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_off = (ex.submit(_own, lambda c: fieldOffsets(c, k_by_pool))
+                         if sport == "XC" else None)
+                f_map = ex.submit(_own, lambda c: venueMap(c, sport))
+                offsets = f_off.result() if f_off is not None else {}
+                races, cells = f_map.result()
+        else:
+            offsets = fieldOffsets(conn, k_by_pool) if (venue and sport == "XC") else {}
+            if venue:
+                races, cells = venueMap(conn, sport)
+        if venue:
+            print(f"  {sport}: --venue: {len(races):,} races with unrated rows, "
+                  f"{len(cells):,} fitted courses")
+    except BaseException:
+        if reader is not None:
+            reader.close()
+            src_cur.close()
+            conn.rollback()
+        raise
 
     # ! COMMIT BEFORE THE WRITER RUNS. poolConstants left this connection
     #   in a transaction holding ACCESS SHARE on results; the writer, on a
@@ -658,19 +713,34 @@ def fillSport(conn, sport, dry_run=False, venue=False):
     #   while every site SELECT on results queued behind the ALTER, gunicorn
     #   killed each worker at 60 s, and ninety orphaned backends filled
     #   max_connections: the site was a 500 for hours).
-    conn.commit()
+    # ! NOT AGAIN ONCE THE STREAM IS DECLARED: a commit closes the named
+    #   cursor the reader thread is fetching (it was made before declaring).
+    if reader is None:
+        conn.commit()
 
-    def pairs():
-        # Its own server-side cursor: saveResultSpeedRatings streams these
-        # into COPY on a second connection while this one is still reading.
+    @contextlib.contextmanager
+    def sourceRows():
+        if reader is not None:                    # declared above (XCP_FILL_OVERLAP)
+            try:
+                yield reader
+            finally:
+                reader.close()                    # before the cursor is touched
+                src_cur.close()
+            return
         with conn.cursor(f"fill_{sport.lower()}_src",
-                         cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
-            src.itersize = 50_000
+                         cursor_factory=psycopg2.extras.NamedTupleCursor) as cur:
+            cur.itersize = 50_000
             # ! `until` too: build_ranking_results._SQL took a date seam for
             #   its two-half streams (216) and the fill, which reuses that
             #   SQL, bound only `since`; KeyError 'until' failed 09b on
             #   run16d (2026-09-07). Open-ended here: the fill wants every row.
-            src.execute(_sqlFor(sport, conn), {"since": "1990-01-01", "until": "2100-01-01"})
+            cur.execute(_sqlFor(sport, conn), {"since": "1990-01-01", "until": "2100-01-01"})
+            yield cur
+
+    def pairs():
+        # Its own server-side cursor: saveResultSpeedRatings streams these
+        # into COPY on a second connection while this one is still reading.
+        with sourceRows() as src:
             for row in src:
                 nt = row.normalized_time
                 if nt is None or float(nt) <= 0:
@@ -713,16 +783,23 @@ def fillSport(conn, sport, dry_run=False, venue=False):
         # the writer's DDL never waits on this connection
         conn.commit()
 
-    if dry_run:
-        for _ in pairs():
-            pass
-        print(f"  {sport}: DRY RUN -- would fill {census['filled']:,} rows")
-    else:
-        # mode="update": concurrent-safe, touches only the given rows, and
-        # leaves no _old table -- exactly what a gap-fill wants. The heap
-        # rebuild is for the solve's 30M-row full rewrite, not for this.
-        saveResultSpeedRatings(sport, pairs(), mode="update")
-        _writeNt(conn, sport, moved)
+    try:
+        if dry_run:
+            for _ in pairs():
+                pass
+            print(f"  {sport}: DRY RUN -- would fill {census['filled']:,} rows")
+        else:
+            # mode="update": concurrent-safe, touches only the given rows, and
+            # leaves no _old table -- exactly what a gap-fill wants. The heap
+            # rebuild is for the solve's 30M-row full rewrite, not for this.
+            saveResultSpeedRatings(sport, pairs(), mode="update")
+            _writeNt(conn, sport, moved)
+    finally:
+        # ! a write that failed before it read the stream: stop the reader
+        if reader is not None:
+            reader.close()
+            if not src_cur.closed:
+                src_cur.close()
 
     print(f"  {sport}: filled {census['filled']:,}   "
           f"unpriceable: {census['no_pool']:,} no pool, "

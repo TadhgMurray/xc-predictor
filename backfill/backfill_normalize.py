@@ -3626,7 +3626,109 @@ def _printProgress(processed, skipped, written, start_time, apply):
 #           server-side stream is live on that connection).
 # Arguments: read_conn — the read connection; cfg — the SportConfig.
 # Output   : (geom_idx, genders, meet_distances) ready to bake into row_fn.
-def _buildLookups(read_conn, cfg):
+def _buildLookups(read_conn, cfg, threads=1):
+    if threads > 1:
+        got = _loadLookupsSideBySide(cfg, threads)
+    else:
+        got = _loadLookupsInTurn(read_conn, cfg)
+    return _reportLookups(cfg, *got)
+
+
+def _loadVirtualMeetsOrNone(cur, sport):
+    try:
+        return _loadVirtualMeets(cur, sport)
+    except Exception as exc:                              # noqa: BLE001
+        cur.connection.rollback()
+        print(f"  virtual meets: not loaded ({type(exc).__name__}: {exc})")
+        return frozenset()
+
+
+def _printPins(n_pins):
+    print(f"  distance_pin: {n_pins:,} rows ({len(_DPIN_DIV):,} divisions, "
+          f"{len(_DPIN_PART):,} combined divisions' sides, {len(_DPIN_ROW):,} single runners)")
+
+
+# ★ THE LOOKUPS SIDE BY SIDE (2026-11-19, run 20261116_204106: 05_backfill_xc
+#   996 s, the side 05 waits for, and it is --only-changed -- a sliver of
+#   the rows, behind the same full set of lookups a full pass loads:
+#   `distance_pin` printed 86 s in, after geometry, genders (38 s) and the
+#   season levels, with the twin keys, the canon distances, the chair
+#   athletes (a regex over results AND results_tf), the weather and the
+#   virtual meets' reposts still to come, one statement at a time). Each
+#   loader is a read of committed tables that leaves its answer in a dict;
+#   here each runs on its own pooled connection, `threads` at a time, and
+#   the three that read another's answer (canon distances, chair athletes,
+#   dropped twins: the tfrrs blob and the anet distances) start when it is
+#   there.
+# ! THE SAME LOOKUPS: the same functions on the same tables, called with
+#   the same arguments; the only state they share is their own module dicts
+#   (_DPIN_*, _UPLOAD_DIV_GENDER), each written by one loader. Their temp
+#   tables (_wcp, _race_wx_need, tmp_drop_keys) are per connection, and
+#   each connection commits when its loader is done. A failure raises as it
+#   did.
+# ! MEMORY: the same dicts as before; what overlaps is the loaders' result
+#   buffers. So cross country only by default (4 at a time); 05_backfill_tf,
+#   whose peak (114.9 GB) leaves 22 GB free, loads in turn as before.
+#   XCP_BACKFILL_LOOKUP_THREADS_XC / _TF, or XCP_BACKFILL_LOOKUP_THREADS for
+#   both; 1 is the old loop on the read connection.
+def _lookupThreads(sport):
+    import os
+    v = (os.environ.get(f"XCP_BACKFILL_LOOKUP_THREADS_{sport}")
+         or os.environ.get("XCP_BACKFILL_LOOKUP_THREADS")
+         or ("4" if sport == "XC" else "1"))
+    return max(1, int(v))
+
+
+def _onOwnConn(fn):
+    with getConn() as conn:
+        try:
+            with conn.cursor() as cur:
+                out = fn(cur)
+            conn.commit()
+            return out
+        except BaseException:
+            conn.rollback()
+            raise
+
+
+def _loadLookupsSideBySide(cfg, threads):
+    xc = cfg.sport == "XC"
+    with cf.ThreadPoolExecutor(max_workers=threads,
+                               thread_name_prefix=f"lookups_{cfg.sport.lower()}") as ex:
+        def go(fn):
+            return ex.submit(_onOwnConn, fn)
+        # the two the second wave reads, first
+        f_tfrrs = go(_loadTfrrsBlobDistances) if xc else None
+        f_md = go(_loadMeetDistances) if xc else None
+        f_genders = go(_loadGenders)
+        f_twins = go(lambda cur: _loadMatchedTwinKeys(cur, cfg.table))
+        f_virtual = go(lambda cur: _loadVirtualMeetsOrNone(cur, cfg.sport))
+        f_wx = (go(lambda cur: WeatherIndex.build(cur, cfg.sport))
+                if _weatherEnabled(cfg.sport) else None)
+        f_season = go(_loadSeasonLevels)
+        f_geom = go(GeometryIndex.build)
+        f_upload = go(_loadUploadDivGenders) if xc else None
+        f_pins = go(_loadDistancePins) if xc else None
+        f_wdivs = go(_loadWheelchairDivs) if xc else None
+        tfrrs_distances = f_tfrrs.result() if xc else {}
+        meet_distances = f_md.result() if xc else {}
+        f_canon = go(lambda cur: _loadCanonTfrrsDistances(cur, cfg.table, tfrrs_distances))
+        f_wpeople = go(lambda cur: _loadWheelchairPeople(cur, tfrrs_distances))
+        f_dropped = go(lambda cur: _loadDroppedTwins(cur, cfg.table, cfg.sport,
+                                                     meet_distances, tfrrs_distances))
+        if xc:
+            f_upload.result()
+            _printPins(f_pins.result())
+        wheel_persons, wheel_athletes = f_wpeople.result()
+        return (f_geom.result(), f_genders.result(), f_season.result(),
+                meet_distances, tfrrs_distances, f_twins.result(),
+                f_canon.result(), f_wx.result() if f_wx is not None else None,
+                f_wdivs.result() if xc else frozenset(),
+                wheel_persons, wheel_athletes, f_dropped.result(),
+                f_virtual.result())
+
+
+def _loadLookupsInTurn(read_conn, cfg):
     with read_conn.cursor() as cur:                # plain cursor, closed before streaming
         geom_idx = GeometryIndex.build(cur)
         genders = _loadGenders(cur)
@@ -3636,9 +3738,7 @@ def _buildLookups(read_conn, cfg):
         meet_distances = _loadMeetDistances(cur) if cfg.sport == "XC" else {}
         if cfg.sport == "XC":
             _loadUploadDivGenders(cur)
-            n_pins = _loadDistancePins(cur)
-            print(f"  distance_pin: {n_pins:,} rows ({len(_DPIN_DIV):,} divisions, "
-                  f"{len(_DPIN_PART):,} combined divisions' sides, {len(_DPIN_ROW):,} single runners)")
+            _printPins(_loadDistancePins(cur))
         tfrrs_distances = (_loadTfrrsBlobDistances(cur)
                            if cfg.sport == "XC" else {})
         # Canon dedup: the matched cross-source twins (drop the tfrrs copy) and
@@ -3664,6 +3764,16 @@ def _buildLookups(read_conn, cfg):
             read_conn.rollback()
             print(f"  virtual meets: not loaded ({type(exc).__name__}: {exc})")
             virtual_meets = frozenset()
+    return (geom_idx, genders, season_levels, meet_distances,
+            tfrrs_distances,
+            matched_twins, canon_distances, wx_idx, wheel_divs,
+            wheel_persons, wheel_athletes, dropped_twins, virtual_meets)
+
+
+def _reportLookups(cfg, geom_idx, genders, season_levels, meet_distances,
+                   tfrrs_distances, matched_twins, canon_distances, wx_idx,
+                   wheel_divs, wheel_persons, wheel_athletes, dropped_twins,
+                   virtual_meets):
     print(f"  lookups: {len(genders):,} genders, "
           f"{len(season_levels[0]) + len(season_levels[1]):,} season levels, "
           f"{len(season_levels[2]):,} grade verdicts, "
@@ -3733,6 +3843,8 @@ def _accumulate(row_fn, row, updates, census):
 # Output   : (processed, written, skipped, census). The census carries the
 #            per-reason breakdown + sanity panel, printed once at the end.
 def _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target):
+    if not limit and not _SHARD.get("profiling") and _overlapOn(cfg.sport):
+        return _drainOverlapped(stream, write_conn, cfg, row_fn, apply, target)
     processed, written, skipped = 0, 0, 0
     updates = []
     census = _Census()                             # counts + extremes + reservoir
@@ -3754,6 +3866,77 @@ def _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target):
     # final partial buffer
     written += (_flush(write_conn, target, updates, cfg.write_mode)
                 if apply else len(updates))
+    _printProgress(processed, skipped, written, start, apply)
+    return processed, written, skipped, census
+
+
+# ★ THE STREAM READ AHEAD AND THE WRITE BEHIND (2026-11-19, run
+#   20261116_204106: 05_backfill_xc 996 s against track's 665 s, side by
+#   side -- cross country is the one 05 waits for). Its nightly form is
+#   --only-changed, the update write path in ONE process (no workers: they
+#   are the copy path's), and _drainStream took turns three ways: FETCH
+#   50,000 rows and wait on the server, classify them, then UPDATE them
+#   (an index probe and a new tuple per row, ~150-290 us a row) and wait
+#   again. Here a reader thread fetches the next blocks (scripts/
+#   prefetch_rows.Prefetch, 2 ahead) and a writer thread runs the same
+#   _flush on the last batch (Writer, 1 waiting) while this thread
+#   classifies; psycopg2 drops the GIL on each wait, so the waits sit under
+#   the classifying instead of after it.
+# ! THE SAME VALUES: the rows reach row_fn one by one in the stream's own
+#   order, on this thread (row_fn's pool_split, the census and the suspect
+#   sample see what they always saw), and the writer writes the same
+#   batches with the same _flush, in the same order, on write_conn alone.
+#   Only the "written" count in the progress lines lags a batch behind.
+# ! MEMORY: two 50,000-row blocks read ahead and one batch waiting -- tens
+#   of MB. Cross country only by default, so 05_backfill_tf (114.9 GB at
+#   its peak, four workers) is exactly as it was.
+#   XCP_BACKFILL_OVERLAP=0 is the loop above for both; =1 both sports;
+#   XCP_BACKFILL_OVERLAP_XC / _TF one. Never for --limit or --profile.
+def _overlapOn(sport):
+    import os
+    v = (os.environ.get(f"XCP_BACKFILL_OVERLAP_{sport}")
+         or os.environ.get("XCP_BACKFILL_OVERLAP")
+         or ("1" if sport == "XC" else "0"))
+    return v != "0"
+
+
+def _drainOverlapped(stream, write_conn, cfg, row_fn, apply, target):
+    from prefetch_rows import Prefetch, Writer
+    processed, written, skipped = 0, 0, 0
+    updates = []
+    census = _Census()
+    start = time.time()
+    reader = Prefetch(lambda: stream.fetchmany(cfg.batch), depth=2,
+                      name=f"backfill_read_{cfg.sport.lower()}")
+    writer = (Writer(lambda u: _flush(write_conn, target, u, cfg.write_mode),
+                     depth=1, name=f"backfill_write_{cfg.sport.lower()}")
+              if apply else None)
+    try:
+        for row in reader:
+            skipped += _accumulate(row_fn, row, updates, census)
+            processed += 1
+            if len(updates) >= cfg.batch:
+                if writer is not None:
+                    writer.submit(updates)
+                    written = writer.total
+                else:
+                    written += len(updates)
+                updates = []
+                _printProgress(processed, skipped, written, start, apply)
+        if writer is not None:
+            if updates:
+                writer.submit(updates)
+            written = writer.finish()
+            writer = None
+        else:
+            written += len(updates)
+    finally:
+        reader.close()                             # before the caller closes the stream
+        if writer is not None:                     # a failure above: let the queued batch land
+            try:
+                writer.finish()
+            except Exception:                      # noqa: BLE001 -- the first error is the one raised
+                pass
     _printProgress(processed, skipped, written, start, apply)
     return processed, written, skipped, census
 
@@ -3916,10 +4099,12 @@ def _runBackfill(read_conn, write_conn, cfg, apply, limit):
     # kill the read stream 50,000 rows in. Prove they are distinct at row 0.
     _assertDistinctBackends(read_conn, write_conn)
 
+    n_lookup = _lookupThreads(cfg.sport)          # 1: in turn, on read_conn
     (geom_idx, genders, season_levels, meet_distances, tfrrs_distances,
      matched_twins, canon_distances, wx_idx,
      wheel_divs, wheel_persons, wheel_athletes, dropped_twins,
-     virtual_meets) = _buildLookups(read_conn, cfg)
+     virtual_meets) = (_buildLookups(read_conn, cfg, threads=n_lookup)
+                       if n_lookup > 1 else _buildLookups(read_conn, cfg))
     row_fn = _makeRowFn(cfg, geom_idx, genders, season_levels,
                         meet_distances, tfrrs_distances, matched_twins,
                         canon_distances, wx_idx, wheel_divs=wheel_divs,

@@ -1596,6 +1596,18 @@ EXTRA_RULES = (
 )
 
 
+# the rules measured longest on the server, longest first; the rest keep
+# their EXTRA_RULES order after them
+_RULES_LONG_FIRST = ("race",)
+
+
+def _longFirst(rules):
+    if os.environ.get("XCP_OUTLIER_RULES_LONG_FIRST", "1") == "0":
+        return list(rules)
+    rank = {label: i for i, label in enumerate(_RULES_LONG_FIRST)}
+    return sorted(rules, key=lambda r: rank.get(r[0], len(rank)))
+
+
 class ExtraRules:
     """The nine rules of EXTRA_RULES. With connect and streams > 1 each runs
     on its own connection, `streams` at a time, STARTED AT CONSTRUCTION, so
@@ -1627,8 +1639,17 @@ class ExtraRules:
             self.t0 = time.time()
             self.pool = ThreadPoolExecutor(
                 max_workers=min(self.streams, len(EXTRA_RULES)))
-            self.futs = [self.pool.submit(self._work, label, fn)
-                         for label, fn in EXTRA_RULES]
+            # ★ THE LONGEST FIRST (2026-11-19, run 20261116_204106: 09d 452 s
+            #   in line, the longest rule `race: 217,943 rows (180 s)`, fifth
+            #   of nine on four connections -- so it could start only once
+            #   one of the first four was done, and the step waited on its
+            #   tail). Submitted in _longFirst order; collect() still joins
+            #   the answers in EXTRA_RULES order, so the rows, and write()'s
+            #   input, are exactly as before. Each rule's SQL and connection
+            #   are unchanged. XCP_OUTLIER_RULES_LONG_FIRST=0: table order.
+            futs = {label: self.pool.submit(self._work, label, fn)
+                    for label, fn in _longFirst(EXTRA_RULES)}
+            self.futs = [futs[label] for label, _fn in EXTRA_RULES]
             if verbose:
                 print(f"    rules: {len(EXTRA_RULES)} started, "
                       f"{min(self.streams, len(EXTRA_RULES))} side by side "
