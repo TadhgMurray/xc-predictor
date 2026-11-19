@@ -251,7 +251,7 @@ def test_gather_reads_the_upload_rows_with_their_own_gender():
 
 def test_the_tfrrs_linker_runs_uploads_as_pass_4_and_skips_detached_rows():
     src = read("scripts", "link_tfrrs_rows.py")
-    assert "import link_uploads as LU" in src and "LU.run(conn, a.apply)" in src
+    assert "import link_uploads as LU" in src and "LU.run(rconn, a.apply)" in src
     assert '"upload", "upload_mint"' in src and "XCP_LINK_UPLOADS" in src
     cur = Cur([(r"to_regclass", [("result_detach",)]), (r"SELECT count", [(0,)])])
     LT.fanout(cur, apply=False)

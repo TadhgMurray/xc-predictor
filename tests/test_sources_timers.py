@@ -230,7 +230,7 @@ def test_timer_undo_takes_back_only_timer_rules():
 
 def test_pass_4_runs_the_timer_rows_too():
     src = read("scripts", "link_tfrrs_rows.py")
-    assert "LU.run(conn, a.apply, feed=LU.TIMER)" in src and "XCP_LINK_TIMERS" in src
+    assert "LU.run(rconn, a.apply, feed=LU.TIMER)" in src and "XCP_LINK_TIMERS" in src
     assert '"timer", "timer_mint"' in src
 
 

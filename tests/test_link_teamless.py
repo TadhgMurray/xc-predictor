@@ -252,7 +252,10 @@ def test_the_sql_rules_agree_with_the_python_ones():
         assert cur.fetchone()[0] is True, "never NULL"
         for first, last in (("Tadhg", "Murray"), ("Mary-Kate", "O'Neil"),
                             ("  Jake ", "SMITH  "), ("Jo", ""), ("Zoë", "Ng")):
-            cur.execute(f"SELECT {T.nameKeySql('%s', '%s')}", (first, last))
+            # column references, as every caller passes (the key reads its
+            # argument more than once since 2026-11-19's ASCII fast path)
+            cur.execute(f"SELECT {T.nameKeySql('x.f', 'x.l')} FROM (SELECT %s::text AS f, "
+                        f"%s::text AS l) x", (first, last))
             got = cur.fetchone()[0]
             # normName with its two-token floor lifted (the SQL applies the
             # floor separately, as position(' ' in nm) > 0)

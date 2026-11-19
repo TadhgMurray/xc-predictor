@@ -112,9 +112,16 @@ def _installOnce(conn, raise_lock=False):
     """Triggers on, registry built, committed. False (and the registry off)
     on any failure -- gather() then reads the corpus in full, as before.
     raise_lock: a lost lock wait is raised (install retries it), not turned off."""
+    if not _triggersOnce(conn, raise_lock):
+        return False
+    return _build(conn)
+
+
+def _triggersOnce(conn, raise_lock=False):
+    """The move triggers on all three tables, committed. False (triggers
+    dropped again) on any failure but a lost lock wait under raise_lock."""
     if not enabled():
         return False
-    t0 = time.time()
     try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL lock_timeout = '30s'")
@@ -131,6 +138,26 @@ def _installOnce(conn, raise_lock=False):
                 cur.execute(f"""CREATE TRIGGER lu_person_move_id AFTER INSERT OR DELETE ON {table}
                                 FOR EACH ROW EXECUTE FUNCTION lu_note_person_move()""")
         conn.commit()                       # the triggers live from here on
+    except Exception as exc:                # noqa: BLE001 -- the full query still works
+        conn.rollback()
+        import psycopg2.errors
+        if raise_lock and isinstance(exc, psycopg2.errors.LockNotAvailable):
+            raise
+        uninstall(conn, quiet=True)
+        print(f"[name-registry] off ({type(exc).__name__}: {exc}); every pass reads the corpus "
+              "in full", flush=True)
+        return False
+    return True
+
+
+def _build(conn, uninstall_on=None, say=True):
+    """lu_reg on `conn` (a TEMP table: only `conn` sees it), committed; the
+    triggers must already be live. -> True, or False with the registry off
+    and the triggers dropped on `uninstall_on` (default `conn`; False leaves
+    that to the caller). say=False keeps the message for besideJoin to
+    print, so a thread prints nothing between the passes' lines."""
+    t0 = time.time()
+    try:
         with conn.cursor() as cur:
             cur.execute("SET LOCAL work_mem = '512MB'")
             cur.execute("DROP TABLE IF EXISTS lu_reg")
@@ -143,17 +170,104 @@ def _installOnce(conn, raise_lock=False):
         conn.commit()
     except Exception as exc:                # noqa: BLE001 -- the full query still works
         conn.rollback()
-        import psycopg2.errors
-        if raise_lock and isinstance(exc, psycopg2.errors.LockNotAvailable):
-            raise
-        uninstall(conn, quiet=True)
-        print(f"[name-registry] off ({type(exc).__name__}: {exc}); every pass reads the corpus "
-              "in full", flush=True)
+        if uninstall_on is not False:
+            uninstall(uninstall_on or conn, quiet=True)
+        msg = (f"[name-registry] off ({type(exc).__name__}: {exc}); every pass reads the corpus "
+               "in full")
+        _say(msg, say)
         return False
     _READY[id(conn)] = True
-    print(f"[name-registry] built once: {n:,} (person, name) pairs ({time.time() - t0:.0f}s); "
-          "the passes after this refresh only the persons that moved", flush=True)
+    _say(f"[name-registry] built once: {n:,} (person, name) pairs ({time.time() - t0:.0f}s); "
+         "the passes after this refresh only the persons that moved", say)
     return True
+
+
+_LAST = []
+
+
+def _say(msg, say):
+    if say:
+        print(msg, flush=True)
+    else:
+        _LAST.append(msg)
+
+
+# ★ BUILT BESIDE PASSES 1 AND 2, ON A SECOND CONNECTION (2026-11-19; run
+#   20261116_204106: 04a 919 s on a normal night, the registry's one full
+#   read the largest part of it). Passes 1 (fan-out) and 2 (freshmen) never
+#   read the registry -- only 2b, 4 and 5 do -- so its build need not wait
+#   for them. besideStart() turns the triggers on (here, before either pass
+#   writes, exactly as install() does) and builds lu_reg in a thread on its
+#   own connection; besideJoin() waits for it before pass 2b and hands back
+#   that connection, on which 2b, 4 and 5 then run (lu_reg is a TEMP table:
+#   only its own connection sees it).
+#   ! THE SAME REGISTRY. The triggers are committed before the build starts
+#     and before pass 1 writes, so a move of passes 1-2 is either in the
+#     build's snapshot (committed before it) or in lu_person_moves (every
+#     move after the triggers, committed with its writer), and refresh()
+#     rebuilds every person in lu_person_moves at 2b -- the guarantee the
+#     registry always gave writers on other connections (the site's, and
+#     tests/test_name_registry.py's second writer).
+#   ! MEMORY: one more backend for the build's length, at work_mem 512MB --
+#     what the serial build used, now beside pass 1's (1 GB) instead of
+#     before it. XCP_LINK_REGISTRY_BG=0 builds it first, on the linker's own
+#     connection, as before.
+def background():
+    return os.environ.get("XCP_LINK_REGISTRY_BG", "1") not in ("0", "false", "")
+
+
+def besideStart(conn, conn2, tries=None, pause=20):
+    """Triggers on `conn` (install()'s retries), then lu_reg built on `conn2`
+    in a thread. -> a handle for besideJoin, or None when the triggers could
+    not go on (the registry is off; the passes read the corpus in full)."""
+    import threading
+    import psycopg2.errors
+    tries = int(tries or os.environ.get("XCP_LINK_REGISTRY_TRIES") or 8)
+    on = False
+    for k in range(1, tries + 1):
+        try:
+            on = _triggersOnce(conn, raise_lock=(k < tries))
+            break
+        except psycopg2.errors.LockNotAvailable:
+            print(f"[name-registry] the trigger lock was busy (try {k}/{tries}); "
+                  f"again in {pause}s", flush=True)
+            time.sleep(pause)
+    if not on:
+        return None
+    box = {}
+
+    def work():
+        try:
+            box["ok"] = _build(conn2, uninstall_on=False, say=False)
+        except BaseException as exc:        # noqa: BLE001 -- reported at the join
+            box["exc"] = exc
+    th = threading.Thread(target=work, name="name-registry", daemon=True)
+    th.start()
+    print("[name-registry] triggers on; the registry builds on a second connection "
+          "beside passes 1-2", flush=True)
+    return (th, box, conn2)
+
+
+def besideJoin(handle, conn):
+    """Wait for the side-by-side build. -> the connection passes 2b, 4 and 5
+    run on: its own when the registry is ready, else `conn` (triggers dropped,
+    the corpus read in full, as when install() fails)."""
+    th, box, conn2 = handle
+    th.join()
+    while _LAST:
+        print(_LAST.pop(0), flush=True)
+    if box.get("ok"):
+        return conn2
+    if "exc" in box:
+        print(f"[name-registry] off ({type(box['exc']).__name__}: {box['exc']}); every pass "
+              "reads the corpus in full", flush=True)
+    uninstall(conn, quiet=True)
+    forget(conn2)
+    return conn
+
+
+def forget(conn):
+    _READY.pop(id(conn), None)
 
 
 def refresh(cur):
