@@ -1128,6 +1128,41 @@ def buildAthleteState(cur, names):
           f"{time.time() - t0:.0f}s", flush=True)
 
 
+def buildPersonHomeState(cur, t0):
+    """person_home_state_new (person_id PK, state): the state each athlete
+    races in most, by races. Uncommitted -- the caller commits."""
+    cur.execute("DROP TABLE IF EXISTS person_home_state_new")
+    cur.execute("""
+        CREATE TABLE person_home_state_new AS
+        SELECT person_id, state
+        FROM  (SELECT person_id, state,
+                      row_number() OVER (PARTITION BY person_id
+                                         ORDER BY sum(n_races) DESC, state) AS rk
+               FROM   athlete_season
+               WHERE  person_id IS NOT NULL AND state IS NOT NULL
+               GROUP  BY person_id, state) x
+        WHERE  rk = 1
+    """)
+    cur.execute("""
+        ALTER TABLE person_home_state_new
+        ADD PRIMARY KEY (person_id)
+    """)
+    cur.execute("SELECT count(*) FROM person_home_state_new")
+    print(f"  person_home_state: {cur.fetchone()[0]:,} athletes "
+          f"({(time.time() - t0) / 60:.1f} min)", flush=True)
+
+
+def _sideOn():
+    """XCP_SI_SIDE (default on): '0' builds everything in line, in order."""
+    return (os.environ.get("XCP_SI_SIDE") or "1").strip() != "0"
+
+
+def _onOwnConn(fn):
+    """fn(conn) on a pooled connection of its own (a side thread's)."""
+    with getConn() as c:
+        return fn(c)
+
+
 def main():
     t0 = time.time()
     with getConn() as conn:
@@ -1151,26 +1186,33 @@ def main():
         #   transaction, so the swap's retry loop rolled back the finished
         #   build on a lock timeout and the next attempt renamed tables
         #   that no longer existed.
-        cur.execute("DROP TABLE IF EXISTS person_home_state_new")
-        cur.execute("""
-            CREATE TABLE person_home_state_new AS
-            SELECT person_id, state
-            FROM  (SELECT person_id, state,
-                          row_number() OVER (PARTITION BY person_id
-                                             ORDER BY sum(n_races) DESC, state) AS rk
-                   FROM   athlete_season
-                   WHERE  person_id IS NOT NULL AND state IS NOT NULL
-                   GROUP  BY person_id, state) x
-            WHERE  rk = 1
-        """)
-        cur.execute("""
-            ALTER TABLE person_home_state_new
-            ADD PRIMARY KEY (person_id)
-        """)
-        cur.execute("SELECT count(*) FROM person_home_state_new")
-        print(f"  person_home_state: {cur.fetchone()[0]:,} athletes "
-              f"({(time.time() - t0) / 60:.1f} min)", flush=True)
-        conn.commit()
+        # ★ SIDE BY SIDE, ON CONNECTIONS OF THEIR OWN (2026-11-19; run
+        #   20261116_154245: 10b 1,039 s, the longest of its group of three,
+        #   and 09e had moved only the team-row scan out of it). Three pieces
+        #   of this step read nothing the step itself writes before them:
+        #     * buildQualifierCity -- a regex scan of results and results_tf
+        #       (12 GB and 72 GB) joined to anet_team, the same two tables
+        #       the ~530 s team-row scan read; it ran LAST, after the swap,
+        #       and needs nothing of this step at all;
+        #     * person_home_state_new -- an aggregate over athlete_season,
+        #       read first by si_assign, so it overlaps the anet passes;
+        #     * school_level_new -- below, beside buildAthleteState.
+        #   Each is the same statement on its own connection, committed
+        #   before anything reads it, so every table comes out the same.
+        # ! XCP_SI_SIDE=0 runs them in line, in the old order. Memory: one
+        #   or two extra backends at the session's own settings.
+        side = _sideOn()
+        ex = qual = phs = None
+        if side:
+            from concurrent.futures import ThreadPoolExecutor
+            ex = ThreadPoolExecutor(max_workers=2, thread_name_prefix="si-side")
+            qual = ex.submit(_onOwnConn, buildQualifierCity)
+            phs = ex.submit(_onOwnConn,
+                            lambda c: (buildPersonHomeState(c.cursor(), t0),
+                                       c.commit()))
+        else:
+            buildPersonHomeState(cur, t0)
+            conn.commit()
 
         # ★ ANET FIRST: which names it places in two states, and where
         #   each athlete's own team for those names is. Both feed the
@@ -1184,6 +1226,8 @@ def main():
         buildNameStates(cur, contested)
         # (the assignment table's name list is derived from the finished
         #  clusters, below -- see buildAthleteState's call)
+        if phs is not None:
+            phs.result()            # committed: si_assign reads it next
 
         # one vote per (school, athlete): an athlete who raced for the
         # school in five seasons is still one athlete of it
@@ -1324,8 +1368,18 @@ def main():
         conn.commit()
         applyCollegeDirectory(cur)
         conn.commit()
-        buildSchoolLevel(cur)
-        conn.commit()
+        # ★ school_level_new BESIDE THE ASSIGNMENTS (see the note at the top
+        #   of main). It reads athlete_season, person_home_state_new and
+        #   school_state_alias_new -- all final at the commit above -- and
+        #   writes only itself; buildAthleteState reads si_assign (this
+        #   connection's temp table) and writes only its own table.
+        lvl = None
+        if side:
+            lvl = ex.submit(_onOwnConn,
+                            lambda c: (buildSchoolLevel(c.cursor()), c.commit()))
+        else:
+            buildSchoolLevel(cur)
+            conn.commit()
 
         # ★ THE NAMES THAT ACTUALLY SPLIT, NOT THE ONES WE SUSPECTED.
         #   This list used to be `contested`, then `contested | linked` --
@@ -1349,6 +1403,8 @@ def main():
               f"assignment", flush=True)
         buildAthleteState(cur, assigned)
         conn.commit()
+        if lvl is not None:
+            lvl.result()            # committed: the swap renames it next
 
         # ---- the swap: old tables serve until the new ones are whole ----
         #
@@ -1438,7 +1494,11 @@ def main():
         conn.commit()
 
         buildCollegePersonState(conn)
-        buildQualifierCity(conn)
+        if qual is not None:
+            qual.result()           # built and swapped on its own connection
+            ex.shutdown(wait=True)
+        else:
+            buildQualifierCity(conn)
 
     print(f"done in {(time.time() - t0) / 60:.1f} min")
 

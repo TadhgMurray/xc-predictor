@@ -288,6 +288,9 @@ def _fmtRow(row):
             f"{(row.get('school') or '-')!s:<28.28} {tt:>9} {dd:>6}  {row['race_date']}  result {row['result_id']}")
 
 
+_SIDE_WORKERS = 3          # XCP_SANITY_SIDE's extra connections
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--top", type=int, default=60, help="rows per (sport, pool) to check")
@@ -300,6 +303,37 @@ def main():
                     help="the stated gain per level the go-live applied (XCP_SPORT_LEVEL_POOLS)")
     args = ap.parse_args()
 
+    # ★ THE READS SIDE BY SIDE (2026-11-19; run 20261116_154245:
+    #   10a_board_sanity 558 s beside 10d's 608 s). Every query here is a
+    #   read and none waits on another's answer but loadClubSeasons (it
+    #   takes clubSets'). So the big ones -- each sport's top rows (a window
+    #   over that sport's ranking_results), the TF-minus-XC self-join of
+    #   athlete_season, each sport's pool tops -- start on connections of
+    #   their own, longest first, while clubSets reads the club teams; the
+    #   report below takes each answer where it took it before, so it
+    #   prints the same lines in the same order.
+    # ! XCP_SANITY_SIDE=0 reads them one after another, as before. At most
+    #   _SIDE_WORKERS extra backends at default settings; the answers are
+    #   the same rows the serial reads held (top-N per pool, the pairs).
+    side = (os.environ.get("XCP_SANITY_SIDE") or "1").strip() != "0"
+    pre = {}
+    ex = None
+    if side:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _onOwnConn(fn, *a):
+            with getConn() as c, c.cursor() as cu:
+                out = fn(cu, *a)
+                c.rollback()
+                return out
+        ex = ThreadPoolExecutor(max_workers=_SIDE_WORKERS,
+                                thread_name_prefix="sanity-read")
+        pre[("rows", "TF")] = ex.submit(_onOwnConn, loadTopRows, "TF", args.top, args.year)
+        pre[("rows", "XC")] = ex.submit(_onOwnConn, loadTopRows, "XC", args.top, args.year)
+        pre["gap"] = ex.submit(_onOwnConn, loadSportGap)
+        pre[("tops", "TF")] = ex.submit(_onOwnConn, loadPoolTops, "TF")
+        pre[("tops", "XC")] = ex.submit(_onOwnConn, loadPoolTops, "XC")
+
     print("[sanity] club teams from the rows...")
     club_schools, club_teams = clubSets()
     print(f"[sanity] {len(club_schools):,} club school strings, {len(club_teams):,} club team ids")
@@ -307,8 +341,10 @@ def main():
     hard = soft = 0
     with getConn() as conn, conn.cursor() as cur:
         for sport in ("XC", "TF"):
-            rows = loadTopRows(cur, sport, args.top, args.year)
-            tops = loadPoolTops(cur, sport)
+            rows = (pre[("rows", sport)].result() if pre
+                    else loadTopRows(cur, sport, args.top, args.year))
+            tops = (pre[("tops", sport)].result() if pre
+                    else loadPoolTops(cur, sport))
             findings = {}
             for row in rows:
                 for kind, is_hard, note in checkRow(row, sport, club_schools, club_teams, tops):
@@ -346,7 +382,9 @@ def main():
                   f"  person {pid}  ({club_schools.get(school.strip().lower(), '?')})")
 
         print("\n== TF minus XC, same athlete, same pool and year (season medians) ==")
-        pairs = loadSportGap(cur)
+        pairs = pre["gap"].result() if pre else loadSportGap(cur)
+        if ex is not None:
+            ex.shutdown(wait=True)
         gaps = gapReport(pairs)
         if not gaps:
             print("  (too few athlete-years with both sports)")

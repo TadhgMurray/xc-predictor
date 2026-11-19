@@ -723,6 +723,80 @@ def store(conn, week, payload):
     conn.commit()
 
 
+def _boardJobs(args, year, today):
+    """[(div, gender, unit, pool, lo, hi_eff, min_distance)] in main's order:
+    the boards main will build (the same skips)."""
+    jobs = []
+    for div in ([args.division] if args.division else NR.DIVISIONS):
+        if NR.rules(div)["season"] != year:
+            continue
+        lo, hi = NR.window(div)
+        hi_eff = min(hi, today + datetime.timedelta(days=1))
+        for gender in ([args.gender] if args.gender else tuple(NR.GENDERS)):
+            g, pool, _w = NR.GENDERS[gender]
+            jobs.append((div, gender, NR.UNIT[div], pool, lo, hi_eff,
+                         NR.minDistance(div, g)))
+    return jobs
+
+
+# ★ THE NEXT BOARDS' READS WHILE THIS ONE SIMULATES (2026-11-19; run
+#   20261116_154245: 11c_ncaa 393 s). Each (division, gender) board is two
+#   reads -- its athletes and every tfrrs race they ran -- and then the
+#   simulation, one board after another, so the database idled through
+#   every simulation and the simulation waited on every read. Here the reads
+#   of the next PREFETCH_AHEAD boards run on connections of their own while
+#   main simulates; main still takes the boards in its own order, and the
+#   simulation's seed is per board, so every payload is the one it was.
+# ! XCP_NCAA_PREFETCH=0 reads each board in line on main's connection, as
+#   before. Bounded: at most PREFETCH_AHEAD boards' rows wait in memory.
+PREFETCH_AHEAD = 2
+
+
+class _Prefetch:
+    def __init__(self, jobs, year, official, overrides):
+        self.jobs, self.year = list(jobs), year
+        self.official, self.overrides = official, overrides
+        self.futs, self.next = {}, 0
+        self.ex = None
+        if self.jobs and (os.environ.get("XCP_NCAA_PREFETCH") or "1").strip() != "0":
+            from concurrent.futures import ThreadPoolExecutor
+            self.ex = ThreadPoolExecutor(max_workers=PREFETCH_AHEAD,
+                                         thread_name_prefix="ncaa-read")
+            self._fill()
+
+    def _fill(self):
+        while (self.next < len(self.jobs)
+               and len(self.futs) < PREFETCH_AHEAD):
+            job = self.jobs[self.next]
+            self.futs[(job[0], job[1])] = self.ex.submit(self._load, job)
+            self.next += 1
+        if self.next >= len(self.jobs) and not self.futs:
+            self.ex.shutdown(wait=False)
+
+    def _load(self, job):
+        import psycopg2.extras
+        from database import getConn
+        div, gender, unit, pool, lo, hi_eff, min_d = job
+        g = NR.GENDERS[gender][0]
+        with getConn() as c:
+            with c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                ath = loadAthletes(cur, unit, pool, self.year)
+                teams, team_of = buildTeams(ath, div, g, self.official, self.overrides)
+                races, short = loadRaces(cur, unit, pool, self.year, lo, hi_eff, min_d)
+            c.rollback()
+        return teams, team_of, races, short
+
+    def take(self, key):
+        """The board's (teams, team_of, races, short), or None to read it
+        in line (prefetch off)."""
+        if self.ex is None:
+            return None
+        fut = self.futs.pop(key)
+        out = fut.result()
+        self._fill()
+        return out
+
+
 def main():
     import race_sim
     ap = argparse.ArgumentParser()
@@ -745,6 +819,7 @@ def main():
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             year = liveYear(cur)
             print(f"  NCAA projection: XC season {year}, week of {week}, {args.draws} draws")
+            loads = _Prefetch(_boardJobs(args, year, today), year, official, overrides)
             for div in ([args.division] if args.division else NR.DIVISIONS):
                 rules = NR.rules(div)
                 if rules["season"] != year:
@@ -759,10 +834,14 @@ def main():
                 for gender in ([args.gender] if args.gender else tuple(NR.GENDERS)):
                     g, pool, _w = NR.GENDERS[gender]
                     t0 = time.time()
-                    ath = loadAthletes(cur, NR.UNIT[div], pool, year)
-                    teams, team_of = buildTeams(ath, div, g, official, overrides)
-                    races, short = loadRaces(cur, NR.UNIT[div], pool, year, lo, hi_eff,
-                                             NR.minDistance(div, g))
+                    got = loads.take((div, gender))
+                    if got is None:
+                        ath = loadAthletes(cur, NR.UNIT[div], pool, year)
+                        teams, team_of = buildTeams(ath, div, g, official, overrides)
+                        races, short = loadRaces(cur, NR.UNIT[div], pool, year, lo, hi_eff,
+                                                 NR.minDistance(div, g))
+                    else:
+                        teams, team_of, races, short = got
                     conn.rollback()
                     payload = project(div, gender, teams, team_of, races, args.draws,
                                       args.seed, asof=today.isoformat())

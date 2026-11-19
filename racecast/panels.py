@@ -1119,8 +1119,13 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
 
     cur = _streamingCursor(conn, f"perf_{sport.lower()}")
     cur.execute(sql, params)
+    # ★ PREFETCHED (2026-11-19; run 20261116_154245: 13_panels_tf 1,183 s,
+    #   13_panels_xc 945 s, this stream the bulk of each): the next batch is
+    #   on the server while this one is pooled -- dbfast._prefetchedDictRows.
+    #   Same rows, same order. XCP_DB_PREFETCH=0 is the serial loop.
+    rows = dictRows(cur, prefetch=True)
     try:
-        for row in dictRows(cur):
+        for row in rows:
             stats["perf_seen"] += 1
             # Already resolved, by build_ranking_results, from the same
             # resolvePool this loop used to call 101M times.
@@ -1205,6 +1210,7 @@ def _collectPerformances(conn, sport, season_year, buckets, stats):
                 _pushTop(buckets[("performance", "season", sport, pool)],
                          COLLECT_N, score, dict(payload))
     finally:
+        rows.close()        # stops and joins the prefetch reader first
         cur.close()
 
 
@@ -1297,8 +1303,9 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
 
     cur = _streamingCursor(conn, f"ath_{sport.lower()}")
     cur.execute(_athleteSql(sport), params)
+    rows = dictRows(cur, prefetch=True)     # see _collectPerformances
     try:
-        for row in dictRows(cur):
+        for row in rows:
             stats["ath_seen"] += 1
             # Already resolved, by build_ranking_results, using the same
             # resolvePool this file used to call 15.8M times.
@@ -1352,6 +1359,7 @@ def _collectAthletes(conn, sport, season_year, buckets, stats):
                 _pushTop(buckets[("athlete", "season", sport, pool)],
                          COLLECT_N, score, dict(payload))
     finally:
+        rows.close()        # stops and joins the prefetch reader first
         cur.close()
 
 

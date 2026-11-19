@@ -45,7 +45,7 @@ rows cross the wire and how much room Postgres is given to work in.
 BATCH = 50_000
 
 
-def dictRows(cur, batch=BATCH):
+def dictRows(cur, batch=BATCH, prefetch=False):
     """Iterate a PLAIN cursor as plain dicts -- 2.7x RealDictCursor.
 
     The column names come from cur.description, so they are exactly the
@@ -54,7 +54,13 @@ def dictRows(cur, batch=BATCH):
     ! fetchmany, NOT iteration. Iterating a named cursor yields one row at a
       time through psycopg2's own machinery; fetchmany hands back a list and
       the zip runs in C over it.
+
+    prefetch=True (a NAMED cursor only): the next batch is fetched in a
+    thread while this one is consumed -- see _prefetchedDictRows.
     """
+    if prefetch and getattr(cur, "name", None) and prefetchOn():
+        yield from _prefetchedDictRows(cur, batch)
+        return
     names = None
     while True:
         rows = cur.fetchmany(batch)
@@ -64,6 +70,78 @@ def dictRows(cur, batch=BATCH):
             names = [d[0] for d in cur.description]
         for row in rows:
             yield dict(zip(names, row))
+
+
+# ★ THE DATABASE AND THE LOOP TAKE TURNS, AND THEY NEED NOT (2026-11-19;
+#   run 20261116_154245: 13_panels_tf 1,183 s, 13_panels_xc 945 s, nearly
+#   all of it one named-cursor stream of every rated result). A named cursor
+#   runs its plan only as far as each FETCH asks: Postgres scans and joins
+#   the next 50,000 rows while Python waits, then Python pools and ranks them
+#   while Postgres waits. Here a reader thread issues the next FETCH while the
+#   caller works on the batch before it. psycopg2 releases the GIL while the
+#   FETCH is on the server, so the two halves overlap instead of adding up.
+#
+# ! THE SAME ROWS IN THE SAME ORDER. One reader, the same FETCH sizes, a
+#   FIFO queue: the caller sees exactly the sequence the plain loop sees, so
+#   every first-copy-wins and every heap tie comes out as before. Nothing
+#   about the query or its plan changes -- only who waits for whom.
+# ! BOUNDED: at most PREFETCH_DEPTH batches wait in the queue (plus the one
+#   being consumed), a few tens of MB. XCP_DB_PREFETCH=0 turns every caller
+#   back to the plain serial loop.
+# ! ONLY THE READER TOUCHES THE CURSOR until the generator ends; the caller
+#   may use OTHER cursors on the same connection (psycopg2 serialises them
+#   on the connection's lock), and on exit the reader is stopped and joined
+#   before control returns, so the caller's cur.close() never races a FETCH.
+PREFETCH_DEPTH = 2
+
+
+def prefetchOn():
+    """XCP_DB_PREFETCH (default on): '0' turns prefetching off everywhere."""
+    import os
+    return (os.environ.get("XCP_DB_PREFETCH") or "1").strip() != "0"
+
+
+def _prefetchedDictRows(cur, batch):
+    import queue
+    import threading
+    q = queue.Queue(maxsize=PREFETCH_DEPTH)
+    stop = threading.Event()
+
+    def put(item):
+        while not stop.is_set():
+            try:
+                q.put(item, timeout=0.5)
+                return
+            except queue.Full:
+                continue
+
+    def reader():
+        try:
+            names = None
+            while not stop.is_set():
+                rows = cur.fetchmany(batch)
+                if rows and names is None:
+                    names = [d[0] for d in cur.description]
+                put((names, rows))
+                if not rows:
+                    return
+        except BaseException as exc:                  # noqa: BLE001 -- re-raised below
+            put((None, exc))
+
+    t = threading.Thread(target=reader, name="dictRows-prefetch", daemon=True)
+    t.start()
+    try:
+        while True:
+            names, rows = q.get()
+            if isinstance(rows, BaseException):
+                raise rows
+            if not rows:
+                return
+            for row in rows:
+                yield dict(zip(names, row))
+    finally:
+        stop.set()
+        t.join()
 
 
 # ★ WHAT A BUILD IS ALLOWED TO USE. These are per-SESSION, so they last as
