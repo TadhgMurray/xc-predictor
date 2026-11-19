@@ -348,3 +348,22 @@ def test_the_parallel_scan_is_the_one_loop_exactly(monkeypatch):
     assert one == two
     able, best = one[0], one[1]
     assert best and able and one[5] > 0          # wild rows were met, the bar reached
+
+
+def test_the_prefetch_hands_over_every_batch_in_order_and_raises():
+    # ★ 2026-11-19: the thread one batch ahead changes nothing but timing
+    def gen(fail=False):
+        for i in range(5):
+            yield [i]
+        if fail:
+            raise ValueError("stream broke")
+    assert list(B._prefetched(gen())) == [[i] for i in range(5)]
+    got = []
+    try:
+        for b in B._prefetched(gen(fail=True)):
+            got.append(b)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("the stream's error is the loop's")
+    assert got == [[i] for i in range(5)]

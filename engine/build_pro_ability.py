@@ -160,7 +160,17 @@ def _scanOne(sports, min_time, max_time, limit=None):
     n_rows = n_used = n_wild = 0
     wild = []
     for sport in sports:
-        for batch in streamResults(sport, min_time, max_time):
+        # ★ THE SEASON ONCE PER DISTINCT DAY (2026-11-19; run 20261116_204106:
+        #   05c 724 s, the log all "[db] TF: streamed 200,000"). The loop
+        #   called seasonYearFromIso -- str(), three slices, three int()s and
+        #   the shift -- on every row; a season is a pure function of
+        #   (sport, day) and a sport has a few thousand days against tens of
+        #   millions of rows. Same value per row, read from a dict.
+        ay_of = {}
+        stream = streamResults(sport, min_time, max_time)
+        if not limit:
+            stream = _prefetched(stream)
+        for batch in stream:
             for row in batch:
                 n_rows += 1
                 gender = row[_I["gender"]]
@@ -172,10 +182,13 @@ def _scanOne(sports, min_time, max_time, limit=None):
                 date = row[_I["date"]]
                 if pid is None or not dist or not t or not date:
                     continue
-                try:
-                    ay = seasonYearFromIso(sport, str(date))
-                except Exception:                            # noqa: BLE001
-                    ay = None
+                ay = ay_of.get(date, ay_of)
+                if ay is ay_of:
+                    try:
+                        ay = seasonYearFromIso(sport, str(date))
+                    except Exception:                        # noqa: BLE001
+                        ay = None
+                    ay_of[date] = ay
                 if ay is None:
                     continue
                 f = _scaleFactor(float(dist), ABILITY_CURVE_POOL[gender],
@@ -200,6 +213,58 @@ def _scanOne(sports, min_time, max_time, limit=None):
         if limit and n_used >= limit:
             break
     return best, n_rows, n_used, n_wild, wild
+
+
+# ★ THE NEXT BATCH FETCHED WHILE THIS ONE IS SCORED (2026-11-19; run
+#   20261116_204106: 05c_pro_ability 724 s in line, the TF child's log one
+#   "[db] TF: streamed 200,000" after another). streamResults is a named
+#   cursor: the server runs the plan only inside each FETCH, and the loop
+#   above scored a batch with the connection idle, then waited on the next
+#   FETCH with the loop idle. A thread now drives the same generator --
+#   the same FETCHes, the same batches in the same order -- one batch
+#   ahead; psycopg2 lets go of the GIL while it waits on the server.
+# ! MEMORY: ONE BATCH MORE. The thread fetches the next batch only once the
+#   loop has taken the last one (a one-slot handoff), so at most two
+#   batches are alive: the one scored and the one waiting.
+#   XCP_PRO_PREFETCH=0 is the old one-thread loop. Never with --limit.
+def _prefetched(gen):
+    if os.environ.get("XCP_PRO_PREFETCH", "1") in ("0", "false"):
+        yield from gen
+        return
+    import threading
+    slot = []
+    full = threading.Semaphore(0)
+    free = threading.Semaphore(1)
+    done = object()
+
+    def run():
+        it = iter(gen)
+        while True:
+            free.acquire()               # the loop has taken the last batch
+            try:
+                item = next(it)
+            except StopIteration:
+                item = done
+            except BaseException as exc:                      # noqa: BLE001
+                item = exc
+            slot.append(item)
+            full.release()
+            if item is done or isinstance(item, BaseException):
+                return
+
+    th = threading.Thread(target=run, name="pro-ability-prefetch", daemon=True)
+    th.start()
+    while True:
+        full.acquire()
+        item = slot.pop()
+        free.release()
+        if item is done:
+            break
+        if isinstance(item, BaseException):
+            th.join()
+            raise item
+        yield item
+    th.join()
 
 
 _PARKED = []

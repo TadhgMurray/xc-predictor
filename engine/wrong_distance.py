@@ -547,7 +547,7 @@ SELECT d.dk, r.result_id, r.person_id,
        left(r.date::text, 4)::smallint AS yr,
        left(r.date::text, 10) AS day,
        (ln(r.time_seconds) - %(k)s * ln(d.listed / 5000.0))::real AS e,
-       r.rating_pool AS pool
+       r.rating_pool AS pool{sr}
 FROM   results r
 JOIN   wd_div d ON d.source = r.source AND d.div_id = r.div_id
                AND d.jm = CASE WHEN r.source = 'tfrrs' THEN r.meet_id ELSE 0 END
@@ -690,6 +690,33 @@ WHERE  r.speed_rating > 0
 GROUP  BY 1
 """)
 
+# ★ THE RATING RIDES ALONG IN wd_row (2026-11-19; run 20261116_204106:
+#   "the candidates' last ratings: 59,693 rows (181s)" -- wd_rg alone, the
+#   one statement that read results a second time, by result_id, for rows
+#   _ROW_SQL had already read). _ROW_SQL now keeps the row's speed_rating
+#   beside the rating_pool it already kept, and wd_rg joins wd_row straight
+#   to wd_rb: one join fewer, the same rows. w.person_id and w.pool ARE
+#   r.person_id and r.rating_pool of that result_id (result_id is the
+#   primary key), and results is not written between the two statements
+#   (nothing writes results before 05; see run_pipeline.sh's distance
+#   checks). XCP_WD_ROW_RATING=0 is the old second read.
+_ROW_RATING = ",\n       r.speed_rating AS sr"
+_RG_FROM_ROW = """
+CREATE TEMP TABLE wd_rg AS
+SELECT w.dk, percentile_cont(0.5) WITHIN GROUP (ORDER BY ln(w.sr) - b.lb) AS g,
+       count(*)::int AS n
+FROM   wd_row w
+JOIN   wd_cand c ON c.dk = w.dk
+JOIN   wd_rb b ON b.person_id = w.person_id AND b.pool = w.pool
+WHERE  w.sr > 0
+GROUP  BY 1
+"""
+
+
+def _rowRating():
+    return os.environ.get("XCP_WD_ROW_RATING", "1") not in ("0", "false")
+
+
 _LOAD_SQL = """
 SELECT d.dk, d.source, d.meet_id, d.div_id, d.listed, d.meet_name, d.div_name, d.course,
        d.venue, s.n_rows, s.n_ref, s.res, s.q, s.sh_fast, s.sh_slow, s.e50, s.day, s.pool,
@@ -729,7 +756,9 @@ def build(cur, work_mem="512MB"):
     #   so the plan is all there is to choose.
     cur.execute("SET LOCAL enable_nestloop = off")
     cur.execute("SET LOCAL enable_mergejoin = off")
-    _ex(cur, _ROW_SQL, {"k": K}, "result rows at their listed distance", t0)
+    row_rating = _rowRating()
+    _ex(cur, _ROW_SQL.replace("{sr}", _ROW_RATING if row_rating else ""), {"k": K},
+        "result rows at their listed distance", t0)
     cur.execute("SET LOCAL enable_nestloop = on")
     cur.execute("SET LOCAL enable_mergejoin = on")
     cur.execute("ANALYZE wd_row")
@@ -776,8 +805,9 @@ def build(cur, work_mem="512MB"):
     _ex(cur, _CAND_SQL.format(ovr=ovr),
         {"f": FIELD_MIN, "c": CAND, "mix": MIX_MIN, "sep": MIX_SEP}, "divisions to judge", t0)
     cur.execute("ALTER TABLE wd_cand ADD PRIMARY KEY (dk)")
-    for i, q in enumerate(_RATING_SQL):
-        _ex(cur, q, None, "the candidates' last ratings" if i == len(_RATING_SQL) - 1 else None, t0)
+    rating_sql = _RATING_SQL[:-1] + (_RG_FROM_ROW,) if row_rating else _RATING_SQL
+    for i, q in enumerate(rating_sql):
+        _ex(cur, q, None, "the candidates' last ratings" if i == len(rating_sql) - 1 else None, t0)
     return pools, has_ovr
 
 

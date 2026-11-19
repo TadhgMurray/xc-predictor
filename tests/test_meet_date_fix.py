@@ -518,3 +518,40 @@ def test_a_table_from_the_first_cut_still_serves():
                     "meets_tf_meta, meet_date_fix")
         conn.commit()
         conn.close()
+
+
+def test_md_pm_side_by_side_is_the_one_statement(monkeypatch):
+    # ★ 2026-11-19: md_pm's two sports on their own connections stack to
+    #   the one statement's rows, so the vote is the same
+    import contextlib
+    import database
+    conn = _pg()
+    dsn = os.environ["XCP_TWIN_TEST_DSN"]
+    psycopg2 = sys.modules["psycopg2"]
+
+    @contextlib.contextmanager
+    def side_conn():
+        c = psycopg2.connect(dsn)
+        try:
+            yield c
+        finally:
+            c.close()
+    monkeypatch.setattr(database, "getConn", side_conn)
+    monkeypatch.delenv("XCP_PG_SNAPSHOT_FILE", raising=False)
+    monkeypatch.delenv("XCP_MD_PARALLEL", raising=False)
+    try:
+        cur = conn.cursor()
+        _load(cur)
+        conn.commit()
+        cur.execute("SET work_mem = '64MB'")
+        one = MD.buildVotes(cur, side=False)
+        both = MD.buildVotes(cur, side=True)
+        assert both == one and one["XC"] and one["TF"]
+        cur.execute("SELECT to_regclass('md_pm_side_xc'), to_regclass('md_pm_side_tf')")
+        assert cur.fetchone() == (None, None), "the side tables are dropped"
+    finally:
+        conn.rollback()
+        conn.cursor().execute("DROP TABLE IF EXISTS results, results_tf, meets, "
+                              "meets_tf_meta, meet_date_fix, md_pm_side_xc, md_pm_side_tf")
+        conn.commit()
+        conn.close()
