@@ -8,6 +8,7 @@
 #   bash deploy/run_pipeline.sh                  # everything
 #   bash deploy/run_pipeline.sh --from 10        # rankings and after
 #   bash deploy/run_pipeline.sh --fast           # ratings + boards, no reports (iteration)
+#   bash deploy/run_pipeline.sh --test           # repool + rerate + accuracy, no boards/pages
 #   bash deploy/run_pipeline.sh --skip-backfill  # corrections/rules unchanged
 #   bash deploy/run_pipeline.sh --dry-run        # print the plan, run nothing
 #
@@ -58,13 +59,19 @@ XCP_COURSE_SHARDS="${XCP_COURSE_SHARDS:-6}"
 ENV_FILE="${XCP_ENV:-/etc/xc-predictor.env}"
 
 _ORIG_ARGS="$*"
-FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""; FAST=0
+FROM=0; SKIP_BACKFILL=0; DRY=0; SKIP=""; FAST=0; TEST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --from) FROM="$2"; shift 2 ;;
     # --fast: the ratings and the boards, nothing that only reports on them
     #   (see FAST_SKIP below)
     --fast) FAST=1; shift ;;
+    # --test: repool, rerate everybody, score accuracy; nothing else
+    #   (see TEST_SKIP below)
+    --test) TEST=1; FAST=1
+            # before --fast's defaults below turn the holdouts off
+            export XCP_EVIDENCE="${XCP_EVIDENCE:-force}" XCP_LADDER="${XCP_LADDER:-0}"
+            shift ;;
     # --skip 04_grade_sanity,04b_wheelchair : named steps to leave out of
     # this run (2026-09-06, the owner: "you're gonna need to make step 4
     # 100 times faster if we're starting there" -- nothing in 04 changed,
@@ -102,7 +109,27 @@ if [ "$FAST" -eq 1 ]; then
            XCP_QUALIFIED_BUILD XCP_SOCIAL XCP_FORECAST_RAW XCP_RECORD_BOOKS; do
     eval "[ -n \"\${$v+x}\" ] || export $v=0"
   done
-  echo "  --fast: skipping ${FAST_SKIP//,/, } and the evidence/report steps"
+  [ "$TEST" -eq 1 ] || echo "  --fast: skipping ${FAST_SKIP//,/, } and the evidence/report steps"
+fi
+# ★ --test: A MODEL TEST, NOT A SITE BUILD (owner, 2026-11-19: "make a
+#   --test mode that skips all the new tables and such, just repool, rerates
+#   everybody, and tests accuracy"). Everything --fast runs up to and
+#   including the fills (09b): the cleaning steps whose flags the solve
+#   reads, the pools (03a, 04h, 05d), normalise, pack, solve, go-live, fill
+#   -- so every rating is rewritten. Left out as well: the page-only tables
+#   built beside them (13c0, 10b0, 10e, 09c, 09e). Then the holdouts run
+#   (forced, whatever their weekly gate says; the ablation ladder and the
+#   diagnostics do not), 17c_report scores them against the last run in
+#   REPORT.txt, and the run stops: no boards, panels, pages, search,
+#   reports, vacuums or purges. The boards keep serving the last full
+#   run's lists; a board re-reads ratings when it is served
+#   (app._boardFresh), and the next full run rebuilds the lists.
+TEST_SKIP="13c0_person_redirects,13c0_search_helpers,10b0_tfrrs_link,10e_meet_units"
+TEST_SKIP="$TEST_SKIP,09c_school_names,09e_si_team_rows,08b_ladder,08d_diagnose"
+if [ "$TEST" -eq 1 ]; then
+  SKIP="${SKIP}${TEST_SKIP},"
+  echo "  --test: repool, rerate, holdouts and the scorecard only;" \
+       "skipping ${FAST_SKIP//,/, }, ${TEST_SKIP//,/, } and every step after the fills"
 fi
 
 # ---- preflight ------------------------------------------------------ #
@@ -1999,6 +2026,26 @@ stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
 #   and team_id and anet_team, none written after the fills; 10b copies the
 #   table only when this step passed (XCP_SI_TEAM_RAW, set at the join).
 bgstep 09e_si_team_rows "$PY" -u racecast/build_school_identity.py --team-rows-into si_team_raw_pre
+
+# ★ --test STOPS HERE (see TEST_SKIP): every rating is rewritten; collect the
+#   background steps and the holdouts, score them, finish.
+if [ "$TEST" -eq 1 ]; then
+  bgwait
+  if [ -n "${EVID_PID:-}" ]; then
+    echo "  waiting for the evidence chain (08a..08c)..."
+    _tw=$(date +%s)
+    wait "$EVID_PID"
+    echo "  evidence_chain held the run $(( $(date +%s) - _tw ))s" | tee -a "$SUMMARY"
+    _ef=$(tr -s ' \n' ' ' < "$EVID_FAILED_FILE" 2>/dev/null | sed 's/^ *//; s/ *$//')
+    [ -n "$_ef" ] && FAILED="$FAILED $_ef"
+  fi
+  [ "$DRY" -eq 0 ] && "$PY" "$ROOT/scripts/jobrun.py" --unwant $$ 2>/dev/null
+  step 17c_report "$PY" -u scripts/run_report.py --log-dir "$LOGDIR" || true
+  [ "$DRY" -eq 0 ] && [ -s "$LOGDIR/REPORT.txt" ] && { echo ""; cat "$LOGDIR/REPORT.txt"; }
+  echo "  --test: boards, pages and reports left as they were (a full run rebuilds them)"
+  summarise
+  exit 0
+fi
 
 
 # ---- boards and pages ----------------------------------------------- #
