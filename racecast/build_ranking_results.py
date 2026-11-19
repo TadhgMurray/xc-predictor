@@ -3055,6 +3055,14 @@ def orderedRewrite(conn, table, like, units_from=None):
                     # ★ see _SEASON_REWRITE_HASH: hash the keys, no merge sort
                     cur.execute("SET LOCAL enable_mergejoin = off")
                 join = _joinMethod(cur, select)
+                # ! ONLY A HASH JOIN, NEVER WHAT ELSE MERGE-OFF COULD GIVE
+                #   (2026-11-19): with merge joins off, a key match the
+                #   planner cannot hash would fall to a nested loop over
+                #   26M seasons -- the hours-long plan class of 03_pro_flag
+                #   and 06c. Anything but a hash join here gets the old plan.
+                if _SEASON_REWRITE_HASH and not join.startswith("hash"):
+                    cur.execute("SET LOCAL enable_mergejoin = on")
+                    join = _joinMethod(cur, select)
                 cur.execute(f"INSERT INTO {tmp} ({cols}) {select}")
             else:
                 cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table} "

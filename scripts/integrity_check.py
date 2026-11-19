@@ -129,12 +129,30 @@ def _streams():
     return max(1, int(os.environ.get("XCP_INTEGRITY_STREAMS", "6")))
 
 
+def _sameDatabase(conn):
+    """Does a pooled connection reach the same database as `conn`? The
+    streams check through getConn(); a caller on another database (a test's
+    scratch one) would have them read tables that are not there, and an
+    error is reported as a damaged block."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT current_database(), inet_server_port()")
+            mine = cur.fetchone()
+        with getConn() as c, c.cursor() as cur:
+            cur.execute("SELECT current_database(), inet_server_port()")
+            return cur.fetchone() == mine
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def checkSegments(jobs, streams=None, conn=None):
     """[checkRange result] for each (table, start, end) in `jobs`, in order.
     One stream (or one job) runs on `conn` if given, as before."""
     import threading
     streams = min(streams or _streams(), max(1, len(jobs)))
     out = [None] * len(jobs)
+    if streams > 1 and conn is not None and not _sameDatabase(conn):
+        streams = 1          # the pool's database is not the caller's: in line
     if streams == 1 and conn is not None:
         with conn.cursor() as cur:
             for i, (t, a, b) in enumerate(jobs):
