@@ -19,7 +19,7 @@ def test_integrity_runs_first_on_every_from_and_aborts():
     assert "00_integrity" in always
     first_step = re.search(r"^(step|steps2|stepsN|bgstep) (\S+)", s, re.M).group(2)
     assert first_step == "00_integrity"
-    after = s[s.index("step 00_integrity"):s.index("step 00_meet_dates")]
+    after = s[s.index("step 00_integrity"):s.index("steps2 00_meet_dates")]
     assert "if failed 00_integrity" in after and "summarise 1" in after
 
 

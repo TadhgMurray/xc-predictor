@@ -209,7 +209,7 @@ def test_the_pipeline_runs_it_between_the_snapshot_and_the_redirects():
     grade_sanity, twins, gender and the pack, which read who a row is."""
     import re
     sh = open(os.path.join(ROOT, "deploy", "run_pipeline.sh"), encoding="utf-8").read()
-    order = ["step 01a_person_probe", "step 04a_link_tfrrs",
+    order = ['01a_person_probe "$PY -u scripts/person_redirects.py --snapshot"', "step 04a_link_tfrrs",
              "step 04a2_link_teamless", "bgstep 04_grade_sanity", '04d_gender "$PY',
              "step 04c_twins", "step 13c0_person_redirects"]
     at = [sh.index(s) for s in order]
