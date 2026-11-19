@@ -357,20 +357,38 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
 
     team_levels / pro_teams default to the engine's loaders; the tests hand
     them in."""
-    from psycopg2.extras import execute_values
-    from pool_resolve import _PRO_SEASONS, isProPerson
-    from season_level import _gradeKinds
+    import pool_resolve  # noqa: F401  (imported first, as before)
 
     if team_levels is None or pro_teams is None:
         got_levels, got_pro = _loadTeams()
         team_levels = got_levels if team_levels is None else team_levels
         pro_teams = got_pro if pro_teams is None else pro_teams
+    _schoolSeasonBuild(cur, team_levels, pro_teams)
+    return _schoolSeasonFinish(cur)
+
+
+def _schoolSeasonBuild(cur, team_levels, pro_teams):
+    """buildSchoolSeasons up to tmp_school_season as the SQL leaves it (the
+    hand list, its index and ANALYZE are _schoolSeasonFinish). Reads only
+    the results tables, grade_fix and the team loaders' answer, so it can
+    run on a side connection (_SideBuild)."""
+    from season_level import _gradeKinds
+
     _gradeKinds(cur)
     # a copy of season_level's tmp_grade_kind, under this module's own name
     # (SCRATCH); TEMP like the rest
     cur.execute("DROP TABLE IF EXISTS pf_grade_kind")
     cur.execute("CREATE TEMP TABLE pf_grade_kind AS SELECT * FROM tmp_grade_kind")
     cur.execute("ANALYZE pf_grade_kind")
+    _teamTables(cur, team_levels, pro_teams)
+    _schoolSeasonSql(cur)
+
+
+def _teamTables(cur, team_levels, pro_teams):
+    """tmp_team_level, tmp_team_lv, tmp_pro_team, exactly as
+    buildSchoolSeasons has always made them (no ANALYZE, as before)."""
+    from psycopg2.extras import execute_values
+
     cur.execute("DROP TABLE IF EXISTS tmp_team_level")
     cur.execute("CREATE TEMP TABLE tmp_team_level "
                 "(team_id bigint PRIMARY KEY, school boolean NOT NULL)")
@@ -393,6 +411,8 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
         execute_values(cur, "INSERT INTO tmp_pro_team VALUES %s",
                        [(int(t),) for t in pro_teams], page_size=10000)
 
+
+def _schoolSeasonSql(cur):
     cur.execute("DROP TABLE IF EXISTS tmp_school_rows")
     parts = []
     for results in ("results", "results_tf"):
@@ -432,6 +452,12 @@ def buildSchoolSeasons(cur, team_levels=None, pro_teams=None):
               FROM tmp_school_rows GROUP BY 1, 2) s
         {join}
         WHERE {school}""")
+
+
+def _schoolSeasonFinish(cur):
+    """The hand list, the index and ANALYZE on tmp_school_season, on the
+    connection the rest of the step reads it from."""
+    from pool_resolve import _PRO_SEASONS, isProPerson
 
     # the hand list stands: its seasons are professional in either sport
     hand = sorted(_PRO_SEASONS)
@@ -545,7 +571,7 @@ def buildNcaaSeasons(cur):
 
 
 def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
-              pro_teams=None):
+              pro_teams=None, sides=None):
     """
     Athlete-SEASONS with enough races at unambiguously professional meets.
 
@@ -555,7 +581,8 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
     One row per (person, year): a professional season is evidence about THAT
     season only. See the module docstring for why an absorbing flag was wrong.
 
-    team_levels / pro_teams: see buildSchoolSeasons.
+    team_levels / pro_teams: see buildSchoolSeasons. sides (_Sides): the
+    school seasons were built on a side connection; this takes them over.
     """
     cur.execute("DROP TABLE IF EXISTS tmp_pro_race")
     cur.execute("CREATE TEMP TABLE tmp_pro_race (person_id bigint, yr int)")
@@ -615,7 +642,11 @@ def buildSeed(cur, min_pro_races=_MIN_PRO_RACES, team_levels=None,
     # ★ AND SCHOOL ELIGIBILITY, THE SAME WAY (owner, 2026-09-30): see
     #   buildSchoolSeasons. Before propagation, so a schoolboy is never a
     #   confirmed professional in another race's field.
-    buildSchoolSeasons(cur, team_levels=team_levels, pro_teams=pro_teams)
+    if sides is not None and sides.school is not None:
+        sides.school.into(cur)
+        _schoolSeasonFinish(cur)
+    else:
+        buildSchoolSeasons(cur, team_levels=team_levels, pro_teams=pro_teams)
     cur.execute("""DELETE FROM tmp_pro_season p
                    USING tmp_school_season s
                    WHERE s.person_id = p.person_id AND s.yr = p.yr""")
@@ -924,11 +955,22 @@ def _rowLevelSql(cur, results):
     return joins, expr
 
 
-def buildTeamSeasons(cur):
+def buildTeamSeasons(cur, sides=None):
     """tmp_team_season (person_id, yr, n_school, n_college, n_club, n_other):
     each athlete-season's races by the level of the team they ran for.
     'other' is a team nobody has levelled; 'none' (unattached) is not
-    counted."""
+    counted. sides (_Sides): built on a side connection, taken over here."""
+    if sides is not None and sides.team is not None:
+        sides.team.into(cur)
+    else:
+        _teamSeasonSql(cur)
+    cur.execute("CREATE INDEX ON tmp_team_season (person_id, yr)")
+    cur.execute("ANALYZE tmp_team_season")
+
+
+def _teamSeasonSql(cur):
+    """tmp_team_rows and tmp_team_season as the SQL leaves them. Needs
+    tmp_team_lv and tmp_pro_team (_teamTables)."""
     cur.execute("DROP TABLE IF EXISTS tmp_team_rows")
     parts = []
     # ⚠ OFFSET 0 IS THE FIX FOR THE STEP'S SLOWEST PHASE (2026-10-25: 1,870 s
@@ -966,16 +1008,14 @@ def buildTeamSeasons(cur):
                           sum(n_other)::int AS n_other,
                           sum(n_graded)::int AS n_graded
                    FROM tmp_team_rows GROUP BY 1, 2""")
-    cur.execute("CREATE INDEX ON tmp_team_season (person_id, yr)")
-    cur.execute("ANALYZE tmp_team_season")
 
 
-def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES):
+def buildPostCollegiate(cur, min_races=_MIN_PRO_RACES, sides=None):
     """tmp_post_collegiate (person_id, yr, n_club, n_other, first_college,
     last_college): the seasons the rule above makes professional and that
     nothing else already has. Needs tmp_ncaa_season, tmp_school_season,
     tmp_team_lv, tmp_pro_team and tmp_pro_season."""
-    buildTeamSeasons(cur)
+    buildTeamSeasons(cur, sides=sides)
     cur.execute("DROP TABLE IF EXISTS tmp_post_collegiate")
     # ! `two` COMPARES TWO PER-PERSON YEARS, NOT EVERY SEASON (2026-10-25).
     #   It was "a school season after the first college one", a join of
@@ -1195,6 +1235,219 @@ _DDL = """
     )"""
 
 
+# ★ THE SCHOOL VETO AND THE TEAM SEASONS ON SIDE CONNECTIONS (2026-11-19).
+#   Of 03_pro_flag's 1,687 s (run 20261116_204106) ~400 s was the school
+#   veto's build (a grade scan and tmp_school_rows: passes over both results
+#   tables) and most of the 598 s before the post-collegiate line was
+#   buildTeamSeasons' tmp_team_rows (another pass over both). Neither reads
+#   anything this step computes -- only the results tables, grade_fix and
+#   the team loaders' answer -- so each now starts at the top of main() on
+#   its own connection, beside the membership passes (527 s), and is ready
+#   by the time the seed and the post-collegiate rule reach for it.
+# ! THE SAME STATEMENTS, ON THE SAME KIND OF TABLE. A side runs exactly the
+#   old code (_schoolSeasonBuild; _teamTables + _teamSeasonSql) into TEMP
+#   tables of its own session, with the settings main's session has at that
+#   point (_sessionSql), so every pass keeps the serial TEMP plan it
+#   finished on before (see SCRATCH). The helper tables are built and
+#   ANALYZEd (or not) exactly as before.
+# ! TEMP IS PER SESSION, so the finished table is streamed over: COPY TO
+#   STDOUT on the side into an os.pipe, COPY FROM STDIN on main into a TEMP
+#   table of the same columns and types (read from the side's catalog).
+#   COPY carries the rows in the side table's physical order, the order a
+#   CREATE TABLE AS on main would have left them in. Then main does what it
+#   always did -- the hand list, CREATE INDEX, ANALYZE -- before any later
+#   query reads it. The pipe holds 64 KB; no rows are kept in Python.
+# ! THE SAME DATA. Every connection comes from database.getConn, so under
+#   XCP_PG_SNAPSHOT_FILE each side imports the same exported snapshot main
+#   reads (database.SnapshotConnection). Without one, statements read
+#   committed data statement by statement, as they always did.
+# ! A SIDE THAT FAILS FAILS THE STEP: its exception is raised on main when
+#   main reaches for the table, a stream cut short raises too, and main()
+#   closes the sides in a finally (cancelling a running statement). Each
+#   side has main's statement_timeout.
+# ! COST: two more sessions, each with the work_mem the one session had --
+#   bounded at three times one, for about ten minutes.
+# XCP_PRO_FLAG_SIDE=0: everything on the one connection, in the old order.
+#   tests/test_pro_flag_side.py.
+def sidesOn():
+    return os.environ.get("XCP_PRO_FLAG_SIDE", "1").strip() != "0"
+
+
+def _sessionSql():
+    """The settings main's session has when the school and team passes run
+    on it (main(), buildRaceTables)."""
+    return [f"SET statement_timeout = "
+            f"'{int(os.environ.get('XCP_PRO_FLAG_STMT_MIN', '120'))}min'",
+            "SET maintenance_work_mem = '2GB'",
+            "SET synchronous_commit = off"]
+
+
+class _Once:
+    """fn() run once on a thread; .result() waits for it (or raises)."""
+
+    def __init__(self, fn):
+        import threading
+        self._fn, self._val, self._err = fn, None, None
+        self._done = threading.Event()
+        threading.Thread(target=self._run, daemon=True,
+                         name="pro_flag-teams").start()
+
+    def _run(self):
+        try:
+            self._val = self._fn()
+        except BaseException as exc:                        # noqa: BLE001
+            self._err = exc
+        finally:
+            self._done.set()
+
+    def result(self):
+        self._done.wait()
+        if self._err is not None:
+            raise self._err
+        return self._val
+
+
+class _SideBuild:
+    """build(cur) on a connection of its own, in a thread, leaving `table`
+    as a TEMP table of that session; into(cur) streams it into main's."""
+
+    def __init__(self, name, table, build, connect=None):
+        import threading
+        self.name, self.table, self._build = name, table, build
+        self._connect = connect
+        self._cols = None
+        self._err = None
+        self._conn = None
+        self._wfile = None
+        self._closing = False
+        self._secs = None
+        self._built = threading.Event()
+        self._want = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"pro_flag-{table}")
+        self._thread.start()
+
+    def _run(self):
+        import time
+        t0 = time.monotonic()
+        try:
+            if self._connect is None:
+                from database import getConn as connect
+            else:
+                connect = self._connect
+            with connect() as conn:
+                self._conn = conn
+                with conn.cursor() as cur:
+                    for sql in _sessionSql():
+                        cur.execute(sql)
+                    self._build(cur)
+                    cur.execute("""SELECT attname, format_type(atttypid, atttypmod)
+                                   FROM pg_attribute
+                                   WHERE attrelid = %s::regclass AND attnum > 0
+                                     AND NOT attisdropped ORDER BY attnum""",
+                                (self.table,))
+                    self._cols = cur.fetchall()
+                    self._secs = time.monotonic() - t0
+                    self._built.set()
+                    self._want.wait()
+                    if self._wfile is None or self._closing:
+                        return
+                    try:
+                        cur.copy_expert(f"COPY {self.table} TO STDOUT",
+                                        self._wfile)
+                    finally:
+                        self._wfile.close()
+        except BaseException as exc:                        # noqa: BLE001
+            self._err = exc
+        finally:
+            self._conn = None
+            if self._wfile is not None and not self._wfile.closed:
+                self._wfile.close()
+            self._built.set()
+
+    def _raise(self):
+        raise RuntimeError(f"[pro] the {self.table} side connection failed: "
+                           f"{type(self._err).__name__}: {self._err}") \
+            from self._err
+
+    def into(self, cur):
+        """Wait for the build, then make main's TEMP `table` hold its rows."""
+        import time
+        t = time.monotonic()
+        self._built.wait()
+        if self._err is not None:
+            self._raise()
+        waited = time.monotonic() - t
+        cols = ", ".join(f'"{c}" {ty}' for c, ty in self._cols)
+        cur.execute(f"DROP TABLE IF EXISTS {self.table}")
+        cur.execute(f"CREATE TEMP TABLE {self.table} ({cols})")
+        r, w = os.pipe()
+        rfile = os.fdopen(r, "rb")
+        self._wfile = os.fdopen(w, "wb")
+        self._want.set()
+        t = time.monotonic()
+        try:
+            cur.copy_expert(f"COPY {self.table} FROM STDIN", rfile)
+            n = cur.rowcount
+        finally:
+            rfile.close()
+            self._thread.join()
+        if self._err is not None:
+            self._raise()
+        print(f"    ({self.table}: built on a side connection in "
+              f"{self._secs:,.0f} s, waited {waited:,.0f} s, {n:,} rows "
+              f"streamed in {time.monotonic() - t:,.0f} s)")
+
+    def close(self):
+        """Stop a side main no longer needs (main failed or returned early)."""
+        if not self._thread.is_alive():
+            return
+        self._closing = True
+        self._want.set()
+        # ! cancel until it is gone: a build is several statements, and a
+        #   cancel only ends the one running
+        while self._thread.is_alive():
+            conn = self._conn
+            if conn is not None:
+                try:
+                    conn.cancel()
+                except Exception:                           # noqa: BLE001
+                    pass
+            self._thread.join(1.0)
+
+
+class _Sides:
+    """The school-season and team-season builds, started together; the
+    team loaders run once, on a thread, for both."""
+
+    def __init__(self, team=True, team_levels=None, pro_teams=None,
+                 connect=None):
+        def load():
+            if team_levels is not None and pro_teams is not None:
+                return team_levels, pro_teams
+            got_levels, got_pro = _loadTeams()
+            return (got_levels if team_levels is None else team_levels,
+                    got_pro if pro_teams is None else pro_teams)
+        teams = _Once(load)
+
+        def school(cur):
+            _schoolSeasonBuild(cur, *teams.result())
+
+        def team_seasons(cur):
+            _teamTables(cur, *teams.result())
+            _teamSeasonSql(cur)
+
+        self.school = _SideBuild("school veto", "tmp_school_season", school,
+                                 connect)
+        self.team = (_SideBuild("team seasons", "tmp_team_season",
+                                team_seasons, connect) if team else None)
+
+    def close(self):
+        for side in (self.school, self.team):
+            if side is not None:
+                side.close()
+
+
 def writeTable(cur):
     """
     One row per PROFESSIONAL athlete-season.
@@ -1268,50 +1521,59 @@ def main(write=False, rounds=_MAX_ROUNDS, show_dist=True, since=None):
                 grains.append((results, meets, g))
                 print(f"[pro] {results} race grain: {', '.join(g)}")
 
-            print("\n[pro] building race tables (one pass)...")
-            buildRaceTables(cur, grains, since=since)
+            # ★ see _Sides (2026-11-19): the school veto and the team seasons
+            #   start now, each on a connection of its own, beside the
+            #   membership passes. XCP_PRO_FLAG_SIDE=0: the old order.
+            sides = (_Sides(team=postCollegiateOn() or longCareerOn())
+                     if sidesOn() else None)
+            try:
+                print("\n[pro] building race tables (one pass)...")
+                buildRaceTables(cur, grains, since=since)
 
-            print("\n[pro] seeding...")
-            if not buildSeed(cur):
-                print("[pro] empty seed -- check the meet patterns")
-                return
+                print("\n[pro] seeding...")
+                if not buildSeed(cur, sides=sides):
+                    print("[pro] empty seed -- check the meet patterns")
+                    return
 
-            if show_dist:
-                # Two full scans. Worth it once, to check _FIELD_FRAC is sane;
-                # skippable on re-runs with --skip-dist.
-                print("\n[pro] field composition BEFORE propagating:")
-                for results, _m, g in grains:
-                    reportFieldDistribution(cur, results, g)
+                if show_dist:
+                    # Two full scans. Worth it once, to check _FIELD_FRAC is sane;
+                    # skippable on re-runs with --skip-dist.
+                    print("\n[pro] field composition BEFORE propagating:")
+                    for results, _m, g in grains:
+                        reportFieldDistribution(cur, results, g)
 
-            print("\n[pro] propagating...")
-            new = propagate(cur, grains, rounds=rounds)
-            cur.execute("SELECT count(*) FROM tmp_pro_season")
-            print(f"[pro] total {cur.fetchone()[0]:,} athlete-seasons "
-                  f"({new:,} from propagation)")
+                print("\n[pro] propagating...")
+                new = propagate(cur, grains, rounds=rounds)
+                cur.execute("SELECT count(*) FROM tmp_pro_season")
+                print(f"[pro] total {cur.fetchone()[0]:,} athlete-seasons "
+                      f"({new:,} from propagation)")
 
-            if postCollegiateOn():
-                print("\n[pro] post-collegiate seasons (XCP_POST_COLLEGIATE=1)...")
-                buildPostCollegiate(cur)
-                print(f"    added {addPostCollegiate(cur):,} athlete-seasons")
+                if postCollegiateOn():
+                    print("\n[pro] post-collegiate seasons (XCP_POST_COLLEGIATE=1)...")
+                    buildPostCollegiate(cur, sides=sides)
+                    print(f"    added {addPostCollegiate(cur):,} athlete-seasons")
 
-            if longCareerOn():
-                print("\n[pro] long-career seasons (XCP_LONG_CAREER=0 turns it off)...")
-                if not postCollegiateOn():
-                    buildTeamSeasons(cur)
-                buildLongCareer(cur)
-                print(f"    added {addLongCareer(cur):,} athlete-seasons")
+                if longCareerOn():
+                    print("\n[pro] long-career seasons (XCP_LONG_CAREER=0 turns it off)...")
+                    if not postCollegiateOn():
+                        buildTeamSeasons(cur, sides=sides)
+                    buildLongCareer(cur)
+                    print(f"    added {addLongCareer(cur):,} athlete-seasons")
 
-            reportTop(cur)
+                reportTop(cur)
 
-            if write:
-                n = writeTable(cur)
-                conn.commit()
-                print(f"\n[pro] wrote pro_athlete_season ({n:,} rows)")
-                dropScratch(cur)
-                conn.commit()
-            else:
-                print("\n[pro] DRY RUN -- pass --write to save "
-                      "pro_athlete_season")
+                if write:
+                    n = writeTable(cur)
+                    conn.commit()
+                    print(f"\n[pro] wrote pro_athlete_season ({n:,} rows)")
+                    dropScratch(cur)
+                    conn.commit()
+                else:
+                    print("\n[pro] DRY RUN -- pass --write to save "
+                          "pro_athlete_season")
+            finally:
+                if sides is not None:
+                    sides.close()
 
 
 if __name__ == "__main__":
