@@ -388,7 +388,67 @@ def ownRaceShift(conn, cur, since, already, race_recs, res_recs, show, explain=(
     return n_races, n_rows
 
 
+# ★ TRACK'S CANDIDATES READ WHILE CROSS COUNTRY IS JUDGED (2026-11-19, run
+#   20261116_204106: 06c 371 s in line, the two sports one after the
+#   other on one connection -- XC's candidate read, its race lookups and
+#   the own-races rule, and only then track's candidate read). Track's
+#   read is the same loadCandidates -- the same SQL, the gender SUBQUERY
+#   untouched (the join form hung 3 h, see candidateSql), the same SET
+#   LOCALs -- on its own pooled connection, started first; the XC half runs
+#   here meanwhile, and track is judged here afterwards exactly as before,
+#   so race_recs / res_recs come out in the same order.
+# ! THE SAME ROWS: nothing in this step writes before both reads are done
+#   (the tables are built after the loop), so the two connections read the
+#   same committed results_tf.
+# ! MEMORY: track's candidate list was already alive beside cross
+#   country's (it was read while `cands` still held XC's); now the
+#   own-races rule's working set overlaps it too, which is small (one
+#   season of XC rows). XCP_06C_SIDE_BY_SIDE=0 reads track after, as before.
+class _TfAhead:
+    def __init__(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.conn = None
+        self.ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="06c_tf")
+        self.fut = self.ex.submit(self._read)
+
+    def _read(self):
+        with getConn() as c:
+            self.conn = c
+            try:
+                with c.cursor() as cur:
+                    return loadCandidates(cur, "TF")
+            finally:
+                c.rollback()
+                self.conn = None
+
+    def result(self):
+        try:
+            return self.fut.result()
+        finally:
+            self.ex.shutdown(wait=True)
+
+    def close(self):
+        """After a failure: cancel the read if it still runs."""
+        c = self.conn
+        if c is not None and not self.fut.done():
+            try:
+                c.cancel()
+            except Exception:                              # noqa: BLE001
+                pass
+        self.ex.shutdown(wait=True)
+
+
 def build(conn, write, show=20, own_since=None, explain=()):
+    tf_ahead = (_TfAhead() if os.environ.get("XCP_06C_SIDE_BY_SIDE", "1") != "0"
+                else None)
+    try:
+        return _build(conn, write, show, own_since, explain, tf_ahead)
+    finally:
+        if tf_ahead is not None:
+            tf_ahead.close()
+
+
+def _build(conn, write, show, own_since, explain, tf_ahead):
     from dbfast import swapTable
     race_t, res_t = "impossible_race", "impossible_result"
     total_races = total_rows = 0
@@ -396,7 +456,8 @@ def build(conn, write, show=20, own_since=None, explain=()):
     with conn.cursor() as cur:
         for sport in ("XC", "TF"):
             t0 = time.time()
-            cands = loadCandidates(cur, sport)
+            cands = (tf_ahead.result() if sport == "TF" and tf_ahead is not None
+                     else loadCandidates(cur, sport))
             bad, floor_rows = judge(sport, cands)
             kept = ownFloorOnly(sport, cands)
             n_rows = 0
