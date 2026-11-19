@@ -144,6 +144,62 @@ def _prefetchedDictRows(cur, batch):
         t.join()
 
 
+# ★ THE SAME OVERLAP FOR A CALLER THAT KEEPS ITS CURSOR'S OWN ROWS (2026-11-19;
+#   run 20261116_204106: the ten rankings streams 1,046 s each, a
+#   NamedTupleCursor walk -- build_ranking_results.prepareRow reads row.attr,
+#   and a dict per row is the 11.8 s vs 3.3 s per 2M rows its docstring
+#   measured). Rows come out exactly as cur.fetchmany returns them, in the
+#   same order.
+# ! BOUNDED BY A SLOT COUNT, NOT A QUEUE: the reader takes a slot before it
+#   FETCHes and the caller gives it back when it moves past a batch, so at
+#   most `ahead` + 1 batches are ever held -- the one being walked and the
+#   ones fetched ahead. A caller halving its batch for ahead=1 holds the
+#   rows it held before.
+def prefetchedRows(cur, batch, ahead=1):
+    """Iterate a NAMED cursor's rows, the next `ahead` batches fetched in a
+    thread while this one is walked. Not prefetchOn(): the plain loop."""
+    if not (getattr(cur, "name", None) and prefetchOn()):
+        while True:
+            rows = cur.fetchmany(batch)
+            if not rows:
+                return
+            yield from rows
+        return
+    import queue
+    import threading
+    q = queue.Queue()
+    slots = threading.Semaphore(ahead + 1)
+    stop = threading.Event()
+
+    def reader():
+        try:
+            while not stop.is_set():
+                if not slots.acquire(timeout=0.5):
+                    continue
+                rows = cur.fetchmany(batch)
+                q.put(rows)
+                if not rows:
+                    return
+        except BaseException as exc:                  # noqa: BLE001 -- re-raised below
+            q.put(exc)
+
+    t = threading.Thread(target=reader, name="prefetchedRows", daemon=True)
+    t.start()
+    try:
+        while True:
+            rows = q.get()
+            if isinstance(rows, BaseException):
+                raise rows
+            if not rows:
+                return
+            yield from rows
+            del rows
+            slots.release()
+    finally:
+        stop.set()
+        t.join()
+
+
 # ★ WHAT A BUILD IS ALLOWED TO USE. These are per-SESSION, so they last as
 #   long as the connection and touch nothing else on the server.
 #
