@@ -205,6 +205,14 @@ def _levelMaps(cur):
     return pair, solo
 
 
+def sharedInputs(cur):
+    """(level maps, name aliases): buildVotes' sport-free inputs, read once.
+    ★ (2026-11-19; run 20261116_154245: 10d_school_units 608 s) _levelMaps
+      is a GROUP BY over all of ranking_results (61.6M rows) with no sport
+      in it, and buildVotes read it once PER SPORT -- the same answer twice."""
+    return _levelMaps(cur), _nameAliases(cur)
+
+
 def _schoolIsCollege(school, st, maps):
     """True/False from the school's own pool mix, or None if unknown."""
     pair, solo = maps
@@ -880,7 +888,7 @@ TEAM_RUNNERS = 5                          # runners in one race that make a scho
 _DEBUG = {"school": None, "rows": []}     # --split: one school's voting meets
 
 
-def buildVotes(cur, sport, state_filter=None, split_level=False):
+def buildVotes(cur, sport, state_filter=None, split_level=False, shared=None):
     """(votes, seasons, unit_eg, stats) over one sport's late season.
 
     votes[(school, state)][kind][(unit, year)] = n. This is the single
@@ -889,20 +897,28 @@ def buildVotes(cur, sport, state_filter=None, split_level=False):
 
     split_level: key (school, state, is_college) instead, so a name that is
     a university and a high school votes two sets of units (the writer's
-    mode; the census keeps its shape)."""
+    mode; the census keeps its shape).
+
+    shared: sharedInputs(cur) already read -- the level maps and the
+    aliases are the same for both sports, so a caller voting both reads
+    them once (build_school_units). None reads them here, as before."""
     lo, hi = _WINDOW[sport]
     votes = defaultdict(lambda: defaultdict(Counter))
     seasons = defaultdict(set)
     unit_eg = {}
     st_ = {"rows": 0, "excluded": 0, "hits": 0, "lvl": 0, "name": 0}
     name_hits, name_miss = Counter(), Counter()
-    maps = _levelMaps(cur)          # BEFORE _rows: same cursor
+    if shared is not None:
+        maps, alias = shared
+    else:
+        maps = _levelMaps(cur)      # BEFORE _rows: same cursor
     # ★ ONE SCHOOL, ONE ROW (2026-11-01: NESCAC listed "Conn College" and
     #   "Connecticut College", "Trinity" and "Trinity (Conn.)"). The rows
     #   carry the feeds' spellings; the boards file them under one name
     #   (school_name_alias, merge_school_names), so the units are voted
     #   under that name too.
-    alias = _nameAliases(cur)
+    if shared is None:
+        alias = _nameAliases(cur)
     for school, yr, meet_name, div_title, state, feed, *rest in _rows(
             cur, sport, lo, hi):
         school = alias.get(school, school)

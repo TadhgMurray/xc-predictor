@@ -312,6 +312,40 @@ def collect(conn, race_years=None, athlete_years=None):
         def _note(sport, mid, day):
             if day and day > meet_day.get((sport, mid), ""):
                 meet_day[(sport, mid)] = day
+        # ★ THE TRACK GROUP BY ON A CONNECTION OF ITS OWN (2026-11-19; run
+        #   20261116_154245: 13d_sitemap 257 s, nearly all of it these three
+        #   aggregates one after another). results_tf's is the longest and
+        #   reads nothing the other two do, so it starts first, beside
+        #   results' and athlete_season's, with the same work_mem and
+        #   workers (SET LOCAL: the pooled connection keeps nothing). Its
+        #   rows are walked where they were walked before, after XC's, so
+        #   every list comes out in the same order.
+        # ! XCP_SITEMAP_SIDE=0 runs the three in line. Memory: two of these
+        #   aggregates at once, not one.
+        tf_side = None
+        tf_sql = """
+                SELECT meet_id, event_id, div_id, max(date)
+                FROM   results_tf
+                WHERE  meet_id IS NOT NULL
+                  AND  event_id IS NOT NULL AND div_id IS NOT NULL
+                GROUP  BY meet_id, event_id, div_id
+            """
+        has_tf = _exists(cur, "results_tf")
+        if has_tf and (os.environ.get("XCP_SITEMAP_SIDE") or "1").strip() != "0":
+            from concurrent.futures import ThreadPoolExecutor
+            from database import getConn
+
+            def _tfRows():
+                with getConn() as c2, c2.cursor() as cur2:
+                    cur2.execute("SET LOCAL work_mem = '1GB'")
+                    cur2.execute("SET LOCAL max_parallel_workers_per_gather = 4")
+                    cur2.execute(tf_sql)
+                    got = cur2.fetchall()
+                    c2.rollback()
+                    return got
+            side_ex = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sitemap-tf")
+            tf_side = side_ex.submit(_tfRows)
+            side_ex.shutdown(wait=False)
         if _exists(cur, "results"):
             cur.execute("""
                 SELECT meet_id, div_id, max(date)
@@ -324,15 +358,13 @@ def collect(conn, race_years=None, athlete_years=None):
                 _note("xc", m, day)
                 if raceWanted(day, race_since):
                     races.append((f"/race/xc/{m}/{d}", day))
-        if _exists(cur, "results_tf"):
-            cur.execute("""
-                SELECT meet_id, event_id, div_id, max(date)
-                FROM   results_tf
-                WHERE  meet_id IS NOT NULL
-                  AND  event_id IS NOT NULL AND div_id IS NOT NULL
-                GROUP  BY meet_id, event_id, div_id
-            """)
-            for m, e, d, lm in cur.fetchall():
+        if has_tf:
+            if tf_side is not None:
+                tf_rows = tf_side.result()
+            else:
+                cur.execute(tf_sql)
+                tf_rows = cur.fetchall()
+            for m, e, d, lm in tf_rows:
                 day = _day(lm)
                 _note("tf", m, day)
                 if raceWanted(day, race_since):

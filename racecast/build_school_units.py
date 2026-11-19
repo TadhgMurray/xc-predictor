@@ -29,6 +29,7 @@
 #   list of them.
 
 import argparse
+import os
 import re
 import sys
 
@@ -328,8 +329,41 @@ def main():
 
     with getConn() as conn, conn.cursor() as cur:
         rows, census = [], {}
+        # ★ THE SPORTS' VOTES SIDE BY SIDE, THEIR SHARED INPUTS ONCE
+        #   (2026-11-19; run 20261116_154245: 10d_school_units 608 s beside
+        #   10a's 558 s). Each sport's votes are two reads -- a GROUP BY over
+        #   all of ranking_results for the level maps (no sport in it) and
+        #   that sport's late-season attendance -- then a parse; XC's and
+        #   TF's touch nothing of each other. So the maps and aliases are
+        #   read once (C.sharedInputs), and the two sports' attendance reads
+        #   run on connections of their own at once. The rows are then taken
+        #   in the sports' order, XC first, exactly as the loop took them,
+        #   so ON CONFLICT DO NOTHING keeps the same row of every key.
+        # ! XCP_UNITS_SIDE=0 votes one sport after the other on this
+        #   connection. Memory: both sports' votes are held together (they
+        #   were one after the other), one extra backend.
+        shared = C.sharedInputs(cur)
+        side = (os.environ.get("XCP_UNITS_SIDE") or "1").strip() != "0"
+        voted = {}
+        if side and len(sports) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _votesOnOwnConn(sport):
+                with getConn() as c2, c2.cursor() as cur2:
+                    out = C.buildVotes(cur2, sport, split_level=True, shared=shared)
+                    c2.rollback()
+                    return out
+            with ThreadPoolExecutor(max_workers=len(sports)) as pool:
+                # TF first: its LATERAL over results_tf is the longer read
+                futs = {sp: pool.submit(_votesOnOwnConn, sp)
+                        for sp in sorted(sports, key=lambda sp: sp != "TF")}
+                voted = {sp: f.result() for sp, f in futs.items()}
         for sport in sports:
-            votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(cur, sport, split_level=True)
+            if sport in voted:
+                votes, _seasons, _eg, (st_, _h, _m) = voted.pop(sport)
+            else:
+                votes, _seasons, _eg, (st_, _h, _m) = C.buildVotes(
+                    cur, sport, split_level=True, shared=shared)
             n_ok = n_clash = n_coll = 0
             for (school, st, _coll), kinds in votes.items():
                 if not isTeam(school) or notASchool(school):
