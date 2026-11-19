@@ -2610,6 +2610,30 @@ def analyze(conn, name):
     conn.commit()
 
 
+_INDEX_SECONDS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "engine", "data", "index_build_seconds.json")
+
+
+def _indexSeconds():
+    try:
+        import json
+        with open(_INDEX_SECONDS) as fh:
+            return {str(k): float(v) for k, v in json.load(fh).items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def _saveIndexSeconds(took):
+    try:
+        import json
+        tmp = f"{_INDEX_SECONDS}.{os.getpid()}.tmp"
+        with open(tmp, "w") as fh:
+            json.dump(took, fh, sort_keys=True)
+        os.replace(tmp, _INDEX_SECONDS)
+    except OSError:
+        pass
+
+
 def buildIndexes(conn, name, like):
     """Create the deferred indexes on the shadow, after the data is in.
 
@@ -2725,15 +2749,27 @@ def buildIndexes(conn, name, like):
             c.commit()
         return newname, time.time() - t0
 
+    # ★ THE LONGEST BUILDS START FIRST (2026-11-19; run 20261117_142219:
+    #   "index ranking_results" 20.5 of the finish's 31.2 min, its builds
+    #   _INDEX_JOBS at a time in catalogue order, so a long one that starts
+    #   last sets the phase's length). Last run's seconds per index, kept
+    #   beside the engine data; one never timed goes first. The indexes
+    #   built are the same, and verifyIndexes checks them as before.
+    took = _indexSeconds()
+    defs = sorted(defs, key=lambda d: -took.get(f"{like}/{d[0]}", float("inf")))
     jobs = min(_INDEX_JOBS, len(defs))
+    now = {}
     if jobs > 1:
         with cf.ThreadPoolExecutor(max_workers=jobs) as pool:
-            for newname, dt in pool.map(build, defs):
+            for (idxname, _ddl), (newname, dt) in zip(defs, pool.map(build, defs)):
+                now[f"{like}/{idxname}"] = round(dt, 1)
                 print(f"    [{dt:7.1f}s] {newname[:60]}")
     else:
         for job in defs:
             newname, dt = build(job)
+            now[f"{like}/{job[0]}"] = round(dt, 1)
             print(f"    [{dt:7.1f}s] {newname[:60]}")
+    _saveIndexSeconds({**took, **now})
 
     verifyIndexes(conn, name, like)
     analyze(conn, name)
