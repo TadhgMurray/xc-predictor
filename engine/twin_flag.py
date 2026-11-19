@@ -934,6 +934,15 @@ def _dropShards(cur, sport, shards):
             cur.execute(f"DROP TABLE IF EXISTS _rc_{name}_{sport.lower()}_s{k}")
 
 
+def _inFailedTxn(cur):
+    import psycopg2.extensions as _ext
+    try:
+        return (cur.connection.get_transaction_status()
+                == _ext.TRANSACTION_STATUS_INERROR)
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
 def prepareRaceCopy(cur, table, sport, explain=False, connect=None, shards=None):
     """Stage dup_race_copy into _rc_<part>_<sport> temp tables, each analysed.
     Parts marked True run with nested loops on (index lookups of a few
@@ -986,7 +995,12 @@ def prepareRaceCopy(cur, table, sport, explain=False, connect=None, shards=None)
                 cur.execute(f"CREATE TEMP TABLE {tbl} AS {sql}")
             cur.execute(f"ANALYZE {tbl}")
     finally:
-        cur.execute(f"SET enable_nestloop = {was}")
+        # ! NOT IN AN ABORTED TRANSACTION (2026-11-19): after a stage's
+        #   timeout this SET raised InFailedSqlTransaction over the
+        #   QueryCanceled, so the "keep last run's flags" path never ran.
+        #   The caller's rollback undoes the SET OFF anyway.
+        if not _inFailedTxn(cur):
+            cur.execute(f"SET enable_nestloop = {was}")
     if bounds:
         # the flags are in _rc_flag_<sport>; the shards' tables are spent
         _dropShards(cur, sport, len(bounds))
@@ -1427,7 +1441,12 @@ def prepareCrossGender(cur, table, sport, explain=False):
                 cur.execute(f"CREATE TEMP TABLE {tbl} AS {sql}")
             cur.execute(f"ANALYZE {tbl}")
     finally:
-        cur.execute(f"SET enable_nestloop = {was}")
+        # ! NOT IN AN ABORTED TRANSACTION (2026-11-19): after a stage's
+        #   timeout this SET raised InFailedSqlTransaction over the
+        #   QueryCanceled, so the "keep last run's flags" path never ran.
+        #   The caller's rollback undoes the SET OFF anyway.
+        if not _inFailedTxn(cur):
+            cur.execute(f"SET enable_nestloop = {was}")
     if not explain:
         cur.execute("SELECT (SELECT count(*) FROM _cg_k), (SELECT count(*) FROM _cg_rows)")
         k, r = cur.fetchone()
