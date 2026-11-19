@@ -299,6 +299,12 @@ def buildPieces(cur, connect=None):
                             wc.execute("ROLLBACK TO SAVEPOINT side_set")
                     wc.execute(f"DROP TABLE IF EXISTS {name}")
                     wc.execute(f"CREATE TABLE {name} AS\n{sql}")
+                    # ! STATISTICS BEFORE THE FINAL JOIN READS IT (2026-11-19).
+                    #   As CTEs of one statement these were planned from the
+                    #   base tables' statistics; a fresh table has none, and
+                    #   a join planned on guesses is how 03_pro_flag and 06c
+                    #   stalled for hours. ANALYZE samples; seconds.
+                    wc.execute(f"ANALYZE {name}")
                 conn.commit()
             except BaseException:
                 conn.rollback()
