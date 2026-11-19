@@ -145,3 +145,42 @@ def test_explain_plans_every_stage_without_running_it(capsys):
     finally:
         conn.rollback()
         conn.close()
+
+
+def test_person_shards_flag_the_same_rows_as_the_one_query():
+    """2026-11-19: XCP_TWIN_RC_SHARDS stages the rows and pairs in person_id
+    ranges on their own sessions; the flags are the one query's, and the
+    shards' tables are gone after."""
+    import contextlib
+    import psycopg2
+    import twin_flag as T
+
+    @contextlib.contextmanager
+    def connect():
+        c = psycopg2.connect(DSN)
+        c.set_client_encoding("UTF8")
+        try:
+            yield c
+        finally:
+            c.close()
+    conn = psycopg2.connect(DSN)
+    conn.set_client_encoding("UTF8")
+    try:
+        cur = conn.cursor()
+        T._session(conn, cur)
+        for seed in range(6):
+            _seed(cur, seed)
+            conn.commit()                         # the shards' sessions read it
+            for sport, table in (("XC", "results"), ("TF", "results_tf")):
+                assert len(T._personBounds(cur, table, 3)) == 3
+                cur.execute(T._dupRaceCopyOneQuery(table, sport))
+                want = sorted(r[0] for r in cur.fetchall())
+                T.prepareRaceCopy(cur, table, sport, connect=connect, shards=3)
+                cur.execute(T.dupRaceCopySql(table, sport))
+                got = sorted(r[0] for r in cur.fetchall())
+                assert want and got == want, (seed, sport, set(want) ^ set(got))
+                cur.execute("SELECT count(*) FROM pg_class WHERE relname LIKE '\\_rc\\_%\\_s_'")
+                assert cur.fetchone()[0] == 0
+    finally:
+        conn.rollback()
+        conn.close()

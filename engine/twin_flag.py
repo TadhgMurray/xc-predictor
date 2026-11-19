@@ -741,7 +741,18 @@ def _dupRaceCopyOneQuery(table, sport):
 #   matched divisions with nested loops ON -- index lookups, both sides
 #   counted. The rule's SELECT reads the staged flags. The same rows as
 #   _dupRaceCopyOneQuery, the query it replaces (tests/test_twin_race_copy_staged.py).
-def _raceCopyParts(table, sport):
+def _personRange(alias, rng):
+    """A shard's person_id range as SQL (lo <= person_id < hi; None is open)."""
+    lo, hi = rng or (None, None)
+    return ((f" AND {alias}person_id >= {int(lo)}" if lo is not None else "")
+            + (f" AND {alias}person_id < {int(hi)}" if hi is not None else ""))
+
+
+def _raceCopyParts(table, sport, rng=None, tag=None, pair_from=None, matched_from=None):
+    """The stages of dup_race_copy. rng + tag: one person shard's rows,
+    matched pairs and pair counts (prepareRaceCopy's shards); pair_from +
+    matched_from: the merge of those shards. All None: the one-session
+    stages, as before."""
     tf = sport == "TF"
     def rc(alias=""):
         col = f"upper(left(btrim(COALESCE({alias}round, '')), 1))"
@@ -752,11 +763,12 @@ def _raceCopyParts(table, sport):
               AND  {a}date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'""")
     kev = ", event_id" if tf else ""
     sfx = sport.lower()
+    tsfx = tag or sfx
     rows = f"""
         WITH keys AS (
             SELECT person_id, source{kev}, round(time_seconds::numeric, 1) AS rt
             FROM   {table}
-            {where("")}
+            {where("")}{_personRange("", rng)}
             GROUP  BY 1, 2, 3{', 4' if tf else ''} HAVING count(*) BETWEEN 2 AND 8)
         SELECT r.result_id, r.person_id, r.source, r.meet_id, r.div_id{', r.event_id' if tf else ''},
                {rc('r.')} AS rc, substr(r.date, 1, 10)::date AS d, k.rt
@@ -765,15 +777,15 @@ def _raceCopyParts(table, sport):
                      AND k.rt = round(r.time_seconds::numeric, 1)
                      {"AND k.event_id IS NOT DISTINCT FROM r.event_id" if tf else ""}
         WHERE  r.date ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
-          AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000"""
+          AND  r.time_seconds IS NOT NULL AND r.time_seconds < 100000{_personRange("r.", rng)}"""
     key_a = "a.meet_id, a.div_id, a.rc" + (", a.event_id" if tf else "")
     key_b = "b.meet_id, b.div_id, b.rc" + (", b.event_id" if tf else "")
     matched = f"""
         SELECT a.result_id, a.source,
                a.meet_id AS ma, a.div_id AS da, a.rc AS ra{', a.event_id AS ea' if tf else ''},
                b.meet_id AS mb, b.div_id AS db, b.rc AS rb{', b.event_id AS eb' if tf else ''}
-        FROM   _rc_rows_{sfx} a
-        JOIN   _rc_rows_{sfx} b ON b.person_id = a.person_id AND b.source = a.source
+        FROM   _rc_rows_{tsfx} a
+        JOIN   _rc_rows_{tsfx} b ON b.person_id = a.person_id AND b.source = a.source
                       AND b.rt = a.rt
                       {"AND b.event_id IS NOT DISTINCT FROM a.event_id" if tf else ""}
                       AND ({key_b}) <> ({key_a})
@@ -782,13 +794,16 @@ def _raceCopyParts(table, sport):
     # size in the one query (its joins are '='), so it is left out here too
     ev_a = ", ea" if tf else ""
     ev_b = ", eb" if tf else ""
+    # ! the merge reads the divisions off the summed pairs: pair groups by
+    #   exactly these columns, so its divisions are matched's, the same set
+    dsrc = f"_rc_pair_{sfx}" if pair_from else f"_rc_matched_{sfx}"
     divs = f"""
         SELECT DISTINCT source, ma AS meet_id, da AS div_id, ra AS rc{ev_a + ' AS event_id' if tf else ''}
-        FROM   _rc_matched_{sfx}
+        FROM   {dsrc}
         WHERE  ma IS NOT NULL AND da IS NOT NULL AND ra IS NOT NULL{' AND ea IS NOT NULL' if tf else ''}
         UNION
         SELECT DISTINCT source, mb, db, rb{ev_b}
-        FROM   _rc_matched_{sfx}
+        FROM   {dsrc}
         WHERE  mb IS NOT NULL AND db IS NOT NULL AND rb IS NOT NULL{' AND eb IS NOT NULL' if tf else ''}"""
     size = f"""
         SELECT v.source, v.meet_id, v.div_id{', v.event_id' if tf else ''}, v.rc,
@@ -802,14 +817,23 @@ def _raceCopyParts(table, sport):
     sz_eq = lambda s_, x: (f"{s_}.source = p.source AND {s_}.meet_id = p.m{x} AND {s_}.div_id = p.d{x}"
                            f" AND {s_}.rc = p.r{x}" + (f" AND {s_}.event_id = p.e{x}" if tf else ""))
     grp = "1, 2, 3, 4, 5, 6, 7" + (", 8, 9" if tf else "")
-    loser = f"""
-        WITH pair AS (
-            SELECT source, ma, da, ra{', ea' if tf else ''}, mb, db, rb{', eb' if tf else ''},
+    pcols = f"source, ma, da, ra{', ea' if tf else ''}, mb, db, rb{', eb' if tf else ''}"
+    pairp = f"""
+            SELECT {pcols},
                    count(DISTINCT result_id) AS shared
-            FROM   _rc_matched_{sfx}
-            GROUP  BY {grp})
+            FROM   _rc_matched_{tsfx}
+            GROUP  BY {grp}"""
+    # ★ THE SHARDS' COUNTS ADD UP EXACTLY (2026-11-19): a result_id has one
+    #   person, so it lies in one person shard, and count(DISTINCT
+    #   result_id) over all of matched is the sum of the shards' counts.
+    pair = pair_from and f"""
+        SELECT {pcols}, sum(shared)::bigint AS shared
+        FROM   ({" UNION ALL ".join(f"SELECT * FROM {t}" for t in pair_from)}) u
+        GROUP  BY {grp}"""
+    loser = f"""
+        {"" if pair_from else f"WITH pair AS ({pairp})"}
         SELECT p.*, (p.shared * 10 >= sa.n * 9) AS whole
-        FROM   pair p
+        FROM   {f"_rc_pair_{sfx}" if pair_from else "pair"} p
         JOIN   _rc_size_{sfx} sa ON {sz_eq('sa', 'a')}
         JOIN   _rc_size_{sfx} sb ON {sz_eq('sb', 'b')}
         WHERE  p.shared >= 5 AND p.shared * 10 >= least(sa.n, sb.n) * 9
@@ -823,32 +847,132 @@ def _raceCopyParts(table, sport):
                       AND l.da = r.div_id AND l.ra = {rc('r.')}
                       {"AND l.ea = r.event_id" if tf else ""}
         {where("r.")}
-          AND  l.whole
+          AND  l.whole"""
+    for mt in (matched_from or [f"_rc_matched_{sfx}"]):
+        flag += f"""
         UNION
         SELECT m.result_id
-        FROM   _rc_matched_{sfx} m
+        FROM   {mt} m
         JOIN   _rc_loser_{sfx} l ON NOT l.whole AND l.source = m.source
                       AND l.ma = m.ma AND l.da = m.da AND l.ra = m.ra
                       AND l.mb = m.mb AND l.db = m.db AND l.rb = m.rb
                       {"AND l.ea IS NOT DISTINCT FROM m.ea AND l.eb IS NOT DISTINCT FROM m.eb" if tf else ""}"""
-    return [("rows", rows, False), ("matched", matched, False), ("divs", divs, False),
+    if tag:
+        return [("rows", rows, False), ("matched", matched, False), ("pairp", pairp, False)]
+    head = ([("pair", pair, False)] if pair_from else
+            [("rows", rows, False), ("matched", matched, False)])
+    return head + [("divs", divs, False),
             # loser joins only small analysed tables: hash joins, nested
             # loops back off (with them on, the server's plan crossed size
             # with itself -- fine empty, thousands x thousands on real data)
             ("size", size, True), ("loser", loser, False), ("flag", flag, True)]
 
 
-def prepareRaceCopy(cur, table, sport, explain=False):
+# ★ dup_race_copy IN PERSON SHARDS (2026-11-19; run 20261116_204106: TF
+#   dup_race_copy 956 s of a 1,556 s step, alone for its last ~370 s --
+#   dup_cross_date, the next longest, was done 583 s in). Its staged plan
+#   is one session: the repeated keys (a hash aggregate over every row),
+#   then the self-join of 18.2M repeated-key rows and the pair count, both
+#   on TEMP tables, which no parallel worker may read -- one core. Every
+#   one of those joins and groups keys on person_id, so the rows, the
+#   matched pairs and the pair counts split EXACTLY into person_id ranges:
+#   XCP_TWIN_RC_SHARDS sessions (default 4) each stage one range, and this
+#   session sums their pair counts (_raceCopyParts says why the sum is
+#   exact) and runs divs / size / loser / flag as before. The ranges come
+#   from the table's own person_id histogram, so each shard's estimate is
+#   the histogram's, not a guess at a hash. Each shard gets work_mem / N:
+#   a shard holds a 1/N slice, so its plan sees the same data-to-memory
+#   ratio as the one session did, and the shards together stay inside the
+#   one session's memory. XCP_TWIN_RC_SHARDS=1 is the one-session staging.
+RC_SHARDS = int(os.environ.get("XCP_TWIN_RC_SHARDS", "4"))
+
+
+def _personBounds(cur, table, shards):
+    """shards person_id ranges [(lo, hi), ...] (None = open) cut at the
+    table's person_id histogram; [] when it has none (not analysed)."""
+    cur.execute("""SELECT histogram_bounds::text FROM pg_stats
+                   WHERE schemaname = current_schema() AND tablename = %s
+                     AND attname = 'person_id'""", (table,))
+    row = cur.fetchone()
+    try:
+        vals = [int(v) for v in row[0].strip("{}").split(",")]
+    except (TypeError, ValueError, AttributeError):
+        return []
+    cuts = sorted({vals[len(vals) * i // shards] for i in range(1, shards)})
+    edges = [None] + cuts + [None]
+    return list(zip(edges[:-1], edges[1:])) if len(edges) > 2 else []
+
+
+def _raceCopyShard(connect, table, sport, k, rng, shards):
+    """One person shard of dup_race_copy on its own session: _rc_rows_<tag>
+    TEMP, _rc_matched_<tag> and _rc_pairp_<tag> UNLOGGED (the merge reads
+    them), each analysed. Returns the shard's repeated-key row count."""
+    tag = f"{sport.lower()}_s{k}"
+    with connect() as c:
+        with c.cursor() as cur:
+            _session(c, cur)
+            cur.execute("SET max_parallel_workers_per_gather = 2")
+            cur.execute(f"SET work_mem = '{max(64, 2048 // shards)}MB'")
+            cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
+            for name, sql, _loops in _raceCopyParts(table, sport, rng=rng, tag=tag):
+                tbl = f"_rc_{name}_{tag}"
+                cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+                kind = "TEMP" if name == "rows" else "UNLOGGED"
+                cur.execute(f"CREATE {kind} TABLE {tbl} AS {sql}")
+                cur.execute(f"ANALYZE {tbl}")
+            cur.execute(f"SELECT count(*) FROM _rc_rows_{tag}")
+            n = cur.fetchone()[0]
+            # ! a pooled session outlives this rule: its 1/N of the rows goes now
+            cur.execute(f"DROP TABLE _rc_rows_{tag}")
+        c.commit()
+    return n
+
+
+def _dropShards(cur, sport, shards):
+    for k in range(shards):
+        for name in ("matched", "pairp"):
+            cur.execute(f"DROP TABLE IF EXISTS _rc_{name}_{sport.lower()}_s{k}")
+
+
+def prepareRaceCopy(cur, table, sport, explain=False, connect=None, shards=None):
     """Stage dup_race_copy into _rc_<part>_<sport> temp tables, each analysed.
     Parts marked True run with nested loops on (index lookups of a few
     divisions into the big table); the session's setting is put back after.
-    explain=True prints each part's plan and stages empty tables instead."""
+    explain=True prints each part's plan and stages empty tables instead.
+    connect (a session factory) and shards > 1: the rows and pairs in
+    person shards first (RC_SHARDS says why)."""
     sfx = sport.lower()
+    shards = RC_SHARDS if shards is None else shards
+    bounds = _personBounds(cur, table, shards) if (connect and shards > 1 and not explain) else []
+    if explain and shards > 1:
+        rng = (_personBounds(cur, table, shards) or [(None, None)])[0]
+        cur.execute(f"EXPLAIN {_raceCopyParts(table, sport, rng=rng, tag=sfx + '_s0')[0][1]}")
+        print(f"-- dup_race_copy shard 0 rows, person_id {rng} (of {shards}):")
+        for (line,) in cur.fetchall():
+            print(line)
     cur.execute("SHOW enable_nestloop")
     was = cur.fetchone()[0]
     t0 = time.time()
+    parts = _raceCopyParts(table, sport)
+    nrows = None
+    if bounds:
+        from concurrent.futures import ThreadPoolExecutor
+        try:
+            with ThreadPoolExecutor(max_workers=len(bounds)) as ex:
+                nrows = sum(ex.map(lambda kr: _raceCopyShard(connect, table, sport, kr[0], kr[1],
+                                                             len(bounds)),
+                                   enumerate(bounds)))
+        except Exception:
+            with connect() as c:
+                with c.cursor() as cur2:
+                    _dropShards(cur2, sport, len(bounds))
+                c.commit()
+            raise
+        tags = [f"{sfx}_s{k}" for k in range(len(bounds))]
+        parts = _raceCopyParts(table, sport, pair_from=[f"_rc_pairp_{t}" for t in tags],
+                               matched_from=[f"_rc_matched_{t}" for t in tags])
     try:
-        for name, sql, loops in _raceCopyParts(table, sport):
+        for name, sql, loops in parts:
             cur.execute(f"SET enable_nestloop = {'on' if loops else was}")
             tbl = f"_rc_{name}_{sfx}"
             cur.execute(f"DROP TABLE IF EXISTS {tbl}")
@@ -863,12 +987,18 @@ def prepareRaceCopy(cur, table, sport, explain=False):
             cur.execute(f"ANALYZE {tbl}")
     finally:
         cur.execute(f"SET enable_nestloop = {was}")
+    if bounds:
+        # the flags are in _rc_flag_<sport>; the shards' tables are spent
+        _dropShards(cur, sport, len(bounds))
     if not explain:
-        cur.execute(f"SELECT (SELECT count(*) FROM _rc_rows_{sfx}), (SELECT count(*) FROM _rc_divs_{sfx}),"
+        cur.execute(f"SELECT {'NULL' if bounds else f'(SELECT count(*) FROM _rc_rows_{sfx})'},"
+                    f" (SELECT count(*) FROM _rc_divs_{sfx}),"
                     f" (SELECT count(*) FROM _rc_loser_{sfx}), (SELECT count(*) FROM _rc_flag_{sfx})")
         r, d, l, f = cur.fetchone()
+        r = nrows if bounds else r
+        how = f", {len(bounds)} person shards" if bounds else ""
         print(f"  [{sport}] dup_race_copy staged: {r:,} repeated-key rows, {d:,} matched divisions, "
-              f"{l:,} losers, {f:,} rows flagged ({time.time() - t0:.0f}s)", flush=True)
+              f"{l:,} losers, {f:,} rows flagged ({time.time() - t0:.0f}s{how})", flush=True)
 
 
 def dupRaceCopySql(table, sport):
@@ -1420,14 +1550,14 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          (LC.REASON, LC.ruleSql))
 
 
-def prepareRule(cur, table, sport, reason, explain=False):
+def prepareRule(cur, table, sport, reason, explain=False, connect=None):
     """The staging a rule needs before its SELECT can run: the meet pairs of
     dup_cross_date, the decided rows of level_conflict. Nothing for the
     rest."""
     if reason == "dup_cross_date":
         prepareCrossDate(cur, table, sport)
     elif reason == "dup_race_copy":
-        prepareRaceCopy(cur, table, sport, explain=explain)
+        prepareRaceCopy(cur, table, sport, explain=explain, connect=connect)
     elif reason == "dup_cross_gender":
         # ! a database the full pipeline has not built person_gender in yet:
         #   an empty stand-in, so the rule flags nothing rather than failing
@@ -1561,6 +1691,9 @@ TWIN_PARALLEL = os.environ.get("XCP_TWIN_PARALLEL", "1") not in ("0", "false", "
 TWIN_WORKERS = int(os.environ.get("XCP_TWIN_WORKERS", "4"))
 
 
+EARLY_ASSEMBLY = os.environ.get("XCP_TWIN_EARLY_ASSEMBLY", "1") not in ("0", "false", "")
+
+
 def _stageName(sport, reason):
     return f"twin_stage_{sport.lower()}_{reason}"
 
@@ -1580,7 +1713,7 @@ def _stageRule(connect, sport, table, reason, fn):
             c.commit()
             cur.execute(f"SET statement_timeout = {int(RULE_TIMEOUT * 1000)}")
             try:
-                prepareRule(cur, table, sport, reason)
+                prepareRule(cur, table, sport, reason, connect=connect)
                 cur.execute(f"INSERT INTO {stage} SELECT s.result_id FROM ({fn(table, sport)}) s")
                 n = cur.rowcount
                 c.commit()
@@ -1627,7 +1760,7 @@ def _saveRuleSeconds(took):
 def _buildPooled(conn, cur, skip, connect, workers):
     """Every (sport, rule) in a pool of sessions, then the stages into
     result_twin_new in RULES order (TWIN_WORKERS says why)."""
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
     jobs = [(sport, table, reason, fn)
             for sport, table in sorted(TABLES.items(), key=lambda kv: kv[0] != "TF")
             for reason, fn in RULES if reason not in skip]
@@ -1644,25 +1777,47 @@ def _buildPooled(conn, cur, skip, connect, workers):
     def timed(j):
         t0 = time.time()
         return _stageRule(connect, *j), time.time() - t0
+    # ★ THE ASSEMBLY OVERLAPS THE POOL (2026-11-19; run 20261116_204106:
+    #   result_twin_new's 17.8M rows went in for ~165 s after the pool,
+    #   while TF dup_race_copy alone held the pool for its last ~370 s). The
+    #   key is (sport, result_id), so only the order WITHIN a sport decides
+    #   which reason wins a row: each sport's stages go in in RULES order as
+    #   soon as every stage before them is in -- all of XC and TF's first
+    #   eight rules while dup_race_copy still runs. The same INSERTs in the
+    #   same per-sport order: the same rows and reasons.
+    #   XCP_TWIN_EARLY_ASSEMBLY=0 inserts everything after the pool, as before.
+    nxt = {sport: 0 for sport in TABLES}
+    idx = {(jobs[i][0], jobs[i][2]): i for i in range(len(jobs))}
+
+    def assemble(futs, final):
+        for sport in TABLES:
+            while nxt[sport] < len(RULES):
+                reason = RULES[nxt[sport]][0]
+                if reason in skip:
+                    kept = carryOver(cur, sport, reason)
+                    print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP); "
+                          f"{kept:,} flags kept from the last run", flush=True)
+                else:
+                    f = futs[idx[(sport, reason)]]
+                    if not final and not (f.done() and f.exception() is None):
+                        break
+                    cur.execute(f"""
+                        INSERT INTO result_twin_new (sport, result_id, reason)
+                        SELECT %s, result_id, %s FROM {_stageName(sport, reason)}
+                        ON CONFLICT DO NOTHING""", (sport, reason))
+                nxt[sport] += 1
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {i: ex.submit(timed, jobs[i]) for i in order}
         took = {}
         for i in range(len(jobs)):
+            while EARLY_ASSEMBLY and not futs[i].done():
+                assemble(futs, False)
+                wait([f for f in futs.values() if not f.done()], return_when=FIRST_COMPLETED)
             line, dt = futs[i].result()
             took[f"{jobs[i][0]}:{jobs[i][2]}"] = round(dt, 1)
             print(line, flush=True)
     _saveRuleSeconds(took)
-    for sport in TABLES:
-        for reason, _fn in RULES:
-            if reason in skip:
-                kept = carryOver(cur, sport, reason)
-                print(f"  [{sport}] {reason:<14} skipped (XCP_TWIN_SKIP); "
-                      f"{kept:,} flags kept from the last run", flush=True)
-                continue
-            cur.execute(f"""
-                INSERT INTO result_twin_new (sport, result_id, reason)
-                SELECT %s, result_id, %s FROM {_stageName(sport, reason)}
-                ON CONFLICT DO NOTHING""", (sport, reason))
+    assemble(futs, True)
     for sport in TABLES:
         for reason, _fn in RULES:
             cur.execute(f"DROP TABLE IF EXISTS {_stageName(sport, reason)}")
