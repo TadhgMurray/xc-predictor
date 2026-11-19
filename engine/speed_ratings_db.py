@@ -1720,13 +1720,81 @@ def preparePackQuery(cur, sport):
     ensurePackMeetClass(cur, sport)
 
 
+# ★ THE TWIN KEYS BUILT WHILE THE PACK WARMS UP (2026-11-19; run
+#   20261116_204106: 07_pack 1,650 s in line, and the TF child -- the long
+#   pole, its pace set by the one cursor's read -- could not start that read
+#   until it had run _buildTwinKeys, a scan and hash aggregate of
+#   results_tf. And the child is forked only after the parent's warm-ups
+#   (season levels, grade gate, unattached race ceilings ...), which are
+#   Python dict building with the database idle.) _packParallel now starts
+#   one thread per sport on _buildTwinKeys before the warm-ups and joins
+#   them before the forks; each child's streamResults takes the table the
+#   thread built instead of building it again.
+# ! THE SAME TABLE. The same function, the same SQL, the same index and
+#   ANALYZE, on a pooled connection -- an ordinary UNLOGGED table any session
+#   reads. Nothing that runs beside 07 writes results / results_tf (the bg
+#   steps it overlaps write their own tables), so built a few minutes
+#   earlier it holds the same keys, and the stream's plan reads the same
+#   statistics. The stream still drops it at its end.
+# ! A FAILED BUILD FALLS BACK: streamResults builds it itself, as before.
+#   Each result is taken once; a second stream of the sport rebuilds.
+#   XCP_PACK_TWIN_AHEAD=0 is the old order (each child builds its own).
+_TWIN_AHEAD = {}                  # sport -> (thread, box) or box once joined
+_STREAM_TABLE = {"XC": "results", "TF": "results_tf"}
+
+
+def buildTwinKeysAhead(sports):
+    """Start _buildTwinKeys for each sport on its own thread."""
+    if os.environ.get("XCP_PACK_TWIN_AHEAD", "1") in ("0", "false"):
+        return
+    import threading
+    for sp in sports:
+        box = {}
+
+        def run(sp=sp, box=box):
+            t0 = time.time()
+            try:
+                box["got"] = _buildTwinKeys(_STREAM_TABLE[sp], sp)
+            except BaseException as exc:                      # noqa: BLE001
+                box["err"] = exc
+            print(f"[time] {sp} twin keys built ahead: {time.time() - t0:.0f}s",
+                  flush=True)
+
+        th = threading.Thread(target=run, name=f"twin-keys-{sp}", daemon=True)
+        th.start()
+        _TWIN_AHEAD[sp] = (th, box)
+
+
+def joinTwinKeysAhead():
+    """Wait for every ahead build (before a fork: no thread may hold a
+    connection across it)."""
+    for sp, ent in list(_TWIN_AHEAD.items()):
+        if isinstance(ent, tuple):
+            ent[0].join()
+            _TWIN_AHEAD[sp] = ent[1]
+
+
+def _twinKeysFor(table, sport):
+    """(table, n) from the ahead build when it succeeded, else built now."""
+    ent = _TWIN_AHEAD.pop(sport, None)
+    if isinstance(ent, tuple):
+        ent[0].join()
+        ent = ent[1]
+    if ent is not None:
+        if "got" in ent:
+            return ent["got"]
+        print(f"[db] {sport}: the twin keys built ahead failed "
+              f"({type(ent.get('err')).__name__}: {ent.get('err')}); building them now")
+    return _buildTwinKeys(table, sport)
+
+
 def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
                   batch: int = 200_000):
     # Materialise the twin keys BEFORE opening the stream. This is one scan and
     # one hash aggregate; it replaces a correlated SubPlan that the planner would
     # otherwise re-execute once per row (see CROSS-SOURCE DEDUP above).
-    table = {"XC": "results", "TF": "results_tf"}[sport]
-    tw, _n_tw = _buildTwinKeys(table, sport)
+    table = _STREAM_TABLE[sport]
+    tw, _n_tw = _twinKeysFor(table, sport)
     tw = tw or ""
     _probeResultTwin()
 

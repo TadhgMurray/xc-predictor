@@ -62,6 +62,8 @@ def fake(monkeypatch, tmp_path):
         return f"{'hs' if grade else 'college'}_{gender}" + ("" if sport == "XC" else "_tf")
 
     monkeypatch.setattr(S, "streamResults", stream)
+    monkeypatch.setattr(S, "buildTwinKeysAhead", lambda sports: None)
+    monkeypatch.setattr(S, "joinTwinKeysAhead", lambda: None)
     monkeypatch.setattr(S, "poolOf", pool)
     monkeypatch.setattr(S, "rowTeamFacts", lambda *a, **k: (None, False, False, False, None))
     monkeypatch.setattr(S, "rescaleToPool", lambda nt, *a, **k: (nt, None))

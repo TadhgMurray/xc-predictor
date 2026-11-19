@@ -59,7 +59,8 @@ from normalize_distance import poolFor, ratedScalePool
 from season_year import seasonYearFor, RolloverLedger, seasonYearForPersonDate
 import speed_ratings_kernels as K
 from speed_ratings_db import (streamResults, saveCourseDifficulties,
-                              saveAthleteRatings, saveResultSpeedRatings)
+                              saveAthleteRatings, saveResultSpeedRatings,
+                              buildTwinKeysAhead, joinTwinKeysAhead)
 from itertools import chain
 
 import os
@@ -2076,6 +2077,14 @@ def _packParallel(sports, today, merge):
         return None
     import pickle
     import tempfile
+    import time
+    # ★ EACH SPORT'S TWIN-KEY TABLE BUILDS ON THE DATABASE WHILE THE WARM-UPS
+    #   BELOW BUILD THEIR DICTS (2026-11-19; run 20261116_204106, 07 1,650 s:
+    #   the TF child built it before its first FETCH, after these). Joined
+    #   before the forks. See speed_ratings_db._TWIN_AHEAD;
+    #   XCP_PACK_TWIN_AHEAD=0 lets each child build its own again.
+    buildTwinKeysAhead(sports)
+    t0 = time.time()
     # the shared lookups, loaded ONCE here so both children inherit them
     for fn in (loadClubPros, loadClubMajority, loadProTeams, loadUnattachedRaceLevel,
                loadAnetLevels, loadSeasonLevels, loadProSeasons, loadCollegeFirst,
@@ -2084,6 +2093,10 @@ def _packParallel(sports, today, merge):
             fn()
         except Exception as exc:                      # noqa: BLE001 -- the child retries
             print(f"[pack] warm-up {fn.__name__}: {type(exc).__name__}: {exc}")
+    t1 = time.time()
+    joinTwinKeysAhead()
+    print(f"[time] pack warm-ups: {t1 - t0:.0f}s, then {time.time() - t1:.0f}s "
+          f"waiting on the twin keys built beside them", flush=True)
     sys.stdout.flush(); sys.stderr.flush()
     tmp = tempfile.mkdtemp(prefix="pack_", dir=_CACHE_DIR)
     kids = []
