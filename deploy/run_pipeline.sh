@@ -2399,8 +2399,13 @@ step 13_panels_facts "$PY" -u racecast/panels.py --combine-facts
 # ! AFTER THE PANELS' JOIN, NOT BESIDE THEM (2026-11-13): their long scans
 #   hold the snapshot horizon this vacuum needs to pass.
 bgjoin 10f3_comps                        # its season_comps swap, before the vacuum reads it
-step 13f6_vacuum_small "$PY" -u scripts/gentle_vacuum.py --table season_comps --table athletes \
-     --table athlete_pick --table school_page --table meet_counts || true
+# ★ IN THE BACKGROUND SINCE 2026-11-19 (run 20261117_142219: 587 s in line).
+#   It only sets visibility maps the site's reads use; no later step reads
+#   its result, and none renames or drops these tables (a vacuum would hold
+#   that swap). bgwait before 19b_prewarm collects it. A failure stays
+#   harmless, as the old "|| true" made it.
+bgstep 13f6_vacuum_small sh -c '"$0" -u scripts/gentle_vacuum.py --table season_comps --table athletes \
+     --table athlete_pick --table school_page --table meet_counts || true' "$PY"
 # ★ STATE ODDS (owner, 2026-10-10): each state's season simulated into
 #   state_odds_* (racecast/build_state_odds.py). After the boards and units
 #   it reads; its own line, not chained, so a failure costs nothing else. OFF until
