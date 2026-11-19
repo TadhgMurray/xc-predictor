@@ -60,6 +60,7 @@
 #   events are excluded for the same reason: they are not one runner's race.
 
 import io                        # in-memory buffer for COPY payloads
+import os
 import sys
 import time
 from datetime import date
@@ -2044,13 +2045,52 @@ def _stagingFor(sport: str) -> str:
 #            joins it once, and the update path indexes it just before use.
 # Output:    rows copied. `pairs` may be a GENERATOR of 30M items; we never
 #            build a list of it.
+# ★ THE ARRAYS RENDERED A CHUNK AT A TIME (2026-11-19, run 20261116_204106:
+#   08_golive saves cross country and track on two threads, and both fills
+#   were this per-row Python -- _asPairs' numpy scalar per field, then
+#   _field per value -- ~1.1 us a row under ONE GIL, so the two sports' fills
+#   took turns). _stagingLines renders the same text from .tolist() per
+#   chunk: ~0.43 us a row measured on 1M rows, byte-for-byte the same
+#   payload (str(int), str(float) of the same float64, the pool's str or
+#   \N), so the staging table holds the same rows. Memory stays one chunk.
+#   XCP_STAGING_FAST_COPY=0 goes back to _asPairs row by row.
+def _stagingLines(pairs, chunk=200_000):
+    """COPY TEXT payloads, one per chunk, for (rid, val[, pool]) arrays:
+    exactly what _copyChunk makes of _asPairs' triples."""
+    import numpy as np
+    rid, val = pairs[0], pairs[1]
+    pool = pairs[2] if len(pairs) > 2 else None
+    for s in range(0, rid.size, chunk):
+        # int(np.int64) / float(np.float32|64) of each element, as _asPairs
+        a = np.asarray(rid[s:s + chunk]).astype(np.int64).tolist()
+        v = np.asarray(val[s:s + chunk]).astype(np.float64).tolist()
+        if pool is None:
+            p = ["\\N"] * len(a)
+        else:
+            p = ["\\N" if c is None else str(c)
+                 for c in np.asarray(pool[s:s + chunk], dtype=object).tolist()]
+        yield len(a), "".join([f"{x}\t{y}\t{z}\n" for x, y, z in zip(a, v, p)])
+
+
+def _fastStagingOn(pairs):
+    return (os.environ.get("XCP_STAGING_FAST_COPY", "1") != "0"
+            and isinstance(pairs, tuple) and hasattr(pairs[0], "size"))
+
+
 def _fillStaging(conn, sport, pairs):
     table = _stagingFor(sport)
     with conn.cursor() as cur:
         cur.execute(f"DROP TABLE IF EXISTS {table}")
         cur.execute(f"CREATE UNLOGGED TABLE {table} "
                     f"(result_id bigint NOT NULL, val real NOT NULL, pool text)")
-        n = _copyInto(cur, table, ("result_id", "val", "pool"), _asPairs(pairs))
+        if _fastStagingOn(pairs):
+            n = 0
+            for k, payload in _stagingLines(pairs):
+                cur.copy_expert(f"COPY {table} (result_id, val, pool) FROM STDIN",
+                                io.StringIO(payload))
+                n += k
+        else:
+            n = _copyInto(cur, table, ("result_id", "val", "pool"), _asPairs(pairs))
     conn.commit()
     print(f"[db] {sport}: COPYed {n:,} ratings into {table}")
     return table, n
@@ -2209,7 +2249,12 @@ def _ensureRatingPool(conn, table):
     raise RuntimeError(f"{table}: could not add rating_pool (lock held by another session)")
 
 
-def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
+def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild",
+                           before_swap=None) -> None:
+    """before_swap: None, or a callable that blocks until the writes that
+    must land before this table changes have landed (raising if they
+    failed); called just before the swap, or before the UPDATE in "update"
+    mode (joint_golive.writeLive)."""
     table = {"XC": "results", "TF": "results_tf"}[sport]
     with getConn() as conn:
         _takeGoLiveLock(conn, table)
@@ -2250,9 +2295,12 @@ def saveResultSpeedRatings(sport: str, pairs, mode: str = "rebuild") -> None:
             _ensureRatingPool(conn, table)
             mergeColumn(conn, table, "speed_rating", staging,
                         extra=(("rating_pool", "pool"),),
-                        key="result_id", val="val", preserve_unmatched=False)
+                        key="result_id", val="val", preserve_unmatched=False,
+                        before_swap=before_swap)
         else:
             _ensureRatingPool(conn, table)
+            if before_swap is not None:
+                before_swap()
             _updateFromStaging(conn, sport, table, staging)
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {staging}")

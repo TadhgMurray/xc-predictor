@@ -1451,17 +1451,52 @@ def writeLive(live):
     """⚠ Writes course_difficulties, athlete_ratings and results.speed_rating."""
     import pair_golive as pg
     from database import getConn
-    from speed_ratings_db import (saveCourseDifficulties, saveAthleteRatings,
-                                  saveResultSpeedRatings)
+    from speed_ratings_db import saveCourseDifficulties, saveAthleteRatings
 
     with getConn() as conn:
         pg.backupSpeedRatings(conn)
 
-    print(f"[joint/live] course_difficulties: {len(live['diffs']):,} cells")
-    saveCourseDifficulties(live["diffs"], ("XC", "TF"))
+    def _courseAndAthletes():
+        print(f"[joint/live] course_difficulties: {len(live['diffs']):,} cells")
+        saveCourseDifficulties(live["diffs"], ("XC", "TF"))
+        print(f"[joint/live] athlete_ratings: {len(live['athletes']):,} rows")
+        saveAthleteRatings(live["athletes"], ("XC", "TF"))
 
-    print(f"[joint/live] athlete_ratings: {len(live['athletes']):,} rows")
-    saveAthleteRatings(live["athletes"], ("XC", "TF"))
+    # ★ COURSES AND ATHLETES BESIDE THE RESULTS REBUILDS, GATED AT THE SWAP
+    #   (2026-11-19, run 20261116_204106: these two writes ran first and the
+    #   results rebuilds -- track's ~20 min the long pole -- waited on
+    #   them). They touch course_difficulties and athlete_ratings only;
+    #   the rebuilds touch the staging tables and <table>_new until their
+    #   swap. So they now run on their own thread from the start, and each
+    #   results save waits for them just before its swap (mergeColumn's
+    #   before_swap): the same order at the moment anything becomes
+    #   visible -- courses and athletes, then results -- and a failure in
+    #   them still leaves results and results_tf untouched (the rebuilt
+    #   <table>_new is dropped) and fails the go-live. Memory: one more
+    #   pooled connection; the dicts are already in memory.
+    #   XCP_GOLIVE_PRESAVE_PARALLEL=0 writes them first, in line, as before.
+    import concurrent.futures as cf
+    pre_pool = pre = None
+    if os.environ.get("XCP_GOLIVE_PRESAVE_PARALLEL", "1") != "0":
+        pre_pool = cf.ThreadPoolExecutor(max_workers=1)
+        pre = pre_pool.submit(_courseAndAthletes)
+    else:
+        _courseAndAthletes()
+    gate = None if pre is None else pre.result
+    try:
+        _saveResults(live, gate)
+        if pre is not None:
+            pre.result()                     # a sport with no rows never gated
+    finally:
+        if pre_pool is not None:
+            pre_pool.shutdown(wait=True)     # never leave a writer running
+    _afterResults(live)
+
+
+def _saveResults(live, gate):
+    """Every sport's result ratings; `gate` (None or a callable) is each
+    save's before_swap."""
+    from speed_ratings_db import saveResultSpeedRatings
 
     # ! DO NOT DESTRUCTURE THIS. buildLive puts (result_id, rating, pool)
     #   here -- three arrays since fbf4419 (issue 171: the pool the rating
@@ -1500,7 +1535,8 @@ def writeLive(live):
         # the bigger table first, so its rebuild starts at once
         items.sort(key=lambda kv: -kv[1][0].size)
         with cf.ThreadPoolExecutor(max_workers=len(items)) as pool:
-            futs = {pool.submit(saveResultSpeedRatings, name, arrays): (name, arrays)
+            futs = {pool.submit(saveResultSpeedRatings, name, arrays,
+                                before_swap=gate): (name, arrays)
                     for name, arrays in items}
             for f in cf.as_completed(futs):
                 f.result()                     # a failed save raises here, as in line
@@ -1511,8 +1547,12 @@ def writeLive(live):
             print(f"[joint/live] saving one sport at a time: {avail:.0f} GB available, "
                   f"under XCP_GOLIVE_SAVE_MIN_GB={need:.0f}", flush=True)
         for name, arrays in items:
-            saveResultSpeedRatings(name, arrays)
+            saveResultSpeedRatings(name, arrays, before_swap=gate)
             print(f"[joint/live] {name}: {arrays[0].size:,} result ratings written")
+
+
+def _afterResults(live):
+    import pair_golive as pg
     writeGoliveStamp()
     writeDistOffsets(live.get("dist_rows", []))
     writeEngineScale(live.get("scale_rows", []))

@@ -27,13 +27,15 @@ def stubbed(monkeypatch):
     live_now = [0, 0]
     lock = threading.Lock()
 
-    def save(name, arrays, mode="rebuild"):
+    def save(name, arrays, mode="rebuild", before_swap=None):
         with lock:
             live_now[0] += 1
             live_now[1] = max(live_now[1], live_now[0])
         time.sleep(0.3)
         with lock:
             live_now[0] -= 1
+        if before_swap is not None:
+            before_swap()                      # the swap waits here
         log.append(name)
 
     monkeypatch.setattr(D, "saveResultSpeedRatings", save)
@@ -79,3 +81,36 @@ def test_one_at_a_time_without_room_or_when_off(stubbed, monkeypatch):
     monkeypatch.setenv("XCP_GOLIVE_SAVE_PARALLEL", "0")
     G.writeLive(live)
     assert log == ["XC", "TF"] and live_now[1] == 1
+
+
+def test_course_and_athletes_beside_the_rebuilds_gated_at_the_swap(stubbed, monkeypatch):
+    """2026-11-19: course_difficulties / athlete_ratings run on their own
+    thread while the results rebuild; every results swap waits for them,
+    and their failure means no results swap at all."""
+    import speed_ratings_db as D
+    live, log, _ = stubbed
+    monkeypatch.setattr(G, "_memAvailableGb", lambda: 100.0)
+
+    def athletes(*a, **k):
+        time.sleep(0.6)                        # longer than a rebuild's 0.3 s
+        log.append("athletes")
+    monkeypatch.setattr(D, "saveAthleteRatings", athletes)
+    t0 = time.time()
+    G.writeLive(live)
+    assert log[0] == "athletes" and sorted(log[1:]) == ["TF", "XC"]
+    assert time.time() - t0 < 0.85             # side by side: ~0.6, not 0.9
+
+    log.clear()
+
+    def broken(*a, **k):
+        raise RuntimeError("athlete_ratings failed")
+    monkeypatch.setattr(D, "saveAthleteRatings", broken)
+    with pytest.raises(RuntimeError, match="athlete_ratings failed"):
+        G.writeLive(live)
+    assert log == []                           # no table was swapped
+
+    monkeypatch.setenv("XCP_GOLIVE_PRESAVE_PARALLEL", "0")
+    monkeypatch.setattr(D, "saveAthleteRatings", athletes)
+    t0 = time.time()
+    G.writeLive(live)
+    assert log[0] == "athletes" and time.time() - t0 >= 0.9   # in line, as before

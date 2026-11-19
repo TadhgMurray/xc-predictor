@@ -721,7 +721,7 @@ def _vacuumNew(conn, table):
 
 
 def mergeColumn(conn, table, column, staging, key="result_id", val="val",
-                preserve_unmatched=True, extra=(), connect=None):
+                preserve_unmatched=True, extra=(), connect=None, before_swap=None):
     print("-" * 70)
     print(f"MERGE: rebuilding {table}.{column} from {staging}")
     with conn.cursor() as cur:
@@ -813,6 +813,18 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
     #   nothing observes a half-done state; `table` still flips atomically.
     conn.commit()
     _vacuumNew(conn, table)
+    # ★ THE CALLER'S GATE, JUST BEFORE THE SWAP (2026-11-19, run
+    #   20261116_204106: 08_golive's course and athlete writes ran in front of
+    #   the results rebuilds, which waited on them). before_swap() blocks
+    #   until whatever must land before `table` changes has landed, and
+    #   raises if it failed -- then <table>_new is dropped and `table` is
+    #   untouched, exactly as if this merge had never started. None: no gate.
+    if before_swap is not None:
+        try:
+            before_swap()
+        except BaseException:
+            _dropNew(conn, table)
+            raise
     _swapSiege(conn, table, cap)                   # the swap becomes visible HERE
 
     with conn.cursor() as cur:
