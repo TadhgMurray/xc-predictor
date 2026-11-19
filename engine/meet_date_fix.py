@@ -483,7 +483,73 @@ def _timed(cur, label, sql, params=None):
     print(f"[dates]   {label} ({time.time() - t0:.0f}s)", flush=True)
 
 
-def buildVotes(cur, sports=tuple(TABLES)):
+# ★ md_pm'S TWO SPORTS SIDE BY SIDE (2026-11-19; run 20261116_204106:
+#   00_meet_dates 326 s, "md_pm: every graded anet athlete per meet (182s)"
+#   -- one statement reading results and then results_tf). md_pm groups by
+#   (sport, meet, person) and the sport is a constant per table, so no group
+#   ever holds rows of both: grouping each table alone and stacking the two
+#   is the same set of rows. Each sport's group runs on its own connection
+#   into a plain table (md_pm_side_<sport>, the main connection's session
+#   settings -- its work_mem -- copied over), and md_pm is the two stacked
+#   through the same UNION ALL, so its columns resolve to the same types.
+#   Each side statement's plan is one branch of the old one.
+# ! Only with --write (a dry run commits nothing, so it stays on one
+#   connection) and never under an exported snapshot (XCP_PG_SNAPSHOT_FILE:
+#   the main transaction could not see the side tables' rows). Memory: two
+#   statements at once, each the old statement's work_mem.
+#   XCP_MD_PARALLEL=0 is the one statement.
+_SIDE_SKIP = ("transaction_isolation", "transaction_read_only",
+              "transaction_deferrable", "session_authorization", "role")
+
+
+def sideOn():
+    if os.environ.get("XCP_MD_PARALLEL", "1").strip() in ("0", "false"):
+        return False
+    return not os.environ.get("XCP_PG_SNAPSHOT_FILE", "").strip()
+
+
+def _sideTable(sp):
+    return f"md_pm_side_{sp.lower()}"
+
+
+def _sidePm(cur, groups):
+    """Each {sport: SELECT} into its own plain table on its own connection,
+    at once; returns the tables in `groups` order. Raises on a failure."""
+    from concurrent.futures import ThreadPoolExecutor
+    from database import getConn
+    cur.execute("SELECT name, current_setting(name) FROM pg_settings "
+                "WHERE source = 'session' ORDER BY name")
+    settings = [(n, v) for n, v in cur.fetchall() if n not in _SIDE_SKIP]
+
+    def work(sp, sql):
+        t0 = time.time()
+        tb = _sideTable(sp)
+        with getConn() as conn:
+            try:
+                with conn.cursor() as wc:
+                    for name, value in settings:
+                        wc.execute("SAVEPOINT side_set")
+                        try:
+                            wc.execute("SELECT set_config(%s, %s, true)", (name, value))
+                            wc.execute("RELEASE SAVEPOINT side_set")
+                        except Exception:                   # noqa: BLE001
+                            wc.execute("ROLLBACK TO SAVEPOINT side_set")
+                    wc.execute(f"DROP TABLE IF EXISTS {tb}")
+                    wc.execute(f"CREATE TABLE {tb} AS {sql}")
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        print(f"[dates]     {sp} on its own connection ({time.time() - t0:.0f}s)",
+              flush=True)
+        return tb
+
+    with ThreadPoolExecutor(max_workers=len(groups)) as ex:
+        futs = [ex.submit(work, sp, sql) for sp, sql in groups.items()]
+        return [f.result() for f in futs]
+
+
+def buildVotes(cur, sports=tuple(TABLES), side=False):
     """{sport: {meet_id: {'tally': {k: voters}, 'first'}}} for every
     anet meet of `sports` with a voter. Set-based: two temp tables and one
     grouped join, each timed.
@@ -516,13 +582,33 @@ def buildVotes(cur, sports=tuple(TABLES)):
     #   (the meets a fix moves get their real first and last day from all
     #   their rows, in meetRows).
     cur.execute("DROP TABLE IF EXISTS md_pm, md_top")
-    _timed(cur, "md_pm: every graded anet athlete per meet", f"""
-        CREATE TEMP TABLE md_pm AS
+    group = """
         SELECT sport, meet_id, person_id, min(class_of) AS class_of,
                min(day) AS d_first
-        FROM   ({' UNION ALL '.join(parts)}) x
+        FROM   ({}) x
         GROUP  BY sport, meet_id, person_id
-        HAVING min(class_of) = max(class_of)""")
+        HAVING min(class_of) = max(class_of)"""
+    tabs = None
+    if side and len(parts) > 1 and sideOn():
+        t0 = time.time()
+        try:
+            tabs = _sidePm(cur, {sp: group.format(p) for sp, p in zip(TABLES, parts)})
+        except Exception as exc:                             # noqa: BLE001
+            # ! a side failure costs only time: the one statement, as before
+            print(f"[dates]   side by side failed ({type(exc).__name__}: {exc}); "
+                  f"one statement instead", flush=True)
+            cur.execute("DROP TABLE IF EXISTS "
+                        + ", ".join(_sideTable(sp) for sp in TABLES))
+    if tabs:
+        cur.execute("CREATE TEMP TABLE md_pm AS "
+                    + " UNION ALL ".join(f"SELECT * FROM {t}" for t in tabs))
+        cur.execute("DROP TABLE " + ", ".join(tabs))
+        print(f"[dates]   md_pm: every graded anet athlete per meet, the sports "
+              f"side by side ({time.time() - t0:.0f}s; XCP_MD_PARALLEL=0 for one "
+              f"statement)", flush=True)
+    else:
+        _timed(cur, "md_pm: every graded anet athlete per meet",
+               "CREATE TEMP TABLE md_pm AS" + group.format(' UNION ALL '.join(parts)))
     _timed(cur, "md_top: each runner's three likeliest classes", """
         CREATE TEMP TABLE md_top AS
         SELECT person_id,
@@ -605,13 +691,13 @@ def meetRows(cur, sport, ids):
     return out
 
 
-def examine(cur, sports=tuple(TABLES), meet=None):
+def examine(cur, sports=tuple(TABLES), meet=None, side=False):
     """{sport: (shape, rows)} -- every anet meet voted on; rows are the ones
     a majority moves (FIX, or held by a guard), plus `meet` if asked for,
     each with its verdict: row['apply'] with row['why']."""
     t0 = time.time()
     print("[dates] the grade vote, both sports' rows:", flush=True)
-    everything = buildVotes(cur, sports)
+    everything = buildVotes(cur, sports, side=side)
     found = {}
     for sport in sports:
         meets = everything[sport]
@@ -890,7 +976,7 @@ def main():
         with conn.cursor() as cur:
             cur.execute("SET work_mem = '512MB'")
             sports = (a.sport,) if a.sport else tuple(TABLES)
-            found = examine(cur, sports, a.meet)
+            found = examine(cur, sports, a.meet, side=a.write)
             printReport(found, a.show, a.meet)
             if a.write:
                 record(cur, found)

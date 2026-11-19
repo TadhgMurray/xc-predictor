@@ -29,7 +29,9 @@ only: the normalisation pool), racecast/app.py (the season labels). A
 database without the table behaves exactly as before.
 """
 import argparse
+import os
 import sys
+import time
 
 sys.path.insert(0, "scripts")
 from database import getConn                                   # noqa: E402
@@ -85,10 +87,13 @@ def boardGenderExpr(sport):
     return f"CASE WHEN a.split THEN COALESCE({lab}, a.gender) ELSE a.gender END"
 
 
-_BUILD = f"""
+# ★ THE BUILD IN PIECES (2026-11-19; see SIDE BY SIDE below). _BUILD is
+#   these fragments joined, the one statement it always was.
+_HEAD = """
 DROP TABLE IF EXISTS person_gender_new;
 CREATE TABLE person_gender_new AS
--- ★ THE FIELD, BY PERSON (2026-10-07): each runner's scraped profile gender,
+"""
+_PA_FLD = f"""-- ★ THE FIELD, BY PERSON (2026-10-07): each runner's scraped profile gender,
 --   one per person (a person whose profiles disagree has none here). By
 --   person, not by the row's athlete_id: a tfrrs row carries no athletic.net
 --   profile id, so the field of a tfrrs race counted almost nobody.
@@ -105,8 +110,8 @@ fld AS (
     FROM   results fr JOIN pa ON pa.person_id = fr.person_id
     GROUP  BY fr.source, fr.meet_id, fr.div_id
 ),
-ev AS (
-    -- ★ THE FIELD OUTVOTES THE LABEL WHEN IT IS DECISIVE (2026-10-07,
+"""
+_EV_XC = f"""    -- ★ THE FIELD OUTVOTES THE LABEL WHEN IT IS DECISIVE (2026-10-07,
     --   owner: Fairborn Community Park 2026, a college MEN's 5k whose tfrrs
     --   division reads "Women"). The label decided, so every runner first
     --   seen there became a woman: rated on the women's scale (a 15:17 at
@@ -149,13 +154,13 @@ ev AS (
                                    OR (r.source IN ('upload', 'timer') AND m.source = r.source))
     LEFT   JOIN meets_tfrrs mt ON mt.meet_id = r.meet_id AND r.source = 'tfrrs'
     WHERE  r.person_id IS NOT NULL
-    UNION ALL
-    SELECT r.person_id, {labelExpr('r.event_short')}, 1
+"""
+_EV_TF = f"""    SELECT r.person_id, {labelExpr('r.event_short')}, 1
     FROM   results_tf r
     WHERE  r.person_id IS NOT NULL
       AND  r.event_short ~* '{M_RX}|{F_RX}'
-),
--- ★ THE PROFILES VOTE TOO, AT {PROFILE_VOTES} EACH (2026-09-06). A boy
+"""
+_PROF = f"""-- ★ THE PROFILES VOTE TOO, AT {PROFILE_VOTES} EACH (2026-09-06). A boy
 --   whose every division read "Varsity" had ONE row labelled the other
 --   way and was pooled as a girl (a 17:54 5k at 144.8). One profile
 --   outvotes a stray label; a handful of labelled rows still outvote a
@@ -171,22 +176,20 @@ prof AS (
         FROM   results_tf r JOIN athletes a ON a.athlete_id = r.athlete_id
         WHERE  r.person_id IS NOT NULL AND a.gender IN ('M', 'F')
     ) p
-),
-rows_ AS (
-    SELECT person_id,
+)"""
+_ROWS = """    SELECT person_id,
            count(*) FILTER (WHERE g = 'M') AS n_m,
            count(*) FILTER (WHERE g = 'F') AS n_f,
            coalesce(sum(w) FILTER (WHERE g = 'M'), 0) AS w_m,
            coalesce(sum(w) FILTER (WHERE g = 'F'), 0) AS w_f
     FROM   ev WHERE g IS NOT NULL GROUP BY person_id
-),
-profs AS (
-    SELECT person_id,
+"""
+_PROFS = """    SELECT person_id,
            count(*) FILTER (WHERE gender = 'M') AS p_m,
            count(*) FILTER (WHERE gender = 'F') AS p_f
     FROM   prof GROUP BY person_id
-)
-SELECT person_id,
+"""
+_FINAL = f"""SELECT person_id,
        CASE WHEN w_f + {PROFILE_VOTES} * p_f > w_m + {PROFILE_VOTES} * p_m
             THEN 'F' ELSE 'M' END                        AS gender,
        n_m, n_f,
@@ -202,7 +205,8 @@ FROM (
     FROM   rows_ r FULL OUTER JOIN profs p USING (person_id)
 ) s
 WHERE n_m + n_f + p_m + p_f > 0;
-ALTER TABLE person_gender_new ADD PRIMARY KEY (person_id);
+"""
+_TAIL = """ALTER TABLE person_gender_new ADD PRIMARY KEY (person_id);
 -- who moved: the people whose verdict (gender or split) differs from the
 -- table this replaces, so a backfill can re-normalise just them
 -- (2026-09-06); an absent previous table means everyone with a row
@@ -215,6 +219,115 @@ WHERE  o.person_id IS NULL OR o.gender IS DISTINCT FROM n.gender
    OR  o.split IS DISTINCT FROM n.split;
 ALTER TABLE person_gender_changed ADD PRIMARY KEY (person_id);
 """
+_BUILD = (_HEAD + _PA_FLD + "ev AS (\n" + _EV_XC + "    UNION ALL\n" + _EV_TF
+          + "),\n" + _PROF + ",\nrows_ AS (\n" + _ROWS + "),\nprofs AS (\n"
+          + _PROFS + ")\n" + _FINAL + _TAIL)
+
+# ★ SIDE BY SIDE (2026-11-19; run 20261116_204106: 04d_gender 542 s in
+#   line, one statement, one log line at the end). _BUILD's three readers
+#   of results / results_tf are independent until the final join: the
+#   cross country votes (pa, fld and ev's results branch), the track votes
+#   (ev's results_tf branch) and the profiles (prof). Each now runs on its
+#   own connection into a plain table, per person, and the main connection
+#   finishes from those three.
+# ! THE SAME ROWS. rows_ groups ev by person; ev is the UNION ALL of the
+#   two branches, so each person's counts and vote weights are the sums of
+#   the two branches' own -- count and sum add, and a person absent from a
+#   branch adds nothing. The sums are cast back to bigint, the type count
+#   and sum(int) gave, and the stack is a UNION ALL of the two pieces, so
+#   person_id resolves to the type ev's union gave it. profs is the profiles
+#   piece as it was. From there on the statement is _BUILD's own text
+#   (_FINAL, _TAIL). Each piece's plan is one branch of the old plan.
+# ! MEMORY: three statements at once, each with the main connection's
+#   session settings (work_mem 1GB, 4 workers per gather) -- the hash tables
+#   the one plan held across its branches until it ended, now held by three
+#   plans at once. Workers past max_parallel_workers are simply not started.
+# ! Never under an exported snapshot (XCP_PG_SNAPSHOT_FILE: the main
+#   transaction could not see the pieces' rows). A failed piece costs only
+#   time: the pieces are dropped and _BUILD runs as before.
+#   XCP_GENDER_PARALLEL=0 is the one statement.
+_PIECE_XC, _PIECE_TF, _PIECE_PROF = ("person_gender_p_xc", "person_gender_p_tf",
+                                     "person_gender_p_prof")
+_PIECES = {
+    _PIECE_XC: _PA_FLD + "ev AS (\n" + _EV_XC + ")\n" + _ROWS,
+    _PIECE_TF: "WITH ev AS (\n" + _EV_TF + ")\n" + _ROWS,
+    _PIECE_PROF: "WITH " + _PROF + "\n" + _PROFS,
+}
+_STACK = (_HEAD + f"""WITH rows_ AS (
+    SELECT person_id,
+           sum(n_m)::bigint AS n_m, sum(n_f)::bigint AS n_f,
+           sum(w_m)::bigint AS w_m, sum(w_f)::bigint AS w_f
+    FROM  (SELECT * FROM {_PIECE_XC} UNION ALL SELECT * FROM {_PIECE_TF}) u
+    GROUP  BY person_id
+),
+profs AS (SELECT * FROM {_PIECE_PROF})
+""" + _FINAL + _TAIL + f"DROP TABLE {', '.join(_PIECES)};\n")
+_SIDE_SKIP = ("transaction_isolation", "transaction_read_only",
+              "transaction_deferrable", "session_authorization", "role")
+
+
+def sideOn():
+    if os.environ.get("XCP_GENDER_PARALLEL", "1").strip() in ("0", "false"):
+        return False
+    return not os.environ.get("XCP_PG_SNAPSHOT_FILE", "").strip()
+
+
+def _dropPieces(cur):
+    cur.execute(f"DROP TABLE IF EXISTS {', '.join(_PIECES)}")
+
+
+def buildPieces(cur, connect=None):
+    """The three pieces at once, each on its own connection with `cur`'s
+    session settings, committed. Raises on a failure."""
+    from concurrent.futures import ThreadPoolExecutor
+    connect = connect or getConn
+    cur.execute("SELECT name, current_setting(name) FROM pg_settings "
+                "WHERE source = 'session' ORDER BY name")
+    settings = [(n, v) for n, v in cur.fetchall() if n not in _SIDE_SKIP]
+
+    def work(name, sql):
+        t0 = time.time()
+        with connect() as conn:
+            try:
+                with conn.cursor() as wc:
+                    for k, v in settings:
+                        wc.execute("SAVEPOINT side_set")
+                        try:
+                            wc.execute("SELECT set_config(%s, %s, true)", (k, v))
+                            wc.execute("RELEASE SAVEPOINT side_set")
+                        except Exception:                   # noqa: BLE001
+                            wc.execute("ROLLBACK TO SAVEPOINT side_set")
+                    wc.execute(f"DROP TABLE IF EXISTS {name}")
+                    wc.execute(f"CREATE TABLE {name} AS\n{sql}")
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        print(f"  {name}: {time.time() - t0:.0f}s on its own connection", flush=True)
+
+    with ThreadPoolExecutor(max_workers=len(_PIECES)) as ex:
+        for f in [ex.submit(work, n, q) for n, q in _PIECES.items()]:
+            f.result()
+
+
+def build(cur, connect=None):
+    """person_gender_new and person_gender_changed, uncommitted on `cur`."""
+    if sideOn():
+        t0 = time.time()
+        try:
+            buildPieces(cur, connect)
+        except Exception as exc:                             # noqa: BLE001
+            print(f"  side by side failed ({type(exc).__name__}: {exc}); "
+                  f"one statement instead", flush=True)
+            _dropPieces(cur)
+        else:
+            cur.execute(_STACK)
+            print(f"  person_gender_new: {time.time() - t0:.0f}s, three pieces side by "
+                  f"side (XCP_GENDER_PARALLEL=0 for one statement)", flush=True)
+            return
+    cur.execute(_BUILD)
+
+
 # the swap itself is database.swapTable (short lock, retries), run after
 # _BUILD commits -- a bare DROP here queued every page behind any reader
 
@@ -239,7 +352,7 @@ def main():
         if args.write:
             cur.execute("SET max_parallel_workers_per_gather = 4")
             cur.execute("SET work_mem = '1GB'")
-            cur.execute(_BUILD)
+            build(cur)
             conn.commit()
             from database import swapTable
             swapTable(conn, "person_gender", "person_gender_new")

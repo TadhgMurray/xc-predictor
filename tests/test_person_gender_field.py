@@ -64,3 +64,62 @@ def test_field_vote_on_a_scratch_database():
     # its "Women" label (Fairborn 2026), as do its known men's own rows;
     # 904: a decisive field outvotes the runner's own profile (Liam Whitling)
     assert got == {900: "M", 903: "M", 904: "M"}, got
+
+
+def test_the_pieces_side_by_side_are_the_one_statement():
+    # ★ 2026-11-19: the three pieces on their own connections, stacked,
+    #   give _BUILD's rows and column types, both tables
+    import contextlib
+    import pytest
+    dsn = os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TWIN_TEST_DSN to a scratch Postgres")
+    import importlib
+    psycopg2 = importlib.import_module("psycopg2")
+
+    @contextlib.contextmanager
+    def connect():
+        c = psycopg2.connect(dsn)
+        try:
+            yield c
+        finally:
+            c.close()
+    conn = psycopg2.connect(dsn)
+    cur = conn.cursor()
+    try:
+        cur.execute(_FIXTURE + """
+            INSERT INTO results_tf VALUES (1,101,101,'anet','Women 1500'),
+              (2,905,NULL,'tfrrs','Men''s 1500 Meters'),(3,905,NULL,'tfrrs','Mens 800'),
+              (4,201,201,'anet','1600'),(5,906,NULL,'tfrrs','Women 5000');
+            INSERT INTO athletes VALUES (907,'F',907);
+            INSERT INTO results_tf VALUES (6,907,907,'anet','3200');
+            INSERT INTO person_gender VALUES (101,'F',0,1,false),(905,'M',2,0,false);""")
+        conn.commit()
+
+        def dump():
+            out = []
+            for t in ("person_gender_new", "person_gender_changed"):
+                cur.execute(f"SELECT * FROM {t} ORDER BY person_id")
+                out.append(cur.fetchall())
+                cur.execute("SELECT column_name, data_type FROM information_schema.columns "
+                            "WHERE table_name = %s ORDER BY ordinal_position", (t,))
+                out.append(cur.fetchall())
+            return out
+        os.environ["XCP_GENDER_PARALLEL"] = "0"
+        PG.build(cur)
+        one = dump()
+        conn.rollback()
+        os.environ["XCP_GENDER_PARALLEL"] = "1"
+        PG.build(cur, connect)
+        both = dump()
+        assert both == one and len(one[0]) > 10
+        cur.execute("SELECT to_regclass('person_gender_p_xc')")
+        assert cur.fetchone()[0] is None, "the pieces are dropped"
+    finally:
+        os.environ.pop("XCP_GENDER_PARALLEL", None)
+        conn.rollback()
+        cur.execute("DROP TABLE IF EXISTS results, results_tf, meets, meets_tfrrs, athletes, "
+                    "person_gender, person_gender_new, person_gender_changed, "
+                    "person_gender_p_xc, person_gender_p_tf, person_gender_p_prof")
+        conn.commit()
+        conn.close()

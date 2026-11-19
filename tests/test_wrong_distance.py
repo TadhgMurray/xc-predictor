@@ -327,6 +327,12 @@ def test_the_finder_on_a_synthetic_corpus(scratch):
         c.execute("INSERT INTO dist_override VALUES (%s, %s, 4000, 'DIST_PROPOSED')", bad)
         pools, has_ovr = WD.build(c, "64MB")
         assert has_ovr
+        # ★ 2026-11-19: wd_rg from wd_row's own rating is the old second read
+        c.execute(WD._RATING_SQL[-1].replace("wd_rg", "wd_rg_old"))
+        c.execute("SELECT * FROM wd_rg ORDER BY dk")
+        new = c.fetchall()
+        c.execute("SELECT * FROM wd_rg_old ORDER BY dk")
+        assert new == c.fetchall() and new
         verdicts = WD.gather(c, pools, has_ovr)
         got = {(int(v["div"]["meet_id"]), int(v["div"]["div_id"])): v for v in verdicts}
 
