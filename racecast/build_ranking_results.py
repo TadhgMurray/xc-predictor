@@ -3041,15 +3041,21 @@ def orderedRewrite(conn, table, like, units_from=None):
             got = _seasonWorkMem(conn, cur, _SEASON_WORK_MEM, quiet_log=True)
             cur.execute(f"CREATE TABLE {tmp} (LIKE {table} INCLUDING DEFAULTS "
                         f"INCLUDING CONSTRAINTS) WITH (autovacuum_enabled = false)")
+            join = ""
             if units_from:
                 # the shadow's columns, its unit columns from the key; named
                 # in a subquery so the board order's bare names stay its own
                 pick = ", ".join(f'k."{n}"' if n in _UNIT_COLS else f's."{n}"'
                                  for n in names)
-                cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM "
-                            f"(SELECT {pick} FROM {table} s "
-                            f"LEFT JOIN {units_from} k ON {_keyMatch('s', 'k')}) q "
-                            f"ORDER BY {order}")
+                select = (f"SELECT {cols} FROM "
+                          f"(SELECT {pick} FROM {table} s "
+                          f"LEFT JOIN {units_from} k ON {_keyMatch('s', 'k')}) q "
+                          f"ORDER BY {order}")
+                if _SEASON_REWRITE_HASH:
+                    # ★ see _SEASON_REWRITE_HASH: hash the keys, no merge sort
+                    cur.execute("SET LOCAL enable_mergejoin = off")
+                join = _joinMethod(cur, select)
+                cur.execute(f"INSERT INTO {tmp} ({cols}) {select}")
             else:
                 cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table} "
                             f"ORDER BY {order}")
@@ -3065,8 +3071,24 @@ def orderedRewrite(conn, table, like, units_from=None):
         return False
     print(f"    [{time.time() - t0:7.1f}s] {table}: logged, {n_out:,} rows in board "
           f"order ({order}; work_mem {got})"
-          + (f"; unit columns from {units_from}" if units_from else ""))
+          + (f"; unit columns from {units_from}" if units_from else "")
+          + (f", {join}" if join else ""))
     return True
+
+
+def _joinMethod(cur, select):
+    """The join node the planner chose for `select` (EXPLAIN, no run), for
+    the log line: so a run says which plan its rewrite had."""
+    try:
+        cur.execute("SAVEPOINT join_method")
+        cur.execute(f"EXPLAIN (COSTS OFF) {select}")
+        plan = " ".join(r[0] for r in cur.fetchall())
+        cur.execute("RELEASE SAVEPOINT join_method")
+    except psycopg2.Error:
+        cur.execute("ROLLBACK TO SAVEPOINT join_method")
+        return ""
+    m = re.search(r"(Hash|Merge|Nested Loop)(?: (?:Left|Right|Full))? Join|Nested Loop", plan)
+    return m.group(0).lower() if m else ""
 
 
 def verifyShadow(conn, tables):
@@ -3560,6 +3582,25 @@ _SEASON_SHARD_WORK_MEM = ("1GB", "512MB", "256MB")
 #   with the UPDATE passes as before.
 _SEASON_UNITS_IN_REWRITE = os.environ.get("XCP_SEASON_UNITS_IN_REWRITE", "1") != "0"
 _SEASON_UNIT_KEYS = "tmp_season_unit_keys"
+
+# ★ THE SEASON REWRITE HASHES ITS KEYS (2026-11-19; run 20261117_142219:
+#   "athlete_season_new: logged, 26,180,545 rows in board order" 180 s).
+#   The planner joined the shadow to the unit keys with a MERGE join: an
+#   extra full sort of every season row by the five key expressions, before
+#   the board-order sort. The keys' expressions (_keyMatch: COALESCE, IS
+#   NULL, the CASE on pool) have no statistics, so it guesses 200 distinct
+#   values a clause and prices a hash join at ~1.5e9. Measured on 5M rows
+#   at work_mem 512MB (Postgres 16): merge 60.8 s, hash 28.4 s, the hash
+#   built on the keys (397k rows, 31 MB, one batch). So the rewrite turns
+#   merge joins off for its own transaction (SET LOCAL) and the log line
+#   names the join it got.
+# ! THE SAME TABLE, ROW FOR ROW AND PAGE FOR PAGE: a LEFT JOIN returns the
+#   same rows whatever its method, and the board order ends in person_id
+#   after (pool, sport, year) -- athlete_season's own GROUP BY key -- so no
+#   two rows tie and the INSERT writes them in one order only. A hash that
+#   outgrows memory spills into batches; nothing waits on anything.
+#   XCP_SEASON_REWRITE_HASH=0 leaves the planner its merge join, as before.
+_SEASON_REWRITE_HASH = os.environ.get("XCP_SEASON_REWRITE_HASH", "1") != "0"
 
 # ★ athlete_season BUILT BESIDE ranking_results' INDEXES (2026-11-13; run
 #   20261112_173033: ~470 s of index builds, then the season build after

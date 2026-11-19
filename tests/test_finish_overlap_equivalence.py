@@ -397,3 +397,19 @@ def test_fewer_shards_beside_the_indexes_build_the_same_table(db, monkeypatch):
     _finish(db, monkeypatch, "snap_new_sh", lean=False, ordered=True,
             patches=[("_SEASON_OVERLAP_SHARDS", 3)], **_NEW)
     _assertSame(db, "snap_old_sh", "snap_new_sh", as_in_order=True)
+
+
+_FOLD = dict(fold=True, beside=False, vac_par=False)
+
+
+def test_the_season_rewrite_by_hash_builds_the_same_table(db, monkeypatch):
+    """_SEASON_REWRITE_HASH (2026-11-19): the ordered season copy joins its
+    unit keys by hash, not merge -- the same rows in the same pages."""
+    _finish(db, monkeypatch, "snap_old_hj", lean=False, ordered=True,
+            patches=[("_SEASON_REWRITE_HASH", False)], **_FOLD)
+    log = _finish(db, monkeypatch, "snap_new_hj", lean=False, ordered=True,
+                  patches=[("_SEASON_REWRITE_HASH", True)], **_FOLD)
+    # the join is named, and it is not the merge (a tiny corpus may loop)
+    line = next(ln for ln in log.splitlines() if "unit columns from tmp_season_unit_keys" in ln)
+    assert line.endswith(" join") and "merge" not in line, line
+    _assertSame(db, "snap_old_hj", "snap_new_hj", as_in_order=True)
