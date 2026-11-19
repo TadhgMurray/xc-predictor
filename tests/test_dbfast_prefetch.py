@@ -52,3 +52,25 @@ def test_prefetch_matches_the_plain_loop_and_stops_cleanly():
             list(dbfast.dictRows(_Named(25), batch=10))
     finally:
         del os.environ["XCP_DB_PREFETCH"]
+
+
+def test_prefetched_rows_keep_the_cursor_rows_and_hold_two_batches():
+    """prefetchedRows (the rankings streams, 2026-11-19): the cursor's own
+    rows in order, and the reader at most one batch ahead of the walk."""
+    import time
+    cur = _Named(1003)
+    walked = 0
+    gen = dbfast.prefetchedRows(cur, 10, ahead=1)
+    got = []
+    for row in gen:
+        got.append(row)
+        walked += 1
+        if walked % 10 == 1:
+            time.sleep(0.002)               # the reader gets every chance
+            assert cur.pos <= (walked // 10 + 2) * 10   # walked batch + one
+    assert got == _Named(1003).rows
+    os.environ["XCP_DB_PREFETCH"] = "0"
+    try:
+        assert list(dbfast.prefetchedRows(_Named(25), 10)) == _Named(25).rows
+    finally:
+        del os.environ["XCP_DB_PREFETCH"]

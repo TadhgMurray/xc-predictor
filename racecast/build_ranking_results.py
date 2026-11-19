@@ -24,6 +24,7 @@ COST
     ~15-25 minutes for 61.6M rows. Streaming cursor in, COPY out.
 """
 
+import contextlib
 import io
 import os
 import re
@@ -63,7 +64,7 @@ try:
     from event_parse import distanceFromEventShort, sprintDistanceFromEventShort
     # the field-event mark parser, beside this file (racecast/marks.py)
     from marks import parseMark, normalizeFieldEvent, saneMark
-    from dbfast import tuneSession
+    from dbfast import tuneSession, prefetchedRows
     from pool_ceiling import ceilingFor
     from pool_resolve import resolvePool, inScope
     # ★ THE SAME READER THE ENGINE USES (engine/pro_ability.py). Inside the
@@ -226,19 +227,24 @@ _GENDER_JOIN = """
 """
 
 
-def prepareGenderTemp(conn):
+def prepareGenderTemp(conn, into=None):
     """One pass over `athletes`, so the per-row lateral becomes a hash join.
 
     Same rule as the lateral it replaces -- majority of `athletes` rows, ties
     to 'M' -- so every athlete resolves to the gender the engine gave them.
+
+    into: a REAL table instead of the session temp (--stage prepare's shared
+    copy, see _SHARED_PREP); the same SQL, so the same contents.
     """
+    name = into or "tmp_person_gender"
     with conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.person_gender')")
         have_pg = cur.fetchone()[0] is not None
         print(f"  person_gender: {'rows decide' if have_pg else 'absent -- profile majority'}")
-        cur.execute(_GENDER_TEMP_SQL.format(
-            pg_table='person_gender' if have_pg else _PG_EMPTY))
-        cur.execute("SELECT count(*) FROM tmp_person_gender")
+        cur.execute(_sharedSql(_GENDER_TEMP_SQL.format(
+            pg_table='person_gender' if have_pg else _PG_EMPTY),
+            "tmp_person_gender", into))
+        cur.execute(f"SELECT count(*) FROM {name}")
         n = cur.fetchone()[0]
     conn.commit()
     print(f"  gender index: {n:,} people (built once, replaces a per-row lateral)")
@@ -289,7 +295,7 @@ _XC_TFRRS_DIST_SQL = """
 """
 
 
-def prepareXcTfrrsDistTemp(conn):
+def prepareXcTfrrsDistTemp(conn, into=None):
     """The XC distances that are NOT in `meets`, which is half the corpus.
 
     ⚠ THE XC QUERY JOINED `meets` AND NOTHING ELSE, AND `meets` IS THE ANET
@@ -322,8 +328,8 @@ def prepareXcTfrrsDistTemp(conn):
       JSON 34.5M times.
     """
     with conn.cursor() as cur:
-        cur.execute(_XC_TFRRS_DIST_SQL)
-        cur.execute("SELECT count(*) FROM tmp_xc_tfrrs_dist")
+        cur.execute(_sharedSql(_XC_TFRRS_DIST_SQL, "tmp_xc_tfrrs_dist", into))
+        cur.execute(f"SELECT count(*) FROM {into or 'tmp_xc_tfrrs_dist'}")
         n = cur.fetchone()[0]
     conn.commit()
     print(f"  XC tfrrs distances: {n:,} meet-divisions "
@@ -399,7 +405,8 @@ def ensureResultTwin(conn):
     conn.commit()
 
 
-def prepareSprintEvents(conn):
+def prepareSprintEvents(conn, into=None):
+    name = into or "tmp_sprint_events"
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT event_short FROM results_tf "
                     "WHERE event_short IS NOT NULL")
@@ -416,14 +423,15 @@ def prepareSprintEvents(conn):
                 sprints.append(ev)
                 n_nonflat += 1
 
-        cur.execute("DROP TABLE IF EXISTS tmp_sprint_events")
-        cur.execute("CREATE TEMP TABLE tmp_sprint_events (event_short text)")
+        cur.execute(f"DROP TABLE IF EXISTS {name}")
+        cur.execute(_sharedSql("CREATE TEMP TABLE tmp_sprint_events (event_short text)",
+                               "tmp_sprint_events", into))
         if sprints:
             psycopg2.extras.execute_values(
-                cur, "INSERT INTO tmp_sprint_events (event_short) VALUES %s",
+                cur, f"INSERT INTO {name} (event_short) VALUES %s",
                 [(e,) for e in sprints], page_size=1000)
-        cur.execute("CREATE UNIQUE INDEX ON tmp_sprint_events (event_short)")
-        cur.execute("ANALYZE tmp_sprint_events")
+        cur.execute(f"CREATE UNIQUE INDEX ON {name} (event_short)")
+        cur.execute(f"ANALYZE {name}")
     conn.commit()
     print(f"  sprint events (<{_SPRINT_MAX_DISTANCE:.0f}m, rated by nobody): "
           f"{len(sprints) - n_nonflat:,} of {len(names):,} event names, "
@@ -431,7 +439,7 @@ def prepareSprintEvents(conn):
 
 
 
-def prepareTfStateTemp(conn):
+def prepareTfStateTemp(conn, into=None):
     """One pass over meets_tf, so the TF query stops paying for its EVENT axis.
 
     ★ THE ONLY COLUMN TF WANTED FROM meets_tf WAS `state`, AND STATE IS A
@@ -453,12 +461,136 @@ def prepareTfStateTemp(conn):
       identical copies of it.
     """
     with conn.cursor() as cur:
-        cur.execute(_TF_STATE_TEMP_SQL)
-        cur.execute("SELECT count(*) FROM tmp_tf_state")
+        cur.execute(_sharedSql(_TF_STATE_TEMP_SQL, "tmp_tf_state", into))
+        cur.execute(f"SELECT count(*) FROM {into or 'tmp_tf_state'}")
         n = cur.fetchone()[0]
     conn.commit()
     print(f"  TF state index: {n:,} meet-divisions "
           f"(built once, replaces a 14.17M-row 4-key join)")
+
+
+# ★ THE STREAMS' LOOKUP TABLES, BUILT ONCE IN --stage prepare (2026-11-19;
+#   run 20261116_204106: ten streams of 1,046 s each, every one of them first
+#   building the same session temps -- "gender index: 17,802,181 people"
+#   about 50 s, "sprint events" about 60 s, a DISTINCT over all of
+#   results_tf -- ten copies of the same work at once, on the database that
+#   is the step's bottleneck). Prepare now builds the four as REAL tables,
+#   two connections side by side (XCP_RANK_PREP_JOBS), and every stream's
+#   query reads them under their own names (_sourceSql's `tables`).
+#
+# ! THE SAME CONTENTS: the same SQL as the temps (_sharedSql renames the
+#   table and nothing else), under the same tuneSession settings, with the
+#   same unique indexes. The stream query is the same text but for the
+#   names, so the rows it returns are the same rows.
+# ! THE SAME STATISTICS, SO THE SAME PLAN. Each is ANALYZEd inside the
+#   statement that builds it, exactly like the temp (a table the planner has
+#   no statistics on is how a scratch table once planned for 20 h). And
+#   autovacuum is OFF on them: a temp table is never vacuumed, so its
+#   visibility map stays empty and its statistics stay what that ANALYZE
+#   wrote; a shared copy that autovacuum vacuumed or re-analyzed between
+#   prepare and the streams could cost an index-only path differently. Off,
+#   the planner sees what it saw for the temp. Logged, not UNLOGGED: a crash
+#   would empty an unlogged table and leave its stamp behind.
+# ! ONLY THIS SHADOW'S COPIES ARE READ. Prepare stamps each table with the
+#   oid of the ranking_results_new it just created (COMMENT ON TABLE); a
+#   stream uses them only when every table its sport reads carries the oid
+#   of the shadow it is about to load, so a failed prepare, an older night's
+#   leftovers or a one-process run (no --stage) builds its own temps exactly
+#   as before. XCP_RANK_SHARED_PREP=0 is the old shape everywhere: prepare
+#   drops the copies, the streams build their temps.
+_SHARED_PREP = {
+    "tmp_person_gender": "rank_prep_person_gender",
+    "tmp_xc_tfrrs_dist": "rank_prep_xc_tfrrs_dist",
+    "tmp_tf_state": "rank_prep_tf_state",
+    "tmp_sprint_events": "rank_prep_sprint_events",
+}
+_SHARED_FOR = {"XC": ("tmp_person_gender", "tmp_xc_tfrrs_dist"),
+               "TF": ("tmp_person_gender", "tmp_tf_state", "tmp_sprint_events")}
+# {temp name: shared name} this process's stream query reads; {} = the temps
+_PREP_TABLES = {}
+
+
+def sharedPrepOn():
+    """XCP_RANK_SHARED_PREP (default on): '0' = every stream builds its temps."""
+    return (os.environ.get("XCP_RANK_SHARED_PREP") or "1").strip() != "0"
+
+
+def _sharedSql(sql, temp, into):
+    """A temp builder's SQL, building the real table `into` instead. Only the
+    name and the TEMP keyword change; autovacuum is switched off on it inside
+    the same transaction (see _SHARED_PREP)."""
+    if not into:
+        return sql
+    sql = sql.replace(f"CREATE TEMP TABLE {temp}", f"CREATE TABLE {temp}")
+    sql = re.sub(rf"\b{temp}\b", into, sql)
+    return (sql.rstrip().rstrip(";") + ";\n"
+            f"    ALTER TABLE {into} SET (autovacuum_enabled = false, "
+            f"toast.autovacuum_enabled = false);\n")
+
+
+def _prepStamp(cur):
+    """The stamp that ties the shared tables to one shadow, or None."""
+    cur.execute("SELECT to_regclass(%s)::oid", (_LOAD_TABLE,))
+    got = cur.fetchone()[0]
+    return None if got is None else f"rank_prep for {_LOAD_TABLE} oid {got}"
+
+
+def buildSharedPrep(conn):
+    """--stage prepare: the four lookup tables every stream reads."""
+    with conn.cursor() as cur:
+        for t in _SHARED_PREP.values():
+            cur.execute(f"DROP TABLE IF EXISTS {t}")
+    conn.commit()
+    if not sharedPrepOn():
+        print("  XCP_RANK_SHARED_PREP=0 -- each stream builds its own temps")
+        return
+
+    def gender(c):
+        prepareGenderTemp(c, into=_SHARED_PREP["tmp_person_gender"])
+        prepareXcTfrrsDistTemp(c, into=_SHARED_PREP["tmp_xc_tfrrs_dist"])
+
+    def track(c):
+        prepareTfStateTemp(c, into=_SHARED_PREP["tmp_tf_state"])
+        prepareSprintEvents(c, into=_SHARED_PREP["tmp_sprint_events"])
+
+    # ! TWO CONNECTIONS, ONE READING athletes, ONE results_tf: they share no
+    #   table. XCP_RANK_PREP_JOBS=1 (or XCP_DB_QUIET=strict) builds all
+    #   four on this connection, one after another.
+    if dbJobs(int(os.environ.get("XCP_RANK_PREP_JOBS") or "2")) > 1:
+        def side(fn):
+            with getConn() as c:
+                tuneSession(c, quiet=True)
+                fn(c)
+        with cf.ThreadPoolExecutor(max_workers=2) as pool:
+            for f in [pool.submit(side, track), pool.submit(gender, conn)]:
+                f.result()
+    else:
+        gender(conn)
+        track(conn)
+    with conn.cursor() as cur:
+        stamp = _prepStamp(cur)
+        for t in _SHARED_PREP.values():
+            cur.execute(f"COMMENT ON TABLE {t} IS %s", (stamp,))
+    conn.commit()
+    print(f"  shared stream tables stamped ({stamp})")
+
+
+def sharedPrepFor(conn, sports):
+    """{temp: shared} when every table these sports read was built by the
+    prepare that made the current shadow; {} (build the temps) otherwise."""
+    if not sharedPrepOn():
+        return {}
+    need = sorted({t for s in sports for t in _SHARED_FOR[s]})
+    with conn.cursor() as cur:
+        stamp = _prepStamp(cur)
+        if stamp is None:
+            return {}
+        for t in need:
+            cur.execute("SELECT obj_description(to_regclass(%s), 'pg_class')",
+                        (_SHARED_PREP[t],))
+            if cur.fetchone()[0] != stamp:
+                return {}
+    return {t: _SHARED_PREP[t] for t in need}
 
 
 _GENDER_LATERAL = """
@@ -973,8 +1105,19 @@ def _loadUnits(conn):
             pass
 
 
+# ★ PER DISTINCT POOL, NOT PER ROW (2026-11-19; run 20261116_204106, the
+#   ten 1,046 s streams): prepareRow asks this twice a written row
+#   (_homeStateOf, _unitsOf) of a few dozen pool strings. A pure function
+#   of its argument, so the cached answer is the computed one.
+_COLLEGE_POOL = {}
+
+
 def _isCollegePool(pool):
-    return bool(pool) and str(pool).split("|")[0].startswith("college")
+    got = _COLLEGE_POOL.get(pool)
+    if got is None:
+        got = _COLLEGE_POOL[pool] = (bool(pool)
+                                     and str(pool).split("|")[0].startswith("college"))
+    return got
 
 
 _TEAM_CACHE = {}
@@ -1294,15 +1437,28 @@ def timedEventKind(event_short):
 # Same trio as the engine loader and the backfill nuke -- one pattern,
 # three spellings, all named "wheelchair" so a grep finds the family.
 _WHEELCHAIR_RX = re.compile(r"wheelchair|seated|ambulator", re.IGNORECASE)
+# ★ ONE SEARCH PER DISTINCT EVENT NAME (2026-11-19, the 1,046 s streams):
+#   it ran on every TF row, of a few thousand names
+_WHEELCHAIR_EVENT = {}
+
+
+def _isWheelchairEvent(event_short):
+    got = _WHEELCHAIR_EVENT.get(event_short)
+    if got is None:
+        got = _WHEELCHAIR_EVENT[event_short] = bool(_WHEELCHAIR_RX.search(event_short))
+    return got
 
 
 _HAVE_RATING_POOL = {"XC": False, "TF": False}   # set by _sourceSql
 
 
-def _sourceSql(conn, sport):
+def _sourceSql(conn, sport, tables=None):
     """_SQL[sport] with the rating_pool column where the table has it (the
     go-live has written it since issue 171), NULL where a database predates
-    it, so the build runs on either."""
+    it, so the build runs on either.
+
+    tables: {session temp name: shared table name}, for a stream reading
+    --stage prepare's shared copies (_SHARED_PREP). None: the temps."""
     table = "results" if sport == "XC" else "results_tf"
     with conn.cursor() as cur:
         cur.execute("""SELECT 1 FROM information_schema.columns
@@ -1312,6 +1468,8 @@ def _sourceSql(conn, sport):
     _HAVE_RATING_POOL[sport] = have
     sql = _SQL[sport].replace("__RATING_POOL__", "r.rating_pool" if have else "NULL::text")
     sql = _collegeFirstSql(conn, sql)
+    for temp, shared in (tables or {}).items():
+        sql = re.sub(rf"\b{temp}\b", shared, sql)
     return sql.replace("__IMPOSSIBLE__", _impossibleClause(conn, sport)
                        + _outlierClause(conn, sport))
 
@@ -1590,7 +1748,7 @@ def prepareRow(row, sport):
         # Wheelchair belt for the boards: the backfill nuke removes these
         # rows at the NEXT full backfill; this keeps chairs off boards
         # rebuilt from the current disk in the meantime.
-        if _ev and _WHEELCHAIR_RX.search(_ev):
+        if _ev and _isWheelchairEvent(_ev):
             _GATE[sport]["wheelchair"] += 1
             return None
         if row.distance is not None:
@@ -1886,10 +2044,27 @@ def buildSport(conn, sport, since, stats, until="2100-01-01"):
     with conn.cursor(name=f"rank_src_{sport.lower()}",
                      cursor_factory=psycopg2.extras.NamedTupleCursor) as src:
         src.itersize = _FETCH_BATCH
-        src.execute(_sourceSql(conn, sport), {"since": since, "until": until})
+        src.execute(_sourceSql(conn, sport, tables=_PREP_TABLES),
+                    {"since": since, "until": until})
 
-        with conn.cursor() as dst:
-            for row in src:
+        # ★ THE NEXT FETCH RUNS WHILE THIS BATCH IS WALKED (2026-11-19; run
+        #   20261116_204106: ten streams of 1,046 s, "TF: 355,475 read,
+        #   200,000 written" -- the named cursor runs its plan only as far
+        #   as each FETCH asks, so Postgres waited on prepareRow and
+        #   prepareRow on Postgres). dbfast.prefetchedRows: the same rows,
+        #   the same order, the same namedtuples, one batch fetched ahead.
+        # ! THE SAME ROWS HELD: two half batches where there was one whole.
+        #   The COPYs on `dst` share the connection and psycopg2 runs one
+        #   command at a time on it, as the plain loop did.
+        #   XCP_RANK_PREFETCH=0 (or XCP_DB_PREFETCH=0) is the plain loop.
+        if (os.environ.get("XCP_RANK_PREFETCH") or "1").strip() != "0":
+            rows = prefetchedRows(src, max(1, _FETCH_BATCH // 2), ahead=1)
+        else:
+            rows = (r for r in src)
+        # ! closing(): on an error the reader thread is stopped and joined
+        #   here, before anything else touches the connection
+        with conn.cursor() as dst, contextlib.closing(rows):
+            for row in rows:
                 seen += 1
                 prepared = prepareRow(row, sport)
                 if prepared is None:
@@ -4340,7 +4515,8 @@ def main():
     #   Python row walk is the whole cost of this step (30-80 min) and the
     #   sports share nothing until the indexes: `prepare` makes the shadow
     #   once, two `stream --sport` processes COPY into it side by side
-    #   (each builds its own session temps), and `finish` indexes, builds
+    #   (reading prepare's shared lookup tables, _SHARED_PREP, 2026-11-19),
+    #   and `finish` indexes, builds
     #   athlete_season and swaps. No stage = the old one-process run.
     parser.add_argument("--stage", choices=["prepare", "stream", "finish", "restamp", "seams"],
                         default=None,
@@ -4439,8 +4615,17 @@ def main():
                   f"builds it)" if _n else
                   "  no school_name_alias -- every school string is its own "
                   "team, as before", flush=True)
+            # ★ PREPARE'S SHARED COPIES WHEN THEY ARE THIS SHADOW'S (2026-11-19,
+            #   see _SHARED_PREP): the stream builds no temp at all then.
+            _PREP_TABLES.clear()
+            if stage == "stream":
+                _PREP_TABLES.update(sharedPrepFor(conn, sports))
+            if _PREP_TABLES:
+                print(f"  reading prepare's shared tables: "
+                      f"{', '.join(sorted(_PREP_TABLES.values()))}", flush=True)
             with phase("temp indexes (gender, tfrrs distance, TF state, sprints)"):
-                prepareGenderTemp(conn)
+                if not _PREP_TABLES:
+                    prepareGenderTemp(conn)
                 ensureResultTwin(conn)
                 ensureWheelchairPerson(conn)
                 # ! ONLY THE SPORT THIS PROCESS STREAMS (2026-09-26). The four
@@ -4448,9 +4633,9 @@ def main():
                 #   a DISTINCT over the whole of results_tf (prepareSprintEvents)
                 #   and the TF state index, which only the TF query joins, and
                 #   the TF shards for the XC tfrrs distances.
-                if "XC" in sports:
+                if "XC" in sports and not _PREP_TABLES:
                     prepareXcTfrrsDistTemp(conn)
-                if "TF" in sports:
+                if "TF" in sports and not _PREP_TABLES:
                     prepareTfStateTemp(conn)
                     prepareSprintEvents(conn)
 
@@ -4460,6 +4645,9 @@ def main():
                 seedOtherSports(conn, sports if stage is None else ("XC", "TF"))
         if stage == "prepare":
             conn.commit()
+            # after the shadow: the tables carry its oid (_SHARED_PREP)
+            with phase("shared stream tables (gender, tfrrs distance, TF state, sprints)"):
+                buildSharedPrep(conn)
             print("  shadow ready; stream the sports, then --stage finish")
             return
 
