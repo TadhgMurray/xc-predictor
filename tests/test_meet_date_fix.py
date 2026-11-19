@@ -150,8 +150,9 @@ def test_the_day_moves_by_whole_years_and_the_guards():
 
 def test_it_runs_first_and_is_not_always_run():
     sh = read("deploy", "run_pipeline.sh")
-    assert 'step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write' in sh
-    assert sh.index("step 00_meet_dates") < sh.index("step 01_season_year") \
+    # beside 01a_person_probe since 2026-11-19 (steps2)
+    assert 'steps2 00_meet_dates "$PY -u engine/meet_date_fix.py --write' in sh
+    assert sh.index("steps2 00_meet_dates") < sh.index("step 01_season_year") \
         < sh.index("step 04c_twins")
     always = [l for l in sh.splitlines() if l.startswith("_ALWAYS=")][0]
     assert "00_meet_dates" not in always, "a --from run keeps last run's dates"

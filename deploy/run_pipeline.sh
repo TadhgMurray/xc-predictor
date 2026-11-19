@@ -821,7 +821,23 @@ if failed 00_integrity; then
   echo "       else ran. The repair is in $LOGDIR/00_integrity.log." | tee -a "$SUMMARY"
   summarise 1
 fi
-step 00_meet_dates    "$PY" -u engine/meet_date_fix.py --write --show 20
+# ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
+#   Twins, tfrrs links and mints all change person ids, and the old id's page
+#   404s. 13c0 compares against this and 301s each vanished id to its
+#   successor. Two result ids per person per sport; on every --from, because
+#   04a (always) moves ids too.
+# ★ 01a BESIDE 00_meet_dates (2026-11-19; ~130 s off the line). 01a reads
+#   only results* person_id / result_id (min and max per person) and writes
+#   person_probe alone; 00_meet_dates reads results* person / grade / meet /
+#   date and writes meet_date_fix plus the date columns of results*, meets
+#   and meets_tf_meta, in place (an UPDATE: no person id or result id moves,
+#   no row is added or dropped). Neither reads the other's table, and the
+#   steps that used to sit between them (01_season_year reads only; 01b
+#   writes meets_tfrrs places) move no person or result id either. Both after
+#   the integrity gate, both before 02_drop_old and the first id mover (04a).
+#   steps2 asks --from per name: 01a stays on every --from, alone.
+steps2 00_meet_dates "$PY -u engine/meet_date_fix.py --write --show 20" \
+       01a_person_probe "$PY -u scripts/person_redirects.py --snapshot"
 step 01_season_year   "$PY" -u engine/season_year.py
 # ★ tfrrs XC MEETS PLACED BEFORE THE WEATHER GRID READS THEIR PLACE
 #   (2026-10-25). 04e fetches weather for the meets that have gps, and
@@ -879,12 +895,7 @@ fi
 #   version throughout. It commits after reading results, so it holds no
 #   lock on the live tables while it propagates. Collected at the end (bgwait).
 bgstep 01c_level_graph "$PY" -u engine/level_graph.py --stage
-# ★ WHERE EVERY ATHLETE'S ROWS ARE, BEFORE ANYTHING MOVES THEM (2026-09-26).
-#   Twins, tfrrs links and mints all change person ids, and the old id's page
-#   404s. 13c0 compares against this and 301s each vanished id to its
-#   successor. Two result ids per person per sport; on every --from, because
-#   04a (always) moves ids too.
-step 01a_person_probe "$PY" -u scripts/person_redirects.py --snapshot
+# (01a_person_probe, the person snapshot, ran beside 00_meet_dates above)
 step 02_drop_old      "$PY" -u engine/drop_old.py
 # ! BEFORE ANYTHING LABELS A VENUE. meets_tf.venue_name is NULL on a lot of
 #   anet track meets, and the engine then prints the LOCATION ID as if it
@@ -2394,14 +2405,48 @@ if [ "${XCP_PANELS_HEAD:-1}" = "1" ] && willRun 13_panels_head \
 fi
 if [ -n "$_PANELS_AFTER_HEAD" ]; then bgchain panels _panelsPair; else _panelsPair; fi
 # Breakouts, precomputed: reads ranking_results and the panels' newest dates
-step 13f_breakouts    "$PY" -u racecast/build_breakouts.py
+#   (13f_breakouts, in the group below)
 # ★ "WHAT IT TAKES", PRECOMPUTED (2026-11-08; racecast/build_wit_marks.py):
 #   every state's marks into wit_marks, which cuts.marksFor reads instead of
 #   computing them in the web workers. After everything cuts reads (the
 #   boards, 10d's units, 10e's meet_unit, 13_panels' season year). A failed
 #   build costs nothing else: the site computes a state live when its row is
 #   missing or older than cuts.MAX_AGE_S.
-step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py
+# ★ EVERY MEET'S NEWEST DATE AND RESULT COUNT (2026-11-12;
+#   racecast/build_meet_counts.py): /meets reads them by key instead of
+#   counting each candidate meet's results, while results is unchanged since
+#   (its oid and change stamp). A failure costs nothing: /meets counts live.
+#   XCP_MEET_COUNTS=0 skips it.
+# ★ THE "ADD ANYONE" PICKER'S TABLE (2026-11-12; racecast/build_athlete_pick.py):
+#   one row per rated runner, sport and gender with the newest season, used
+#   by /api/predict/athletes while athletes and athlete_season are unchanged
+#   since. A failure costs nothing: the search runs as before.
+#   XCP_ATHLETE_PICK=0 skips it.
+# ★★ 13f, 13f2, 13f4 AND 13f5 SIDE BY SIDE (2026-11-19). One heavy step
+#    (13f, ~11 min) and three caches beside it. Disjoint writes:
+#    breakout_rows / breakout_meta (13f), wit_marks (13f2), meet_counts /
+#    meet_counts_meta (13f4), athlete_pick / athlete_pick_meta (13f5), each a
+#    _new table swapped in. None reads another's: 13f reads results*, meets*,
+#    rating_outlier, ranking_results and homepage_recent; 13f2 (cuts and
+#    every module it imports) the boards, school_unit, meet_unit and
+#    season_year_<sport>; 13f4 results* (date, meet_id); 13f5 athlete_season
+#    and athletes -- the import closures of the four builders name none of
+#    the others' tables. All four inputs are final by here (the boards, 10d,
+#    10e, the panels' head). 13f3 stays after them (one heavy at a time) and
+#    reads none of their tables either; 13g_social stays after all five (it
+#    reaches the site's code, which reads every one of them). 13f4 and 13f5
+#    fail as they did: their old `step ... || true` guarded only the call
+#    (step never returns non-zero; this script has no set -e), so a failure
+#    was a FAILED line and the run went on -- exactly what stepsN does.
+_G13F=(13f_breakouts "$PY -u racecast/build_breakouts.py"
+       13f2_wit_marks "$PY -u racecast/build_wit_marks.py")
+if [ "${XCP_MEET_COUNTS:-1}" != "0" ]; then
+  _G13F+=(13f4_meet_counts "$PY -u racecast/build_meet_counts.py")
+fi
+if [ "${XCP_ATHLETE_PICK:-1}" != "0" ]; then
+  _G13F+=(13f5_athlete_pick "$PY -u racecast/build_athlete_pick.py")
+fi
+stepsN "${_G13F[@]}"
 # ★ THE BIG SCHOOLS' PAGES, PRECOMPUTED (2026-11-12; racecast/build_school_pages.py):
 #   the history half of /school/:name (header, year bar, current season,
 #   best, top athletes) for schools with XCP_SCHOOL_PAGE_MIN_SEASONS+ seasons,
@@ -2410,22 +2455,6 @@ step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py
 #   XCP_SCHOOL_PAGES=0 skips it.
 if [ "${XCP_SCHOOL_PAGES:-1}" != "0" ]; then
   step 13f3_school_pages "$PY" -u racecast/build_school_pages.py || true
-fi
-# ★ EVERY MEET'S NEWEST DATE AND RESULT COUNT (2026-11-12;
-#   racecast/build_meet_counts.py): /meets reads them by key instead of
-#   counting each candidate meet's results, while results is unchanged since
-#   (its oid and change stamp). A failure costs nothing: /meets counts live.
-#   XCP_MEET_COUNTS=0 skips it.
-if [ "${XCP_MEET_COUNTS:-1}" != "0" ]; then
-  step 13f4_meet_counts "$PY" -u racecast/build_meet_counts.py || true
-fi
-# ★ THE "ADD ANYONE" PICKER'S TABLE (2026-11-12; racecast/build_athlete_pick.py):
-#   one row per rated runner, sport and gender with the newest season, used
-#   by /api/predict/athletes while athletes and athlete_season are unchanged
-#   since. A failure costs nothing: the search runs as before.
-#   XCP_ATHLETE_PICK=0 skips it.
-if [ "${XCP_ATHLETE_PICK:-1}" != "0" ]; then
-  step 13f5_athlete_pick "$PY" -u racecast/build_athlete_pick.py || true
 fi
 # ★ THE WEEKLY INSTAGRAM POSTS (owner, 2026-10-13): images and captions
 #   from the week's boards (10g2 snapshots, the breakouts above), picked up

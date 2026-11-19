@@ -270,13 +270,17 @@ def _src(*parts):
 
 def test_pipeline_and_nightly_run_the_builder_after_its_inputs():
     p = _src("deploy", "run_pipeline.sh")
-    line = 'step 13f2_wit_marks   "$PY" -u racecast/build_wit_marks.py'
+    # in the 13f group beside the breakouts since 2026-11-19 (it reads
+    # none of breakout_*), after every table cuts reads
+    line = '13f2_wit_marks "$PY -u racecast/build_wit_marks.py"'
     assert line in p
     i = p.index(line)
     for before in ("step 10_rankings_finish", "10d_school_units",
                    "bgjoin 10e_meet_units", "steps2 13_panels_xc",
-                   "step 13f_breakouts"):
+                   "step 13_panels_head"):
         assert p.index(before) < i, before
+    assert i < p.index('stepsN "${_G13F[@]}"') < p.index("step 13f3_school_pages") \
+        < p.index("step 13g_social")
     n = _src("deploy", "nightly_update.sh")
     line = 'step 13f2_wit_marks "$PY" -u racecast/build_wit_marks.py'
     assert line in n
