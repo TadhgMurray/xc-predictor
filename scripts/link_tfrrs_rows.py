@@ -74,6 +74,7 @@ THREE PASSES, IN THIS ORDER, EACH SAFE TO RE-RUN
   read as a second person and stop the id fanning out at all.
 """
 import argparse
+import contextlib
 import datetime
 import os
 import sys
@@ -285,7 +286,17 @@ def main():
         #   sees what a full read would. Off (XCP_LINK_REGISTRY=0, or any
         #   failure here): each pass reads the corpus in full, as before.
         import name_registry as NR
-        NR.install(conn)
+        # ★ BESIDE PASSES 1-2 (2026-11-19, name_registry.besideStart): the
+        #   registry builds on a second connection while passes 1 and 2 run
+        #   here; 2b, 4 and 5 then run on that connection (rconn), where
+        #   lu_reg lives. XCP_LINK_REGISTRY_BG=0: built first, here, as before.
+        side = contextlib.ExitStack()
+        rconn, beside = conn, None
+        if NR.enabled() and NR.background():
+            conn2 = side.enter_context(getConn())
+            beside = NR.besideStart(conn, conn2)
+        else:
+            NR.install(conn)
         try:
             with conn.cursor() as cur:
                 if a.apply:
@@ -337,13 +348,16 @@ def main():
                     print(f"[tfrrs-link] pass 2: joined {len(tpairs):,} by race "
                           f"times; rows {moved}")
 
+            if beside is not None:
+                rconn, beside = NR.besideJoin(beside, conn), None
+
             # ★ PASS 2b, HIGH SCHOOL TFRRS ROWS (2026-10-25): an fl. / indiana.tfrrs.org
             #   meet's runner joins their athletic.net career by name + school +
             #   grade (scripts/link_tfrrs_hs.py; rule 'tfrrs_hs'), before pass 3
             #   would mint them a second person. XCP_LINK_TFRRS_HS=0 skips it.
             if os.environ.get("XCP_LINK_TFRRS_HS", "1") not in ("0", "false"):
                 import link_tfrrs_hs as LH
-                LH.run(conn, a.apply, days=int(os.environ.get("XCP_LINK_TFRRS_HS_DAYS", "14")))
+                LH.run(rconn, a.apply, days=int(os.environ.get("XCP_LINK_TFRRS_HS_DAYS", "14")))
             if not a.no_mint:
                 with conn.cursor() as cur:
                     n = mint(cur, a.apply, a.mint_seasons)
@@ -353,17 +367,23 @@ def main():
             #   rules ('upload' / 'upload_mint'), the same --undo
             if not a.no_uploads and os.environ.get("XCP_LINK_UPLOADS", "1") not in ("0", "false"):
                 import link_uploads as LU
-                LU.run(conn, a.apply)
+                LU.run(rconn, a.apply)
             # ★ AND THE TIMING COMPANIES' ROWS (2026-10-25): a timer meet no feed
             #   had, promoted by sources/promote.py, is linked by the same rules
             #   (link_uploads --source timer; rules 'timer' / 'timer_mint')
             if not a.no_uploads and os.environ.get("XCP_LINK_TIMERS", "1") not in ("0", "false"):
                 import link_uploads as LU
-                LU.run(conn, a.apply, feed=LU.TIMER)
+                LU.run(rconn, a.apply, feed=LU.TIMER)
             if not a.apply:
                 print("[tfrrs-link] dry run -- nothing written; --apply to link")
         finally:
+            if beside is not None:          # a pass before 2b raised: let the build end
+                NR.besideJoin(beside, conn)
+            if rconn is not conn:           # no open transaction of its holds the
+                rconn.rollback()            # tables the trigger drop needs
             NR.uninstall(conn)
+            NR.forget(rconn)
+            side.close()
 
 
 if __name__ == "__main__":

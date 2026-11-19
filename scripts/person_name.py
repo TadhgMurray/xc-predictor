@@ -73,8 +73,31 @@ def personKeyParts(first, last, keep_suffix=False):
                      keep_suffix=keep_suffix)
 
 
+# ★ THE FOLD ONLY WHERE THERE IS SOMETHING TO FOLD (2026-11-19; run
+#   20261116_204106: 04a2's "namesakes in the anet registry (a scan of
+#   athletes)" 448 s for 1.4M rows, and every full name read in 04a ~540 s).
+#   Postgres's translate() walks the whole 523-letter FOLD_FROM for EVERY
+#   character of the name (multibyte, so letter by letter): on a scratch PG 16
+#   it was 28 s of a 30 s key over 3M names; the regexes, lower() and the
+#   concat are under 2 s. Every FOLD_FROM letter is non-ASCII (asserted
+#   below), so translate() of a name with no non-ASCII character returns it
+#   unchanged: the CASE skips the call exactly there, and only there. The
+#   test ("[^\x01-\x7f]", a code point past 127) is a cheap linear scan
+#   (0.2 s over 3M) and reads code points, so it holds in any server
+#   encoding. Same key, character for character; a NULL name still goes
+#   through translate() (NULL either way).
+assert all(ord(ch) > 0x7F for ch in FOLD_FROM)
+
+
+def _foldSql(expr):
+    """translate(expr, FOLD_FROM, FOLD_TO) -- called only on a name that has
+    a non-ASCII character (the identity otherwise)."""
+    return (f"(CASE WHEN {expr} !~ '[^\\x01-\\x7f]' THEN {expr} "
+            f"ELSE translate({expr}, '{FOLD_FROM}', '{FOLD_TO}') END)")
+
+
 def _keySql(expr, keep_suffix=False):
-    folded = f"lower(translate({expr}, '{FOLD_FROM}', '{FOLD_TO}'))"
+    folded = f"lower({_foldSql(expr)})"
     cleaned = (f"btrim(regexp_replace(regexp_replace(replace({folded}, '-', ' '), "
                f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
     if keep_suffix:

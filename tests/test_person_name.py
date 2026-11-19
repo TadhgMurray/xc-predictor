@@ -68,3 +68,51 @@ def test_nicknames_are_one_first_name():
     assert not P.sameFirstName("steven", "stephen")
     assert not P.sameFirstName("liam", "william")
     assert ("chris", "christopher") in P.nicknamePairs()
+
+
+def test_the_ascii_fast_path_is_the_full_translate():
+    """2026-11-19: _keySql calls translate() only on a name with a non-ASCII
+    character. The key must be the plain translate() key on every name --
+    ASCII, folded letters, letters outside the map, combining marks, edge
+    code points -- in the UTF8 and in the SQL_ASCII (production) encoding."""
+    import random
+    dsn = os.environ.get("XCP_TEST_PG_DSN") or os.environ.get("XCP_TWIN_TEST_DSN")
+    if not dsn:
+        pytest.skip("set XCP_TEST_PG_DSN to a scratch Postgres")
+    import psycopg2
+
+    def plain(expr, keep_suffix):          # _keySql before 2026-11-19
+        folded = f"lower(translate({expr}, '{P.FOLD_FROM}', '{P.FOLD_TO}'))"
+        cleaned = (f"btrim(regexp_replace(regexp_replace(replace({folded}, '-', ' '), "
+                   f"'[^a-z ]+', '', 'g'), '\\s+', ' ', 'g'))")
+        return cleaned if keep_suffix else f"regexp_replace({cleaned}, ' ({'|'.join(P.SUFFIXES)})$', '')"
+    rnd = random.Random(11)
+    alpha = list("abcXYZ -',.\t\x7f\x01") + list(P.FOLD_FROM) + ["中", "й", "́", "€", "ǅ", "\x80"]
+    names = [None, "", " ", "Jake Smith", "Smith Jr., John"] + [f"{a} {b}" for a, b in CASES] + TEXT
+    names += ["".join(rnd.choice(alpha) for _ in range(rnd.randint(0, 12))) for _ in range(3000)]
+    admin = psycopg2.connect(dsn)
+    admin.autocommit = True
+    try:
+        for db, enc in (("pn_fast_utf8", "UTF8"), ("pn_fast_ascii", "SQL_ASCII")):
+            admin.cursor().execute(f"DROP DATABASE IF EXISTS {db}")
+            admin.cursor().execute(f"CREATE DATABASE {db} ENCODING '{enc}' TEMPLATE template0 "
+                                   f"LC_COLLATE 'C' LC_CTYPE 'C'")
+            conn = psycopg2.connect(dsn, dbname=db)
+            conn.set_client_encoding("UTF8")
+            try:
+                cur = conn.cursor()
+                cur.execute("CREATE TEMP TABLE n (f text, l text)")
+                cur.executemany("INSERT INTO n VALUES (%s, %s)",
+                                [(x, names[-i - 1]) for i, x in enumerate(names)])
+                two = "concat_ws(' ', NULLIF(btrim(x.f), ''), NULLIF(btrim(x.l), ''))"
+                for ks in (False, True):
+                    cur.execute(f"SELECT count(*) FILTER (WHERE ({P.personKeySql('x.f', 'x.l', ks)}) "
+                                f"IS DISTINCT FROM ({plain(two, ks)})), "
+                                f"count(*) FILTER (WHERE x.f ~ '[^\\x01-\\x7f]') FROM n x")
+                    diff, wide = cur.fetchone()
+                    assert diff == 0 and wide > 1000, (enc, ks, diff, wide)
+            finally:
+                conn.close()
+                admin.cursor().execute(f"DROP DATABASE IF EXISTS {db}")
+    finally:
+        admin.close()

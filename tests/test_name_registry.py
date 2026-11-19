@@ -138,3 +138,56 @@ def test_off_switch_leaves_gather_on_the_full_read(monkeypatch):
         assert NR.install(conn) is False and not NR.ready(conn)
     finally:
         conn.close()
+
+
+def test_the_registry_built_beside_the_writes_is_the_full_read(monkeypatch):
+    """2026-11-19 (besideStart / besideJoin): the triggers go on first, the
+    registry builds on a second connection while the first one writes (04a's
+    passes 1-2), and after the join the second connection's refresh gives the
+    full read's namesakes -- whether a write landed before, during or after
+    the build."""
+    import threading
+    import psycopg2
+    import name_registry as NR
+    conn = psycopg2.connect(DSN)
+    conn.set_client_encoding("UTF8")
+    conn2 = psycopg2.connect(DSN)
+    conn2.set_client_encoding("UTF8")
+    try:
+        for seed in range(6):
+            rnd = random.Random(100 + seed)
+            cur = conn.cursor()
+            _seed(cur, rnd)
+            conn.commit()
+            gate = threading.Event()
+            real = NR._build
+
+            def slow_build(c, **kw):           # hold the build open while conn writes
+                gate.wait(10)
+                return real(c, **kw)
+            monkeypatch.setattr(NR, "_build", slow_build)
+            h = NR.besideStart(conn, conn2)
+            assert h is not None
+            for k in range(4):
+                _mutate(cur, rnd)
+                (conn.commit if rnd.random() < .8 else conn.rollback)()
+                if k == 1:
+                    gate.set()
+            monkeypatch.setattr(NR, "_build", real)
+            rc = NR.besideJoin(h, conn)
+            assert rc is conn2 and NR.ready(conn2)
+            c2 = conn2.cursor()
+            c2.execute(f"SELECT DISTINCT nm FROM ({NR._pairsSql()}) z WHERE nm IS NOT NULL")
+            _keysSql(c2, [r[0] for r in c2.fetchall()] or ["x"])
+            c2.execute(f"SELECT person_id, nm, name FROM ({NR._pairsSql()}) z "
+                       f"WHERE nm IN (SELECT nm FROM lu_keys)")
+            want = sorted(c2.fetchall(), key=repr)
+            NR.refresh(c2)
+            c2.execute("SELECT DISTINCT person_id, nm, name FROM lu_reg WHERE nm IN (SELECT nm FROM lu_keys)")
+            assert sorted(c2.fetchall(), key=repr) == want, seed
+            conn2.rollback()
+            NR.uninstall(conn)
+            NR.forget(conn2)
+    finally:
+        conn.rollback(); conn.close()
+        conn2.rollback(); conn2.close()
