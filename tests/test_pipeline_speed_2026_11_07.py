@@ -584,7 +584,23 @@ def _shape(cur, table="mt"):
     cons = cur.fetchall()
     cur.execute("""SELECT conrelid::regclass::text, conname, pg_get_constraintdef(oid)
                    FROM pg_constraint WHERE confrelid = %s::regclass ORDER BY 1, 2""", (table,))
-    return idx, cols, cons, cur.fetchall()
+    inbound = cur.fetchall()
+    # the key built in the pool (XCP_MERGE_PK_IN_POOL) must be ADD PRIMARY KEY's in the catalogue
+    cur.execute("""SELECT c.conname, c.condeferrable, c.convalidated, c.connoinherit, c.conislocal,
+                          ic.relname, i.indisprimary, i.indisunique, i.indimmediate, i.indcheckxmin,
+                          i.indclass::text, ic.reloptions
+                   FROM pg_constraint c JOIN pg_index i ON i.indexrelid = c.conindid
+                   JOIN pg_class ic ON ic.oid = i.indexrelid
+                   WHERE c.conrelid = %s::regclass AND c.contype = 'p'""", (table,))
+    pk = cur.fetchall()
+    cur.execute("""SELECT pg_describe_object(classid, objid, objsubid),
+                          pg_describe_object(refclassid, refobjid, refobjsubid), deptype
+                   FROM pg_depend
+                   WHERE (classid = 'pg_class'::regclass AND objid = %s::regclass)
+                      OR (classid = 'pg_constraint'::regclass AND objid IN
+                          (SELECT oid FROM pg_constraint WHERE conrelid = %s::regclass AND contype = 'p'))
+                   ORDER BY 1, 2""", (f"{table}_pkey", table))
+    return idx, cols, cons, inbound, pk, cur.fetchall()
 
 
 def _merge(conn, connect, jobs, seed, monkeypatch):

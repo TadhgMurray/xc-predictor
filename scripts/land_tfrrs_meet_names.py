@@ -77,10 +77,19 @@ _MISSING = """
       AND  m.div_id IS NULL
 """
 
-_COLLIDING = """
-    SELECT count(*) FROM (""" + _MISSING + """) x
-    JOIN   meets_tf a ON a.div_id = x.div_id AND a.meet_id = x.meet_id
-                     AND a.event_id = x.event_id AND a.source <> 'tfrrs'
+# ★ BOTH CENSUS COUNTS IN ONE PASS (2026-11-20; 06_tfrrs_meets 72 s, and
+#   the census evaluated _MISSING -- a DISTINCT over every tfrrs track row
+#   of results_tf, anti-joined to meets_tf -- twice, once to count it and
+#   once more inside the colliding count, before _INSERT evaluates it a
+#   third time). Now one LEFT JOIN gives both: count(*) is the missing
+#   keys, count(a.div_id) the ones an anet row holds -- the numbers the
+#   two queries gave, because (div_id, meet_id, event_id) is unique in
+#   meets_tf (_INSERT's ON CONFLICT target), so the join matches each
+#   missing key at most once. The same counts, printed the same.
+_MISSING_AND_COLLIDING = """
+    SELECT count(*), count(a.div_id) FROM (""" + _MISSING + """) x
+    LEFT JOIN meets_tf a ON a.div_id = x.div_id AND a.meet_id = x.meet_id
+                        AND a.event_id = x.event_id AND a.source <> 'tfrrs'
 """
 
 # One pass over the tfrrs rows, grouped to the meet-event: the name from
@@ -168,13 +177,11 @@ def main():
         print(f"  anet rows already holding division 0 in meets_tf: {zero_anet:,}")
         cur.execute("SELECT count(*) FROM meets_tf WHERE source = 'tfrrs' AND NULLIF(btrim(meet_name), '') IS NULL")
         nameless = cur.fetchone()[0]
-        cur.execute(f"SELECT count(*) FROM ({_MISSING}) s")
-        missing = cur.fetchone()[0]
+        cur.execute(_MISSING_AND_COLLIDING)
+        missing, colliding = cur.fetchone()
         cur.execute("SELECT count(*) FROM meets_tfrrs WHERE sport = 'TF' AND meet_name IS NOT NULL")
         named = cur.fetchone()[0]
         print(f"  tfrrs rows in meets_tf without a name: {nameless:,}")
-        cur.execute(_COLLIDING)
-        colliding = cur.fetchone()[0]
         print(f"  tfrrs (div, meet, event) in results_tf with no tfrrs row in meets_tf: {missing:,}")
         print(f"    of which the key is held by an anet row (cannot be landed; "
               f"the pages fall back to meets_tfrrs): {colliding:,}")

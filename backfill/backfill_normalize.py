@@ -3667,15 +3667,28 @@ def _printPins(n_pins):
 #   each connection commits when its loader is done. A failure raises as it
 #   did.
 # ! MEMORY: the same dicts as before; what overlaps is the loaders' result
-#   buffers. So cross country only by default (4 at a time); 05_backfill_tf,
-#   whose peak (114.9 GB) leaves 22 GB free, loads in turn as before.
-#   XCP_BACKFILL_LOOKUP_THREADS_XC / _TF, or XCP_BACKFILL_LOOKUP_THREADS for
-#   both; 1 is the old loop on the read connection.
+#   buffers. XCP_BACKFILL_LOOKUP_THREADS_XC / _TF, or
+#   XCP_BACKFILL_LOOKUP_THREADS for both; 1 is the old loop on the read
+#   connection.
+# ★ TRACK TOO, 4 AT A TIME (2026-11-20). 05_backfill_tf (665 s, now the
+#   long side of 05) loaded in turn for fear of its memory (114.9 GB, 22 GB
+#   free). Measured on scratch Postgres 16 with track's loaders on
+#   synthetic tables (3M profiles, 2M person_gender, 8M season-level rows,
+#   4M grade_fix, 6M results_tf; weather off), two runs each:
+#     in turn       33-40 s, peak +2,980 MB, held after the loads +2,980 MB
+#     side by side  20-25 s, peak +3,091-3,127 MB (+4-5 %), held +2,657-2,691 MB
+#   The extra is the loaders' result buffers at once, for the seconds the
+#   loads overlap, before any worker exists. What the process holds when
+#   the loads are done -- what the four forked workers inherit, and what
+#   the step's 114.9 GB counts once per process -- is ~10 % LOWER (each
+#   loader's buffers freed in its own thread's arena, which gives them back).
+#   The lookups are equal (compared, every one). XCP_BACKFILL_LOOKUP_THREADS_TF=1
+#   is the old loop.
 def _lookupThreads(sport):
     import os
     v = (os.environ.get(f"XCP_BACKFILL_LOOKUP_THREADS_{sport}")
          or os.environ.get("XCP_BACKFILL_LOOKUP_THREADS")
-         or ("4" if sport == "XC" else "1"))
+         or "4")
     return max(1, int(v))
 
 
