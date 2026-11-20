@@ -3329,10 +3329,13 @@ def orderedRewrite(conn, table, like, units_from=None):
                 # in a subquery so the board order's bare names stay its own
                 pick = ", ".join(f'k."{n}"' if n in _UNIT_COLS else f's."{n}"'
                                  for n in names)
-                select = (f"SELECT {cols} FROM "
-                          f"(SELECT {pick} FROM {table} s "
-                          f"LEFT JOIN {units_from} k ON {_keyMatch('s', 'k')}) q "
-                          f"ORDER BY {order}")
+
+                def makeSelect(keys):
+                    return (f"SELECT {cols} FROM "
+                            f"(SELECT {pick} FROM {table} s "
+                            f"LEFT JOIN {keys} k ON {_keyMatch('s', 'k')}) q "
+                            f"ORDER BY {order}")
+                select = makeSelect(units_from)
                 if _SEASON_REWRITE_HASH:
                     # ★ see _SEASON_REWRITE_HASH: hash the keys, no merge sort
                     cur.execute("SET LOCAL enable_mergejoin = off")
@@ -3345,11 +3348,29 @@ def orderedRewrite(conn, table, like, units_from=None):
                 if _SEASON_REWRITE_HASH and not join.startswith("hash"):
                     cur.execute("SET LOCAL enable_mergejoin = on")
                     join = _joinMethod(cur, select)
-                cur.execute(f"INSERT INTO {tmp} ({cols}) {select}")
+                parallel = _SEASON_REWRITE_PARALLEL
             else:
-                cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {table} "
-                            f"ORDER BY {order}")
+                select = f"SELECT {cols} FROM {table} ORDER BY {order}"
+
+                def makeSelect(_keys):
+                    return select
+                parallel = _RELOG_PARALLEL
+            # ★ THE SORT ON A PARALLEL PLAN, THE WRITE AS BEFORE (2026-11-20):
+            #   _parallelSort; None when the plan is not the one meant, and
+            #   the INSERT sorts the shadow itself as it always did
+            sorted_in, how = (_parallelSort(conn, cur, table, makeSelect, got, join,
+                                            keys=units_from)
+                              if parallel else (None, ""))
+            if sorted_in and not _plainCopyPlan(cur, tmp, cols, sorted_in):
+                how = "parallel sort unused: the copy's plan was not a plain scan"
+                sorted_in = None
+            if sorted_in:
+                cur.execute(f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {sorted_in}")
+            else:
+                cur.execute(f"INSERT INTO {tmp} ({cols}) {select}")
             n_out = cur.rowcount
+            if sorted_in:
+                cur.execute(f"DROP TABLE {sorted_in}")
             cur.execute(f"DROP TABLE {table}")
             cur.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
         conn.commit()
@@ -3362,8 +3383,110 @@ def orderedRewrite(conn, table, like, units_from=None):
     print(f"    [{time.time() - t0:7.1f}s] {table}: logged, {n_out:,} rows in board "
           f"order ({order}; work_mem {got})"
           + (f"; unit columns from {units_from}" if units_from else "")
-          + (f", {join}" if join else ""))
+          + (f", {join}" if join else "")
+          + (f"; {how}" if how else ""))
     return True
+
+
+# ★ THE BOARD-ORDER SORT ON A PARALLEL PLAN (2026-11-20; run 20261117_142219:
+#   "ranking_results_new: logged, 157.8M rows in board order" 621 s, and
+#   athlete_season's 180 s). Postgres 16 never gives an INSERT ... SELECT a
+#   parallel plan, so the rewrite's sort ran in one process. A CREATE TABLE
+#   AS can: parallel seq scan, a sort in every worker, Gather Merge. So the
+#   sort is done that way into an UNLOGGED scratch (no WAL), and the same
+#   INSERT as before copies the scratch into the same LIKE table, reading
+#   it front to back. Scratch Postgres 16, 4 cores, 4 workers: 6.0M
+#   ranking_results rows (1 GB) 35.6 s -> 26.4 s (the sort 22.8 -> 12.6 s,
+#   the copy 12.8 s either way); 5.4M athlete_season rows with the unit
+#   keys 51.8 s -> 34.5 s. Identical (ctid, row) both times.
+# ! THE SAME TABLE, ROW FOR ROW AND PAGE FOR PAGE (tests/test_relog_parallel.py
+#   compares ctid and every column, and the catalogue). Not a CTAS into the
+#   final table: CTAS keeps no NOT NULL, default or CHECK, and it writes
+#   in bulk with the free-space map off, where the INSERT tops up earlier
+#   pages -- measured, all 6.0M lab rows at another ctid. Here the
+#   final table is created and filled exactly as before (CREATE TABLE LIKE,
+#   INSERT), from the same rows in the same order: the board order ends in
+#   a unique key (rr_layout.BOARD_ORDER), so the parallel sort has only one
+#   answer, Gather Merge keeps it, the CTAS writes it in that order (it
+#   skips the free-space map, so page after page), and a plain seq scan
+#   (synchronize_seqscans off, checked by EXPLAIN: Insert over Seq Scan,
+#   nothing else) reads it back in that order.
+# ! MEMORY NO HIGHER: each sort process gets work_mem / (workers + 1) of
+#   the work_mem the serial sort had (the leader sorts too), workers =
+#   max_parallel_workers_per_gather. Disk: the scratch (1x) beside the
+#   spill, then beside the new heap -- within _ORDERED_ROOM.
+# ! EXPLAINED FIRST: no Gather Merge, or another join method than the
+#   serial plan's (athlete_season: the hash join, _SEASON_REWRITE_HASH),
+#   and the INSERT sorts the shadow itself, as before. athlete_season's
+#   unit keys are a TEMP table, which a worker cannot read; the parallel
+#   plan joins an unlogged copy of them (397k rows, same rows).
+# XCP_RR_RELOG_PARALLEL=0 (ranking_results) and XCP_SEASON_REWRITE_PARALLEL=0
+# (athlete_season) restore the one-statement INSERT ... ORDER BY.
+_RELOG_PARALLEL = os.environ.get("XCP_RR_RELOG_PARALLEL", "1") != "0"
+_SEASON_REWRITE_PARALLEL = os.environ.get("XCP_SEASON_REWRITE_PARALLEL", "1") != "0"
+
+
+def _explain(cur, sql):
+    cur.execute(f"EXPLAIN (COSTS OFF) {sql}")
+    return "\n".join(r[0] for r in cur.fetchall())
+
+
+def _planJoin(plan):
+    m = re.search(r"(Hash|Merge|Nested Loop)(?: (?:Left|Right|Full))? Join|Nested Loop", plan)
+    return m.group(0).lower() if m else ""
+
+
+def _parallelSort(conn, cur, table, makeSelect, got, join, keys=None):
+    """`makeSelect(keys)` sorted into an UNLOGGED scratch table by a parallel
+    plan, in this transaction: (scratch, note), or (None, why not) with the
+    transaction as it was. See _RELOG_PARALLEL."""
+    if not got:
+        return None, "parallel sort unused: no work_mem"
+    cur.execute("SELECT current_setting('max_parallel_workers_per_gather')::int, "
+                "pg_size_bytes(%s)", (got,))
+    workers, total = cur.fetchone()
+    if workers < 1:
+        return None, "parallel sort unused: max_parallel_workers_per_gather 0"
+    per_kb = max(64, int(total) // 1024 // (workers + 1))
+    scratch = f"{table}_psort"
+    cur.execute("SAVEPOINT parallel_sort")
+    src_keys = None
+    if keys:
+        # a worker cannot read the TEMP keys; the same rows, unlogged, analysed
+        src_keys = f"{table}_psort_keys"
+        cur.execute(f"CREATE UNLOGGED TABLE {src_keys} AS SELECT * FROM {keys}")
+        cur.execute(f"ANALYZE {src_keys}")
+    select = makeSelect(src_keys)
+    cur.execute(f"SET LOCAL work_mem = '{per_kb}kB'")
+    plan = _explain(cur, f"CREATE UNLOGGED TABLE {scratch} AS {select}")
+    why = None
+    if "Gather Merge" not in plan:
+        why = "no Gather Merge in the plan"
+    elif join and _planJoin(plan).split()[:1] != join.split()[:1]:
+        why = f"the parallel plan's join is {_planJoin(plan) or 'none'}, not {join}"
+    if why:
+        cur.execute("ROLLBACK TO SAVEPOINT parallel_sort")   # work_mem back too
+        cur.execute("RELEASE SAVEPOINT parallel_sort")
+        return None, f"parallel sort unused: {why}"
+    cur.execute(f"CREATE UNLOGGED TABLE {scratch} WITH (autovacuum_enabled = false) "
+                f"AS {select}")
+    if src_keys:
+        cur.execute(f"DROP TABLE {src_keys}")
+    cur.execute(f"SET LOCAL work_mem = '{got}'")
+    cur.execute(f"ANALYZE {scratch}")
+    cur.execute("SET LOCAL synchronize_seqscans = off")   # read from page 0
+    cur.execute("RELEASE SAVEPOINT parallel_sort")
+    return scratch, (f"parallel sort, {workers} workers + leader at "
+                     f"work_mem {per_kb}kB each")
+
+
+def _plainCopyPlan(cur, tmp, cols, scratch):
+    """The copy out of the scratch is an Insert over a Seq Scan of it and
+    nothing else, so it reads the rows in the order they were written."""
+    lines = [ln.strip() for ln in _explain(
+        cur, f"INSERT INTO {tmp} ({cols}) SELECT {cols} FROM {scratch}").splitlines()]
+    return (len(lines) == 2 and lines[0].startswith(f"Insert on {tmp}")
+            and lines[1] == f"->  Seq Scan on {scratch}")
 
 
 def _joinMethod(cur, select):
@@ -3371,14 +3494,12 @@ def _joinMethod(cur, select):
     the log line: so a run says which plan its rewrite had."""
     try:
         cur.execute("SAVEPOINT join_method")
-        cur.execute(f"EXPLAIN (COSTS OFF) {select}")
-        plan = " ".join(r[0] for r in cur.fetchall())
+        plan = _explain(cur, select)
         cur.execute("RELEASE SAVEPOINT join_method")
     except psycopg2.Error:
         cur.execute("ROLLBACK TO SAVEPOINT join_method")
         return ""
-    m = re.search(r"(Hash|Merge|Nested Loop)(?: (?:Left|Right|Full))? Join|Nested Loop", plan)
-    return m.group(0).lower() if m else ""
+    return _planJoin(plan)
 
 
 def verifyShadow(conn, tables):
