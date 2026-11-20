@@ -61,9 +61,33 @@ if _HAVE_NUMBA:
                 has_imp, imp_idx, imp_w, imp,
                 has_ind, ind_idx, ind_w, ind,
                 out_a, out_beta, out_g, out_q,
-                p_d, p_u, p_mu, p_c, p_r, p_e, p_k, p_imp, p_ind, n_mu):
+                p_d, p_u, p_mu, p_c, p_r, p_e, p_k, p_imp, p_ind, n_mu,
+                zero_in, derive_mu, derive_k1, derive_c, col_of):
         nch = edges.size - 1
         for t in prange(nch):
+            if zero_in:
+                # ★ each chunk zeroes its own private rows and its own
+                #   athletes' slots (2026-11-20; see fusedMatvec)
+                p_d[t, :] = 0.0
+                p_u[t, :] = 0.0
+                p_mu[t, :] = 0.0
+                p_c[t, :] = 0.0
+                p_r[t, :] = 0.0
+                p_e[t, :] = 0.0
+                p_k[t, :] = 0.0
+                p_imp[t, :] = 0.0
+                p_ind[t, :] = 0.0
+                lo = 0 if t == 0 else ath[edges[t]]
+                hi = out_a.size if t == nch - 1 else ath[edges[t + 1]]
+                out_a[lo:hi] = 0.0
+                if has_beta:
+                    out_beta[lo:hi] = 0.0
+                if has_g:
+                    out_g[lo:hi] = 0.0
+                if has_q:
+                    out_q[lo:hi] = 0.0
+            k0i = 0
+            k1i = 0
             for i in range(edges[t], edges[t + 1]):
                 at = ath[i]
                 hs = h[i]
@@ -74,7 +98,9 @@ if _HAVE_NUMBA:
                 if has_beta:
                     row += beta[at] * sc[i]
                 if has_c:
-                    row += amp[i] * (w0[i] * cfull[k0[i]] + w1[i] * cfull[k1[i]])
+                    k0i = k0[i]
+                    k1i = k0i + 1 if derive_k1 else k1[i]
+                    row += amp[i] * (w0[i] * cfull[k0i] + w1[i] * cfull[k1i])
                 if has_r:
                     row += first[i] * r[pool_row[i]]
                 if has_e:
@@ -94,14 +120,26 @@ if _HAVE_NUMBA:
                 out_a[at] += wr
                 p_d[t, cell[i]] += wr * hs
                 p_u[t, race[i]] += wr * hs
-                mi = mu_idx[i]
+                if derive_mu:
+                    mi = gr - 1 if gr > 0 else 0
+                else:
+                    mi = mu_idx[i]
                 if mi < n_mu:
-                    p_mu[t, mi] += wr * hs * mu_w[i]
+                    if derive_mu:
+                        p_mu[t, mi] += wr * hs * (1.0 if gr > 0 else 0.0)
+                    else:
+                        p_mu[t, mi] += wr * hs * mu_w[i]
                 if has_beta:
                     out_beta[at] += wr * sc[i]
                 if has_c:
-                    p_c[t, c0[i]] += wr * amp[i] * w0[i]
-                    p_c[t, c1[i]] += wr * amp[i] * w1[i]
+                    if derive_c:
+                        c0i = max(col_of[k0i], 0)
+                        c1i = max(col_of[k1i], 0)
+                    else:
+                        c0i = c0[i]
+                        c1i = c1[i]
+                    p_c[t, c0i] += wr * amp[i] * w0[i]
+                    p_c[t, c1i] += wr * amp[i] * w1[i]
                 if has_r:
                     p_r[t, pool_row[i]] += wr * first[i]
                 if has_e:
@@ -116,6 +154,36 @@ if _HAVE_NUMBA:
                     p_imp[t, imp_idx[i]] += wr * imp_w[i]
                 if has_ind:
                     p_ind[t, ind_idx[i]] += wr * hs * ind_w[i]
+
+    @njit(cache=True)
+    def _derivable(k0, k1, c0, c1, col_of, has_col, grp, mu_idx, mu_w,
+                   check_w):
+        """Whether k1, c0/c1 and mu_idx/mu_w are exactly what the kernel
+        can form from k0, col_of and the group (Design builds them so)."""
+        ok_k1 = k1.size == k0.size
+        ok_c = has_col and c0.size == k0.size and c1.size == k0.size
+        ok_mu = mu_idx.size == grp.size and (not check_w or mu_w.size == grp.size)
+        for i in range(k0.size):
+            if not (ok_k1 or ok_c):
+                break
+            if ok_k1 and k1[i] != k0[i] + 1:
+                ok_k1 = False
+            if ok_c:
+                c = col_of[k0[i]]
+                c_1 = col_of[k1[i]]
+                if c0[i] != max(c, 0) or c1[i] != max(c_1, 0):
+                    ok_c = False
+        for i in range(grp.size):
+            if not ok_mu:
+                break
+            g = grp[i]
+            if mu_idx[i] != (g - 1 if g > 0 else 0):
+                ok_mu = False
+            # bit for bit, so a -0.0 would not pass for a 0.0
+            elif check_w and (mu_w[i] != (1.0 if g > 0 else 0.0)
+                              or np.signbit(mu_w[i])):
+                ok_mu = False
+        return ok_mu, ok_k1, ok_c
 
     @njit(parallel=True, cache=True)
     def _zero(p):
@@ -140,6 +208,53 @@ if _HAVE_NUMBA:
         return out
 
 
+# ★ THE CG'S VECTOR UPDATES ON EVERY CORE (2026-11-20). Between two matvecs
+#   joint_solve.conjugateGradient walks theta-sized vectors seven times
+#   (alpha * p, x +=, alpha * Ap, r -=, the Jacobi product, beta * p, z +),
+#   each a single-threaded numpy pass. On an 8.3M-unknown synthetic design
+#   (4 cores) a step's vector work measured 132 ms, as much as the matvec's
+#   own kernel there, and 58 ms with these (114 ms with numpy in place on
+#   one core); the corpus has several times the unknowns and 22 cores.
+#   These are the same expressions
+#   element by element (a product rounded, then a sum rounded: LLVM fuses
+#   no multiply-add without fast-math, which these do not ask for), so the
+#   vectors are the same to the bit; the dot products and the norm stay
+#   numpy's, since a parallel reduction would reorder their sums. Two
+#   launches a step (cgStepJacobi, cgDirection), and the matvec's kernel
+#   three where it had twelve, so a machine where a launch is dear (8 ms
+#   under OpenMP's default spin on a 4-vCPU box) still comes out ahead.
+#   XCP_CG_PARALLEL=0 keeps the in-place updates in numpy on one core;
+#   XCP_CG_INPLACE=0 is the old numpy expressions.
+if _HAVE_NUMBA:
+    @njit(parallel=True, cache=True)
+    def cgStep(x, r, p, ap, alpha):
+        """x += alpha * p; r -= alpha * Ap -- in place, one pass."""
+        for i in prange(x.size):
+            x[i] += alpha * p[i]
+            r[i] -= alpha * ap[i]
+
+    @njit(parallel=True, cache=True)
+    def cgStepJacobi(x, r, p, ap, alpha, z, inv_diag):
+        """cgStep, then z = inv_diag * r (the Jacobi product) in the same
+        pass: one launch where there were two."""
+        for i in prange(x.size):
+            x[i] += alpha * p[i]
+            r[i] -= alpha * ap[i]
+            z[i] = inv_diag[i] * r[i]
+
+    @njit(parallel=True, cache=True)
+    def cgMul(out, a, v):
+        """out = a * v (the Jacobi product)."""
+        for i in prange(out.size):
+            out[i] = a[i] * v[i]
+
+    @njit(parallel=True, cache=True)
+    def cgDirection(p, z, beta):
+        """p = z + beta * p, written over p."""
+        for i in prange(p.size):
+            p[i] = z[i] + beta * p[i]
+
+
 def _edges(D):
     """Chunk edges on athlete boundaries, cached on D; None if the rows are
     not sorted by athlete (then the caller keeps the numpy path)."""
@@ -156,6 +271,49 @@ def _edges(D):
         edges = np.unique(cut)
     D._kern_edges = edges
     return edges
+
+
+def _derived(D, has_c):
+    """(derive_mu, derive_k1, derive_c, col_of) for the kernel, checked
+    once per design and kept on D.
+
+    ★ FIVE FEWER STREAMS A ROW (2026-11-20). The kernel is ~80% of the
+      solve and reads ~27 eight-byte per-row arrays every matvec. Five of
+      them are functions of others that Design builds and no pass changes:
+      k1 = k0 + 1, c0/c1 = max(col_of[k0/k1], 0), mu_idx = max(group - 1,
+      0), mu_w = (group > 0). Formed in registers instead (col_of is a few
+      hundred numbers, always in L1), the kernel reads 40 of ~216 bytes a
+      row less: a matvec on a 4M-row synthetic design 127 -> 119 ms
+      (median of an in-process A/B, 4 cores; 145 -> 124 with the five
+      streams simply dropped, the ceiling). Used
+      only where the stored arrays ARE those functions, checked element for
+      element (_derivable), so every index and weight is the one it was and
+      the result is the same to the bit. XCP_KERNEL_DERIVE=0 reads them all."""
+    if os.environ.get("XCP_KERNEL_DERIVE", "1").strip() in ("0", "false"):
+        return False, False, False, _DUMMY_I
+    col = getattr(D, "col_of", None)
+    k0, k1 = getattr(D, "k0", None), getattr(D, "k1", None)
+    key = (D.group_row, D.mu_idx, D.mu_w, k0, k1, getattr(D, "c0", None),
+           getattr(D, "c1", None), col)
+    hit = getattr(D, "_kern_derive", None)
+    if hit is None or len(hit[0]) != len(key) \
+            or not all(a is b for a, b in zip(hit[0], key)):
+        n_mu = int(D.n_mu)
+        i64 = lambda x: (np.asarray(x, dtype=np.int64) if x is not None   # noqa: E731
+                         else _DUMMY_I)
+        has_k = k0 is not None and k1 is not None and bool(D.n_c)
+        has_col = has_k and col is not None and getattr(D, "c0", None) is not None
+        col_a = i64(col) if has_col else _DUMMY_I
+        ok_mu, ok_k1, ok_c = _derivable(
+            i64(k0) if has_k else _DUMMY_I, i64(k1) if has_k else _DUMMY_I,
+            i64(D.c0) if has_col else _DUMMY_I,
+            i64(D.c1) if has_col else _DUMMY_I, col_a, has_col,
+            i64(D.group_row), i64(D.mu_idx),
+            np.asarray(D.mu_w, dtype=np.float64), n_mu > 0)
+        D._kern_derive = hit = (key, (bool(ok_mu), bool(ok_k1 and has_k),
+                                      bool(ok_c and has_col), col_a))
+    d_mu, d_k1, d_c, col_a = hit[1]
+    return d_mu, d_k1 and has_c, d_c and has_c, col_a
 
 
 def _arr(x, n, dtype=np.float64):
@@ -211,12 +369,27 @@ def fusedMatvec(D, w, h, amp, b):
     if bufs is None or bufs.get("nch") != nch:
         bufs = D._kern_bufs = {"nch": nch}
 
+    # ★ ONE OUTPUT, ZEROED BY THE KERNEL (2026-11-20). The four athlete
+    #   blocks used to be np.zeros apiece and the whole theta-sized result
+    #   np.concatenate'd from parts -- a fresh array of every unknown,
+    #   copied and page-faulted on one core each matvec -- and the nine
+    #   private copies were zeroed by nine parallel launches of _zero (on
+    #   the 4-vCPU dev box a launch measured 8 ms under GOMP's default spin,
+    #   70 ms of a 90 ms matvec; 0.05 ms with GOMP_SPINCOUNT=0, where the
+    #   kernel's A/B is 122 -> 116 ms median). Now the blocks are slices of
+    #   one np.empty result, and each chunk zeroes its own private rows and
+    #   its own athletes' slots before its rows. Zero is zero: the same
+    #   numbers to the bit (tests/test_joint_kernels.py).
+    #   XCP_KERNEL_ZERO_IN=0 is the old separate zeroing and concatenate.
+    zero_in = os.environ.get("XCP_KERNEL_ZERO_IN", "1").strip() not in ("0", "false")
+
     def priv(size, key):
         shape = (nch, max(int(size), 1) + _PAD)
         p = bufs.get(key)
         if p is None or p.shape != shape:
             p = bufs[key] = np.empty(shape)
-        _zero(p)
+        if not zero_in:
+            _zero(p)
         return p
 
     has_beta = bool(D.n_beta) and b.get("beta") is not None
@@ -229,10 +402,43 @@ def fusedMatvec(D, w, h, amp, b):
     has_imp = bool(getattr(D, "n_imp", 0)) and b.get("imp") is not None
     has_ind = bool(getattr(D, "n_ind", 0)) and b.get("ind") is not None
 
-    out_a = np.zeros(D.n_ath)
-    out_beta = np.zeros(D.n_ath if has_beta else 1)
-    out_g = np.zeros(D.n_ath if has_g else 1)
-    out_q = np.zeros(D.n_ath if has_q else 1)
+    # the packed result's blocks, in theta's order (Design.unpack)
+    n_ath = int(D.n_ath)
+    sizes = [("a", n_ath), ("d", D.n_cell), ("u", D.n_race), ("mu", n_mu)]
+    if D.n_beta:
+        sizes.append(("beta", n_ath))
+    if D.n_c:
+        sizes.append(("c", D.n_c))
+    if D.n_r:
+        sizes.append(("r", D.n_pool))
+    if getattr(D, "n_e", 0):
+        sizes.append(("e", D.n_e))
+    if getattr(D, "n_g", 0):
+        sizes.append(("g", n_ath))
+    if getattr(D, "n_q", 0):
+        sizes.append(("q", n_ath))
+    if getattr(D, "n_k", 0):
+        sizes.append(("k", D.n_group))
+    if getattr(D, "n_imp", 0):
+        sizes.append(("imp", D.n_imp))
+    if getattr(D, "n_ind", 0):
+        sizes.append(("ind", D.n_ind))
+    res = np.empty(sum(int(z) for _, z in sizes))
+    blk, o = {}, 0
+    for key, z in sizes:
+        blk[key] = res[o:o + int(z)]
+        o += int(z)
+
+    if zero_in:
+        out_a = blk["a"]
+        out_beta = blk["beta"] if has_beta else np.zeros(1)
+        out_g = blk["g"] if has_g else np.zeros(1)
+        out_q = blk["q"] if has_q else np.zeros(1)
+    else:
+        out_a = np.zeros(n_ath)
+        out_beta = np.zeros(n_ath if has_beta else 1)
+        out_g = np.zeros(n_ath if has_g else 1)
+        out_q = np.zeros(n_ath if has_q else 1)
     p_d, p_u, p_mu = priv(D.n_cell, "d"), priv(D.n_race, "u"), priv(n_mu, "mu")
     p_c = priv(D.n_c if has_c else 1, "c")
     p_r = priv(D.n_pool if has_r else 1, "r")
@@ -242,13 +448,16 @@ def fusedMatvec(D, w, h, amp, b):
     p_ind = priv(D.n_ind if has_ind else 1, "ind")
 
     F, I = _DUMMY_F, _DUMMY_I
-    _kernel(edges, D.athlete, D.cell, D.race, D.group_row, D.mu_idx,
-            np.asarray(D.mu_w, dtype=np.float64), np.asarray(w, dtype=np.float64),
+    d_mu, d_k1, d_c, col_of = _derived(D, has_c)
+    _kernel(edges, D.athlete, D.cell, D.race, D.group_row,
+            I if d_mu else D.mu_idx,
+            F if d_mu else np.asarray(D.mu_w, dtype=np.float64),
+            np.asarray(w, dtype=np.float64),
             h, amp,
             b["a"], b["d"], b["u"], b["mu"],
             has_beta, D.sc if has_beta else F, b["beta"] if has_beta else F,
-            has_c, D.k0 if has_c else I, D.k1 if has_c else I,
-            D.c0 if has_c else I, D.c1 if has_c else I,
+            has_c, D.k0 if has_c else I, D.k1 if has_c and not d_k1 else I,
+            D.c0 if has_c and not d_c else I, D.c1 if has_c and not d_c else I,
             D.w0 if has_c else F, D.w1 if has_c else F,
             b["c"] if has_c else F,
             has_r, D.first if has_r else F, D.pool_row if has_r else I,
@@ -263,10 +472,35 @@ def fusedMatvec(D, w, h, amp, b):
             has_ind, D.ind_idx if has_ind else I, D.ind_w if has_ind else F,
             b["ind"] if has_ind else F,
             out_a, out_beta, out_g, out_q,
-            p_d, p_u, p_mu, p_c, p_r, p_e, p_k, p_imp, p_ind, n_mu)
+            p_d, p_u, p_mu, p_c, p_r, p_e, p_k, p_imp, p_ind, n_mu,
+            zero_in, d_mu, d_k1, d_c, col_of)
     if not _ANNOUNCED:
         print(f"[joint] kernels: fused matvec on, {nch} chunks", flush=True)
         _ANNOUNCED = True
+
+    if zero_in:
+        blk["d"][:] = _colsum(p_d, D.n_cell)
+        blk["u"][:] = _colsum(p_u, D.n_race)
+        blk["mu"][:] = p_mu.sum(axis=0)[:n_mu]
+        if D.n_beta and not has_beta:
+            blk["beta"][:] = 0.0
+        if D.n_c:
+            blk["c"][:] = p_c.sum(axis=0)[:D.n_c]
+        if D.n_r:
+            blk["r"][:] = p_r.sum(axis=0)[:D.n_pool]
+        if getattr(D, "n_e", 0):
+            blk["e"][:] = p_e.sum(axis=0)[:D.n_e]
+        if getattr(D, "n_g", 0) and not has_g:
+            blk["g"][:] = 0.0
+        if getattr(D, "n_q", 0) and not has_q:
+            blk["q"][:] = 0.0
+        if getattr(D, "n_k", 0):
+            blk["k"][:] = p_k.sum(axis=0)[:D.n_group]
+        if getattr(D, "n_imp", 0):
+            blk["imp"][:] = p_imp.sum(axis=0)[:D.n_imp]
+        if getattr(D, "n_ind", 0):
+            blk["ind"][:] = p_ind.sum(axis=0)[:D.n_ind]
+        return res
 
     parts = [out_a, _colsum(p_d, D.n_cell), _colsum(p_u, D.n_race),
              p_mu.sum(axis=0)[:n_mu]]
