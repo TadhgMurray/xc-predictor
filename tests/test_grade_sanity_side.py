@@ -376,6 +376,8 @@ def test_side_by_side_writes_the_same_tables():
             ("fail", {GS.SIDE_ENV: "1", "XCP_GRADE_SANITY_SIDE_TIMEOUT": "1ms"}))}
         tabs, idx, out = runs["seq"]
         assert "side by side" not in out and "side by side" in runs["side"][2]
+        # the overlap (2026-11-20): fld_best from [2]'s grouping, patched
+        assert "fld_best_pre" not in out and "fld_best: fld_best_pre" in runs["side"][2]
         assert "failed on its own connection" in runs["fail"][2]
         assert {"grade_fix", "grade_untrusted", "allraces", "gradekind"} <= set(tabs)
         c = cx.cursor()
