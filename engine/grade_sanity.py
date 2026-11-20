@@ -1265,6 +1265,74 @@ _CORROBORATED_SQL = """
                                     THEN grade::int ELSE 0 END END) DESC
 """
 
+# ★ ONE GROUPING FOR [2] AND RULE 4's fld_best (2026-11-20; run
+#   20261116_204106: fld_best 87.9 s on the critical path, the same
+#   (person, season, grade_folded) count(DISTINCT race) [2] had already
+#   made). Side by side (XCP_GRADE_SANITY_OVERLAP, default on), [2]'s
+#   per_grade is a table, gs_per_grade: [2] reads it with its own outer
+#   SELECT unchanged, and fld_best_pre -- fld_best's own max(n) per season,
+#   over allraces AS BUILT -- is grouped off it while the main connection
+#   waits for [2c round 1]. The 2c write-back (the only write to allraces)
+#   touches the seasons in barefix and nothing else, so at rule 4 fld_best
+#   is fld_best_pre for every other season and a regroup of barefix's own
+#   seasons for those: the same rows _FIELD_BUILD's statement makes.
+_PER_GRADE_SQL = """
+        SELECT person_id, acad, grade_folded AS grade,
+               count(DISTINCT race) AS n
+        FROM   allraces
+        WHERE  grade_folded IS NOT NULL
+        GROUP  BY 1, 2, 3"""
+# the same grouping as [2]'s CTE, word for word
+assert " ".join(_PER_GRADE_SQL.split()) in " ".join(_CORROBORATED_SQL.split())
+_CORROBORATED_TABLE_SQL = _CORROBORATED_SQL.replace(
+    _CORROBORATED_SQL[_CORROBORATED_SQL.index("WITH per_grade AS ("):
+                      _CORROBORATED_SQL.index("    SELECT DISTINCT ON")],
+    "WITH per_grade AS (SELECT person_id, acad, grade, n FROM gs_per_grade)\n")
+_PER_GRADE_BUILD = f"""
+    DROP TABLE IF EXISTS gs_per_grade;
+    CREATE UNLOGGED TABLE gs_per_grade AS{_PER_GRADE_SQL};
+    ANALYZE gs_per_grade
+"""
+# fld_best's statement in _FIELD_BUILD, over gs_per_grade
+_FLD_BEST_PRE_BUILD = """
+    DROP TABLE IF EXISTS fld_best_pre;
+    CREATE UNLOGGED TABLE fld_best_pre AS
+        SELECT person_id, acad, max(n) AS top_n
+        FROM   gs_per_grade
+        GROUP  BY 1, 2;
+    ANALYZE fld_best_pre;
+    DROP TABLE gs_per_grade
+"""
+# fld_best at rule 4: fld_best_pre outside barefix, barefix's seasons
+# regrouped from allraces as the write-back left it (by_grade verbatim,
+# narrowed to those seasons; barefix holds each season once). Run BEFORE
+# _FIELD_BUILD's SET enable_nestloop = off: the planner picks the join.
+_FLD_BEST_PATCH = """
+    DROP TABLE IF EXISTS fld_best;
+    CREATE UNLOGGED TABLE fld_best AS
+        SELECT p.person_id, p.acad, p.top_n
+        FROM   fld_best_pre p
+        WHERE  NOT EXISTS (SELECT 1 FROM barefix b
+                           WHERE b.person_id = p.person_id AND b.acad = p.acad)
+        UNION ALL
+        SELECT person_id, acad, max(n) AS top_n
+        FROM  (SELECT a.person_id, a.acad, a.grade_folded AS grade,
+                      count(DISTINCT a.race) AS n
+               FROM   allraces a
+               JOIN   barefix b ON b.person_id = a.person_id AND b.acad = a.acad
+               WHERE  a.grade_folded IS NOT NULL
+               GROUP  BY 1, 2, 3) by_grade
+        GROUP  BY 1, 2;
+    ANALYZE fld_best;
+    DROP TABLE fld_best_pre
+"""
+# no write-back wrote anything: allraces is as built, fld_best_pre is fld_best
+_FLD_BEST_AS_BUILT = """
+    DROP TABLE IF EXISTS fld_best;
+    ALTER TABLE fld_best_pre RENAME TO fld_best;
+    ANALYZE fld_best
+"""
+
 
 # ------------------------------------------------------------------ #
 #  RULE 4: THE LEVEL OF THE FIELD
@@ -1622,12 +1690,14 @@ def openSchoolBuild(on, codes, college_codes=()):
 """
 
 
-def loadCollegeNames(cur):
+def loadCollegeNames(cur, names=None):
     """fld_college_names: the normalised school strings that are colleges
     (speed_ratings_db._collegeNames), for rule 4's college-vote exemption.
-    Returns how many."""
-    from speed_ratings_db import _collegeNames
-    names = sorted(_collegeNames(cur))
+    names: already read (a side connection's _collegeNamesRead), else read
+    here. Returns how many."""
+    if names is None:
+        from speed_ratings_db import _collegeNames
+        names = sorted(_collegeNames(cur))
     cur.execute("DROP TABLE IF EXISTS fld_college_names; "
                 "CREATE UNLOGGED TABLE fld_college_names (name text PRIMARY KEY)")
     if names:
@@ -1665,15 +1735,36 @@ _SEASON_RACES_ALL = ("SELECT person_id, acad, count(DISTINCT race) AS races "
                      "FROM allraces GROUP BY 1, 2")
 
 
-def fieldBuild(share=None, codes=None, college_codes=None, pa_races=False):
+def _stageStmts(table):
+    """The three statements of _FIELD_BUILD that make `table`."""
+    return {f"DROP TABLE IF EXISTS {table}", f"CREATE UNLOGGED TABLE {table} AS",
+            f"ANALYZE {table}"}
+
+
+def _headLine(stmt):
+    return next((ln.strip() for ln in stmt.splitlines()
+                 if ln.strip() and not ln.strip().startswith("--")), "")
+
+
+def fieldBuild(share=None, codes=None, college_codes=None, pa_races=False, staged=()):
     """_FIELD_BUILD with the open-race share laid in (OPEN_FIELD_SHARE when
     None; above 1 is off), and the withheld votes after it (openSchoolBuild;
     `codes` / `college_codes` the school and college team codes).
-    pa_races: build season_races from pa_races (it exists on this run)."""
+    pa_races: build season_races from pa_races (it exists on this run).
+    staged: of "season_races" / "fld_best", the tables the caller already
+    made (side by side, see _PER_GRADE_SQL): their three statements left
+    out, every other statement as it was. A script string either way."""
     share = float(OPEN_FIELD_SHARE if share is None else share)
-    return (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
-            .replace("__SEASON_RACES__", _SEASON_RACES_PA if pa_races else _SEASON_RACES_ALL)
-            + openSchoolBuild(share <= 1.0, codes, college_codes))
+    sql = (_FIELD_BUILD.replace(_OPEN_TOKEN, repr(share))
+           .replace("__SEASON_RACES__", _SEASON_RACES_PA if pa_races else _SEASON_RACES_ALL)
+           + openSchoolBuild(share <= 1.0, codes, college_codes))
+    if not staged:
+        return sql
+    drop = set().union(*(_stageStmts(t) for t in staged))
+    stmts = splitStatements(sql)
+    keep = [st for st in stmts if _headLine(st) not in drop]
+    assert len(stmts) - len(keep) == 3 * len(staged), staged
+    return ";\n".join(keep) + ";\n"
 
 
 def _paReady(cur):
@@ -3089,6 +3180,34 @@ _SIDE_EARLY_TABLES = ("gradenorm", "allraces", "pa_races", "raceKinds",
                       "gradekind", _NT_TABLE)
 
 
+# ★ OVERLAP (2026-11-20; run 20261116_204106: 2,086 s, now the length of
+#   block 04's window beside 04d + 04c, ~1,150 s). What it changes, each
+#   the same rows by construction (see each site):
+#    - the base-table reads that need nothing of this step's -- rule 4's
+#      college names and team levels, rule 8's club rows and athlete_season
+#      pools -- start before the build, not on the critical path at rule 4;
+#    - [2c round 1] (401.8 s on its own connection, 252 s of the main
+#      connection waiting for it) starts first, before [2c]'s word read;
+#    - while the main connection waits for it, it groups fld_best_pre off
+#      [2]'s own grouping (gs_per_grade) and builds season_races from
+#      pa_races, two of rule 4's stages (fld_best 87.9 s);
+#    - the reports, and the early reads, run with BG_WORKERS parallel
+#      workers per gather (1): max_parallel_workers is 16 and the build sets
+#      8 per gather, so a report that took eight workers left the critical
+#      query beside it with none.
+#  XCP_GRADE_SANITY_OVERLAP=0: the side-by-side path as it was on
+#  2026-11-16.
+OVERLAP_ENV = "XCP_GRADE_SANITY_OVERLAP"
+BG_WORKERS = os.environ.get("XCP_GRADE_SANITY_BG_WORKERS", "1").strip() or None
+# the early reads' own workers in the pool, so the build's three index
+# jobs never queue behind them
+EARLY_JOBS = 3
+
+
+def overlapOn():
+    return os.environ.get(OVERLAP_ENV, "1").strip() != "0"
+
+
 def sideOn():
     """Run the independent phases side by side? XCP_GRADE_SANITY_PARALLEL
     (default on; 0 = the sequential path), never under an exported
@@ -3147,11 +3266,18 @@ class SideWork:
                          "WHERE source = 'session' ORDER BY name")
         return [(n, v) for n, v in self.cur.fetchall() if n not in _SIDE_SKIP]
 
-    def submit(self, label, fn, commit=False):
+    def submit(self, label, fn, commit=False, workers=None):
         """Start fn(cur) on its own connection. commit: keep what it wrote
-        (tables the main connection reads next); otherwise rolled back."""
+        (tables the main connection reads next); otherwise rolled back.
+        workers: max_parallel_workers_per_gather for this job (a background
+        read that must not take the critical query's workers), else the
+        main connection's."""
         assert label not in self.futs, label
         settings = self.settings()
+        if workers is not None:
+            settings = [(n, v) for n, v in settings
+                        if n != "max_parallel_workers_per_gather"]
+            settings.append(("max_parallel_workers_per_gather", str(workers)))
         self.fns[label] = fn
         self.futs[label] = self.pool.submit(self._work, label, fn, commit, settings)
 
@@ -3296,10 +3422,46 @@ def startBareClassReads(side):
     """[2c]'s two reads, started beside [2]. ★ BOTH READ grade_folded AS
     BUILT, as [2] does: nothing writes allraces until 2c's write-back, which
     comes after both are applied, in their old order."""
+    if overlapOn():
+        # ★ THE LONGEST FIRST (2026-11-20; run 20261116_204106: round 1
+        #   401.8 s, the main connection waiting 252 s of it): it takes its
+        #   parallel workers before the word read and [2] ask for theirs
+        side.submit("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bareFieldArgs()))
+        side.submit("[2c] bare class words", _fetch(_BARE_CLASS_SQL))
+        side.submit("report: ungraded events", _fetch(_UNGRADED_SQL), workers=BG_WORKERS)
+        return
     side.submit("[2c] bare class words", _fetch(_BARE_CLASS_SQL))
     side.submit("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bareFieldArgs()))
     # and the ungraded report, after them: a report waits, they do not
     side.submit("report: ungraded events", _fetch(_UNGRADED_SQL))
+
+
+def _collegeNamesRead(cur):
+    """loadCollegeNames' read, on a side connection: the names, sorted."""
+    from speed_ratings_db import _collegeNames
+    return sorted(_collegeNames(cur))
+
+
+_TEAM_FUT = None
+
+
+def startEarlyReads(side):
+    """★ THE READS THAT NEED NOTHING OF THIS STEP, STARTED WITH THE BUILD
+    (2026-11-20, see OVERLAP). Each reads base tables only -- results*,
+    anet_team, college_directory, athlete_season, race_top_level -- that
+    nothing in this step or beside it (04b/04c/04d/04h0/04h1) writes, so
+    they return what they returned where the old path ran them: rule 4's
+    college names and team levels, rule 8's athlete_season pools and club
+    rows (its two tables committed, as before)."""
+    global _TEAM_FUT
+    from concurrent.futures import ThreadPoolExecutor
+    if OPEN_FIELD_SHARE <= 1.0:
+        side.submit("[4] college names", _collegeNamesRead, workers=BG_WORKERS)
+    side.submit("[8] athlete_season adult pools", adultPoolRows, workers=BG_WORKERS)
+    side.submit("[8] club rows", _clubPrepSide, commit=True, workers=BG_WORKERS)
+    _bg = ThreadPoolExecutor(max_workers=1)
+    _TEAM_FUT = _bg.submit(_teamMeaning)
+    _bg.shutdown(wait=False)
 
 
 def resolve(cur, audit=False, side=None):
@@ -3364,7 +3526,16 @@ def buildRaces(cur, audit=False, side=None):
         runTimed(cur, stmts, label="build")
     else:
         t_b = time.time()
-        runTimed(cur, stmts[:idx[0]], label="build: tables")
+        if overlapOn():
+            # the build's SETs first, so the early reads take its settings
+            n_set = 0
+            while n_set < idx[0] and _headLine(stmts[n_set]).upper().startswith("SET "):
+                n_set += 1
+            runTimed(cur, stmts[:n_set], label="build: settings")
+            startEarlyReads(side)
+            runTimed(cur, stmts[n_set:idx[0]], label="build: tables")
+        else:
+            runTimed(cur, stmts[:idx[0]], label="build: tables")
         noAutovacuum(cur, _SIDE_EARLY_TABLES)
         cur.connection.commit()
         # ★ STARTED NOW, READ WHERE THE SEQUENTIAL PATH RAN THEM: rule 7
@@ -3372,7 +3543,8 @@ def buildRaces(cur, audit=False, side=None):
         #   a verdict; the fold report reads gradekind.
         side.submit("[7] elite field", eliteFieldSeasons)
         buildIndexesSide(cur, side, stmts[idx[0]:idx[-1] + 1])
-        side.submit("report: mixed seasons", _fetch(_FOLD_SQL))
+        side.submit("report: mixed seasons", _fetch(_FOLD_SQL),
+                    workers=BG_WORKERS if overlapOn() else None)
         runTimed(cur, stmts[idx[-1] + 1:], label="build: allraces analyzed")
         cur.connection.commit()
         tick("build total (side by side)", t_b)
@@ -3408,7 +3580,14 @@ def _resolve(cur, side=None):
         startBareClassReads(side)
 
     _tq = time.time()
-    cur.execute(_CORROBORATED_SQL, {"minc": MIN_CORROBORATION})
+    # ★ OVERLAP: [2]'s grouping kept as a table for rule 4's fld_best (see
+    #   _PER_GRADE_SQL); the same outer SELECT over it
+    _ov = side is not None and overlapOn()
+    if _ov:
+        runTimed(cur, _PER_GRADE_BUILD, label="[2] per-grade counts (gs_per_grade)")
+        cur.execute(_CORROBORATED_TABLE_SQL, {"minc": MIN_CORROBORATION})
+    else:
+        cur.execute(_CORROBORATED_SQL, {"minc": MIN_CORROBORATION})
     print(f"    [2] corroborated grades read ({time.time() - _tq:.0f}s)", flush=True)
     for pid, ay, grade, n in cur.fetchall():
         acad[(int(pid), int(ay))] = {"grade": grade, "level": None,
@@ -3445,6 +3624,18 @@ def _resolve(cur, side=None):
     del _bare_rows
     tick(f"[2c] {n_bare:,} bare class words resolved by own grades", _tq)
 
+    # ★ OVERLAP: two of rule 4's stages while [2c round 1] runs -- fld_best
+    #   over allraces as built (patched at rule 4 for barefix's seasons) and
+    #   season_races, from pa_races, which nothing in this step writes
+    _sr_staged = False
+    if _ov:
+        runTimed(cur, _FLD_BEST_PRE_BUILD, label="[4] fld_best_pre, beside [2c round 1]")
+        if _paReady(cur):
+            runTimed(cur, f"""DROP TABLE IF EXISTS season_races;
+                CREATE UNLOGGED TABLE season_races AS {_SEASON_RACES_PA};
+                ANALYZE season_races""", label="[4] season_races, beside [2c round 1]")
+            _sr_staged = True
+
     # ! TWO ROUNDS, WITH A WRITE-BACK BETWEEN THEM. Round one resolves the
     #   pockets it can see; the write-back makes those races visibly
     #   school-level; round two picks up the races that were just under the
@@ -3477,13 +3668,16 @@ def _resolve(cur, side=None):
         #   rows read no allraces at all -- and nothing from here to where
         #   each is applied writes what it reads (rule 4 writes fld_* only).
         _tq = time.time()
-        noAutovacuum(cur, ("barefix",))
+        noAutovacuum(cur, ("barefix", "fld_best_pre", "season_races") if _ov else ("barefix",))
         cur.connection.commit()
         side.submit("[5] stale grades", _fetch(_STALE_SQL, {"maxy": MAX_YEARS_AT_GRADE}))
         side.submit("[5b] seasons after a college start", _fetch(_COLLEGIATE_SQL))
         side.submit("[5e] college starts", _fetch(_COLLEGE_START_SQL))
-        side.submit("[8] athlete_season adult pools", adultPoolRows)
-        side.submit("[8] club rows", _clubPrepSide, commit=True)
+        # (started with the build under OVERLAP: startEarlyReads)
+        if "[8] athlete_season adult pools" not in side.futs:
+            side.submit("[8] athlete_season adult pools", adultPoolRows)
+        if "[8] club rows" not in side.futs:
+            side.submit("[8] club rows", _clubPrepSide, commit=True)
         tick("[2c] write-back committed, the reads after it started", _tq)
 
     # ! THE METHOD NAME IS DERIVED FROM THE LEVEL, NOT ASKED FOR SEPARATELY.
@@ -3495,10 +3689,27 @@ def _resolve(cur, side=None):
     _tq = time.time()
     _on = OPEN_FIELD_SHARE <= 1.0
     if _on:
-        loadCollegeNames(cur)
+        _names = None
+        if side is not None and "[4] college names" in side.futs:
+            _names = side.result("[4] college names", fallback=_collegeNamesRead)
+        loadCollegeNames(cur, names=_names)
+    _staged = ()
+    if _ov:
+        # fld_best: fld_best_pre, barefix's seasons regrouped (see
+        # _FLD_BEST_PATCH); before the build's SET enable_nestloop = off
+        cur.execute("SELECT to_regclass('barefix') IS NOT NULL")
+        _bf = bool(cur.fetchone()[0])
+        if n_bare + n_bare_field > 0:
+            assert _bf, "a bare-word verdict was written back, and barefix is gone"
+            runTimed(cur, _FLD_BEST_PATCH, label="[4] fld_best: fld_best_pre + barefix's seasons")
+        else:
+            runTimed(cur, _FLD_BEST_AS_BUILT, label="[4] fld_best: nothing written back")
+        _staged = ("fld_best",) + (("season_races",) if _sr_staged else ())
+    if _TEAM_FUT is not None:
+        _TEAM_FUT.result()              # the team levels startEarlyReads read
     runTimed(cur, fieldBuild(codes=_schoolTeamCodes() if _on else (),
                              college_codes=_collegeTeamCodes() if _on else (),
-                             pa_races=_paReady(cur)),
+                             pa_races=_paReady(cur), staged=_staged),
              label="[4] staging")
     cur.execute(_FIELD_SQL)
     _field_rows = cur.fetchall()
@@ -4210,7 +4421,9 @@ def main(do_write=False, audit=False, do_compare=False):
             # ★ SIDE BY SIDE only when writing: the side connections need the
             #   main connection's tables committed, and a dry run commits
             #   nothing (see SIDE BY SIDE)
-            side = SideWork(cur, getConn) if do_write and sideOn() else None
+            side = (SideWork(cur, getConn,
+                             streams=SIDE_STREAMS + (EARLY_JOBS if overlapOn() else 0))
+                    if do_write and sideOn() else None)
             try:
                 resolved = resolve(cur, audit=audit, side=side)
             finally:
