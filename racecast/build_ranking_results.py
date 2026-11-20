@@ -136,7 +136,23 @@ _RATING_MAX = 200.0
 # max_parallel_maintenance_workers on its own, so this multiplies rather than
 # replaces it -- 3 stays inside max_parallel_workers (8) with room for the
 # three leader processes.
+#
+# ★ XCP_RANK_INDEX_JOBS (2026-11-20; run 20261117_142219, the index builds
+#   about 10 min at 3): the count, for a night that wants to try 4 or 5.
+#   Unset, 3, as before. Still through dbJobs, so XCP_DB_QUIET caps it.
+#   THE COST, per extra build: maintenance_work_mem (2GB; a parallel btree
+#   build shares one budget across its leader and workers), its sort's temp
+#   files (about one index of disk), and four more parallel workers. 4 jobs
+#   ask 16 workers -- all of max_parallel_workers (16, server_setup.sh) --
+#   plus 4 leaders, 20 busy processes on 24 cores; 5 ask 20, so the last
+#   build starts with whatever workers are free (maybe none) and nothing is
+#   left for a parallel query beside it (athlete_season under
+#   XCP_SEASON_BESIDE_INDEXES). And the phase cannot end before its longest
+#   single index, which starts first now. So 4 is the useful ceiling and
+#   the default stays 3 until a run's per-index seconds show the gain.
 _INDEX_JOBS = dbJobs(3)     # one at a time under XCP_DB_QUIET (2026-09-14)
+if (os.environ.get("XCP_RANK_INDEX_JOBS") or "").strip():
+    _INDEX_JOBS = dbJobs(max(1, int(os.environ["XCP_RANK_INDEX_JOBS"])))
 
 
 # ------------------------------------------------------------------ #
@@ -995,6 +1011,10 @@ def _campusState(school):
     return st
 
 
+_UNATTACHED = {}
+_NO_SI = {}
+
+
 def _homeStateOf(school, state, pool):
     """A board row's state: the athlete's, not the meet's -- the rule
     _homeStates applies to a season, applied to each row (owner's boards,
@@ -1008,9 +1028,17 @@ def _homeStateOf(school, state, pool):
         st = _campusState(school)
         if st and len(str(st).strip()) == 2:
             return str(st).strip().upper()
-    if str(school).lower().startswith("unattached"):
+    # ★ ONE lower() PER DISTINCT SCHOOL, NOT PER ROW (2026-11-20, the same
+    #   cProfile: _homeStateOf 0.52 s of 5.6 s). Pure in the string.
+    try:
+        unattached = _UNATTACHED[school]
+    except KeyError:
+        unattached = _UNATTACHED[school] = str(school).lower().startswith("unattached")
+    except TypeError:
+        unattached = str(school).lower().startswith("unattached")
+    if unattached:
         return state
-    have = _UNITS.get("si_states", {}).get(school)
+    have = _UNITS.get("si_states", _NO_SI).get(school)
     if have and state not in have:
         return _UNITS["si_primary"].get(school, state)
     return state
@@ -1557,6 +1585,23 @@ def isRankablePool(pool):
     boards at 170."""
     if not pool:
         return False
+    # ★ PER DISTINCT POOL (2026-11-20; 0.26 s of the 5.6 s cProfile of
+    #   prepareRow, asked once a row of a few dozen strings): pure, so the
+    #   remembered answer is the computed one.
+    try:
+        return _RANKABLE[pool]
+    except KeyError:
+        pass
+    except TypeError:
+        return _isRankable(pool)
+    got = _RANKABLE[pool] = _isRankable(pool)
+    return got
+
+
+_RANKABLE = {}
+
+
+def _isRankable(pool):
     bare = pool.split("|", 1)[0]
     return not bare.endswith("_unknown_gender") and not bare.startswith("pro_")
 
@@ -1571,6 +1616,56 @@ def isRankablePool(pool):
 #   built too early to know.
 from record_pace import (_WR_PACE, PACE_FLOOR_SLACK, recordPace,     # noqa: E402,F401
                          impossiblePace, exemptPool, impossibleRow)
+from record_pace import poolFactor as _poolFactor                    # noqa: E402
+
+# ★ impossibleRow WITH ITS TWO PURE LOOKUPS REMEMBERED (2026-11-20; cProfile
+#   of prepareRow over 200k synthetic rows of each sport: impossibleRow was
+#   1.35-1.65 s of 5.6-6.4 s, a quarter of the row walk -- exemptPool's
+#   split + any() over the prefixes and recordPace's log interpolation, on
+#   every row, of a few dozen pools and a few thousand distances).
+#   The same arithmetic in the same order: slack is PACE_FLOOR_SLACK *
+#   poolFactor(pool), the record pace is recordPace(d, sex) for the same
+#   float d, and the test is impossiblePace's own expression -- so the
+#   answer is impossibleRow's, bit for bit. XCP_RANK_ROWCACHE=0 calls
+#   impossibleRow itself.
+_IMP_SLACK = {}
+_IMP_PACE = {}
+_ROW_CACHE = (os.environ.get("XCP_RANK_ROWCACHE") or "1").strip() != "0"
+
+
+def _cached_impossibleRow(time_seconds, distance_m, sex, pool):
+    try:
+        slack = _IMP_SLACK[pool]
+    except KeyError:
+        slack = _IMP_SLACK[pool] = (None if exemptPool(pool)
+                                    else PACE_FLOOR_SLACK * _poolFactor(pool))
+    except TypeError:                               # an unhashable pool
+        return impossibleRow(time_seconds, distance_m, sex, pool)
+    if slack is None:
+        return False
+    try:
+        t = float(time_seconds); d = float(distance_m)
+    except (TypeError, ValueError):
+        return False
+    if t <= 0 or d <= 0:
+        return False
+    key = (d, sex)
+    try:
+        rp = _IMP_PACE[key]
+    except KeyError:
+        rp = recordPace(d, sex)
+        if d == d:                                  # a NaN key never hits
+            _IMP_PACE[key] = rp
+    except TypeError:                               # an unhashable sex
+        rp = recordPace(d, sex)
+    return (t / (d / 1000.0)) < slack * rp
+
+
+if not _ROW_CACHE:
+    _cached_impossibleRow = impossibleRow            # noqa: F811
+
+_BARE_POOL = {}
+_BAND = {}
 
 
 def prepareRow(row, sport):
@@ -1647,7 +1742,14 @@ def prepareRow(row, sport):
     #   fallback for a row that carries no rating_pool (an unrated sprint,
     #   a database before the column).
     rp = getattr(row, "rating_pool", None)
-    pool = str(rp).split("|", 1)[0] if rp else None
+    # ★ ONE split PER DISTINCT STAMP (2026-11-20): a few dozen 'hs_m|XC'
+    #   strings over every row; the same str().split, remembered.
+    if rp:
+        pool = _BARE_POOL.get(rp)
+        if pool is None:
+            pool = _BARE_POOL[rp] = str(rp).split("|", 1)[0]
+    else:
+        pool = None
     if pool:
         _GATE[sport]["pool_from_row"] += 1
     elif row.speed_rating is not None and _HAVE_RATING_POOL.get(sport):
@@ -1724,7 +1826,12 @@ def prepareRow(row, sport):
     #   copied (normalize_distance.PACE_FLOOR / PACE_CEIL).
     nt = row.normalized_time
     if nt is not None:
-        lo, hi = poolBandFor(pool, sport)
+        # ★ ONE poolBandFor PER (pool, sport) (2026-11-20; 0.26 s of the
+        #   cProfile's 4.6 s, a targetFor lookup and two multiplies a row)
+        band = _BAND.get((pool, sport))
+        if band is None:
+            band = _BAND[(pool, sport)] = poolBandFor(pool, sport)
+        lo, hi = band
         if not lo <= float(nt) <= hi:
             _GATE[sport]["outside_band"] += 1
             return None
@@ -1846,7 +1953,7 @@ def prepareRow(row, sport):
     if row.speed_rating is not None and distance is None:
         _GATE[sport]["no_distance"] += 1
         return None
-    if impossibleRow(row.time_seconds, distance, row.gender, pool):
+    if _cached_impossibleRow(row.time_seconds, distance, row.gender, pool):
         _GATE[sport]["impossible_pace"] += 1
         return None
     is_bad, _expected, ratio = anchorMismatch(row.time_seconds, distance,
