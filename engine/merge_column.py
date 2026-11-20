@@ -511,9 +511,23 @@ def _poolIndexes(cur, table, cap):
 
 
 def _attachPk(cur, table, cap):
-    _timed(cur, f"ALTER TABLE {table}_new ADD CONSTRAINT {table}_new_pkey "
-                f"PRIMARY KEY USING INDEX {table}_new_pkey",
-           f"PRIMARY KEY ({', '.join(cap['pk'])}) USING INDEX {table}_new_pkey")
+    # ! A FALLBACK, NOT A FAILED GO-LIVE (2026-11-20): the attach was checked
+    #   on Postgres 16 only; production runs 18. If it refuses there, the
+    #   prebuilt index is dropped and the old ADD PRIMARY KEY builds the key
+    #   as before -- slower, never wrong.
+    cur.execute("SAVEPOINT pk_attach")
+    try:
+        _timed(cur, f"ALTER TABLE {table}_new ADD CONSTRAINT {table}_new_pkey "
+                    f"PRIMARY KEY USING INDEX {table}_new_pkey",
+               f"PRIMARY KEY ({', '.join(cap['pk'])}) USING INDEX {table}_new_pkey")
+        cur.execute("RELEASE SAVEPOINT pk_attach")
+    except Exception as exc:                            # noqa: BLE001
+        cur.execute("ROLLBACK TO SAVEPOINT pk_attach")
+        print(f"    PRIMARY KEY USING INDEX refused ({type(exc).__name__}: "
+              f"{str(exc).splitlines()[0][:120]}); building it the old way", flush=True)
+        cur.execute(f"DROP INDEX IF EXISTS {table}_new_pkey")
+        _timed(cur, f"ALTER TABLE {table}_new ADD PRIMARY KEY ({', '.join(cap['pk'])})",
+               f"PRIMARY KEY ({', '.join(cap['pk'])})")
 
 
 def _connector():
