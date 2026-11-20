@@ -813,3 +813,31 @@ def test_rank_streams_follow_the_rows_two_for_xc_eight_for_track(tmp_path):
     for r in (xc, tf):
         assert r[0][1] == "1990-01-01" and r[-1][2] == "2100-01-01"
         assert all(r[i][2] == r[i + 1][1] for i in range(len(r) - 1))
+
+
+# ==================================================================== #
+# 2026-11-20: 10d2 -> 10g AS A CHAIN BESIDE 10b / 10c; 13c2 BESIDE 13d..13h2
+# ==================================================================== #
+def test_restamp_chain_beside_school_ids_and_snapshot_beside_the_sitemap():
+    chain = _func("_unitsChain")
+    assert chain.index("step 10d2_restamp_units") < chain.index("step 10g_season_ranks")
+    on = SH[at('if [ "${XCP_UNITS_BG:-1}" = "1" ]'):at("\n  _afterRestamp\nelse")]
+    assert on.index("bgchain units _unitsChain") < on.index("stepsN 10b_school_ids") \
+        < on.index("bgchainjoin units")
+    assert "10g_season_ranks" not in on
+    assert at("bgchainjoin units") < at("_G10F=(10f_recruits")
+    # the facts the move rests on: 10b and 10c read no unit column and
+    # nothing the restamp writes; 10g reads athlete_season alone
+    cols = re.search(r"_UNIT_COLS = \((.*?)\)", read("racecast", "build_ranking_results.py"), re.S)
+    names = re.findall(r'"(\w+)"', cols.group(1))
+    unit = re.compile(r"\b(%s|school_unit)\b" % "|".join(names))
+    for src in (read("racecast", "build_school_identity.py"),
+                read("scripts", "measure_sport_gap.py")):
+        code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+        hit = unit.search(code)
+        assert hit is None, hit.group(0)
+    g = read("racecast", "build_season_ranks.py").split("def verify")[0]
+    assert set(re.findall(r"\b(?:FROM|JOIN)\s+(\w+)", g)) <= {"athlete_season", "base", "information_schema"}
+    # 13c2: started after 13b, joined after the group and before 16
+    assert at("step 13b_pool_consts") < at("bgstep 13c2_snapshot") \
+        < at('stepsN "${_G13[@]}"') < at("bgjoin 13c2_snapshot") < at("step 16_rowguard_apply")

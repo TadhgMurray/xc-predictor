@@ -2224,7 +2224,32 @@ stepsN 10a_board_sanity "$PY -u scripts/board_sanity.py --top ${XCP_SANITY_TOP:-
 #   late. The restamp re-reads the new school_unit onto athlete_season
 #   before anything that reads those columns: 10g's conference ranks, 11's
 #   team boards (the conferences board), 10f's recruiting.
+# ★★ 10d2 AND 10g AS ONE BACKGROUND CHAIN BESIDE 10b AND 10c (2026-11-20;
+#    runs 20261116_154245 / 20261117_142219: 10d2 365-550 s in line, then
+#    the 10b group 1,039 s -- 10b itself; 10g 533 s and 10c 240 s inside
+#    it). The restamp writes only athlete_season's unit columns (_UNIT_COLS)
+#    and reads athlete_season (school, state, pool, those columns),
+#    school_unit and college_directory. 10b reads athlete_season's school,
+#    state, pool, person and race counts -- never a unit column -- and
+#    writes school_identity, school_state_alias, school_level,
+#    school_athlete_state, person_home_state, school_qualifier_city and
+#    college_person_state, none of which the restamp reads; 10c reads
+#    ranking_results, which the restamp never touches. An UPDATE's new row
+#    version carries the same school / state / pool, so 10b reads the same
+#    values whichever version it meets. 10g reads the unit columns (its
+#    conference ranks) and nothing but athlete_season, so it stays after
+#    10d2, inside the chain; 10b and 10c never read season_rank. The
+#    restamp takes row locks and its ANALYZE a SHARE UPDATE EXCLUSIVE on
+#    athlete_season; 10b locks only person_home_state and school_identity.
+#    The chain is joined where the group ended, before 10f / 11 / 10g2; the
+#    vacuum and Kailo's record start after the join -- still after 10d2.
+#    XCP_UNITS_BG=0 runs the old order: 10d2 in line, then 10b / 10c / 10g
+#    side by side.
+_unitsChain() {
 step 10d2_restamp_units "$PY" -u racecast/build_ranking_results.py --stage restamp
+step 10g_season_ranks "$PY" -u racecast/build_season_ranks.py
+}
+_afterRestamp() {
 # ★ THE BOARDS' VACUUM STARTS HERE, NOT AT THE END (2026-11-10; run
 #   20261108_155220: 18_vacuum 1,150 s in line after the reports). Its two
 #   tables are written by build_ranking_results alone, and 10d2's restamp
@@ -2245,15 +2270,30 @@ bgstep 18_vacuum "$PY" -u scripts/gentle_vacuum.py
 if [ "${XCP_KAILO:-1}" != "0" ]; then
   bgstep 16c_kailo_record "$PY" -u scripts/kailo_compare.py --record
 fi
+}
+_beforeSchoolIds() {
 # (10e_meet_units ran in the background beside the pack since 2026-11-07)
 bgjoin 09e_si_team_rows
 # only a table this run built and passed (never one an earlier run left)
 if [ "$DRY" -eq 0 ] && willRun 09e_si_team_rows && ! failed 09e_si_team_rows; then
   export XCP_SI_TEAM_RAW=si_team_raw_pre
 fi
-stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
-       10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
-       10g_season_ranks "$PY -u racecast/build_season_ranks.py"
+}
+if [ "${XCP_UNITS_BG:-1}" = "1" ]; then
+  bgchain units _unitsChain
+  _beforeSchoolIds
+  stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
+         10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS"
+  bgchainjoin units                     # 10d2's unit columns, 10g's season_rank
+  _afterRestamp
+else
+  step 10d2_restamp_units "$PY" -u racecast/build_ranking_results.py --stage restamp
+  _afterRestamp
+  _beforeSchoolIds
+  stepsN 10b_school_ids "$PY -u racecast/build_school_identity.py" \
+         10c_gap "$PY -u scripts/measure_sport_gap.py $_GAP_FLAGS" \
+         10g_season_ranks "$PY -u racecast/build_season_ranks.py"
+fi
 # recruiting (282) reads school_identity (10b) and school_unit (10d); the
 # teams read school_identity. "Runners like you" (10f3) reads college_recruit
 # (10f) and holds a transaction, so it stays in line before 11b. 10g2 reads
@@ -2474,8 +2514,21 @@ step 13b_pool_consts  "$PY" -u scripts/warm_pool_constants.py
 #   both sports' season ratings and the course difficulties as a dated
 #   snapshot on /data, the newest 8 weeks kept (data_snapshots.py). A full
 #   run only -- a --fast iteration is not the week's numbers.
+# ★ BESIDE THE SITEMAP GROUP, NOT BEFORE IT (2026-11-20; run 20261117_142219:
+#   33 s in line). It writes only data_snapshot / data_snapshot_athlete /
+#   data_snapshot_course, which only the /data pages read -- none of 13d,
+#   13g_follow_alerts, 13h, 13h2 or 13e. It reads athlete_season, athletes,
+#   school_unit, person_optout, course_difficulties and 13b's constants
+#   file (pool_view.toHs), none of which the group writes. Started after
+#   13b as before; joined after the group, before 16_rowguard_apply edits
+#   corrections.py. A failure is a FAILED line, as `step ... || true` gave.
+#   XCP_SNAPSHOT_BG=0 runs it in line, as before.
 if [ "$FAST" -eq 0 ]; then
-  step 13c2_snapshot "$PY" -u scripts/take_snapshot.py --weekly --keep 8 || true
+  if [ "${XCP_SNAPSHOT_BG:-1}" = "1" ]; then
+    bgstep 13c2_snapshot "$PY" -u scripts/take_snapshot.py --weekly --keep 8
+  else
+    step 13c2_snapshot "$PY" -u scripts/take_snapshot.py --weekly --keep 8 || true
+  fi
 fi
 # ★ SIDE BY SIDE (2026-11-12, ~5 min off the line): the sitemap, the follow
 #   digest, the posted-meet forecasts and the qualifier fields write disjoint
@@ -2525,6 +2578,7 @@ if [ "${XCP_LATE_PARALLEL:-1}" = "1" ]; then
 else
   XCP_STREAMS=1 stepsN "${_G13[@]}"
 fi
+bgjoin 13c2_snapshot                     # started after 13b; a no-op when it ran in line
 if [ -n "${_RAW13:-}" ]; then
   step 13h_raw_forecasts env XCP_PREDICT_BASIS=race_raw XCP_FORECAST_TABLE=pred_raw_meet_forecast \
     "$PY" -u racecast/build_meet_forecasts.py
