@@ -1629,6 +1629,13 @@ CG_MAX_ITER_PROBE = 150
 #   count, so the last threads buy little and contend for the same
 #   bandwidth. On a box with 24 cores or fewer this changes nothing.
 #   XCP_THREADS still overrides in both directions.
+# ★ XCP_CG_INPLACE=0 brings back the CG's and the matvec's fresh temporaries
+#   (conjugateGradient, _Operator._scaled; 2026-11-20). Same numbers either way.
+_CG_INPLACE = os.environ.get("XCP_CG_INPLACE", "1").strip().lower() not in ("0", "false")
+# ★ XCP_CG_PARALLEL=0 keeps those updates in numpy on one core instead of
+#   joint_kernels.cgStepJacobi / cgDirection on every core (2026-11-20).
+_CG_PARALLEL = os.environ.get("XCP_CG_PARALLEL", "1").strip().lower() not in ("0", "false")
+
 _N_THREADS = max(1, min(int(os.environ.get("XCP_THREADS", "0")) or
                         min(os.cpu_count() or 1, 24),
                         os.cpu_count() or 1))
@@ -2300,28 +2307,55 @@ def curveGapVectors(D, w, amp):
       falls back to all its rows."""
     if not D.n_c:
         return []
-    ref = D.group_row == 0
-    both = None if D.sc is None else np.abs(D.sc) > 1e-9
     wa = w * amp
     vecs = []
+    for sides in _curveGapRows(D):
+        g = np.zeros(D.n_c)
+        ok = True
+        for sign, mm in zip((-1.0, 1.0), sides):
+            tot = float(w[mm].sum())
+            if tot <= 0:
+                ok = False
+                break
+            c0, c1, wam = D.c0[mm], D.c1[mm], wa[mm]
+            g += sign * (np.bincount(c0, weights=wam * D.w0[mm],
+                                     minlength=D.n_c)
+                         + np.bincount(c1, weights=wam * D.w1[mm],
+                                       minlength=D.n_c)) / tot
+        vecs.append(g if ok else None)
+    return vecs
+
+
+def _curveGapRows(D):
+    """Per pool, the (reference-group, other-group) rows curveGapVectors
+    balances, as row indices in row order.
+    ★ KEPT ON D (2026-11-20). They depend only on pool_row, group_row and
+      sc, which no pass changes, but were rebuilt from a dozen full-length
+      masks per pool on every call -- two calls an outer pass (0.43 s a
+      call at 2M rows, ~14 s at the corpus's 64M). An index array picks
+      the same rows in the same order as the mask did, so every gather,
+      sum and bincount above is the one it was, to the bit. Re-derived if
+      any of the three arrays is replaced. XCP_CURVE_GAP_CACHE=0 rebuilds
+      them every call, as before."""
+    key = (D.pool_row, D.group_row, D.sc)
+    hit = getattr(D, "_gap_rows", None)
+    if (hit is not None and hit[1] == int(D.n_pool)
+            and all(a is b for a, b in zip(hit[0], key))
+            and os.environ.get("XCP_CURVE_GAP_CACHE", "1") not in ("0", "false")):
+        return hit[2]
+    ref = D.group_row == 0
+    both = None if D.sc is None else np.abs(D.sc) > 1e-9
+    idt = np.int32 if D.n < 2 ** 31 else np.int64
+    rows = []
     for p in range(D.n_pool):
         m = D.pool_row == p
         if both is not None and (m & both & ref).any() \
                 and (m & both & ~ref).any():
             m = m & both
-        g = np.zeros(D.n_c)
-        ok = True
-        for sign, mm in ((-1.0, m & ref), (1.0, m & ~ref)):
-            tot = float(w[mm].sum())
-            if tot <= 0:
-                ok = False
-                break
-            g += sign * (np.bincount(D.c0[mm], weights=wa[mm] * D.w0[mm],
-                                     minlength=D.n_c)
-                         + np.bincount(D.c1[mm], weights=wa[mm] * D.w1[mm],
-                                       minlength=D.n_c)) / tot
-        vecs.append(g if ok else None)
-    return vecs
+        rows.append((np.flatnonzero(m & ref).astype(idt),
+                     np.flatnonzero(m & ~ref).astype(idt)))
+    D._gap_rows = (key, int(D.n_pool), rows)
+    return rows
 
 
 def curveWindowGaps(c_free, vecs):
@@ -2332,6 +2366,7 @@ def curveWindowGaps(c_free, vecs):
 
 
 from joint_kernels import fusedMatvec as _fusedMatvec          # noqa: E402
+import joint_kernels as _jk                                      # noqa: E402
 
 
 class _Operator:
@@ -2464,6 +2499,18 @@ class _Operator:
                                             minlength=D.n_ind))
         return np.concatenate(self._reduce(jobs))
 
+    def _scaled(self, s, v):
+        """s * v for an athlete-sized block, into a kept scratch vector.
+        ★ 2026-11-20: three of these per matvec were fresh n_ath arrays
+          (110 MB each at 13.7M athlete-seasons), allocated and faulted
+          ~1,400 times a go-live. The same product, element for element."""
+        if np.ndim(s) or v.dtype != np.float64 or not _CG_INPLACE:
+            return s * v
+        scr = getattr(self, "_scr", None)
+        if scr is None or scr.shape != v.shape:
+            scr = self._scr = np.empty_like(v)
+        return np.multiply(v, s, out=scr)
+
     def matvec(self, theta):
         D = self.D
         b = D.unpack(theta)
@@ -2502,7 +2549,7 @@ class _Operator:
                              - np.bincount(b_, weights=c, minlength=D.n_e))
             out[D.o_e:D.o_g] += g_e
         if D.n_beta:
-            out[D.o_beta:D.o_c] += self.ridge * b["beta"]
+            out[D.o_beta:D.o_c] += self._scaled(self.ridge, b["beta"])
         if D.n_c:
             c_free = theta[D.o_c:D.o_r]
             out[D.o_c:D.o_r] += _curvePenaltyApply(c_free, D, self.lam)
@@ -2511,9 +2558,9 @@ class _Operator:
         if D.n_e:
             out[D.o_e:D.o_g] += self.pen_dist * b["e"]
         if D.n_g:
-            out[D.o_g:D.o_q] += self.ridge_slope * b["g"]
+            out[D.o_g:D.o_q] += self._scaled(self.ridge_slope, b["g"])
         if getattr(D, "n_q", 0):
-            out[D.o_q:D.o_k] += self.ridge_trend * b["q"]
+            out[D.o_q:D.o_k] += self._scaled(self.ridge_trend, b["q"])
         if D.n_k:
             out[D.o_k:D.o_imp] += (ALT_RIDGE + self.alt_prior_pen) * b["k"]
         if D.n_imp:
@@ -2659,9 +2706,38 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
     x = np.zeros_like(rhs) if x0 is None else x0.copy()
     r = rhs - matvec(x)
     inv_diag = 1.0 / np.maximum(diag, 1e-12)
+    # ★ NO FRESH VECTORS PER ITERATION, AND ON EVERY CORE (2026-11-20).
+    #   Every CG step walked theta-sized vectors seven times on one core
+    #   and allocated five of them afresh (alpha * p, alpha * Ap, the Jacobi
+    #   product, beta * p, z + beta * p) -- a few hundred MB each on the
+    #   corpus, ~1,400 steps a go-live (132 ms of vector work a step at
+    #   8.3M unknowns on 4 cores; 58 ms now). Now the updates run in place on
+    #   every core, two launches a step (joint_kernels.cgStepJacobi, which
+    #   also forms the Jacobi product, and cgDirection; numpy with out=
+    #   under XCP_CG_PARALLEL=0 or without numba): the same product-then-
+    #   sum per element, so the same vectors to the bit
+    #   (tests/test_joint_kernels.py). The dot products and the norm are
+    #   untouched -- numpy's, in numpy's order.
+    #   XCP_CG_INPLACE=0 is the old expressions.
+    def _ok(*vs):
+        return all(v.dtype == np.float64 and v.shape == x.shape
+                   and v.flags.c_contiguous for v in vs)
+    inplace = _CG_INPLACE and _ok(x, r)
+    fast = inplace and _CG_PARALLEL and _jk.enabled()
+    tmp = np.empty_like(x) if inplace and not fast else None
+    zbuf = None                       # the Jacobi product, kept (cgStepJacobi)
     if precond is None:
-        def precond(v):
-            return inv_diag * v
+        if inplace and _ok(inv_diag):
+            zbuf = np.empty_like(x)
+
+            def precond(v):
+                if fast and _ok(v):
+                    _jk.cgMul(zbuf, inv_diag, v)
+                    return zbuf
+                return np.multiply(inv_diag, v, out=zbuf)
+        else:
+            def precond(v):
+                return inv_diag * v
     z = precond(r)
     p = z.copy()
     rz = float(r @ z)
@@ -2694,16 +2770,32 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
         if pAp <= 0:
             break                       # not positive definite; stop clean
         alpha = rz / pAp
-        x += alpha * p
-        r -= alpha * Ap
+        z_done = False
+        if fast and _ok(p, Ap) and zbuf is not None:
+            # x += alpha p; r -= alpha Ap; z = inv_diag * r, one pass
+            _jk.cgStepJacobi(x, r, p, Ap, alpha, zbuf, inv_diag)
+            z_done = True
+        elif fast and _ok(p, Ap):
+            _jk.cgStep(x, r, p, Ap, alpha)         # x += alpha p; r -= alpha Ap
+        elif inplace and _ok(p, Ap):
+            x += np.multiply(p, alpha, out=tmp)      # x += alpha * p
+            r -= np.multiply(Ap, alpha, out=tmp)     # r -= alpha * Ap
+        else:
+            x += alpha * p
+            r -= alpha * Ap
         rel = float(np.linalg.norm(r)) / rhs_norm
         if trace and (it % trace == 0):
             print(f"    [cg] {it + 1:4d}  rel {rel:.3e}", flush=True)
         if rel < tol:
             return x, it + 1
-        z = precond(r)
+        z = zbuf if z_done else precond(r)
         rz_new = float(r @ z)
-        p = z + (rz_new / rz) * p
+        if fast and _ok(z, p) and z is not p:
+            _jk.cgDirection(p, z, rz_new / rz)      # p = z + beta * p
+        elif inplace and _ok(z, p) and z is not p:
+            np.add(z, np.multiply(p, rz_new / rz, out=tmp), out=p)
+        else:
+            p = z + (rz_new / rz) * p
         rz = rz_new
     return x, max_iter
 

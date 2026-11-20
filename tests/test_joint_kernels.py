@@ -164,3 +164,40 @@ def test_kept_buffers_give_the_fresh_answer_to_the_bit():
     assert np.array_equal(again, fresh)
     p = rng.normal(size=(7, 10_000))
     assert np.array_equal(jk._colsum(p, 9_000), p.sum(axis=0)[:9_000])
+
+
+def test_inplace_cg_and_lean_kernel_are_the_old_numbers_to_the_bit(monkeypatch):
+    """2026-11-20: the CG's in-place / parallel updates, the kernel's own
+    zeroing into one result, and the five streams it now forms in registers
+    (k1, c0/c1, mu_idx/mu_w) must each give the old arrays exactly."""
+    import test_joint_year as T
+    y, D0, truth, raw = T.world(indoor=True, seed=4)
+    o = np.argsort(raw["ath"], kind="stable")
+    D = js.Design(raw["ath"][o], raw["cel"][o], raw["rac"][o],
+                  group_of_cell=raw["sport_of_cell"], sc=raw["sc"][o],
+                  pool_row=raw["pool_row"][o], day=raw["doy"][o],
+                  first=raw["first"][o], n_ath=D0.n_ath, n_cell=D0.n_cell,
+                  n_race=D0.n_race, n_pool=D0.n_pool)
+    assert jk._derived(D, True)[:3] == (True, True, True)
+    rng = np.random.default_rng(2)
+    w, h, amp = rng.random(D.n), 1 + .1 * rng.normal(size=D.n), \
+        1 + .1 * rng.normal(size=D.n)
+    b = D.unpack(rng.normal(size=D.n_total))
+    new = jk.fusedMatvec(D, w, h, amp, b)
+    monkeypatch.setenv("XCP_KERNEL_DERIVE", "0")
+    monkeypatch.setenv("XCP_KERNEL_ZERO_IN", "0")
+    assert np.array_equal(new, jk.fusedMatvec(D, w, h, amp, b))
+    monkeypatch.delenv("XCP_KERNEL_DERIVE")
+    monkeypatch.delenv("XCP_KERNEL_ZERO_IN")
+
+    op = js._Operator(D, w, h, amp, np.full(D.n_cell, 3.0),
+                      np.full(D.n_race, 5.0), 0.5, np.ones(D.n_pool))
+    rhs, diag = op.rhs(y[o]), op.diag()
+    got = {}
+    for mode in ("parallel", "numpy-inplace", "old"):
+        monkeypatch.setattr(js, "_CG_INPLACE", mode != "old")
+        monkeypatch.setattr(js, "_CG_PARALLEL", mode == "parallel")
+        got[mode] = js.conjugateGradient(rhs, op.matvec, diag, max_iter=40)
+    for mode in ("parallel", "numpy-inplace"):
+        assert got[mode][1] == got["old"][1]
+        assert np.array_equal(got[mode][0], got["old"][0]), mode

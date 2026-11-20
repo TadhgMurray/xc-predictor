@@ -594,7 +594,8 @@ RULES = {
                THETA + ": each runner's own trajectory (§4.2: the amplitude tilt and its rails)"),
         "POOL_MEAN_MIN_RACES": ("DISPLAY", "who votes in the pool mean that 100 is anchored on; "
                                            "§8 point 1 keeps rating = 100·pm/exp(perf)"),
-        **_all("CG_TOL CG_MAX_ITER CG_TOL_OUTER CG_TOL_PROBE CG_MAX_ITER_PROBE _N_THREADS _PRED_POOL",
+        **_all("CG_TOL CG_MAX_ITER CG_TOL_OUTER CG_TOL_PROBE CG_MAX_ITER_PROBE _N_THREADS _PRED_POOL "
+               "_CG_INPLACE _CG_PARALLEL",
                "INFRA", "CG tolerances and threads (the new fit has no CG)"),
         **_all("ABILITY_BANDS ABILITY_W_FLOOR ABILITY_W_CEIL", "REMOVED", ROWT + " (§4.2: the ability weights)"),
         "SIGMA_U_FLOOR": ("FITTED", EMV + " (already {0, 0})"),
@@ -891,6 +892,10 @@ ENV_RULES = {
            "XCP_SWAP_ATTEMPTS XCP_PACK_PREFETCH XCP_PACK_PARALLEL XCP_PACK_TF_SHARDS XCP_PRECOND XCP_SCHUR XCP_CG_TRACE XCP_RANK_SEAM "
            "XCP_BACKFILL_XC XCP_RUNG_TIMEOUT XCP_IGNORE_BACKFILL_FAIL XCP_IGNORE_GOLIVE_FAIL "
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
+    **_all("XCP_CG_INPLACE XCP_CG_PARALLEL XCP_CURVE_GAP_CACHE XCP_KERNEL_ZERO_IN XCP_KERNEL_DERIVE",
+           "INFRA", "speed pass 2026-11-20: the joint solve's CG updates in place and parallel, "
+                    "the curve-gap rows kept, the matvec kernel's own zeroing and derived streams; "
+                    "same numbers to the bit"),
     **_all("XCP_BOARD_SEEK XCP_STATIC_PAGES", "INFRA",
            "speed pass 2026-11-08: the deep-page seek table, nginx static pages"),
     **_all("XCP_SCHOOL_PAGES XCP_MEET_COUNTS XCP_ATHLETE_PICK", "INFRA",
