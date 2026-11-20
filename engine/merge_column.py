@@ -338,12 +338,17 @@ def _buildNewTable(cur, table, staging, cap, column, key, val,
 #   N columns were N full scans of a 40-58 GB table; one ALTER TABLE with all
 #   N subcommands proves them in ONE scan. The catalog ends the same: the
 #   same columns NOT NULL, the same defaults (catalog-only, no scan).
-def _shapeSql(table, cap):
+def _shapeSql(table, cap, pk_in_pool=False):
     """The one ALTER TABLE for every NOT NULL (the PK's columns excepted:
-    ADD PRIMARY KEY set them) and every DEFAULT; None when there are none."""
-    pk = set(cap["pk"])
+    ADD PRIMARY KEY set them -- unless the key is built in the index pool,
+    pk_in_pool, when this statement sets them too) and every DEFAULT; None
+    when there are none."""
+    pk = set() if pk_in_pool else set(cap["pk"])
     subs = [f"ALTER COLUMN {col} SET NOT NULL"
             for col in cap["notnulls"] if col not in pk]
+    if pk_in_pool:                                 # (a key column is always NOT NULL)
+        subs += [f"ALTER COLUMN {col} SET NOT NULL"
+                 for col in cap["pk"] if col not in cap["notnulls"]]
     subs += [f"ALTER COLUMN {col} SET DEFAULT {expr}"
              for col, expr in cap["defaults"]]
     if not subs:
@@ -351,12 +356,12 @@ def _shapeSql(table, cap):
     return f"ALTER TABLE {table}_new " + ", ".join(subs)
 
 
-def _restoreShape(cur, table, cap):
-    if cap["pk"]:
+def _restoreShape(cur, table, cap, pk_in_pool=False):
+    if cap["pk"] and not pk_in_pool:
         cols = ", ".join(cap["pk"])
         _timed(cur, f"ALTER TABLE {table}_new ADD PRIMARY KEY ({cols})",
                f"PRIMARY KEY ({cols})")
-    sql = _shapeSql(table, cap)
+    sql = _shapeSql(table, cap, pk_in_pool)
     if sql:
         _timed(cur, sql, f"NOT NULL / DEFAULT on {table}_new (one statement)")
     if cap["notnulls"]:
@@ -428,13 +433,13 @@ def _buildOneIndex(connect, name, ddl):
     return name, time.time() - t0
 
 
-def _restoreIndexesParallel(conn, table, cap, connect, jobs):
-    """Every secondary index of `cap`, `jobs` at a time on their own
-    connections. <table>_new must be committed. On the first failure the
-    builds not yet started are cancelled, the running ones finish, and the
-    failure is raised."""
+def _restoreIndexesParallel(conn, table, cap, connect, jobs, idx=None):
+    """Every secondary index of `cap` (or the list `idx`), `jobs` at a time
+    on their own connections. <table>_new must be committed. On the first
+    failure the builds not yet started are cancelled, the running ones
+    finish, and the failure is raised."""
     import concurrent.futures as cf
-    idx = cap["indexes"]
+    idx = cap["indexes"] if idx is None else idx
     print(f"    building {len(idx)} indexes on {table}_new, {jobs} at a time", flush=True)
     pool = cf.ThreadPoolExecutor(max_workers=jobs)
     try:
@@ -448,6 +453,67 @@ def _restoreIndexesParallel(conn, table, cap, connect, jobs):
     for f in futs:
         name, dt = f.result()
         print(f"    [{dt:7.1f}s] index {name}_new", flush=True)
+
+
+# ★ THE PRIMARY KEY IN THE INDEX POOL (2026-11-20; 08_golive's write-out
+#   of results_tf about 20 min, and in it ADD PRIMARY KEY ran alone, in the
+#   build transaction, before the pool started: a btree build over the
+#   whole heap, then -- PK columns are not NOT NULL after CREATE TABLE AS --
+#   a second full heap scan to prove the key NOT NULL, then the one-scan
+#   ALTER for the other NOT NULLs, a third). Now the shape ALTER sets the
+#   key's columns NOT NULL with the others (the one scan it makes anyway),
+#   the key's index is built in the pool beside the secondaries as
+#   CREATE UNIQUE INDEX <table>_new_pkey, and after the pool
+#   ADD CONSTRAINT <table>_new_pkey PRIMARY KEY USING INDEX <table>_new_pkey
+#   turns it into the key in the catalogue alone (its columns are already
+#   NOT NULL, so no scan).
+# ! THE SAME CATALOGUE, checked on Postgres 16 (scratch, 2026-11-20): the
+#   pg_constraint row (contype p, conkey, connoinherit, convalidated, ...),
+#   the pg_index row (indisprimary, indisunique, indimmediate, indcheckxmin
+#   false, opclass, collation), pg_get_indexdef, attnotnull and pg_depend
+#   (index INTERNAL on the constraint, constraint AUTO on the column) are
+#   equal to ADD PRIMARY KEY's; the constraint and its index are both named
+#   <table>_new_pkey, as ADD PRIMARY KEY names them, and _swap renames them
+#   as before. On 18 the key's NOT NULL constraint is named by the same rule
+#   (<table>_new_<col>_not_null) whether ADD PRIMARY KEY or SET NOT NULL
+#   makes it. A duplicate key fails the index build in the pool instead of
+#   the ALTER, and <table>_new is dropped (_dropNew) -- `table` untouched,
+#   as before. Only with the pool (XCP_MERGE_INDEX_JOBS > 1);
+#   XCP_MERGE_PK_IN_POOL=0 is the old ADD PRIMARY KEY.
+def _pkInPool(cap):
+    import os
+    return bool(cap["pk"]) and os.environ.get("XCP_MERGE_PK_IN_POOL", "1") != "0"
+
+
+def _pkIndexSql(table, cap):
+    """CREATE UNIQUE INDEX as ADD PRIMARY KEY (cols) would build it on
+    <table>_new: btree, default opclasses, no options, its default name."""
+    cols = ", ".join(cap["pk"])
+    return (f"{table}_new_pkey",
+            f"CREATE UNIQUE INDEX {table}_new_pkey ON public.{table}_new USING btree ({cols})")
+
+
+def _poolIndexes(cur, table, cap):
+    """The pool's builds, the largest first as _indexes orders them: the
+    secondaries, and the key's index placed by the live key's size."""
+    cur.execute("""SELECT pg_relation_size(conindid) FROM pg_constraint
+                   WHERE conrelid = %s::regclass AND contype = 'p'""", (table,))
+    row = cur.fetchone()
+    pk_size = row[0] if row else 0
+    sizes = []
+    for name, _ddl in cap["indexes"]:
+        cur.execute("SELECT pg_relation_size(to_regclass(%s))", (f"public.{name}",))
+        sizes.append(cur.fetchone()[0] or 0)
+    at = next((i for i, sz in enumerate(sizes) if pk_size > sz), len(sizes))
+    out = list(cap["indexes"])
+    out.insert(at, _pkIndexSql(table, cap))
+    return out
+
+
+def _attachPk(cur, table, cap):
+    _timed(cur, f"ALTER TABLE {table}_new ADD CONSTRAINT {table}_new_pkey "
+                f"PRIMARY KEY USING INDEX {table}_new_pkey",
+           f"PRIMARY KEY ({', '.join(cap['pk'])}) USING INDEX {table}_new_pkey")
 
 
 def _connector():
@@ -781,11 +847,13 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         mode = "upsert (unmatched keep old value)" if preserve_unmatched \
             else "FULL RECOMPUTE (unmatched -> NULL)"
         print(f"    {column}: {mode}")
-        _buildNewTable(cur, table, staging, cap, column, key, val,
-                       preserve_unmatched, extra)
-        _restoreShape(cur, table, cap)
         connect = connect or _connector()
         jobs = _indexJobs(len(cap["indexes"])) if connect is not None else 1
+        pk_in_pool = jobs > 1 and _pkInPool(cap)
+        pool = _poolIndexes(cur, table, cap) if pk_in_pool else cap["indexes"]
+        _buildNewTable(cur, table, staging, cap, column, key, val,
+                       preserve_unmatched, extra)
+        _restoreShape(cur, table, cap, pk_in_pool)
         if jobs <= 1:
             _restoreIndexes(cur, table, cap)
             _restoreConstraints(cur, table, cap)
@@ -797,9 +865,11 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         #   lost swap always has. A failure drops it now.
         conn.commit()
         try:
-            _restoreIndexesParallel(conn, table, cap, connect, jobs)
+            _restoreIndexesParallel(conn, table, cap, connect, jobs, pool)
             with conn.cursor() as cur:
                 cur.execute("SET LOCAL lock_timeout = '2min'")   # as the build
+                if pk_in_pool:                     # before the constraints, as ADD PRIMARY KEY was
+                    _attachPk(cur, table, cap)
                 _restoreConstraints(cur, table, cap)
         except BaseException:
             _dropNew(conn, table)

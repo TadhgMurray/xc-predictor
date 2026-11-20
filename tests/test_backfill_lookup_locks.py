@@ -66,6 +66,10 @@ def test_the_lookup_transaction_ends_before_the_stream_opens(monkeypatch):
         return (None,) * 13       # + dropped_twins (2026-09-29), virtual_meets (10-19)
 
     monkeypatch.setattr(B, "_buildLookups", lookups)
+    # the lookups on the read connection, in turn: the path this is about
+    # (side by side, the default since 2026-11-20, they run on pooled
+    # connections that each commit, and read_conn holds nothing)
+    monkeypatch.setenv("XCP_BACKFILL_LOOKUP_THREADS_TF", "1")
     monkeypatch.setattr(B, "_makeRowFn", lambda *a, **k: None)
     monkeypatch.setattr(B, "_openStream",
                         lambda conn, cfg: log.append(f"stream on {conn.name}"))
