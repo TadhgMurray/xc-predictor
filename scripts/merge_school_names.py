@@ -133,7 +133,19 @@ def _hasColumn(cur, table, column):
     return cur.fetchone() is not None
 
 
-def rosters(cur, min_athletes=2):
+def _rosterRows(cur, table):
+    """One table's (school, person_id) pairs: rosters' query, unchanged."""
+    cur.execute(f"""
+        SELECT btrim(r.school) AS school, r.person_id
+        FROM   {table} r
+        WHERE  r.person_id IS NOT NULL
+          AND  r.school IS NOT NULL AND btrim(r.school) <> ''
+        GROUP  BY 1, 2
+    """)
+    return cur.fetchall()
+
+
+def rosters(cur, min_athletes=2, side=None):
     """{school string: {person_id}} from the raw result tables.
 
     ! FROM results/results_tf, NOT FROM THE BOARDS. This has to run BEFORE
@@ -141,18 +153,16 @@ def rosters(cur, min_athletes=2):
       evidence comes from the tables that exist at that point.
 
     ! DISTINCT PEOPLE, NOT ROWS. One prolific athlete is not a roster.
+
+    `side` (_SideReads) hands over each table's rows read on its own
+    connection; the fold below takes them in the same table order.
     """
     out = {}
     for table in ("results", "results_tf"):
-        cur.execute(f"""
-            SELECT btrim(r.school) AS school, r.person_id
-            FROM   {table} r
-            WHERE  r.person_id IS NOT NULL
-              AND  r.school IS NOT NULL AND btrim(r.school) <> ''
-            GROUP  BY 1, 2
-        """)
-        for school, pid in cur.fetchall():
+        rows = side.get("rosters", table) if side else _rosterRows(cur, table)
+        for school, pid in rows:
             out.setdefault(school, set()).add(pid)
+        del rows
     return {k: v for k, v in out.items() if len(v) >= min_athletes}
 
 
@@ -183,27 +193,82 @@ def rosters(cur, min_athletes=2):
 #   That refuses exactly the cases the id veto was built for and admits the
 #   ones it got wrong -- and it reads anet_state, the column anet actually
 #   populates, not the queue's guess (see collegeTeams in link_tfrrs_to_anet).
-def teamStates(cur):
+def _teamStateRows(cur, table):
+    """One table's (school, state) pairs: teamStates' query, unchanged.
+    None where the table has no team_id."""
+    if not _hasColumn(cur, table, "team_id"):
+        return None
+    cur.execute(f"""
+        SELECT btrim(r.school) AS school,
+               upper(btrim(COALESCE(t.anet_state, t.state))) AS st
+        FROM   {table} r
+        JOIN   anet_team t ON t.team_id = r.team_id
+        WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
+          AND  r.school IS NOT NULL AND btrim(r.school) <> ''
+          AND  COALESCE(t.anet_state, t.state) IS NOT NULL
+          AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
+        GROUP  BY 1, 2
+    """)
+    return cur.fetchall()
+
+
+def teamStates(cur, side=None):
     """{school string: {state}} for the anet teams its rows use. Empty
     where team_id does not exist, which is then simply no veto."""
     out = {}
     for table in ("results", "results_tf"):
-        if not _hasColumn(cur, table, "team_id"):
+        rows = side.get("teams", table) if side else _teamStateRows(cur, table)
+        if rows is None:
             continue
-        cur.execute(f"""
-            SELECT btrim(r.school) AS school,
-                   upper(btrim(COALESCE(t.anet_state, t.state))) AS st
-            FROM   {table} r
-            JOIN   anet_team t ON t.team_id = r.team_id
-            WHERE  r.team_id IS NOT NULL AND r.team_id <> 0
-              AND  r.school IS NOT NULL AND btrim(r.school) <> ''
-              AND  COALESCE(t.anet_state, t.state) IS NOT NULL
-              AND  btrim(COALESCE(t.anet_state, t.state)) <> ''
-            GROUP  BY 1, 2
-        """)
-        for school, st in cur.fetchall():
+        for school, st in rows:
             out.setdefault(school, set()).add(st)
     return out
+
+
+# ★ THE FOUR SCANS SIDE BY SIDE (2026-11-20; run log: "101,870 school
+#   strings" 328 s in, then "50,903 of them carry an anet team" 193 s after
+#   the candidate pairs -- 521 of the step's 571 s were these four GROUP BYs,
+#   one after another on one connection, and 09c set the length of the
+#   09b group). Each query now runs on its own pooled connection (getConn:
+#   the same database, the same quiet tuning, the same exported snapshot
+#   when one is set) from the moment the step starts; rosters and teamStates
+#   fold the rows in the same table order as before, the team-state scans
+#   finishing under the candidate building. Same SQL text, same rows.
+# ! MEMORY: results_tf's (school, person) rows wait while results' are
+#   folded -- one table's list more than the serial read held (~1-2 GB at
+#   today's corpus). XCP_SCHOOL_NAMES_SIDE=0 is the old serial read.
+class _SideReads:
+    _JOBS = (("rosters", "results", _rosterRows), ("rosters", "results_tf", _rosterRows),
+             ("teams", "results", _teamStateRows), ("teams", "results_tf", _teamStateRows))
+
+    def __init__(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self._ex = ThreadPoolExecutor(max_workers=len(self._JOBS),
+                                      thread_name_prefix="school-names")
+        self._fut = {(kind, table): self._ex.submit(self._read, fn, table)
+                     for kind, table, fn in self._JOBS}
+
+    @staticmethod
+    def _read(fn, table):
+        from database import getConn
+        with getConn() as conn, conn.cursor() as cur:
+            return fn(cur, table)
+
+    def get(self, kind, table):
+        """The rows, once (the reference is dropped so the list can go)."""
+        return self._fut.pop((kind, table)).result()
+
+    def close(self):
+        for f in self._fut.values():
+            f.cancel()
+        self._ex.shutdown(wait=True)
+
+
+def sideReads():
+    """A _SideReads, or None when XCP_SCHOOL_NAMES_SIDE=0."""
+    if os.environ.get("XCP_SCHOOL_NAMES_SIDE", "1").strip().lower() in ("0", "false", "no"):
+        return None
+    return _SideReads()
 
 
 # ★ THE CANDIDATE PAIRS, WITHOUT COMPARING EVERY NAME TO EVERY OTHER.
@@ -911,8 +976,17 @@ def main():
     a = ap.parse_args()
 
     from database import getConn
+    side = sideReads()
+    try:
+        return _main(a, getConn, side)
+    finally:
+        if side is not None:
+            side.close()
+
+
+def _main(a, getConn, side):
     with getConn() as conn, conn.cursor() as cur:
-        by_name = rosters(cur)
+        by_name = rosters(cur, side=side)
         print(f"  {len(by_name):,} school strings with two or more athletes")
         level_mix = levelMix(cur)
         level_of = levels(cur, level_mix)
@@ -935,7 +1009,7 @@ def main():
         for _x, _y, rel in pairs:
             kinds[rel] = kinds.get(rel, 0) + 1
         print(f"  {len(pairs):,} candidate pairs {kinds}")
-        by_state = teamStates(cur)
+        by_state = teamStates(cur, side=side)
         print(f"  {len(by_state):,} of them carry an anet team, so their "
               f"state is known")
         id_states = identityStates(cur)
