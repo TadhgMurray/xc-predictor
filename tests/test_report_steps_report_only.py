@@ -181,8 +181,9 @@ class TheEvidenceStepsUseIt(unittest.TestCase):
 
     def test_pipeline_step_08a(self):
         src = io.open(_PIPELINE, encoding="utf-8").read()
-        i = src.index("step 08a_holdout")
-        body = src[i:src.index("step 08b_ladder", i)]
+        # one helper runs every holdout since 2026-11-20 (two lanes)
+        i = src.index("  _holdout() {")
+        body = src[i:src.index("_wantHoldout()", i)]
         self.assertIn("--holdout-only", body)
         self.assertNotIn(" --holdout ", body)
 

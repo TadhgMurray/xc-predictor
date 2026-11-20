@@ -70,7 +70,8 @@ while [ $# -gt 0 ]; do
     #   (see TEST_SKIP below)
     --test) TEST=1; FAST=1
             # before --fast's defaults below turn the holdouts off
-            export XCP_EVIDENCE="${XCP_EVIDENCE:-force}" XCP_LADDER="${XCP_LADDER:-0}"
+            export XCP_EVIDENCE="${XCP_EVIDENCE:-force}" XCP_LADDER="${XCP_LADDER:-0}" \
+                   XCP_HOLDOUTS="${XCP_HOLDOUTS:-race}" XCP_EVIDENCE_NICE="${XCP_EVIDENCE_NICE:-10}"
             shift ;;
     # --skip 04_grade_sanity,04b_wheelchair : named steps to leave out of
     # this run (2026-09-06, the owner: "you're gonna need to make step 4
@@ -1704,7 +1705,6 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #  ! A FAILURE STILL COUNTS: the chain writes its failed steps to a file
   #    that the collection point adds to FAILED, as before.
   #  XCP_EVIDENCE_BG=0 runs them in line, where they used to be.
-  _evidence() {
   # ★★ THE SCOREBOARD, EVERY RUN (2026-09-10). Until now nothing in this
   #    pipeline produced a number that said whether a change helped, so
   #    modelling questions were settled by argument. 08a scores the shipped
@@ -1727,8 +1727,18 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #    read -- for a solve nobody looks at. It cost this step half its
   #    wall clock (3073s of 6371s) and would have shipped a quarter-sample
   #    difficulty file to explain_joint_row.
-  step 08a_holdout      "$PY" -u engine/run_joint.py --holdout-only \
-      --holdout-kind race --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
+  # ★ EVERY RUN AGAIN, TWO LANES (owner, 2026-11-20: the weekly skip "should
+  #   not do this"). The three holdouts were one chain, 8,717 s beside the
+  #   boards of run 20261111; they now run in two lanes -- race then
+  #   distance, and sport then the ladder and checks -- each holdout admitted
+  #   by jobrun only when the box has XCP_HOLDOUT_GB (38) to spare, so two
+  #   overlap only when memory allows. XCP_EVIDENCE_LANES=1 runs one chain as
+  #   before. XCP_HOLDOUTS (race,sport,distance) names which run; --test runs
+  #   race only. They read only the pack (07); nothing the go-live writes.
+  _holdout() {   # _holdout <step name> <holdout kind>
+    STEP_MEM="--gb ${XCP_HOLDOUT_GB:-38} --wait-min ${XCP_HOLDOUT_WAIT_MIN:-720}" \
+    step "$1" "$PY" -u engine/run_joint.py --holdout-only \
+      --holdout-kind "$2" --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
       --outer "${XCP_OUTER:-5}" --probes 0 --altitude \
       ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
       ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
@@ -1742,140 +1752,96 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
       ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
-  # ★ THE CROSS-SPORT HOLDOUT (owner, 2026-10-04: "we holdout certain things
-  #   to test the actual solve, but we also don't holdout things like the
-  #   conversions or what you think someone will run xc vs track"). The
-  #   track season of 10% of dual-sport athlete-seasons is held out whole
-  #   and predicted from their cross country alone; the log's "cross-sport
-  #   BIAS" table is the conversion's error by pool, event and ability, on
-  #   races the model never saw. Same settings as 08a; skipped with 08a.
-  #   XCP_SPORT_HOLDOUT=sport-xc asks the reverse (XC from track).
-  step 08a_sport_holdout "$PY" -u engine/run_joint.py --holdout-only \
-      --holdout-kind "${XCP_SPORT_HOLDOUT:-sport}" --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
-      --outer "${XCP_OUTER:-5}" --probes 0 --altitude \
-      ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
-      ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
-      ${XCP_NO_IMPORTANCE:+--no-importance} \
-      ${XCP_NO_INDOOR:+--no-indoor} \
-      ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
-      ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
-      ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
-      ${XCP_NO_DIST_TABLE:+--no-dist-table} \
-      ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
-      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
-      ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
-      $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
-  # ★ THE DISTANCE HOLDOUT (owner, 2026-10-07: "how can we score the accuracy
-  #   of the distance spline"): one whole distance of 10% of multi-distance
-  #   athlete-seasons, predicted from their other distances; the log's
-  #   "distance holdout BIAS" tables are the distance law's and the event
-  #   offsets' error by distance and by the gap to the nearest distance raced.
-  #   Every held-out run also prints the error by month (the season curve).
-  #   In the background chain; XCP_DIST_HOLDOUT=0 skips it.
-  if [ "${XCP_DIST_HOLDOUT:-1}" != "0" ]; then
-    step 08a_distance_holdout "$PY" -u engine/run_joint.py --holdout-only \
-        --holdout-kind distance --sample-pct "${XCP_HOLDOUT_PCT:-25}" \
-        --outer "${XCP_OUTER:-5}" --probes 0 --altitude \
-        ${XCP_SPORT_LEVEL:+--sport-level "$XCP_SPORT_LEVEL"} \
-        ${XCP_IMPORTANCE:+--importance "$XCP_IMPORTANCE"} \
-        ${XCP_NO_IMPORTANCE:+--no-importance} \
-        ${XCP_NO_INDOOR:+--no-indoor} \
-        ${XCP_INDOOR_LEVEL:+--indoor-level "$XCP_INDOOR_LEVEL"} \
-        ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} \
-        ${XCP_ERA_DRIFT:+--era-drift "$XCP_ERA_DRIFT"} \
-        ${XCP_NO_DIST_TABLE:+--no-dist-table} \
-        ${XCP_TILT_SCALE:+--tilt-scale "$XCP_TILT_SCALE"} \
-      ${XCP_FORM_TREND:+--form-trend "$XCP_FORM_TREND"} \
-        ${XCP_RACE_KEY:+--race-key "$XCP_RACE_KEY"} \
-        $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
-  fi
-  # ! A RUNG IS A SOLVE (2026-09-12: "08b takes over 6 hours ... gets
-  #   stuck"). Each rung solves XCP_LADDER_PCT of the athletes, the era
-  #   rungs on three times the cells, and until today nothing was printed
-  #   while one ran. The ladder now runs its CORE set (seven rungs) by
-  #   default, streams each rung to engine/data/ladder_logs/<rung>.log with
-  #   a heartbeat in this log, and kills a rung past XCP_RUNG_TIMEOUT
-  #   seconds (default 7200). XCP_LADDER_ALL=1 runs every rung;
-  #   XCP_LADDER_ONLY=base,no-importance runs a named subset;
-  #   XCP_LADDER_TUNE=1 runs the tuning grid (era length and drift, the
-  #   distance walk, one step either side of what ships -- see TUNE in
-  #   scripts/ablation_ladder.py).
-  # ★★ ONLY WHEN THE MODEL CHANGED (2026-10-05: 18,193 s of run
-  #    20261004_125010's 17h44m). The ladder answers "does switch X help?"
-  #    and the answer moves when the engine's code or settings move, not
-  #    when a week of races arrives. Its stamp is a hash of engine/*.py,
-  #    deploy/solve_env.sh, the ladder itself and the XCP_ settings it is
-  #    run with (the model's, not the database's or the box's); an
-  #    unchanged stamp skips it, saying so. XCP_LADDER=1
-  #    forces it, XCP_LADDER=0 skips it.
-  LADDER_STAMP_FILE="$ROOT/engine/data/ladder_stamp"
-  LADDER_STAMP=$( { cat "$ROOT"/engine/*.py "$ROOT/deploy/solve_env.sh" \
-                        "$ROOT/scripts/ablation_ladder.py"
-                    # the model's settings only, not the box's plumbing (XCP_ALERT*: the
-                    # follow digest's switch and secret, 2026-10-10)
-                    env | grep '^XCP_' | grep -vE '^XCP_(DB_|MAIL|ADMIN|NICE|THREADS|LIVE|LADDER|WEATHER_FIT|STREAMS|COURSE_SHARDS|ENV|PYTHON|INDEXNOW|LACCTIC|ALERT)' | sort; } \
-                  | sha1sum | cut -c1-16)
-  LADDER_RUN=1
-  case "${XCP_LADDER:-auto}" in
-    0) LADDER_RUN=0; LADDER_WHY="XCP_LADDER=0" ;;
-    1) LADDER_WHY="XCP_LADDER=1" ;;
-    *) if [ "$(cat "$LADDER_STAMP_FILE" 2>/dev/null)" = "$LADDER_STAMP" ]; then
-         LADDER_RUN=0; LADDER_WHY="engine, settings and ladder unchanged since its last run"
-       # ★ AT MOST WEEKLY (owner, 2026-10-12: "speed up other parts of the
-       #   pipeline too"; 08b took 12,305 s on 20261011). Any edit to an
-       #   engine file -- a grade rule -- changed the stamp and bought a
-       #   three-hour report. It is a report the owner reads to choose a
-       #   switch, not something a run uses; a week-old one answers the
-       #   same question. XCP_LADDER_MIN_DAYS sets the gap, XCP_LADDER=1
-       #   forces a run.
-       elif [ -f "$LADDER_STAMP_FILE" ] && [ -n "$(find "$LADDER_STAMP_FILE" -mtime -"${XCP_LADDER_MIN_DAYS:-7}" 2>/dev/null)" ]; then
-         LADDER_RUN=0; LADDER_WHY="last run under ${XCP_LADDER_MIN_DAYS:-7} days ago (weekly at most)"
-       else
-         LADDER_WHY="the model changed since its last run"
-       fi ;;
-  esac
-  if [ "$LADDER_RUN" -eq 1 ]; then
-    echo "  08b_ladder runs: $LADDER_WHY"
-    step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
-        --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
-        --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
-        ${XCP_LADDER_ALL:+--all} \
-        $([ "${XCP_LADDER_TUNE:-0}" = "1" ] && echo --tune) \
-        ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
-    case " $FAILED " in
-      *" 08b_ladder "*) ;;
-      *) [ "$DRY" -eq 1 ] || [ -n "${XCP_LADDER_ONLY:-}" ] || [ "${XCP_LADDER_TUNE:-0}" = "1" ] || echo "$LADDER_STAMP" > "$LADDER_STAMP_FILE" ;;
+  }
+  _wantHoldout() { case ",${XCP_HOLDOUTS:-race,sport,distance}," in *",$1,"*) return 0 ;; esac; return 1; }
+  _evLaneA() {
+    _wantHoldout race && _holdout 08a_holdout race
+    if [ "${XCP_DIST_HOLDOUT:-1}" != "0" ] && _wantHoldout distance; then
+      _holdout 08a_distance_holdout distance
+    fi
+  }
+  _evLaneB() {
+    _wantHoldout sport && _holdout 08a_sport_holdout "${XCP_SPORT_HOLDOUT:-sport}"
+    LADDER_STAMP_FILE="$ROOT/engine/data/ladder_stamp"
+    LADDER_STAMP=$( { cat "$ROOT"/engine/*.py "$ROOT/deploy/solve_env.sh" \
+                          "$ROOT/scripts/ablation_ladder.py"
+                      # the model's settings only, not the box's plumbing (XCP_ALERT*: the
+                      # follow digest's switch and secret, 2026-10-10)
+                      env | grep '^XCP_' | grep -vE '^XCP_(DB_|MAIL|ADMIN|NICE|THREADS|LIVE|LADDER|WEATHER_FIT|STREAMS|COURSE_SHARDS|ENV|PYTHON|INDEXNOW|LACCTIC|ALERT)' | sort; } \
+                    | sha1sum | cut -c1-16)
+    LADDER_RUN=1
+    case "${XCP_LADDER:-auto}" in
+      0) LADDER_RUN=0; LADDER_WHY="XCP_LADDER=0" ;;
+      1) LADDER_WHY="XCP_LADDER=1" ;;
+      *) if [ "$(cat "$LADDER_STAMP_FILE" 2>/dev/null)" = "$LADDER_STAMP" ]; then
+           LADDER_RUN=0; LADDER_WHY="engine, settings and ladder unchanged since its last run"
+         # ★ AT MOST WEEKLY (owner, 2026-10-12: "speed up other parts of the
+         #   pipeline too"; 08b took 12,305 s on 20261011). Any edit to an
+         #   engine file -- a grade rule -- changed the stamp and bought a
+         #   three-hour report. It is a report the owner reads to choose a
+         #   switch, not something a run uses; a week-old one answers the
+         #   same question. XCP_LADDER_MIN_DAYS sets the gap, XCP_LADDER=1
+         #   forces a run.
+         elif [ -f "$LADDER_STAMP_FILE" ] && [ -n "$(find "$LADDER_STAMP_FILE" -mtime -"${XCP_LADDER_MIN_DAYS:-7}" 2>/dev/null)" ]; then
+           LADDER_RUN=0; LADDER_WHY="last run under ${XCP_LADDER_MIN_DAYS:-7} days ago (weekly at most)"
+         else
+           LADDER_WHY="the model changed since its last run"
+         fi ;;
     esac
-  else
-    echo "  08b_ladder skipped ($LADDER_WHY; XCP_LADDER=1 forces it)" | tee -a "$SUMMARY"
-  fi
-  # ★ THE SECOND ENGINE AND THE PACK DIAGNOSTICS, ONE PROCESS (2026-09-12).
-  #   scripts/diagnose.py loads the pack and the solve file once and runs
-  #   the bracket engine on the ladder's athlete sample and race split (so
-  #   its "error sd" and the base rung's are one question asked of two
-  #   engines), indoor against outdoor, and why tracks differ. Reports go
-  #   to $LOGDIR/{bracket_holdout,indoor,tracks}.txt; the venue brackets
-  #   need names from the database and are run by hand (--venue). Three
-  #   minutes on the corpus, measured. XCP_BRACKET=0 skips it.
-  if [ "${XCP_BRACKET:-1}" != "0" ]; then
-    step 08d_diagnose     "$PY" -u scripts/diagnose.py \
-        --only indoor,tracks,holdout --out-dir "$LOGDIR" \
-        --pct "${XCP_LADDER_PCT:-15}" --seed 11 \
-        ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} || true
-  fi
+    if [ "$LADDER_RUN" -eq 1 ]; then
+      echo "  08b_ladder runs: $LADDER_WHY"
+      step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
+          --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
+          --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
+          ${XCP_LADDER_ALL:+--all} \
+          $([ "${XCP_LADDER_TUNE:-0}" = "1" ] && echo --tune) \
+          ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
+      case " $FAILED " in
+        *" 08b_ladder "*) ;;
+        *) [ "$DRY" -eq 1 ] || [ -n "${XCP_LADDER_ONLY:-}" ] || [ "${XCP_LADDER_TUNE:-0}" = "1" ] || echo "$LADDER_STAMP" > "$LADDER_STAMP_FILE" ;;
+      esac
+    else
+      echo "  08b_ladder skipped ($LADDER_WHY; XCP_LADDER=1 forces it)" | tee -a "$SUMMARY"
+    fi
+    # ★ THE SECOND ENGINE AND THE PACK DIAGNOSTICS, ONE PROCESS (2026-09-12).
+    #   scripts/diagnose.py loads the pack and the solve file once and runs
+    #   the bracket engine on the ladder's athlete sample and race split (so
+    #   its "error sd" and the base rung's are one question asked of two
+    #   engines), indoor against outdoor, and why tracks differ. Reports go
+    #   to $LOGDIR/{bracket_holdout,indoor,tracks}.txt; the venue brackets
+    #   need names from the database and are run by hand (--venue). Three
+    #   minutes on the corpus, measured. XCP_BRACKET=0 skips it.
+    if [ "${XCP_BRACKET:-1}" != "0" ]; then
+      step 08d_diagnose     "$PY" -u scripts/diagnose.py \
+          --only indoor,tracks,holdout --out-dir "$LOGDIR" \
+          --pct "${XCP_LADDER_PCT:-15}" --seed 11 \
+          ${XCP_ERA_YEARS:+--era-years "$XCP_ERA_YEARS"} || true
+    fi
 
-  # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
-  #   row's normalized_time on the pool it is RATED in and reports the ones
-  #   that disagree -- rows normalised as hs_m and rated as college_m come
-  #   out 60% inflated, which is how two athletes rated 230 in a race whose
-  #   other six finishers rated 141-144.
-  #
-  # ⚠ IT IS A REPORT, NOT A GATE. It writes nothing and cannot fail the run;
-  #   `|| true` keeps a diagnostic from ever taking a pipeline down. Read the
-  #   percentages: they should be a fraction of a percent, and a jump means
-  #   the two stages have drifted apart again.
-  step 08c_anchor_check "$PY" -u engine/anchor_check.py --sport TF --pct 1 \
-      || true
+    # ★ THE ANCHOR AUDIT, EVERY RUN (2026-09-09). anchor_check recomputes each
+    #   row's normalized_time on the pool it is RATED in and reports the ones
+    #   that disagree -- rows normalised as hs_m and rated as college_m come
+    #   out 60% inflated, which is how two athletes rated 230 in a race whose
+    #   other six finishers rated 141-144.
+    #
+    # ⚠ IT IS A REPORT, NOT A GATE. It writes nothing and cannot fail the run;
+    #   `|| true` keeps a diagnostic from ever taking a pipeline down. Read the
+    #   percentages: they should be a fraction of a percent, and a jump means
+    #   the two stages have drifted apart again.
+    step 08c_anchor_check "$PY" -u engine/anchor_check.py --sport TF --pct 1 \
+        || true
+    }
+  _evidence() {
+    if [ "${XCP_EVIDENCE_LANES:-2}" -ge 2 ] && [ "$DRY" -eq 0 ]; then
+      ( FAILED=""; _evLaneA; echo "$FAILED" > "$LOGDIR/.evidence_lane_a" ) &
+      local _la=$!
+      _evLaneB
+      wait "$_la"
+      FAILED="$FAILED $(cat "$LOGDIR/.evidence_lane_a" 2>/dev/null)"
+    else
+      _evLaneA
+      _evLaneB
+    fi
   }
   EVID_PID=""
   EVID_FAILED_FILE="$LOGDIR/.evidence_failed"
@@ -1893,7 +1859,9 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   one whose holdout passed skips them, as XCP_EVIDENCE=0 does (17c then
   #   reports no fair tests for this run). XCP_EVIDENCE=force runs them.
   _evRecent=""
-  if [ "${XCP_EVIDENCE:-1}" = "1" ]; then
+  # ! EVERY RUN SINCE 2026-11-20 (owner): the weekly skip applies only when
+  #   XCP_EVIDENCE_DAYS is set by hand
+  if [ "${XCP_EVIDENCE:-1}" = "1" ] && [ -n "${XCP_EVIDENCE_DAYS:-}" ]; then
     _evRecent=$(find "$ROOT/logs" -mindepth 2 -maxdepth 2 -name summary.log \
                   -mtime -"${XCP_EVIDENCE_DAYS:-7}" 2>/dev/null \
                 | xargs -r grep -l "08a_holdout ok" 2>/dev/null | head -1)

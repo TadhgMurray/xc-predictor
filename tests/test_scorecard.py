@@ -30,7 +30,7 @@ import scorecard as sc                                          # noqa: E402
 
 def _golive_vars():
     src = open(os.path.join(_ROOT, "deploy", "run_pipeline.sh")).read()
-    block = src[src.index("step 08_golive"):src.index("step 08a_holdout")]
+    block = src[src.index("step 08_golive"):src.index("  _holdout() {")]
     return set(re.findall(r"\$\{(XCP_\w+):\+", block))
 
 

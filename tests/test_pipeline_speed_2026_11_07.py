@@ -137,7 +137,8 @@ def test_distance_checks_read_no_people_table_and_people_read_none_of_theirs():
 
 def test_report_steps_in_groups_and_the_evidence_wait_just_before_17c():
     tail = SH[at("# ---- the owner's go/no-go"):at("bgjoin 18_vacuum")]
-    assert SH.count('wait "$EVID_PID"') == 1
+    # one here; --test (2026-11-19) collects the chain at its own early stop
+    assert tail.count('wait "$EVID_PID"') == 1
     order = ['_REPORTS=(17_checklist "$PY -u scripts/run_checklist.py"',
              '17b_status "$PY -u scripts/print_status.py"',
              '_REPORTS+=(16b_lacctic', '_REPORTS+=(16d_backtest',
