@@ -4466,6 +4466,42 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                   f"{THETA_RACE_PRIOR_N:g} pseudo-rows; slow residuals keep "
                   f"weight 1", flush=True)
 
+    # ★ WARM START, TEST-ONLY (2026-11-20, docs/MOE-WARM-START-2026-11-20.md).
+    #   OFF unless BOTH a caller hangs a dict on the design (D.warm_start,
+    #   already mapped onto THIS design's indexing) AND XCP_WARM_START names
+    #   a mode; nothing in run_joint sets either, so the shipped solve is
+    #   untouched. "theta": last night's unknowns as pass 1's CG start, and
+    #   nothing else -- every pass still solves its own system to CG_TOL, so
+    #   only the iteration count moves. "full": also last night's weights,
+    #   tilt, amplitude, variance components, curve prior and day-guard
+    #   offset, i.e. pass 1 starts where last night's pass 5 ended (this
+    #   changes the PATH, and is what would let XCP_OUTER drop).
+    warm = getattr(D, "warm_start", None)
+    warm_mode = os.environ.get("XCP_WARM_START", "").strip().lower()
+    if warm is not None and warm_mode in ("theta", "full"):
+        theta = np.asarray(warm["theta"], dtype=np.float64).copy()
+        assert theta.size == D.n_total, "warm_start theta is not this design's"
+        if warm_mode == "full":
+            w = np.asarray(warm["w"], dtype=np.float64).copy()
+            h = np.asarray(warm["h"], dtype=np.float64).copy()
+            amp = np.asarray(warm["amp"], dtype=np.float64).copy()
+            tau2 = np.asarray(warm["tau2"], dtype=np.float64).copy()
+            sigma_u2 = np.asarray(warm["sigma_u2"], dtype=np.float64).copy()
+            sigma2 = float(warm["sigma2"])
+            if curve_sd2 is not None and warm.get("curve_sd2") is not None:
+                curve_sd2 = np.asarray(warm["curve_sd2"], dtype=np.float64).copy()
+                lam = sigma2 / curve_sd2
+            if warm.get("div_off") is not None and div_sub is not None:
+                div_off = np.asarray(warm["div_off"], dtype=np.float64).copy()
+            if warm.get("rating") is not None and athlete_pool is not None:
+                rating = np.asarray(warm["rating"], dtype=np.float64).copy()
+                D.rebandDist(rating[D.athlete])
+                if dist_cal:
+                    n_cal = D.calibrateDist(y, rating[D.athlete])
+        if verbose:
+            print(f"[joint] WARM START ({warm_mode}) from a previous solve -- "
+                  "test-only, not the shipped path", flush=True)
+
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
         # the walk's stiffness: sigma2 over the drift variance per era step

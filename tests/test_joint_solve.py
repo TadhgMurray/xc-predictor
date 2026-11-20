@@ -199,6 +199,23 @@ def test_cell_groups_split_by_sport():
     print(f"  cellGroups: sport split {grp.tolist()} ............. OK")
 
 
+def test_warm_start_hook_is_test_only_and_theta_keeps_the_answer(monkeypatch):
+    """docs/MOE-WARM-START-2026-11-20.md: D.warm_start does nothing unless
+    XCP_WARM_START names a mode; "theta" moves only the CG start, so the
+    answer stays the cold one to the CG tolerance."""
+    ath, cel, rac, y, _, _, _ = _world(seed=5)
+    kw = dict(n_outer=3, tilt=False, tau_max=None, n_probe=0)
+    cold = js.solveJoint(y, design=js.Design(ath, cel, rac), **kw)
+    D = js.Design(ath, cel, rac)
+    D.warm_start = {"theta": cold["theta"] + 0.01}
+    monkeypatch.delenv("XCP_WARM_START", raising=False)
+    off = js.solveJoint(y, design=D, **kw)
+    assert np.array_equal(off["theta"], cold["theta"])
+    monkeypatch.setenv("XCP_WARM_START", "theta")
+    warm = js.solveJoint(y, design=D, **kw)
+    assert np.max(np.abs(warm["delta"] - cold["delta"])) < 1e-5
+
+
 if __name__ == "__main__":
     for fn in [test_recovers_known_difficulty,
                test_race_day_effect_protects_the_venue,
