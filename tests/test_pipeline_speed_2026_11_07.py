@@ -296,7 +296,7 @@ def test_four_late_steps_beside_the_pack_joined_before_the_golive():
 def test_fills_side_by_side_and_the_scrub_flag_only_after_this_runs_pack_and_golive():
     assert 'stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG"' in SH
     assert '09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG"' in SH
-    cond = SH[at('_FILL_FLAG=""'):at("stepsN 09b_fill")]
+    cond = SH[at('_FILL_FLAG=""'):at("# ★ 09c IN THE BACKGROUND")]  # before the 09c if-block (2026-11-20)
     for need in ('[ "${XCP_JOINT_LIVE:-1}" = "1" ]', '[ "$FROM" -le 7 ]',
                  "! skipped 07_pack", "! failed 07_pack", "! skipped 08_golive", "! failed 08_golive"):
         assert need in cond, need
@@ -316,7 +316,7 @@ def _bash(script):
 
 
 def test_fill_flag_cases():
-    cond = SH[at('_FILL_FLAG=""'):at("stepsN 09b_fill")]
+    cond = SH[at('_FILL_FLAG=""'):at("# ★ 09c IN THE BACKGROUND")]  # before the 09c if-block (2026-11-20)
     stubs = ('skipped() { case "$SKIP" in *",$1,"*) return 0 ;; *) return 1 ;; esac; }\n'
              'failed() { case " $FAILED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }\n')
     def flag(pre):
