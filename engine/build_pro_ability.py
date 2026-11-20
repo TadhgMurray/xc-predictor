@@ -294,7 +294,13 @@ def _scanSports(sports, min_time, max_time):
                 _PARKED.append((_db._pool, _db._slots))      # never closed here
                 _db._pool = None
                 _db._slots = None
+                # ★ EACH SIDE'S OWN TIME (2026-11-20): the log had no way to
+                #   say whether XC and TF are balanced. Log only.
+                import time as _time
+                _t0 = _time.time()
                 out = _scanOne((sp,), min_time, max_time)
+                print(f"    [time] {sp} scan: {_time.time() - _t0:.0f}s, "
+                      f"{out[1]:,} rows", flush=True)
                 with open(path, "wb") as fh:
                     pickle.dump(out, fh, protocol=pickle.HIGHEST_PROTOCOL)
                 code = 0

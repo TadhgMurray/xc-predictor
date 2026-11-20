@@ -1997,9 +1997,27 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ] && [ "$FROM" -le 7 ] \
    && ! skipped 08_golive && ! failed 08_golive; then
   _FILL_FLAG=" --after-golive"
 fi
-stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
-       09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG" \
-       09c_school_names "$PY -u scripts/merge_school_names.py --write"
+# ★ 09c IN THE BACKGROUND FROM HERE, COLLECTED BEFORE THE BOARDS (2026-11-20;
+#   09c 571 s set the length of the 09b group once the fills were sped up).
+#   It reads results*' school, person_id and team_id, anet_team,
+#   college_directory, and last run's athlete_season, school_identity and
+#   school_name_alias; it writes only school_name_alias. Between here and
+#   10_rankings_prepare nothing writes what it reads (09b: speed_rating;
+#   09c2: speed_rating; 09d: rating_outlier*; 09e: si_team_raw_pre; 18c:
+#   a VACUUM; the rowguard: files), and nothing reads school_name_alias
+#   (the fill never calls loadNameAliases; the boards' stream processes
+#   load it, after the bgjoin below). Not before 08: the go-live swaps
+#   results, and 09c's long reads would hold that swap's lock.
+#   XCP_09C_BG=0 puts it back in the fills' group.
+if [ "${XCP_09C_BG:-1}" != "0" ]; then
+  bgstep 09c_school_names "$PY" -u scripts/merge_school_names.py --write
+  stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
+         09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG"
+else
+  stepsN 09b_fill "$PY -u engine/fill_ratings.py --sport XC --venue$_FILL_FLAG" \
+         09b_fill_tf "$PY -u engine/fill_ratings.py --sport TF$_FILL_FLAG" \
+         09c_school_names "$PY -u scripts/merge_school_names.py --write"
+fi
 # ★ 10b's TEAM-ROW SCAN FROM HERE, IN THE BACKGROUND (2026-11-16; ~530 s of
 #   10b in line on run 20261116_154245). It reads results' person_id, school
 #   and team_id and anet_team, none written after the fills; 10b copies the
@@ -2104,6 +2122,7 @@ _rowguard() {
          15_rowguard_triage_tf "$PY -u scripts/triage_suspects.py --sport TF"
 }
 bgchain 15_rowguard _rowguard
+bgjoin 09c_school_names                  # the boards apply school_name_alias
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
 # each sport in date ranges, every stream into one shadow: the row walk is
 # Python per row and was 52 minutes for two (2026-09-06), 45 for four.

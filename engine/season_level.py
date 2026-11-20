@@ -447,6 +447,28 @@ def rawVotesReady(cur):
     return True
 
 
+# ★ THE VOTES WRITTEN IN THE INDEX'S ORDER (2026-11-20; run log: 04h
+#   "[time] resolve: 436s" of 598 s). The resolve's first CTE (tot) walks
+#   tmp_season_vote through its (person_id, ay, sport) index, and the rows
+#   went in in the GROUP BY's hash order -- one heap page per row, and a
+#   TEMP table's pages go through temp_buffers (8 MB), so nearly every row
+#   was a read: a 7.5M-row copy on scratch Postgres 16 read 7,390,893 local
+#   blocks in that index scan (25.7 s of a 72.8 s resolve); written in
+#   index order it read 138,270 and the resolve took 48.0 s (+10 s for the
+#   sort here; less where the GROUP BY is already sorted).
+# ! SAME ROWS, SAME VALUES: only the TEMP table's physical order changes
+#   (no query text, no planner setting). Every aggregate over it is an
+#   integer sum, a count or a count(DISTINCT), and the share is that
+#   integer sum over another, so no value depends on the order the rows are
+#   read in. XCP_SEASON_VOTES_SORTED=0 is the old insert.
+_VOTE_ORDER = "ORDER BY v.person_id, v.ay, v.sport"
+
+
+def _votesSorted():
+    return os.environ.get("XCP_SEASON_VOTES_SORTED", "1").strip().lower() \
+        not in ("0", "false", "no")
+
+
 def votesFromRaw(cur):
     """tmp_season_vote from season_vote_raw, with tonight's grade kinds --
     the same rows _collectVotes builds."""
@@ -468,6 +490,7 @@ def votesFromRaw(cur):
             FROM {_RAW_VOTES} v
             LEFT JOIN tmp_grade_kind gk ON gk.g = v.grade
             GROUP BY v.person_id, v.ay, v.sport, v.level, v.pass
+            {_VOTE_ORDER if _votesSorted() else ""}
         """)
         print(f"    {cur.rowcount:,} season-level votes from {_RAW_VOTES}")
     cur.execute("CREATE INDEX ON tmp_season_vote (person_id, ay, sport)")
