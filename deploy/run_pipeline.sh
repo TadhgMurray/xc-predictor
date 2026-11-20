@@ -837,6 +837,25 @@ fi
 #   writes meets_tfrrs places) move no person or result id either. Both after
 #   the integrity gate, both before 02_drop_old and the first id mover (04a).
 #   steps2 asks --from per name: 01a stays on every --from, alone.
+# ★ 02b IN THE BACKGROUND FROM HERE, COLLECTED WHERE IT STOOD (2026-11-20;
+#   02b ~35 s in line between 02_drop_old and the 03 snapshot). 02b reads
+#   meets_tf (venue_name, location_id, gps) and meets_tf_meta.venue_name and
+#   writes meets_tf.venue_name alone (database.backfillMeetsTFVenueNames;
+#   its two scratch tables are its own session's TEMP). From here to its
+#   join nothing writes those -- 00_meet_dates moves meets_tf_meta.meet_date,
+#   meets.meet_date and results*.date; 01a person_probe; 01b meets_tfrrs;
+#   04e/04e2 the weather grid; 01c the *_next level tables; 02 drops the
+#   _old tables -- and nothing reads meets_tf.venue_name (04e reads
+#   meets_tf_meta / meets / meets_tfrrs, 01c meets_tf.meet_name, 01b meets
+#   and meets_tfrrs; 04e and 01c already ran beside 02b before this). The
+#   join sits where the step was, so the 03 snapshot, 04a and every venue
+#   label after see the same meets_tf. After the integrity gate.
+#   XCP_02B_BG=0 runs it in line at its old place.
+_02B_BG=0
+if [ "${XCP_02B_BG:-1}" != "0" ]; then
+  bgstep 02b_tf_venues "$PY" -u scripts/backfill_tf_venues.py --write
+  _02B_BG=1
+fi
 steps2 00_meet_dates "$PY -u engine/meet_date_fix.py --write --show 20" \
        01a_person_probe "$PY -u scripts/person_redirects.py --snapshot"
 step 01_season_year   "$PY" -u engine/season_year.py
@@ -924,10 +943,14 @@ step 02_drop_old      "$PY" -u engine/drop_old.py
 #   tables (pro_athlete_season, ncaa_first_season, age_band_*, team_pool),
 #   none of which the 04a chain reads or writes. Collected after 04a3c,
 #   before grade_sanity (age_band_result), 04h1 (ncaa_first_season) and the
-#   04g chain. 02b stays in line first: it and 04a both write results_tf
-#   rows. XCP_SNAPSHOT_03=0, or a holder that cannot start: today's order.
+#   04g chain. 02b is collected (or run) first, before the snapshot and
+#   04a. XCP_SNAPSHOT_03=0, or a holder that cannot start: today's order.
 #   tests/test_snapshot_03_beside_04a.py.
-step 02b_tf_venues "$PY" -u scripts/backfill_tf_venues.py --write
+if [ "$_02B_BG" = 1 ]; then
+  bgjoin 02b_tf_venues                   # started beside 00_meet_dates (above)
+else
+  step 02b_tf_venues "$PY" -u scripts/backfill_tf_venues.py --write
+fi
 _SNAP03=""; _SNAP03_FILE="$LOGDIR/.snapshot_03"; _SNAP03_REL="$LOGDIR/.snapshot_03.release"
 if [ "${XCP_SNAPSHOT_03:-1}" != "0" ] && [ "$DRY" -eq 0 ] \
    && { willRun 03_pro_flag || willRun 03b_age_bands || willRun 03a_team_pool; }; then
@@ -1135,9 +1158,6 @@ step 04d_gender "$PY" -u engine/person_gender.py --write
 step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
 bgjoin 04_grade_sanity
 bgjoin 04b_wheelchair
-if ! skipped 04c_twins && ! failed 04c_twins; then
-  step 04c_twins_swap "$PY" -u engine/twin_flag.py --swap-only
-fi
 # ★ THE SEASON LEVELS, REBUILT EVERY RUN (2026-10-25: "the tables nothing
 #   builds"). college_first_season / upperclass_first_season (college_flag)
 #   and athlete_season_level (season_level, from race_level and tonight's
@@ -1155,6 +1175,17 @@ if failed 04h1_college_flags; then
   bgstep 04h_season_levels sh -c "\"$PY\" -u engine/college_flag.py --write && \"$PY\" -u engine/season_level.py $_SV_ARGS"
 else
   bgstep 04h_season_levels "$PY" -u engine/season_level.py $_SV_ARGS
+fi
+# ★ THE TWINS' SWAP AFTER 04h STARTS, NOT BEFORE (2026-11-20; the swap
+#   sat in line between grade_sanity's join and 04h's start, and 04h then
+#   held the run ~600 s at its join). season_level and college_flag read no
+#   result_twin (results* keys, race_level, meets.level_mask, grade_fix,
+#   college_first_season, pair_athlete_season), and the swap renames
+#   result_twin_new over result_twin alone (database.swapTable: lock_timeout
+#   retries on that table, nothing terminated), so neither sees the other.
+#   Still after grade_sanity, which reads the previous result_twin.
+if ! skipped 04c_twins && ! failed 04c_twins; then
+  step 04c_twins_swap "$PY" -u engine/twin_flag.py --swap-only
 fi
 # ★ THE WEATHER GRID FOLLOWS THE SEASON (2026-09-06). The grid stopped at
 #   2025-12-31 because nothing in the pipeline ever extended it, so the
@@ -1269,10 +1300,16 @@ else
   echo "  04g_audit_overrides skipped (XCP_AUDIT_OVERRIDES=0 or no engine/corrections.py)" | tee -a "$SUMMARY"
 fi
 
-bgjoin 04h_season_levels
 # a race a report moved to another course (scripts/set_race_course.py), put
 # back on it before the backfill prices every row
+# ★ BEFORE 04h's JOIN, INSIDE ITS WAIT (2026-11-20; 04h held the run ~600 s
+#   there). 04y writes meets.course_name / gps_lat / gps_long and NULLs
+#   results.normalized_time on a re-pinned race (row locks; its only DDL is
+#   race_course_pin's); season_level and college_flag read none of those
+#   columns (results* keys / school / grade, meets.level_mask). Still after
+#   04e's join (the grid reads meets' places) and after 04g2.
 step 04y_course_pins "$PY" -u scripts/set_race_course.py --apply
+bgjoin 04h_season_levels
 if [ "$SKIP_BACKFILL" -eq 1 ]; then
   echo "  05_backfill skipped (--skip-backfill)"
 else
@@ -2080,12 +2117,35 @@ fi
 if [ "${XCP_FIELD_GUARD:-0}" != 0 ]; then
   step 09c2_field_guard "$PY" -u engine/field_guard.py --write --since 2000-01-01 || true
 fi
-step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
-                      --streams "$XCP_STREAMS" \
-                      ${XCP_OUTLIER_SIGMA:+--fast-sigma "$XCP_OUTLIER_SIGMA"} \
-                      ${XCP_OUTLIER_SLOW_SIGMA:+--slow-sigma "$XCP_OUTLIER_SLOW_SIGMA"} \
-                      ${XCP_OUTLIER_FLOOR:+--floor "$XCP_OUTLIER_FLOOR"} \
-                      ${XCP_OUTLIER_K:+--k "$XCP_OUTLIER_K"}
+# ★ 09d BESIDE 10_rankings_prepare, JOINED RIGHT AFTER IT (2026-11-20; 09d
+#   ~450 s in line, then prepare in line). 09d reads results* (ratings,
+#   pools, dates, person ids) and writes rating_outlier, rating_outlier_calib
+#   and its own scratch tables (no results* write). Prepare reads the live
+#   ranking_results' shape, athletes / person_gender, meets_tfrrs, meets_tf
+#   and results_tf.event_short, and writes ranking_results_new,
+#   athlete_season_new and the rank_prep_* tables. Neither reads what the
+#   other writes: rating_outlier is read only by the streams' anti-join
+#   (build_ranking_results._outlierClause, through _sourceSql, which prepare
+#   never calls), and the streams start after the join. 18c's VACUUM and the
+#   rowguard chain below read results* and corrections.py, not
+#   rating_outlier, so starting them while 09d runs changes nothing they
+#   read. XCP_09D_BG=0 runs it in line, as before.
+_09D_BG=0; [ "${XCP_09D_BG:-1}" != "0" ] && _09D_BG=1
+if [ "$_09D_BG" = 1 ]; then
+  bgstep 09d_outliers   "$PY" -u engine/rating_outliers.py --write --show 10 \
+                        --streams "$XCP_STREAMS" \
+                        ${XCP_OUTLIER_SIGMA:+--fast-sigma "$XCP_OUTLIER_SIGMA"} \
+                        ${XCP_OUTLIER_SLOW_SIGMA:+--slow-sigma "$XCP_OUTLIER_SLOW_SIGMA"} \
+                        ${XCP_OUTLIER_FLOOR:+--floor "$XCP_OUTLIER_FLOOR"} \
+                        ${XCP_OUTLIER_K:+--k "$XCP_OUTLIER_K"}
+else
+  step 09d_outliers     "$PY" -u engine/rating_outliers.py --write --show 10 \
+                        --streams "$XCP_STREAMS" \
+                        ${XCP_OUTLIER_SIGMA:+--fast-sigma "$XCP_OUTLIER_SIGMA"} \
+                        ${XCP_OUTLIER_SLOW_SIGMA:+--slow-sigma "$XCP_OUTLIER_SLOW_SIGMA"} \
+                        ${XCP_OUTLIER_FLOOR:+--floor "$XCP_OUTLIER_FLOOR"} \
+                        ${XCP_OUTLIER_K:+--k "$XCP_OUTLIER_K"}
+fi
 # ★ THE RESULTS VACUUM BESIDE THE BOARDS, NOT AFTER EVERYTHING (2026-11-10;
 #   run 20261108_155220: 18c_vacuum_results was 3,792 s IN LINE at the very
 #   end, 15% of the run's in-line time). Its job is the visibility map the
@@ -2124,6 +2184,7 @@ _rowguard() {
 bgchain 15_rowguard _rowguard
 bgjoin 09c_school_names                  # the boards apply school_name_alias
 step 10_rankings_prepare "$PY" -u racecast/build_ranking_results.py --stage prepare
+bgjoin 09d_outliers                      # the streams anti-join rating_outlier (09d above)
 # each sport in date ranges, every stream into one shadow: the row walk is
 # Python per row and was 52 minutes for two (2026-09-06), 45 for four.
 # ★ FOUR RANGES PER SPORT, CUT WHERE THE ROWS ARE (2026-11-07, owner-

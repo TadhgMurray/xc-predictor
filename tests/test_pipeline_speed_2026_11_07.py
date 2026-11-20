@@ -61,8 +61,10 @@ def test_twin_build_runs_beside_grade_sanity_and_swaps_after_it():
              'step 04d_gender "$PY"',
              'step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap',
              "bgjoin 04_grade_sanity", "bgjoin 04b_wheelchair",
+             # 04h starts first, the swap beside it (2026-11-20)
+             "bgstep 04h_season_levels",
              'step 04c_twins_swap "$PY" -u engine/twin_flag.py --swap-only',
-             "bgstep 04h_season_levels", "_PEOPLE_FAILED=\"\"", "steps2 05_backfill_xc"]
+             "_PEOPLE_FAILED=\"\"", "steps2 05_backfill_xc"]
     pos = [at(s) for s in order]
     assert pos == sorted(pos), order
     # the swap only after a build that ran and succeeded this run
@@ -371,7 +373,7 @@ echo "FAILED2=[$FAILED]"
 
 def _peopleBlock():
     return SH[at("skipped 04b_wheelchair && _skipCost 04b_wheelchair"):
-              at("# ★ THE SEASON LEVELS, REBUILT EVERY RUN")]
+              at("# ★ THE WEATHER GRID FOLLOWS THE SEASON")]   # the swap follows 04h's start (2026-11-20)
 
 
 def _runPeople(tmp_path, fail_build=False, skip=""):
@@ -387,7 +389,7 @@ esac
 exit 0
 ''')
     stub.chmod(0o755)
-    script = (_lib(tmp_path) + f"PY={stub}; SKIP=',{skip},'\n" + _peopleBlock()
+    script = (_lib(tmp_path) + f"PY={stub}; SKIP=',{skip},'; _SV_EARLY=0\n" + _peopleBlock()
               + 'echo "FAILED=[$FAILED]"\n')
     out = _bash(script)
     return out, (calls.read_text() if calls.exists() else "")
@@ -841,3 +843,34 @@ def test_restamp_chain_beside_school_ids_and_snapshot_beside_the_sitemap():
     # 13c2: started after 13b, joined after the group and before 16
     assert at("step 13b_pool_consts") < at("bgstep 13c2_snapshot") \
         < at('stepsN "${_G13[@]}"') < at("bgjoin 13c2_snapshot") < at("step 16_rowguard_apply")
+
+
+# ==================================================================== #
+# 2026-11-20: 02b, 04y, the twin swap and 09d moved beside longer steps
+# ==================================================================== #
+
+def test_overlaps_2026_11_20():
+    # 02b from before 00_meet_dates, joined where it stood (before the 03
+    # snapshot and 04a); it writes meets_tf alone
+    assert at("  bgstep 02b_tf_venues") < at("steps2 00_meet_dates") \
+        < at("bgjoin 02b_tf_venues") < at('_SNAP03=""') < at("step 04a_link_tfrrs")
+    db = read("scripts", "database.py")
+    body = db[db.index("def backfillMeetsTFVenueNames"):db.index("def saveMeetTF(")]
+    assert set(re.findall(r"UPDATE\s+(\w+)(?:\s+\w+)?\s+SET", body)) == {"meets_tf"}
+    # 04y inside 04h's wait, still after 04e's join and 04g2; the swap after
+    # 04h starts. season_level / college_flag read none of what they write.
+    assert at("bgjoin 04e_weather_grid") < at("step 04g2_dump_overrides") \
+        < at("step 04y_course_pins") < at("bgjoin 04h_season_levels")
+    for f in ("season_level.py", "college_flag.py"):
+        src = read("engine", f)
+        for col in ("result_twin", "normalized_time", "course_name", "gps_lat"):
+            assert col not in src, (f, col)
+    # 09d beside prepare, joined before the streams read rating_outlier;
+    # prepare never reads it, 09d never writes results*
+    assert at("  bgstep 09d_outliers") < at("step 10_rankings_prepare") \
+        < at("bgjoin 09d_outliers") < at('stepsN "${_RANK[@]}"')
+    b = read("racecast", "build_ranking_results.py")
+    assert "rating_outlier" not in b[b.index("def buildSharedPrep"):b.index("def sharedPrepFor")]
+    assert not re.search(r"UPDATE\s+results", read("engine", "rating_outliers.py"))
+    for knob in ("XCP_02B_BG", "XCP_09D_BG"):
+        assert knob in SH
