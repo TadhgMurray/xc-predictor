@@ -302,6 +302,13 @@ def envReadsShell(path, repo=REPO):
             else:
                 d = ""
             out.append(dict(name=name, file=path, line=k, default=d))
+        # a switch inside another's default, ${XCP_A:-${XCP_B:-8}}: the
+        # pattern above stops at the first }, so the inner one is read here
+        seen = {m.group(1) or m.group(4) for m in _SH_EXPAND.finditer(line)}
+        for inner in re.findall(r"\$\{(XCP_[A-Z0-9_]+)", line):
+            if inner not in seen:
+                seen.add(inner)
+                out.append(dict(name=inner, file=path, line=k, default=""))
     return out
 
 
@@ -379,6 +386,7 @@ def _all(names, cat, note):
 RULES = {
     # -------------------------------------------------------------- backfill
     "backfill/backfill_normalize.py": {
+        **_all("_DPIN_ROW _SHARD _PARKED", "INFRA", "speed passes 2026-11-16..20: caches, shared prep tables, shard and row-tuple plumbing; no number"),
         **_all("_DPIN_DIV _DPIN_PART", "DATA",
                "distance_pin, loaded once a run: wrong_distance's fixes, read before the dicts"),
         **_all("_SKIP_ORDER _RESULT_TABLE _ONLY_CHANGED _NEW_ONLY _WRITE_PAGE _STAGING "
@@ -528,6 +536,7 @@ RULES = {
     },
     # --------------------------------------------------------- speed_ratings
     "engine/speed_ratings.py": {
+        **_all("_PARKED", "INFRA", "speed passes 2026-11-16..20: caches, shared prep tables, shard and row-tuple plumbing; no number"),
         "SPORTS": ("INFRA", "sport list"),
         "DECAY_K": ("REMOVED", THETA + "; " + DEAD + " (the pack's weight column is not read by the joint solve)"),
         "DECAY_K_COURSE": ("REMOVED", "course eras + " + EMV + "; " + DEAD),
@@ -608,6 +617,7 @@ RULES = {
     },
     # ------------------------------------------------------------- run_joint
     "engine/run_joint.py": {
+        **_all("SNAPSHOT_DAYS", "INFRA", "go-live snapshot retention, days"),
         "_HERE": ("INFRA", "path"),
         **_all("_NO_RACE_TERM _RACE_KEY", "REMOVED", RACE + " (run state for the race key / race term)"),
         "DIST_REF": ("STATED", "definition: the event offset pinned at the 1600 (prototype: the 1000-2000 class)"),
@@ -707,6 +717,7 @@ RULES = {
     },
     # ------------------------------------------------ build_ranking_results
     "racecast/build_ranking_results.py": {
+        **_all("_SHARED_PREP _SHARED_FOR _PREP_TABLES _UNATTACHED _NO_SI _COLLEGE_POOL _WHEELCHAIR_EVENT _RANKABLE _IMP_SLACK _IMP_PACE _BARE_POOL _BAND _INDEX_SECONDS", "INFRA", "speed passes 2026-11-16..20: caches, shared prep tables, shard and row-tuple plumbing; no number"),
         "_HAVE_RATING_POOL": ("INFRA", "whether the result tables carry rating_pool (set per build)"),
         **_all("_RETIRED_INDEXES _RESTAMP_BY_KEY _RESTAMP_KEYS _SEAM_LO _SEAM_HI _ISO_DAY", "INFRA",
                "plumbing: retired index names, the restamp by key, the rankings date seams"),
@@ -768,6 +779,7 @@ RULES = {
     },
     # ------------------------------------------- the distance judges
     "engine/impossible_race.py": {
+        **_all("GENDER_SUBQUERY", "INFRA", "the gender subquery text (the join form hung 3 h; opt-in)"),
         "_ROOT": ("INFRA", "path"),
         **_all("PREFILTER_PACE XC_DIST TF_DIST", "DATA",
                "a time past the world record with no plausible distance is a wrong time: data "
@@ -892,6 +904,10 @@ ENV_RULES = {
            "XCP_SWAP_ATTEMPTS XCP_PACK_PREFETCH XCP_PACK_PARALLEL XCP_PACK_TF_SHARDS XCP_PRECOND XCP_SCHUR XCP_CG_TRACE XCP_RANK_SEAM "
            "XCP_BACKFILL_XC XCP_RUNG_TIMEOUT XCP_IGNORE_BACKFILL_FAIL XCP_IGNORE_GOLIVE_FAIL "
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
+    **_all("XCP_06C_GENDER_JOIN XCP_06C_SIDE_BY_SIDE XCP_06C_STMT_MIN XCP_09C_BG XCP_BACKFILL_LOOKUP_THREADS XCP_BACKFILL_OVERLAP XCP_BACKFILL_WORKERS XCP_CLUB_CACHE XCP_COURSE_BG XCP_EVIDENCE_DAYS XCP_EVIDENCE_LANES XCP_FILL_OVERLAP XCP_FORECAST_RAW XCP_GOLIVE_GB XCP_GOLIVE_MEM_WAIT_MIN XCP_GOLIVE_PRESAVE_PARALLEL XCP_GOLIVE_SAVE_MIN_GB XCP_GOLIVE_SAVE_PARALLEL XCP_GOLIVE_SNAPSHOT_DAYS XCP_HOLDOUTS XCP_HOLDOUT_GB XCP_HOLDOUT_WAIT_MIN XCP_JOBRUN XCP_LACCTIC_DAYS XCP_LATE_PARALLEL XCP_LOCK_WAIT_MIN XCP_PANELS_HEAD XCP_PRED_DIR XCP_RACE_INPUTS_DIR XCP_RACE_MODEL_RAW XCP_RANK_INDEX_JOBS XCP_RANK_PREFETCH XCP_RANK_PREP_JOBS XCP_RANK_ROWCACHE XCP_RANK_SHARED_PREP XCP_SEASON_VOTES_EARLY XCP_SNAPSHOT_03 XCP_SNAPSHOT_03_MAX XCP_SNAPSHOT_BG XCP_STALL_MIN XCP_UNITS_BG XCP_WX_GRID_MIN",
+           "INFRA", "speed passes 2026-11-16..20: side connections, prefetch, background steps, memory gates, holdout lanes and other scheduling switches; same outputs"),
+    **_all("XCP_RANK_PARTS_TF XCP_RANK_PARTS_XC", "INFRA", "how many date ranges each sport's board streams take"),
+    **_all("XCP_RACE_MODEL", "INFRA", "which race-forecast model file the forecasts load"),
     **_all("XCP_CG_INPLACE XCP_CG_PARALLEL XCP_CURVE_GAP_CACHE XCP_KERNEL_ZERO_IN XCP_KERNEL_DERIVE",
            "INFRA", "speed pass 2026-11-20: the joint solve's CG updates in place and parallel, "
                     "the curve-gap rows kept, the matvec kernel's own zeroing and derived streams; "
