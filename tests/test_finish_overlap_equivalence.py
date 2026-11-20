@@ -411,5 +411,7 @@ def test_the_season_rewrite_by_hash_builds_the_same_table(db, monkeypatch):
                   patches=[("_SEASON_REWRITE_HASH", True)], **_FOLD)
     # the join is named, and it is not the merge (a tiny corpus may loop)
     line = next(ln for ln in log.splitlines() if "unit columns from tmp_season_unit_keys" in ln)
-    assert line.endswith(" join") and "merge" not in line, line
+    # the parallel sort's own note may follow it (2026-11-20)
+    join = line.split("unit columns from tmp_season_unit_keys, ", 1)[1].split(";")[0]
+    assert join.endswith(" join") and "merge" not in join, line
     _assertSame(db, "snap_old_hj", "snap_new_hj", as_in_order=True)
