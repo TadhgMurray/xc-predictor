@@ -10,7 +10,11 @@
 #
 # ★ WHY (2026-11-22, owner: "get really experimental"). Every big step
 #   rewrites a 20-70 GB table (05's merges, 08's results rebuilds, the
-#   rankings). server_setup.sh set max_wal_size = 8GB, so Postgres must
+#   rankings). ! MEASURED 2026-11-22 on production BEFORE --apply:
+#   max_wal_size was already 32GB, checkpoint_timeout 15min, wal_compression
+#   lz4, and only 7 of 565 checkpoints had been forced by WAL size -- so
+#   --apply's gain there is small; wal_level minimal (--minimal) is the
+#   bigger lever. The original reasoning, for the record: with 8GB Postgres must
 #   checkpoint after every 8 GB of WAL -- several times inside one rewrite --
 #   and after each checkpoint the first change to every page writes the WHOLE
 #   8 kB page into the WAL again (full_page_writes). The pipeline's summary
