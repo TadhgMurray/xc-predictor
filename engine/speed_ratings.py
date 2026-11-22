@@ -57,6 +57,7 @@ import numpy as np
 
 from normalize_distance import poolFor, ratedScalePool
 from season_year import seasonYearFor, RolloverLedger, seasonYearForPersonDate
+from season_year import seasonShift, proSummerShift
 import speed_ratings_kernels as K
 from speed_ratings_db import (streamResults, saveCourseDifficulties,
                               saveAthleteRatings, saveResultSpeedRatings,
@@ -713,6 +714,65 @@ def rescaleToPool(norm, time_s, dist, pool, sport):
         if abs(f / best - 1.0) > _SCALE_SAME_SIZE and off < best_off + _SCALE_IDENTIFY_GAP:
             return norm, "scale_ambiguous"
     return nt * f_to / best, "rescaled"
+
+
+# ★ rescaleToPool WITH ITS FACTORS LOOKED UP ONCE PER (distance, pool, sport)
+#   (2026-11-22; profiled on scratch, 600k synthetic TF rows: rescaleToPool
+#   38 of the row loop's 100 s, 14.5M _scaleFactor calls -- a round(), a
+#   tuple and a dict probe each, ~26 a row on the candidate search). The
+#   factors are a pure function of the distance, the pool and the sport and
+#   a corpus holds a few hundred distances; `memo` keeps, per (dist, pool,
+#   sport), [f_to, the candidate factors in rescaleToPool's own order]. The
+#   arithmetic per row is rescaleToPool's, operation for operation, so the
+#   value and the tag are the same bits (tests/test_pack_scale.py).
+def _rescaleMemo(norm, time_s, dist, pool, sport, memo):
+    try:
+        t = float(time_s) if time_s is not None else 0.0
+        d = float(dist) if dist is not None else 0.0
+        nt = float(norm)
+    except (TypeError, ValueError):
+        return norm, None
+    if t <= 0 or d <= 0 or nt <= 0:
+        return norm, None
+    key = (d, pool, sport)
+    m = memo.get(key)
+    if m is None:
+        m = [_scaleFactor(d, _scalePool(pool), sport), None]
+        memo[key] = m
+    f_to = m[0]
+    if not f_to:
+        return norm, None
+    ratio = nt / (t * f_to)
+    if abs(ratio - 1.0) <= _SCALE_TOL:
+        return norm, None
+    fs = m[1]
+    if fs is None:
+        fs = m[1] = [f for sp in (sport, "XC" if sport == "TF" else "TF")
+                     for p in _SCALE_POOLS
+                     for f in (_scaleFactor(d, p, sp),) if f]
+    if not fs:
+        return norm, "scale_not_identified"
+    cands = [(abs(nt / (t * f) - 1.0), f) for f in fs]
+    cands.sort()
+    best_off, best = cands[0]
+    if best_off > _SCALE_IDENTIFY_TOL:
+        return norm, "scale_not_identified"
+    for off, f in cands[1:]:
+        if abs(f / best - 1.0) > _SCALE_SAME_SIZE and off < best_off + _SCALE_IDENTIFY_GAP:
+            return norm, "scale_ambiguous"
+    return nt * f_to / best, "rescaled"
+
+
+class _NoMemo(dict):
+    """A memo that keeps nothing: XCP_PACK_MEMO=0, every row computed as
+    before."""
+    def __setitem__(self, key, value):
+        pass
+
+
+def _packMemo():
+    return (_NoMemo if os.environ.get("XCP_PACK_MEMO", "1") in ("0", "false")
+            else dict)()
 
 
 # ------------------------------------------------------------------ #
@@ -1604,6 +1664,11 @@ def _packLoop(batches, today, merge=False, marks=None):
     v_lookup, v_uniq = {}, []
     t_lookup, t_uniq = {}, []    # the row's TEAM (2026-10-18), see teamKey
     chunks = []
+    date_memo, season_memo, scale_memo = _packMemo(), _packMemo(), _packMemo()
+    pool_memo = _packMemo()
+    pool_memo_max = int(os.environ.get("XCP_PACK_POOL_MEMO") or 1_000_000)
+    n_pool_miss = 0
+    unatt = loadUnattachedRaceLevel()
 
     # ★ WHERE THE PACK'S TWO HOURS GO (2026-09-22: "stream + pack: 7324.8s",
     #   about 120 us a row, and nothing said whether that was Postgres or this
@@ -1637,25 +1702,76 @@ def _packLoop(batches, today, merge=False, marks=None):
             #   unusable date is therefore rejected before the pool is
             #   decided -- the only behavioural change is which census
             #   counter fires for a row that would fail both tests.
-            d = _asDate(r[_DATE])
-            if d is None or (today - d).days < 0:
+            # ★ ONCE PER DISTINCT DATE (2026-11-22; scratch profile, 600k
+            #   TF rows: _asDate's strptime 14.6 of the loop's 100 s). A
+            #   date's facts -- the date, days ago, day of year -- are a pure
+            #   function of the value the loader wrote, and a corpus has a
+            #   few tens of thousands of them. XCP_PACK_MEMO=0: per row.
+            raw = r[_DATE]
+            df = date_memo.get(raw, date_memo)      # itself: not met yet
+            if df is date_memo:
+                d = _asDate(raw)
+                df = None if d is None else (d, (today - d).days,
+                                             d.timetuple().tm_yday)
+                date_memo[raw] = df
+            if df is None or df[1] < 0:
                 census["bad_or_future_date"] += 1
                 continue
+            d, days, doy = df
+            # ★ seasonYearFor's half once per (sport, date): the academic
+            #   year (rowTeamFacts and poolOf key on it), its month and shift
+            #   for the ledger, and the ISO day proSummerShift reads.
+            sp_ = r[_SPORT]
+            sy = season_memo.get((sp_, d))
+            if sy is None:
+                sy = (d.year + seasonShift(sp_, d.month, d.day), d.month,
+                      seasonShift(sp_, d.month, d.day), d.isoformat()[:10])
+                season_memo[(sp_, d)] = sy
             _tp = _clk()
             # ★ THE FIVE TEAM FACTS, FROM rowTeamFacts -- the one derivation,
             #   shared with fill_ratings so a row the solve skipped is priced
             #   in the pool this loop would have given it.
+            # ★ AND THE POOL ONCE PER DISTINCT INPUT (2026-11-22; scratch
+            #   profile, 600k TF rows: poolOf + rowTeamFacts 26 of the loop's
+            #   100 s). Given the tables they load once, the two are a pure
+            #   function of the row's grade, gender, source, school, sport,
+            #   person, ACADEMIC year (_academicYear: sy[0]; `season=` is only
+            #   tested for None), team id, team slug and its race ceiling
+            #   (looked up here, as rowTeamFacts does). The census counts
+            #   rowTeamFacts makes are kept with the answer and replayed per
+            #   row, in the order they were made. Bounded: the memo starts
+            #   over past XCP_PACK_POOL_MEMO entries (default 1M).
             have_team = len(r) > _SLUG
-            team_level, has_pros, no_team, team_pro, race_top_level = rowTeamFacts(
-                r[_TEAM] if have_team else None, r[_SLUG] if have_team else None,
-                r[_SCHOOL], r[_PID], d, r[_SPORT], r[_RID],
-                census=census, have_team=have_team)
-            pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
-                          r[_SPORT], merge,
-                          person_id=r[_PID], season=d.year,
-                          race_date=d, team_level=team_level, team_has_pros=has_pros,
-                          no_team=no_team, team_pro=team_pro,
-                          race_top_level=race_top_level)
+            tid_ = r[_TEAM] if have_team else None
+            slug_ = r[_SLUG] if have_team else None
+            rtl_ = None
+            if unatt:
+                try:
+                    rtl_ = unatt.get((str(sp_), int(r[_RID])))
+                except (TypeError, ValueError):
+                    rtl_ = None
+            pkey = (r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL], sp_, r[_PID],
+                    sy[0], tid_, slug_, rtl_, have_team)
+            hit = pool_memo.get(pkey)
+            if hit is None:
+                c_ = defaultdict(int)
+                team_level, has_pros, no_team, team_pro, race_top_level = rowTeamFacts(
+                    tid_, slug_, r[_SCHOOL], r[_PID], d, sp_, r[_RID],
+                    census=c_, have_team=have_team)
+                pool = poolOf(r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL],
+                              sp_, merge,
+                              person_id=r[_PID], season=d.year,
+                              race_date=d, team_level=team_level, team_has_pros=has_pros,
+                              no_team=no_team, team_pro=team_pro,
+                              race_top_level=race_top_level)
+                hit = (pool, has_pros, tuple(c_.items()) if c_ else ())
+                if len(pool_memo) >= pool_memo_max:
+                    pool_memo.clear()
+                pool_memo[pkey] = hit
+                n_pool_miss += 1
+            pool, has_pros, deltas = hit
+            for k_, n_ in deltas:
+                census[k_] += n_
             t_pool += _clk() - _tp
             if has_pros and pool and pool.startswith("pro_"):
                 census["club_with_pros_repooled_pro"] += 1
@@ -1670,15 +1786,15 @@ def _packLoop(batches, today, merge=False, marks=None):
             nt = r[_NORM]
             if len(r) > _TIME and r[_TIME]:
                 dm_row = r[_DIST] if len(r) > _DIST else None
-                nt, tag = rescaleToPool(nt, r[_TIME], dm_row, pool, r[_SPORT])
+                nt, tag = _rescaleMemo(nt, r[_TIME], dm_row, pool, r[_SPORT],
+                                       scale_memo)
                 if tag:
                     census[tag] += 1
             lo, hi = poolBand(pool)
             if not lo <= nt <= hi:
                 census["outside_pool_band"] += 1
                 continue
-            days = (today - d).days
-            doy = d.timetuple().tm_yday          # 1..366, for the season-phase term
+            # days ago and the day of year (1..366, the season-phase term): df
 
             akey = (r[_PID], pool)
             ac = a_lookup.get(akey)
@@ -1735,7 +1851,11 @@ def _packLoop(batches, today, merge=False, marks=None):
             # ★ A PROFESSIONAL'S LATE-SUMMER TRACK RACE CLOSES THE SEASON
             #   BEHIND IT (season_year 3b) -- the boards' rule, same table
             loadProSeasons()
-            yrs.append(seasonYearForPersonDate(r[_SPORT], d, r[_PID], _rollover))
+            # ★ seasonYearForPersonDate with its date half once per (sport,
+            #   date): seasonYearFor's shift, the ledger's record for this row
+            #   and the professionals' summer shift (per person) as before.
+            _rollover.record(sp_, sy[1], sy[2])
+            yrs.append(sy[0] + proSummerShift(sp_, sy[3], r[_PID], sy[0]))
             # the row's distance in metres, 0 when the loader had none
             dm = r[_DIST] if len(r) > _DIST else None
             dists.append(float(dm) if dm is not None and dm > 0 else 0.0)
@@ -1787,7 +1907,7 @@ def _packLoop(batches, today, merge=False, marks=None):
     print(f"[time] pack: {t_fetch:.0f}s waiting on the database, "
           f"{t_pool:.0f}s resolving pools ({t_pool * _us:.1f} us/row), "
           f"{t_loop:.0f}s the rest of the row loop ({t_loop * _us:.1f} us/row), "
-          f"{n_rows:,} rows")
+          f"{n_rows:,} rows; pools decided {n_pool_miss:,} times")
 
     return {"chunks": chunks, "a_uniq": a_uniq, "v_uniq": v_uniq,
             "t_uniq": t_uniq, "census": census}
