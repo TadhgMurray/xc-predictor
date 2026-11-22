@@ -24,6 +24,13 @@ stays race_trees'. No database; CPU.
            SEQ_FEATURES), read by attention: patterns in a career the
            hand-made summaries miss (plan #6). Against mlp, it measures what
            the order of the results is worth.
+    field  the mlp's inputs for EVERY runner of a race at once, read by
+           self-attention across the field (owner, 2026-11-22: "try the whole
+           field model"): what a runner does depends on who else is in the
+           race -- a deep field, a pack, teammates -- which every other member
+           sees only through a few field summaries. Trained on the order
+           within the race (each race's mean taken out), so the level stays
+           race_trees'.
   lgbm, rank and xgb need /srv/pred/pylib on PYTHONPATH (installed there,
   never into the site's venv); a member that does not import is skipped.
 
@@ -43,7 +50,7 @@ if _HERE not in sys.path:
 
 import race_trees as RT                                       # noqa: E402
 
-MEMBERS = ("hgb", "raw", "lgbm", "rank", "xgb", "mlp", "seq")
+MEMBERS = ("hgb", "raw", "lgbm", "rank", "xgb", "mlp", "seq", "field")
 
 
 # ------------------------------------------------------------------ #
@@ -192,6 +199,160 @@ def fitMlp(T, seed, epochs=6, batch=8192):
     return T["base"][T["val"]] + np.concatenate(out)
 
 
+# ---- the whole field at once (owner, 2026-11-22) ---------------------- #
+FIELD_WIDTH = 64
+FIELD_HEADS = 4
+FIELD_LAYERS = 2
+FIELD_MAX = 256           # a bigger race is read in random parts of this size
+FIELD_TOKENS = 16384      # runners per training batch, padding included
+
+
+def fieldBatches(sizes, max_tokens=FIELD_TOKENS, max_field=FIELD_MAX):
+    """Races grouped into batches of about max_tokens padded runners, races
+    of like size together: [[race index]]. Pure."""
+    order = sorted(range(len(sizes)), key=lambda i: sizes[i])
+    out, cur, width = [], [], 0
+    for i in order:
+        n = min(sizes[i], max_field)
+        w = max(width, n)
+        if cur and w * (len(cur) + 1) > max_tokens:
+            out.append(cur)
+            cur, w = [], n
+        cur.append(i)
+        width = w
+    if cur:
+        out.append(cur)
+    return out
+
+
+def fieldParts(n, max_field=FIELD_MAX, rng=None):
+    """A race's runners in parts of at most max_field (random parts when
+    rng is given, else in order). Pure but numpy."""
+    import numpy as np
+    idx = rng.permutation(n) if rng is not None else np.arange(n)
+    k = max(1, -(-n // max_field))
+    return [p for p in np.array_split(idx, k) if len(p)]
+
+
+def _fieldNet(d_in, width=FIELD_WIDTH, heads=FIELD_HEADS, layers=FIELD_LAYERS):
+    import torch
+
+    class FieldNet(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.enc = torch.nn.Sequential(torch.nn.Linear(d_in, width), torch.nn.SiLU(),
+                                           torch.nn.Linear(width, width))
+            layer = torch.nn.TransformerEncoderLayer(width, heads, 2 * width, dropout=0.1,
+                                                     batch_first=True, activation="gelu")
+            self.att = torch.nn.TransformerEncoder(layer, layers)
+            self.head = torch.nn.Sequential(torch.nn.SiLU(), torch.nn.Linear(width, 1))
+
+        def forward(self, x, pad):
+            h = self.att(self.enc(x), src_key_padding_mask=pad)
+            out = self.head(h).squeeze(-1)
+            out = out.masked_fill(pad, 0.0)
+            n = (~pad).sum(1, keepdim=True).clamp(min=1)
+            return out - out.sum(1, keepdim=True) / n       # each race's mean out
+    return FieldNet()
+
+
+def _padded(parts, Z, extra=None):
+    """[B, n, d] inputs and the [B, n] padding mask for parts (row index
+    arrays) of the rows Z."""
+    import numpy as np
+    import torch
+    n = max(len(p) for p in parts)
+    x = np.zeros((len(parts), n, Z.shape[1]), np.float32)
+    pad = np.ones((len(parts), n), bool)
+    y = np.zeros((len(parts), n), np.float32) if extra is not None else None
+    for b, p in enumerate(parts):
+        x[b, :len(p)] = Z[p]
+        pad[b, :len(p)] = False
+        if extra is not None:
+            y[b, :len(p)] = extra[p]
+    return (torch.from_numpy(x), torch.from_numpy(pad),
+            torch.from_numpy(y) if y is not None else None)
+
+
+def fitField(T, seed, epochs=4):
+    """The whole-field member (FieldNet): fitted on the training races, a
+    tenth of them held back to keep the best epoch; returns the validation
+    rows' predictions on the ratings' clock, like every member."""
+    import numpy as np
+    import torch
+    torch.manual_seed(seed)
+    rng = np.random.default_rng(seed)
+    prep = _prep(T)
+    tr = ~T["val"]
+    base = T["base"].astype(np.float32)
+    Zt = np.hstack([prep(T["Xt"]), base[tr][:, None]])
+    rt = T["r"][tr].astype(np.float32)
+    sl = RT.raceSlices(T["race"][tr])
+    hold = np.array([(int(T["race"][tr][s]) // 2) % 10 == 0 for s, _e in sl])
+    train_r = [k for k in range(len(sl)) if not hold[k]]
+    hold_r = [k for k in range(len(sl)) if hold[k]]
+    net = _fieldNet(Zt.shape[1])
+    opt = torch.optim.AdamW(net.parameters(), lr=1e-3, weight_decay=1e-4)
+    loss_fn = torch.nn.HuberLoss(delta=0.03, reduction="sum")
+
+    def parts_of(ks, rand):
+        out = []
+        for k in ks:
+            s, e = sl[k]
+            out += [s + p for p in fieldParts(e - s, rng=rng if rand else None)]
+        return out
+
+    def run(ks, train):
+        parts = parts_of(ks, train)
+        batches = fieldBatches([len(p) for p in parts])
+        if train:
+            rng.shuffle(batches)
+        tot, n = 0.0, 0
+        net.train(train)
+        for b in batches:
+            x, pad, y = _padded([parts[i] for i in b], Zt, rt)
+            y = y - (y * ~pad).sum(1, keepdim=True) / (~pad).sum(1, keepdim=True).clamp(min=1)
+            with torch.set_grad_enabled(train):
+                out = net(x, pad)
+                loss = loss_fn(out[~pad], y[~pad])
+            if train:
+                opt.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+                opt.step()
+            tot += float(loss)
+            n += int((~pad).sum())
+        return tot / max(n, 1)
+
+    best, best_state = None, None
+    for ep in range(epochs):
+        t1 = datetime.datetime.now()
+        lt = run(train_r, True)
+        lh = run(hold_r, False)
+        print(f"    field epoch {ep + 1}/{epochs}: loss {lt:.6f}, held-out races {lh:.6f} "
+              f"({datetime.datetime.now() - t1})", flush=True)
+        if best is None or lh < best:
+            best = lh
+            best_state = {k: v.clone() for k, v in net.state_dict().items()}
+    net.load_state_dict(best_state)
+    net.eval()
+    val = T["val"]
+    Zv = np.hstack([prep(T["X"][val]), base[val][:, None]])
+    slv = RT.raceSlices(T["race"][val])
+    pred = np.zeros(len(Zv), np.float32)
+    parts = []
+    for s, e in slv:
+        parts += [s + p for p in fieldParts(e - s)]
+    with torch.no_grad():
+        for b in fieldBatches([len(p) for p in parts], max_tokens=65536):
+            ps = [parts[i] for i in b]
+            x, pad, _ = _padded(ps, Zv)
+            out = net(x, pad).numpy()
+            for j, p in enumerate(ps):
+                pred[p] = out[j, :len(p)]
+    return T["base"][val] + pred
+
+
 def seqBatch(ev, idx, day):
     """[B, k, SEQ_FEATURES + 1] steps (the facts and how long before the
     race, in log weeks; zeros where there is no result) and the [B, k]
@@ -314,6 +475,7 @@ def main():
                          "a test in about a third of the time); the validation season stays whole")
     ap.add_argument("--mlp-epochs", type=int, default=6)
     ap.add_argument("--seq-epochs", type=int, default=4)
+    ap.add_argument("--field-epochs", type=int, default=4)
     ap.add_argument("--drop-odd", action="store_true",
                     help="as race_trees --drop-odd: no practices or time trials in training")
     a = ap.parse_args()
@@ -335,7 +497,8 @@ def main():
     fits = {"hgb": lambda: fitHgb(T, a.seed), "lgbm": lambda: fitLgbm(T, a.seed),
             "rank": lambda: fitRank(T, a.seed), "xgb": lambda: fitXgb(T, a.seed),
             "mlp": lambda: fitMlp(T, a.seed, epochs=a.mlp_epochs),
-            "seq": lambda: fitSeq(T, a.seed, epochs=a.seq_epochs)}
+            "seq": lambda: fitSeq(T, a.seed, epochs=a.seq_epochs),
+            "field": lambda: fitField(T, a.seed, epochs=a.field_epochs)}
     for name in want:
         if name == "raw":
             continue
