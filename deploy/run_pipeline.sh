@@ -287,6 +287,10 @@ if [ "$DRY" -eq 0 ] && [ "${XCP_STALL_MIN:-45}" != "0" ]; then
   _stallWatch $$ 9>&- &
   _STALL_PID=$!
 fi
+# ★ THE RUN'S CHECKPOINTS (2026-11-22): forced-by-WAL against timed, and the
+#   WAL written, printed in the closing summary (scripts/checkpoint_stats.py;
+#   deploy/pg_bulk_tuning.sh is what to do about many forced ones)
+[ "$DRY" -eq 0 ] && "$PY" "$ROOT/scripts/checkpoint_stats.py" --save "$LOGDIR/.ckpt_start" >/dev/null 2>&1 || true
 
 # _stampTo <file> -- copy stdin to stdout unchanged, and to <file> with the
 # wall-clock time in front of every line.
@@ -365,6 +369,8 @@ summarise() {
   echo ""
   echo "======================================================================"
   echo "  finished in $((TOTAL / 3600))h $(((TOTAL % 3600) / 60))m" | tee -a "$SUMMARY"
+  [ "$DRY" -eq 0 ] && "$PY" "$ROOT/scripts/checkpoint_stats.py" --since "$LOGDIR/.ckpt_start" 2>/dev/null \
+    | tee -a "$SUMMARY" || true
   # ★ THE RUN'S OWN DIAGNOSIS (owner, 2026-11-13: "diagnose and look over
   #   every step after each run"): every step against the last finished run,
   #   what each background step held the run, and the longest pauses inside
