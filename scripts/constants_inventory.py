@@ -923,9 +923,10 @@ ENV_RULES = {
     **_all("XCP_WARM_OUTER XCP_WARM_COLD_EVERY", "INFRA",
            "XCP_WARM_START=full only: its passes (2) and every Nth warm run forced cold (7)"),
     **_all("XCP_02B_BG XCP_09D_BG", "INFRA", "steps moved beside longer ones (2026-11-20); 0 restores the old order"),
-    **_all("XCP_PACK_MEMO XCP_PACK_POOL_MEMO", "INFRA",
+    **_all("XCP_PACK_MEMO XCP_PACK_POOL_MEMO XCP_PRO_COPY", "INFRA",
            "07_pack row loop (2026-11-22): dates, season years, scale factors and pools looked up once per "
-           "distinct input (0 = every row as before); the pool memo's size bound (1M); same pack"),
+           "distinct input (0 = every row as before); the pool memo's size bound (1M); same pack. "
+           "05c streams by the proved COPY chunks unless XCP_PRO_COPY=0; same table"),
     **_all("XCP_RANK_PARTS_TF XCP_RANK_PARTS_XC", "INFRA", "how many date ranges each sport's board streams take"),
     **_all("XCP_RACE_MODEL", "INFRA", "which race-forecast model file the forecasts load"),
     **_all("XCP_CG_INPLACE XCP_CG_PARALLEL XCP_CURVE_GAP_CACHE XCP_KERNEL_ZERO_IN XCP_KERNEL_DERIVE",
