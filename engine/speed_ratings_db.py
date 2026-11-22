@@ -64,6 +64,7 @@ import os
 import sys
 import time
 from datetime import date
+from contextlib import ExitStack  # the pack COPY's side connections
 from itertools import islice     # lazy chunking; never materialises the source
 
 import psycopg2
@@ -1804,20 +1805,539 @@ def streamResults(sport: str, min_time: float = 200.0, max_time: float = 6000.0,
         with conn.cursor() as prep:
             ensurePackGender(prep)
             ensurePackMeetClass(prep, sport)
-        cur = conn.cursor(name=f"speed_ratings_{sport.lower()}")
-        cur.itersize = batch
-        cur.execute(sql)
-        while True:
-            rows = cur.fetchmany(batch)
-            if not rows:
-                break
-            total += len(rows)
-            print(f"[db] {sport}: streamed {total:,}")
-            yield rows
-        cur.close()
+        # ★ COPY INSTEAD OF THE NAMED CURSOR, WHEN IT IS PROVABLY THE SAME
+        #   ROWS IN THE SAME ORDER (2026-11-20; see _copyReady/_copyBatches).
+        #   The old path below is untouched and still the fallback.
+        sides = ExitStack()               # the chunks' own connections
+        with sides:
+            plan = _copyReady(conn, sql, sport, sides)
+            if plan is None:
+                sides.close()             # a refused probe hands them back now
+            else:
+                for rows in _copyBatches(plan[0], batch, plan[1]):
+                    total += len(rows)
+                    print(f"[db] {sport}: streamed {total:,}")
+                    yield rows
+        if plan is None:
+            cur = conn.cursor(name=f"speed_ratings_{sport.lower()}")
+            cur.itersize = batch
+            cur.execute(sql)
+            while True:
+                rows = cur.fetchmany(batch)
+                if not rows:
+                    break
+                total += len(rows)
+                print(f"[db] {sport}: streamed {total:,}")
+                yield rows
+            cur.close()
     if tw:
         _dropTwinKeys(sport)       # scratch; rebuilt on the next run
     print(f"[db] {sport}: {total:,} rows total")
+
+
+# ------------------------------------------------------------------ #
+# THE PACK STREAM BY COPY, IN ctid CHUNKS (2026-11-20)
+# ------------------------------------------------------------------ #
+#
+# ★ WHY. 07_pack is ~27 min and the TF child sets the pace: its one named
+#   cursor is ONE backend running a serial plan (a cursor never gets
+#   parallel workers). Splitting TF's row loop over two processes gained
+#   nothing (1,650 vs 1,687 s), so the read is the pole. Scratch (PG 16,
+#   3.1M synthetic TF rows through the real _tfQuery, 4 cores): the cursor
+#   stream alone 136-151 s; the same query with 4 parallel workers 43 s.
+#
+# ! THE SAME ROWS IN THE SAME ORDER, OR THE OLD CURSOR. The pack's codes
+#   are first-seen, so row order IS output, and _tfQuery has no ORDER BY.
+#   What is proved, from the plans, before a row is read:
+#   1. EXPLAIN of the plain query with parallel workers off is the
+#      cursor's own plan, node for node (COSTS OFF).
+#   2. That plan emits r's rows in r's PHYSICAL order: its outer spine is
+#      joins down to a Seq Scan on r; every join is anti/semi or matches at
+#      most one inner row (the planner's Inner Unique, or -- for the
+#      deliberately unindexed tmp_pack_meet_class -- a count of its key);
+#      every hash on the spine is estimated far inside hash memory (a
+#      multi-batch hash join would reorder its outer rows).
+#   3. Then the query split into K block ranges of r (r.ctid >= '(lo,0)'
+#      AND r.ctid < '(hi,0)') gives, chunk after chunk, exactly those rows
+#      in that order, provided each chunk's plan is (2) with a Tid Range
+#      Scan as its leaf -- checked per chunk, on the connection that runs
+#      it. A Tid Range Scan reads its blocks in order and never joins a
+#      synchronized scan.
+#   The K chunks run AT ONCE, each a serial plan on its own backend and its
+#   own fresh connection (tuned as the pool tunes one), read by its own
+#   forked process (_copyBatches says why not a thread): chunk 0 through a
+#   pipe straight to the pack, the others into a temp file on disk (not
+#   memory) that the pack reads when it gets there. The chunks read the
+#   stream connection's exported snapshot (or the run's
+#   XCP_PG_SNAPSHOT_FILE one) and build their own TEMP tables
+#   (ensurePackGender / ensurePackMeetClass -- the same SQL).
+#   Anything unproved, or an error before the first row, streams through
+#   the named cursor exactly as before.
+# ! THE ONE ORDER THE OLD PATH NEVER PINNED: with synchronize_seqscans its
+#   serial Seq Scan starts where the last scan of results_tf left the
+#   shared hint (the twin-key build scans it just before) and wraps. The
+#   chunks always start at block 0 -- the cursor's order when its scan
+#   starts there. Measured on scratch: with synchronize_seqscans off (so
+#   the cursor starts at block 0) all 22 packed arrays are identical.
+# ★ AND THE CLIENT. COPY text is split column-wise with C-level str ops
+#   (split, slicing, map(int), zip): the same Python types and values as
+#   psycopg2 (int, float(text) -- psycopg2's own cast -- str, None),
+#   tests/test_pack_copy.py. It is NOT faster than psycopg2 per row
+#   (~5 vs ~3 us/row on scratch); the gain is the server side.
+#   One COPY of the cursor's own serial plan was measured too: 146 s
+#   against the cursor's 151 -- no gain, so it is not kept.
+# ! OFF BY DEFAULT (XCP_PACK_COPY=1 turns it on). Scratch, 3.1M TF rows,
+#   4 cores: the stream alone 164 s -> 75 s, every packed array identical
+#   -- but the whole TF pack 177 s -> 213 s, because on that box the row
+#   loop, not the read, is the pole (14 s of 177 waiting on the database)
+#   and 4 backends + 4 readers beside it on 4 cores slow the loop ~20%.
+#   It pays only where the TF child really waits on the database: read
+#   its "[time] pack: N s waiting on the database" line first.
+#   K = XCP_PACK_COPY_CHUNKS (4). XCP_PACK_COPY_DIR: where the chunk files
+#   go (default engine/data; ~130 bytes a row of chunks 1..K-1, removed as
+#   they are read). Server memory: K serial backends at the session's
+#   work_mem instead of one.
+_COPY_INT = {20, 21, 23}               # int8 int2 int4
+_COPY_FLOAT = {700, 701}               # float4 float8
+_COPY_TEXT = {25, 1043, 19}            # text varchar name
+_COPY_CTID = 27                        # tid: the chunked stream's last column
+_WHERE = "\n        WHERE r.normalized_time IS NOT NULL"
+
+
+def _copyMode():
+    v = os.environ.get("XCP_PACK_COPY", "0").strip().lower()
+    return None if v in ("0", "false", "off", "no", "") else "chunks"
+
+
+def _innerKey(node, inner):
+    """(schema.relation, column) the join matches its inner side on, when
+    the inner side is one plain scan of one relation matched by ONE
+    equality on one of its columns; else None."""
+    import re
+    if node.get("Node Type") == "Hash Join":
+        if inner.get("Node Type") != "Hash" or len(inner.get("Plans") or []) != 1:
+            return None
+        scan = inner["Plans"][0]
+        cond = node.get("Hash Cond") or ""
+    else:
+        scan = inner
+        cond = scan.get("Index Cond") or ""
+    if scan.get("Node Type") not in ("Seq Scan", "Index Scan", "Index Only Scan") \
+            or scan.get("Plans") or not scan.get("Relation Name"):
+        return None
+    alias = scan.get("Alias")
+    m = re.fullmatch(r"\((.*)\)", cond.strip())
+    if not m or " AND " in m.group(1) or " OR " in m.group(1):
+        return None
+    sides = [s.strip() for s in m.group(1).split(" = ")]
+    if len(sides) != 2:
+        return None
+    for s in sides:
+        k = re.fullmatch(rf"(?:{re.escape(alias)}\.)?([a-z_][a-z0-9_]*)", s)
+        if k and (s.startswith(alias + ".") or scan.get("Node Type") != "Seq Scan"):
+            return f"{scan.get('Schema', 'public')}.{scan['Relation Name']}", k.group(1)
+    return None
+
+
+def _planSpineOrdered(plan, table, hash_bytes, cur=None, leaf="Seq Scan"):
+    """True when the serial plan (EXPLAIN FORMAT JSON, VERBOSE) emits one
+    row per qualifying row of `table` AS r, in its physical order, read by
+    a `leaf` node. cur: to prove a join's inner side unique on its key by
+    counting, where the planner could not (tmp_pack_meet_class has no
+    index, by design)."""
+    node = plan
+    while True:
+        t = node.get("Node Type")
+        kids = node.get("Plans") or []
+        if t == leaf:
+            return (node.get("Relation Name") == table
+                    and node.get("Alias") == "r" and not kids)
+        if t not in ("Nested Loop", "Hash Join"):
+            return False
+        outer = [k for k in kids if k.get("Parent Relationship") == "Outer"]
+        inner = [k for k in kids if k.get("Parent Relationship") == "Inner"]
+        if len(outer) != 1 or len(inner) != 1:
+            return False
+        if node.get("Join Type") not in ("Anti", "Semi") \
+                and not node.get("Inner Unique"):
+            key = _innerKey(node, inner[0])
+            if key is None or cur is None:
+                return False
+            rel, col = key
+            # = never matches a NULL, so only non-NULL duplicates fan out
+            cur.execute(f'SELECT count("{col}") = count(DISTINCT "{col}") FROM {rel}')
+            if not cur.fetchone()[0]:
+                return False
+        if t == "Hash Join":
+            h = inner[0]
+            est = float(h.get("Plan Rows", 0)) * (float(h.get("Plan Width", 0)) + 64)
+            if est * 8 > hash_bytes:          # far inside: one batch
+                return False
+        node = outer[0]
+
+
+def _hashBytes(cur):
+    cur.execute("SELECT pg_size_bytes(current_setting('work_mem'))"
+                " * current_setting('hash_mem_multiplier')::float8")
+    return float(cur.fetchone()[0])
+
+
+def _chunkSql(sql, table, lo, hi):
+    """The query over r's blocks [lo, hi) (hi None: to the end), with
+    r.ctid as a last column for the parser's one-row-per-r-row check."""
+    frm = f"\n        FROM {table} r"
+    rng = f"r.ctid >= '({lo},0)'::tid" + (f" AND r.ctid < '({hi},0)'::tid" if hi else "")
+    out = sql.replace(frm, ",\n               r.ctid AS _pack_ctid" + frm)
+    return out.replace(_WHERE, f"\n        WHERE {rng}\n          AND"
+                               + _WHERE[len("\n        WHERE"):])
+
+
+def _chunkProved(cur, csql, table):
+    """Parallel workers off for this transaction, then (2) on csql's plan."""
+    cur.execute("SELECT set_config('max_parallel_workers_per_gather', '0', true)")
+    cur.execute("EXPLAIN (VERBOSE, FORMAT JSON) " + csql)
+    plan = cur.fetchone()[0][0]["Plan"]
+    return _planSpineOrdered(plan, table, _hashBytes(cur), cur, leaf="Tid Range Scan")
+
+
+def _sideConn(sid, sport, csql, table):
+    """A FRESH connection (not the pool's: a forked reader takes it over,
+    see _copyBatches) tuned like the pool's, reading snapshot `sid`, with
+    the stream's TEMP tables, proved for csql. None when not proved."""
+    import psycopg2
+    import database as _db
+    c = psycopg2.connect(**_db._PG_CONFIG_WITH_TIMEOUT)
+    try:
+        if _db.dbQuiet():
+            _db._quietTune(c)        # the pool's settings and backend priority
+        with c.cursor() as cur:
+            if sid is not None:
+                cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                cur.execute("SET TRANSACTION SNAPSHOT %s", (sid,))
+            ensurePackGender(cur)
+            ensurePackMeetClass(cur, sport)
+            if _chunkProved(cur, csql, table):
+                return c
+    except Exception:
+        c.close()
+        raise
+    c.close()
+    return None
+
+
+class _NoCopy(Exception):
+    pass
+
+
+def _copyReady(conn, sql, sport, stack):
+    """([(connection, COPY statement), ...] in stream order, column type
+    codes) when the chunked COPY provably streams the cursor's rows in the
+    cursor's order; None for the named cursor. The chunks' connections are
+    closed by `stack`."""
+    import database as _db
+    if _copyMode() is None:
+        return None
+    table = _STREAM_TABLE[sport]
+    try:
+        with conn.cursor() as cur:
+            # the snapshot the chunks read, exported before the savepoint (a
+            # subtransaction cannot export one); this transaction stays open
+            # while they import it
+            sid = _db.snapshotId()
+            if sid is None:
+                cur.execute("SELECT pg_export_snapshot()")
+                sid = cur.fetchone()[0]
+            cur.execute("SAVEPOINT pack_copy_probe")
+            try:
+                cur.execute(f"SELECT * FROM ({sql}) _q LIMIT 0")
+                codes = [d.type_code for d in cur.description]
+                if any(c not in _COPY_INT | _COPY_FLOAT | _COPY_TEXT for c in codes):
+                    raise _NoCopy(f"a column type the parser does not know ({codes})")
+                cur.execute("EXPLAIN (COSTS OFF) DECLARE _pack_probe CURSOR FOR " + sql)
+                p_cur = [r[0] for r in cur.fetchall()]
+                cur.execute("SELECT set_config('max_parallel_workers_per_gather', '0', true)")
+                cur.execute("EXPLAIN (COSTS OFF) " + sql)
+                if [r[0] for r in cur.fetchall()] != p_cur:
+                    raise _NoCopy("its serial plan is not the cursor's")
+                cur.execute("EXPLAIN (VERBOSE, FORMAT JSON) " + sql)
+                if not _planSpineOrdered(cur.fetchone()[0][0]["Plan"], table,
+                                         _hashBytes(cur), cur):
+                    raise _NoCopy("the cursor's plan is not provably r's physical order")
+                k = max(1, int(os.environ.get("XCP_PACK_COPY_CHUNKS", "4")))
+                cur.execute("SELECT pg_relation_size(%s::regclass)"
+                            " / current_setting('block_size')::int", (table,))
+                nb = int(cur.fetchone()[0])
+                if k < 2 or nb < 16 * k:
+                    raise _NoCopy(f"{k} chunk(s) over {nb} blocks")
+                if sql.count(f"\n        FROM {table} r") != 1 or sql.count(_WHERE) != 1:
+                    raise _NoCopy("the query's FROM / WHERE is not the shape the chunks edit")
+                bounds = [nb * i // k for i in range(k)] + [None]
+                out = []
+                for i in range(k):
+                    csql = _chunkSql(sql, table, bounds[i], bounds[i + 1])
+                    c = _sideConn(sid, sport, csql, table)
+                    if c is None:
+                        raise _NoCopy(f"chunk {i}'s plan is not a Tid Range Scan in order")
+                    stack.callback(c.close)
+                    out.append((c, f"COPY ({csql}) TO STDOUT"))
+                cur.execute("RELEASE SAVEPOINT pack_copy_probe")
+                print(f"[db] {sport}: COPY in {k} ctid chunks side by side "
+                      f"({nb:,} blocks; every plan proved in r's physical order)")
+                return out, codes + [_COPY_CTID]
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT pack_copy_probe")
+                raise
+    except _NoCopy as why:
+        print(f"[db] {sport}: COPY off -- {why}; named cursor")
+    except Exception as exc:                                  # noqa: BLE001
+        print(f"[db] {sport}: COPY probe failed ({type(exc).__name__}: {exc}); "
+              f"named cursor")
+    return None
+
+
+_COPY_UNESC = {"\\": "\\", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+               "t": "\t", "v": "\v"}
+
+
+def _copyUnescape(v):
+    # COPY TO's text format escapes only these (CopyAttributeOutText)
+    out, i, n = [], 0, len(v)
+    while i < n:
+        j = v.find("\\", i)
+        if j < 0:
+            out.append(v[i:])
+            break
+        out.append(v[i:j])
+        out.append(_COPY_UNESC[v[j + 1]])
+        i = j + 2
+    return "".join(out)
+
+
+def _copyColumn(col, code):
+    """One column of COPY text fields -> the values psycopg2 would give."""
+    has_null = "\\N" in col
+    if code in _COPY_INT:
+        return ([None if v == "\\N" else int(v) for v in col] if has_null
+                else list(map(int, col)))
+    if code in _COPY_FLOAT:
+        return ([None if v == "\\N" else float(v) for v in col] if has_null
+                else list(map(float, col)))
+    nul = col.count("\\N") if has_null else 0
+    if "\x00".join(col).count("\\") == nul:   # every backslash is a NULL marker
+        return [None if v == "\\N" else v for v in col] if nul else col
+    return [None if v == "\\N" else (_copyUnescape(v) if "\\" in v else v)
+            for v in col]
+
+
+def _copyParse(lines, codes, decode, last=None):
+    """A batch of COPY TO text rows (bytes, newline stripped) -> the list
+    of tuples a cursor's fetchmany would have returned."""
+    k = len(codes)
+    text = decode(b"\n".join(lines))[0]
+    fields = text.replace("\n", "\t").split("\t")
+    if len(fields) != k * len(lines):
+        raise ValueError(f"COPY batch: {len(fields)} fields for {len(lines)} rows of {k}")
+    if codes[-1] == _COPY_CTID:
+        # ! ONE ROW PER r ROW, CHECKED: in ctid order a repeat is adjacent,
+        #   in this batch or across its first row and the last batch's last
+        tids = fields[k - 1::k]
+        if len(set(tids)) != len(tids) or (last is not None and tids[0] == last[0]):
+            raise RuntimeError("pack COPY: two rows of one result row in the "
+                               "chunked stream -- set XCP_PACK_COPY=0")
+        if last is not None:
+            last[0] = tids[-1]
+        k_out = k - 1
+    else:
+        k_out = k
+    cols = [_copyColumn(fields[i::k], c) for i, c in enumerate(codes[:k_out])]
+    return list(zip(*cols))
+
+
+def _copyChild(conn, stmt, wfd, errfd, close_fds):
+    """In a forked reader: run one COPY on `conn` (which this process now
+    owns) into wfd; the error, if any, into errfd. Never returns."""
+    code = 1
+    try:
+        import gc
+        gc.disable()          # no collection: it would copy the parent's pages
+        for fd in close_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        with os.fdopen(wfd, "wb", buffering=1 << 20) as fh:
+            cur = conn.cursor()
+            cur.copy_expert(stmt, fh)
+        code = 0
+    except BaseException as exc:                      # noqa: BLE001 -- reported via errfd
+        try:
+            os.write(errfd, f"{type(exc).__name__}: {exc}".encode()[:4000])
+        except BaseException:                         # noqa: BLE001
+            pass
+    finally:
+        os._exit(code)
+
+
+def _copyBatches(sources, batch, codes, depth=1):
+    """Yield the rows of sources' COPYs, in order, as lists of tuples,
+    exactly `batch` rows at a time (the last batch the rest) -- the batches
+    fetchmany(batch) gave.
+
+    ! ONE FORKED READER PER COPY, NOT A THREAD. psycopg2 hands COPY data
+      over a row at a time, dropping and retaking the GIL around each row;
+      beside the pack's CPU-bound row loop every retake waits out the
+      switch interval, and a thread reader starved (scratch: 82 s waiting
+      on the database against 14 s for the cursor). Each reader is a fork
+      that owns its connection outright (the parent never touches it
+      again until it closes it, after the reader is gone): sources[0]
+      writes into a pipe, the rest into temp files, all at once, and this
+      process reads megabytes at a time.
+    At most `depth` parsed batches wait in the queue and the pipe blocks
+    its writer, so memory is bounded as with the cursor. Leaving the loop
+    early kills the readers."""
+    import codecs
+    import queue
+    import tempfile
+    import threading
+    import warnings
+    from psycopg2.extensions import encodings as _pg_enc
+    decode = codecs.getdecoder(_pg_enc[sources[0][0].encoding])
+    d = os.environ.get("XCP_PACK_COPY_DIR") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "data")
+    kids = []                       # (pid, read fd or file path, error path)
+    rfd0 = None
+    try:
+        for i, (conn, stmt) in enumerate(sources):
+            efd, epath = tempfile.mkstemp(prefix="pack_copy_err_", dir=d)
+            if i == 0:
+                rfd0, wfd = os.pipe()
+                where = rfd0
+            else:
+                wfd, where = tempfile.mkstemp(prefix="pack_copy_", suffix=".txt", dir=d)
+            sys.stdout.flush()
+            sys.stderr.flush()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)   # fork beside threads
+                pid = os.fork()
+            if pid == 0:
+                _copyChild(conn, stmt, wfd, efd, [rfd0])
+            os.close(wfd)
+            os.close(efd)
+            kids.append((pid, where, epath))
+    except BaseException:
+        for pid, where, epath in kids:
+            _killCopyChild(pid)
+            _reapCopyChild(pid, where, epath, quiet=True)
+        raise
+
+    q = queue.Queue(maxsize=depth)
+    stop = threading.Event()
+    _END = object()
+    last = [""]                     # the previous row's ctid
+
+    def put(item):
+        while not stop.is_set():
+            try:
+                q.put(item, timeout=1.0)
+                return
+            except queue.Full:
+                continue
+        raise RuntimeError("pack COPY abandoned by its reader")
+
+    lines = []
+
+    def feed(read):
+        tail = b""
+        while True:
+            block = read(1 << 22)
+            if not block:
+                break
+            parts = (tail + block).split(b"\n")
+            tail = parts.pop()
+            lines.extend(parts)
+            while len(lines) >= batch:
+                put(_copyParse(lines[:batch], codes, decode, last))
+                del lines[:batch]
+        if tail:
+            raise RuntimeError("pack COPY: a chunk ended inside a row")
+
+    def produce():
+        try:
+            for i, (pid, where, epath) in enumerate(kids):
+                if i == 0:
+                    feed(lambda n: os.read(where, n))
+                    _reapCopyChild(pid, where, epath)
+                else:
+                    _reapCopyChild(pid, None, epath)   # wait for its file
+                    with open(where, "rb", buffering=0) as fh:
+                        feed(fh.read)
+                    os.unlink(where)
+            if lines:
+                put(_copyParse(lines, codes, decode, last))
+            put(_END)
+        except BaseException as exc:                  # noqa: BLE001 -- re-raised below
+            try:
+                put(("__copy_error__", exc))
+            except BaseException:                     # noqa: BLE001
+                pass
+
+    th = threading.Thread(target=produce, name="pack-copy", daemon=True)
+    th.start()
+    try:
+        while True:
+            item = q.get()
+            if item is _END:
+                break
+            if (isinstance(item, tuple) and len(item) == 2
+                    and item[0] == "__copy_error__"):
+                raise item[1]
+            yield item
+    finally:
+        stop.set()
+        for pid, _, _ in kids:
+            _killCopyChild(pid)       # a no-op for the ones already reaped
+        th.join()
+        for pid, where, epath in kids:
+            _reapCopyChild(pid, where, epath, quiet=True)
+            for p in ((where,) if isinstance(where, str) else ()) + (epath,):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+
+_REAPED = set()
+
+
+def _killCopyChild(pid):
+    import signal
+    if pid not in _REAPED:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _reapCopyChild(pid, fd, epath, quiet=False):
+    """Wait for one reader, close its pipe end, and raise its error unless
+    quiet."""
+    if pid in _REAPED:
+        return
+    _, status = os.waitpid(pid, 0)
+    _REAPED.add(pid)
+    if isinstance(fd, int):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    if status != 0 and not quiet:
+        try:
+            with open(epath) as fh:
+                msg = fh.read().strip()
+        except OSError:
+            msg = ""
+        raise RuntimeError(f"pack COPY reader failed (status {status}): "
+                           f"{msg or 'no message'}")
 
 
 # ------------------------------------------------------------------ #
