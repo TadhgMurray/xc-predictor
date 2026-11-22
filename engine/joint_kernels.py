@@ -255,6 +255,127 @@ if _HAVE_NUMBA:
             p[i] = z[i] + beta * p[i]
 
 
+# ★ THE GLOBAL BLOCK'S OWN GRAM MATRIX, IN ONE PASS (2026-11-22; see
+#   joint_solve.globalBlockPrecond). Per row its loadings on the few
+#   hundred global unknowns (mu, curve knots, rust, distance classes,
+#   altitude, importance, indoor -- at most 8 a row), and w * v_p * v_q
+#   added into a private m x m matrix per chunk, summed in chunk order (so
+#   the same matrix every run). Once per outer pass, about one matvec.
+if _HAVE_NUMBA:
+    @njit(parallel=True, cache=True)
+    def _globalGram(edges, nacc, m, w, h, amp, grp,
+                    has_mu, has_c, c0, c1, w0, w1,
+                    has_r, first, pool_row,
+                    has_e, e_idx, e_w,
+                    has_k, alt,
+                    has_imp, imp_idx, imp_w,
+                    has_ind, ind_idx, ind_w,
+                    o_c, o_r, o_e, o_k, o_imp, o_ind):
+        nch = edges.size - 1
+        acc = np.zeros((nacc, m, m))
+        for j in prange(nacc):
+            idx = np.empty(8, dtype=np.int64)
+            val = np.empty(8)
+            # accumulator j takes chunks j, j + nacc, ... in order, so the
+            # sums are the same whichever thread runs it
+            for t in range(j, nch, nacc):
+                for i in range(edges[t], edges[t + 1]):
+                    n = 0
+                    hs = h[i]
+                    if has_mu and grp[i] > 0:
+                        idx[n] = grp[i] - 1
+                        val[n] = hs
+                        n += 1
+                    if has_c:
+                        idx[n] = o_c + c0[i]
+                        val[n] = amp[i] * w0[i]
+                        n += 1
+                        idx[n] = o_c + c1[i]
+                        val[n] = amp[i] * w1[i]
+                        n += 1
+                    if has_r:
+                        idx[n] = o_r + pool_row[i]
+                        val[n] = first[i]
+                        n += 1
+                    if has_e:
+                        idx[n] = o_e + e_idx[i]
+                        val[n] = e_w[i]
+                        n += 1
+                    if has_k:
+                        idx[n] = o_k + grp[i]
+                        val[n] = alt[i]
+                        n += 1
+                    if has_imp:
+                        idx[n] = o_imp + imp_idx[i]
+                        val[n] = imp_w[i]
+                        n += 1
+                    if has_ind:
+                        idx[n] = o_ind + ind_idx[i]
+                        val[n] = hs * ind_w[i]
+                        n += 1
+                    wi = w[i]
+                    for p_ in range(n):
+                        vp = wi * val[p_]
+                        if vp == 0.0:
+                            continue
+                        ip = idx[p_]
+                        for q_ in range(n):
+                            acc[j, ip, idx[q_]] += vp * val[q_]
+        out = np.zeros((m, m))
+        for j in range(nacc):
+            out += acc[j]
+        return out
+
+
+GRAM_ACC_BYTES = 256 << 20
+
+
+def globalGram(D, w, h, amp, nmax=None):
+    """The rows' part of the normal matrix on the global unknowns, in
+    globalBlockPrecond's order (mu, c, r, e, k, imp, ind); None without
+    numba or with rows not sorted by athlete."""
+    if not enabled():
+        return None
+    edges = _edges(D)
+    if edges is None:
+        return None
+    n = D.n
+    F, I = _DUMMY_F, _DUMMY_I
+    has_c = bool(D.n_c)
+    has_r = bool(D.n_r)
+    has_e = bool(getattr(D, "n_e", 0))
+    has_k = bool(getattr(D, "n_k", 0))
+    has_imp = bool(getattr(D, "n_imp", 0))
+    has_ind = bool(getattr(D, "n_ind", 0))
+    o_c = int(D.n_mu)
+    o_r = o_c + int(D.n_c)
+    o_e = o_r + int(D.n_r)
+    o_k = o_e + (int(D.n_e) if has_e else 0)
+    o_imp = o_k + int(getattr(D, "n_k", 0))
+    o_ind = o_imp + (int(D.n_imp) if has_imp else 0)
+    m = o_ind + (int(D.n_ind) if has_ind else 0)
+    if m == 0 or (nmax is not None and m > nmax):
+        return None
+    f64 = lambda x: _arr(x, n)                                  # noqa: E731
+    i64 = lambda x: np.asarray(x, dtype=np.int64)               # noqa: E731
+    # ! private accumulators bounded to GRAM_ACC_BYTES in all (m x m each)
+    nacc = int(max(1, min(get_num_threads(), edges.size - 1,
+                          GRAM_ACC_BYTES // (8 * m * m))))
+    return _globalGram(
+        edges, nacc, m, f64(w), f64(h), f64(amp), i64(D.group_row),
+        bool(D.n_mu),
+        has_c, i64(D.c0) if has_c else I, i64(D.c1) if has_c else I,
+        f64(D.w0) if has_c else F, f64(D.w1) if has_c else F,
+        has_r, f64(D.first) if has_r else F, i64(D.pool_row) if has_r else I,
+        has_e, i64(D.e_idx) if has_e else I, f64(D.e_w) if has_e else F,
+        has_k, f64(D.alt) if has_k else F,
+        has_imp, i64(D.imp_idx) if has_imp else I,
+        f64(D.imp_w) if has_imp else F,
+        has_ind, i64(D.ind_idx) if has_ind else I,
+        f64(D.ind_w) if has_ind else F,
+        o_c, o_r, o_e, o_k, o_imp, o_ind)
+
+
 def _edges(D):
     """Chunk edges on athlete boundaries, cached on D; None if the rows are
     not sorted by athlete (then the caller keeps the numpy path)."""

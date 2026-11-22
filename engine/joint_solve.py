@@ -2700,9 +2700,11 @@ def _operatorDiag(athlete, cell, race, w, h, n_ath, n_cell, n_race,
 # Detail:    Jacobi preconditioner -- the operator's own diagonal, which is
 #            available in closed form and costs one bincount per block.
 def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
-                      x0=None, precond=None):
+                      x0=None, precond=None, gblock=None):
     """precond: r -> z, a symmetric positive preconditioner in place of
-    Jacobi (arrowPrecond); None is the diagonal, as always."""
+    Jacobi (arrowPrecond); None is the diagonal, as always.
+    gblock: (idx, inverse) from globalBlockPrecond -- those unknowns of z
+    are inverse @ r[idx] instead of their diagonal's; None is plain."""
     x = np.zeros_like(rhs) if x0 is None else x0.copy()
     r = rhs - matvec(x)
     inv_diag = 1.0 / np.maximum(diag, 1e-12)
@@ -2738,6 +2740,16 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
         else:
             def precond(v):
                 return inv_diag * v
+    if gblock is not None:
+        g_idx, g_inv = gblock
+        _precond = precond
+
+        def _gfix(z):
+            z[g_idx] = g_inv @ r[g_idx]
+            return z
+
+        def precond(v):
+            return _gfix(_precond(v))
     z = precond(r)
     p = z.copy()
     rz = float(r @ z)
@@ -2789,6 +2801,8 @@ def conjugateGradient(rhs, matvec, diag, tol=CG_TOL, max_iter=CG_MAX_ITER,
         if rel < tol:
             return x, it + 1
         z = zbuf if z_done else precond(r)
+        if z_done and gblock is not None:
+            z = _gfix(z)
         rz_new = float(r @ z)
         if fast and _ok(z, p) and z is not p:
             _jk.cgDirection(p, z, rz_new / rz)      # p = z + beta * p
@@ -3041,9 +3055,21 @@ def arrowPrecond(D, diag_sub, off, w, h, cell_of, rowq=None):
     # share of the course's own diagonal
     s_c = np.maximum(s_c, np.maximum(C * 1e-3, 1e-12))
     inv_all = 1.0 / np.maximum(diag_sub, 1e-12)
+    # ★ one kept output (2026-11-22): the same products into the same
+    #   buffer every step instead of a fresh theta-sized array, on every
+    #   core when it can (joint_kernels.cgMul); the CG reads z before the
+    #   next call
+    zb = np.empty_like(inv_all)
+    par = (_CG_PARALLEL and _jk.enabled() and inv_all.flags.c_contiguous)
 
     def apply(r):
-        z = inv_all * r
+        if par and r.dtype == np.float64 and r.shape == zb.shape \
+                and r.flags.c_contiguous:
+            _jk.cgMul(zb, inv_all, r)
+            z = zb
+        else:
+            z = np.multiply(inv_all, r, out=zb) if r.shape == zb.shape \
+                else inv_all * r
         rc, ru = r[cs:ce], r[us:ue]
         xc = (rc - np.bincount(cell_of, weights=q * ru, minlength=D.n_cell)) / s_c
         z[cs:ce] = xc
@@ -3052,8 +3078,96 @@ def arrowPrecond(D, diag_sub, off, w, h, cell_of, rowq=None):
     return apply
 
 
+# ★ THE GLOBAL UNKNOWNS SOLVED TOGETHER, THE REST BY THEIR DIAGONAL
+#   (2026-11-22, XCP_PRECOND=global). The CG's 300-425 iterations a pass are
+#   a cluster of weak directions (issue 1.8). Measured on the synthetic
+#   design (scripts/moe_warm_start.py with race dates in their sport's
+#   season, 1M rows): they are the few hundred GLOBAL unknowns -- mu, the
+#   curve's knots, rust, the distance classes, altitude, importance, indoor
+#   -- each loading on a whole season's rows, coupled to each other (two
+#   knots share every row between them, the curve's level trades against
+#   mu across the winter) and scaled one by one by Jacobi. With their own
+#   block of the normal matrix inverted exactly (a few hundred squared,
+#   formed in one pass over the rows each outer, joint_kernels.globalGram)
+#   and every other unknown still by its diagonal, CG needs 51/34 matvecs
+#   where Jacobi needed 123/85 (passes 1/2, both to 1e-8). Each step costs
+#   one small dense product more (0.01 ms at 207 globals); the block is
+#   formed once a pass (357 ms at 4M rows, about three matvecs). The same
+#   system, so the same minimiser -- not the same bits: the iterates take
+#   another path, and the stop is tightened to keep the error no larger
+#   (PRECOND_TOL_SCALE below).
+# ! The synthetic design reaches production's hundreds of Jacobi steps
+#   only partly (123, not 300-425); how much of production's cluster this
+#   block takes is measured by the "[joint] outer k/n: cg N iters" lines.
+# ! Symmetric positive definite by construction (a principal block of the
+#   normal matrix, and the diagonal); if its Cholesky fails anyway, or the
+#   block is larger than GLOBAL_BLOCK_MAX, None and the plain Jacobi runs.
+GLOBAL_BLOCK_MAX = 4000
+
+
+def globalBlockPrecond(op, D, diag):
+    """(idx, inverse) for conjugateGradient's gblock: theta's global
+    unknowns and the inverse of the normal matrix's block on them; None
+    when it cannot be formed (no numba, rows not sorted, too large)."""
+    idx = np.concatenate([np.arange(D.o_mu, D.o_beta), np.arange(D.o_c, D.o_g),
+                          np.arange(D.o_k, D.n_total)]).astype(np.int64)
+    m = idx.size
+    if m == 0 or m > GLOBAL_BLOCK_MAX:
+        return None
+    G = _jk.globalGram(D, op.w, op.h, op.amp, nmax=GLOBAL_BLOCK_MAX)
+    if G is None or G.shape != (m, m):
+        return None
+    # the penalties' couplings inside the block: the curve's curvature,
+    # the window-balance rank-one terms, the walk over distance classes;
+    # the diagonal is the operator's own (rows and every prior)
+    o_c = int(D.n_mu)
+    if D.n_c:
+        n_c = int(D.n_c)
+        eye = np.zeros(n_c)
+        P = np.empty((n_c, n_c))
+        for j in range(n_c):
+            eye[j] = 1.0
+            P[:, j] = _curvePenaltyApply(eye, D, op.lam)
+            eye[j] = 0.0
+        for lg, g in op.gap:
+            P += lg * np.outer(g, g)
+        G[o_c:o_c + n_c, o_c:o_c + n_c] += P
+    if D.n_e and op._dist_deg is not None and getattr(D, "n_dist_pair", 0):
+        o_e = o_c + int(D.n_c) + int(D.n_r)
+        a, b_ = D.dist_pairs
+        c = op.pen_walk * D.dist_pair_w
+        np.add.at(G, (o_e + a, o_e + b_), -c)
+        np.add.at(G, (o_e + b_, o_e + a), -c)
+    G[np.arange(m), np.arange(m)] = np.maximum(diag[idx], 1e-12)
+    G = 0.5 * (G + G.T)
+    try:
+        L = np.linalg.cholesky(G)
+    except np.linalg.LinAlgError:
+        return None
+    Li = np.linalg.inv(L)
+    inv = Li.T @ Li
+    return idx, 0.5 * (inv + inv.T)
+
+
+# ★ THE DEFAULT IS "global+arrow" (2026-11-22): the global block solved
+#   exactly (globalBlockPrecond), each course with its race days as one
+#   arrowhead (arrowPrecond), every other unknown by its diagonal; and the
+#   CG then stops at PRECOND_TOL_SCALE x the tolerance. WHY THE TIGHTER
+#   STOP: at the same relative residual a stronger preconditioner leaves
+#   its error in other directions, and measured against the converged
+#   answer (the same design solved to 1e-12) global+arrow at 1e-8 was ~3x
+#   FURTHER off than Jacobi at 1e-8. At 3e-10 it is closer than Jacobi on
+#   every statistic (5 outers, 1M rows, athlete-season rating: max 0.023
+#   vs 0.079 pts, p99.9 0.0012 vs 0.0039, median 0.00028 vs 0.00055;
+#   course max 0.001 vs 0.020 %) and still takes 254 matvecs to Jacobi's
+#   403 (passes 51/50/51/56/46 vs 123/85/78/59/58).
+#   XCP_PRECOND=jacobi is the old solve, bit for bit; "global" and "arrow"
+#   alone are kept for measurement. XCP_PRECOND_TOL_SCALE overrides 0.03.
+PRECOND_TOL_SCALE = float(os.environ.get("XCP_PRECOND_TOL_SCALE", "0.03") or 0.03)
+
+
 def precondKind():
-    return os.environ.get("XCP_PRECOND", "jacobi").strip().lower()
+    return os.environ.get("XCP_PRECOND", "global+arrow").strip().lower()
 
 
 def schurOn():
@@ -4550,10 +4664,22 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
         if _sch is not None:
             theta, iters = _sch
         else:
+            _pk = precondKind()
+            _gb = (globalBlockPrecond(op, D, diag)
+                   if _pk in ("global", "global+arrow") else None)
+            if _gb is not None:
+                _tol = _tol * PRECOND_TOL_SCALE
+            elif _pk == "global+arrow":
+                _pk = "jacobi"          # no block: the plain solve, not arrow alone
+            if verbose and outer == 0:
+                print(f"[joint] cg preconditioner: {_pk}"
+                      + (f" ({_gb[0].size} global unknowns), tol {_tol:.1e}"
+                         if _gb is not None else ""), flush=True)
             theta, iters = conjugateGradient(
                 _rhs, op.matvec, diag, max_iter=cg_max_iter, x0=theta, tol=_tol,
                 precond=(arrowPrecond(D, diag, 0, w, h, cellOfRace(D))
-                         if precondKind() == "arrow" else None))
+                         if _pk in ("arrow", "global+arrow") else None),
+                gblock=_gb)
         D.cg_iters.append(int(iters))
         b = D.unpack(theta)
         bbar = 0.0
