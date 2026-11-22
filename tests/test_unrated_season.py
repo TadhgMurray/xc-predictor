@@ -157,7 +157,8 @@ class ItRefusesToRunAgainstANotNullColumn(unittest.TestCase):
                                   "build_ranking_results.py"),
                      encoding="utf-8") as fh:
             src = fh.read()
-        i = src.index("def refreshAthleteSeason")
+        # the aggregate half of refreshAthleteSeason (split 2026-11-22)
+        i = src.index("def _seasonAggregate")
         self.body = src[i:src.index("\ndef ", i + 10)]
 
     def test_it_checks_before_it_aggregates(self):
