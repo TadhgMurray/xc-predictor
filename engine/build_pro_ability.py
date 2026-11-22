@@ -167,19 +167,26 @@ def _scanOne(sports, min_time, max_time, limit=None):
         #   (sport, day) and a sport has a few thousand days against tens of
         #   millions of rows. Same value per row, read from a dict.
         ay_of = {}
+        # ★ THE FACTOR ONCE PER (distance, gender) (2026-11-22): _scaleFactor
+        #   rounds the distance, builds a key and probes its cache on every
+        #   row; it is a pure function of the two, and a corpus has a few
+        #   hundred distances. Same value per row, from a dict.
+        f_of = {}
+        iG, iP, iD, iT, iA = (_I["gender"], _I["person_id"], _I["dist_m"],
+                              _I["time_seconds"], _I["date"])
         stream = streamResults(sport, min_time, max_time)
         if not limit:
             stream = _prefetched(stream)
         for batch in stream:
             for row in batch:
                 n_rows += 1
-                gender = row[_I["gender"]]
+                gender = row[iG]
                 if gender not in ("M", "F"):
                     continue
-                pid = row[_I["person_id"]]
-                dist = row[_I["dist_m"]]
-                t = row[_I["time_seconds"]]
-                date = row[_I["date"]]
+                pid = row[iP]
+                dist = row[iD]
+                t = row[iT]
+                date = row[iA]
                 if pid is None or not dist or not t or not date:
                     continue
                 ay = ay_of.get(date, ay_of)
@@ -191,8 +198,10 @@ def _scanOne(sports, min_time, max_time, limit=None):
                     ay_of[date] = ay
                 if ay is None:
                     continue
-                f = _scaleFactor(float(dist), ABILITY_CURVE_POOL[gender],
-                                 ABILITY_CURVE_SPORT)
+                f = f_of.get((dist, gender), f_of)
+                if f is f_of:
+                    f = f_of[(dist, gender)] = _scaleFactor(
+                        float(dist), ABILITY_CURVE_POOL[gender], ABILITY_CURVE_SPORT)
                 if not f:
                     continue
                 nt = float(t) * f
@@ -440,6 +449,18 @@ def main(argv=None):
         ap.error("--limit builds a partial table; it may not be written")
 
     sports = (args.sport,) if args.sport else ("XC", "TF")
+    # ★ THE STREAM BY COPY IN ctid CHUNKS (2026-11-22). This scan is the
+    #   pack's own loader and almost nothing else -- the loop keeps a min per
+    #   athlete-season -- so the read is the pole (scratch, 3,135,826
+    #   synthetic TF rows, 4 cores: 166.9 s by the named cursor, 157.2 s with
+    #   the loop's lookups hoisted). speed_ratings_db's XCP_PACK_COPY path
+    #   proves, from the plans, that its chunks stream the cursor's rows in
+    #   the cursor's order, or falls back to the cursor: 86.0 s, the bests,
+    #   their dict order and every count identical. 07_pack leaves it off
+    #   (its row loop is the pole there); here it is on unless the run says
+    #   otherwise. XCP_PRO_COPY=0, or XCP_PACK_COPY=0, is the named cursor.
+    if os.environ.get("XCP_PRO_COPY", "1").strip().lower() not in ("0", "false", "off", "no"):
+        os.environ.setdefault("XCP_PACK_COPY", "1")
     able, best, hist, n_rows, n_used, n_wild, wild = scan(
         sports=sports, limit=args.limit or None)
     report(able, best, hist, n_rows, n_used, n_wild, wild, show=args.show)

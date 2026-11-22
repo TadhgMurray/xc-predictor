@@ -93,3 +93,22 @@ def test_a_pro_row_goes_onto_the_college_anchor_it_is_rated_against(monkeypatch)
     assert abs(new / (t * _F["college_m"] * 1.01) - 1) < 1e-9
     assert sr._scalePool("pro_f") == "college_f"
     assert sr._scalePool("hs_m") == "hs_m"
+
+
+def test_the_memoised_rescale_is_rescaleToPool_bit_for_bit(monkeypatch):
+    # ★ 2026-11-22: the pack loop calls _rescaleMemo (factors once per
+    #   distance, pool and sport); value and tag must be rescaleToPool's
+    _setup(monkeypatch)
+    import random
+    rnd = random.Random(7)
+    memo = {}
+    pools = ("hs_m", "college_m", "ms_m", "hs_f", "pro_m")
+    for _ in range(4000):
+        t = rnd.choice((None, 0, 242.58, 600.1, rnd.uniform(100, 2000)))
+        d = rnd.choice((None, 0, 800.0, 1609.34, 5000.0))
+        f = rnd.choice(tuple(_F.values()) + (4.0, 2.75))
+        nt = (t or 300.0) * f * rnd.uniform(0.9, 1.1)
+        pool, sport = rnd.choice(pools), rnd.choice(("XC", "TF"))
+        want = sr.rescaleToPool(nt, t, d, pool, sport)
+        got = sr._rescaleMemo(nt, t, d, pool, sport, memo)
+        assert repr(got) == repr(want)
