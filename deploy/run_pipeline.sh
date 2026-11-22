@@ -1160,8 +1160,32 @@ bgstep 04_grade_sanity "$PY" -u engine/grade_sanity.py --write
 #   tables). season_level reads grade_fix, so it alone waits (below).
 bgstep 04h1_college_flags "$PY" -u engine/college_flag.py --write
 bgstep 04b_wheelchair  "$PY" -u engine/wheelchair_flag.py --write
-step 04d_gender "$PY" -u engine/person_gender.py --write
-step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
+# ★ 04d AND THE TWINS' BUILD SIDE BY SIDE (2026-11-22; run 20261116_204106:
+#   04d_gender 542 s, then 04c_twins 1,556 s, in line). Of 04c's rules only
+#   XC dup_cross_gender reads person_gender, and 04d reads nothing 04c
+#   writes (twin_flag.GENDER_GATE has the table lists). So 04d goes in the
+#   background, its wrapper touching $_TWIN_GATE when it ends (ok or not),
+#   and 04c starts at once; dup_cross_gender alone waits for the file, then
+#   reads the person_gender 04d just swapped in and analysed -- the table it
+#   read when 04c ran after 04d. A failed 04d still fails the people gate
+#   below (bgjoin records it). 04d not running this run (--from, --skip):
+#   the gate is opened at once, as 04c read last run's table before.
+#   XCP_TWIN_BESIDE_GENDER=0: 04d then 04c, in line, as before.
+if [ "${XCP_TWIN_BESIDE_GENDER:-1}" != "0" ] && [ "$DRY" -eq 0 ] && willRun 04c_twins; then
+  _TWIN_GATE="$LOGDIR/.04d_gender_ended"; rm -f "$_TWIN_GATE"
+  if willRun 04d_gender; then
+    bgstep 04d_gender sh -c '"$1" -u engine/person_gender.py --write; rc=$?; touch "$2"; exit $rc' \
+           sh "$PY" "$_TWIN_GATE"
+  else
+    skipped 04d_gender && echo "  04d_gender skipped (--skip)"
+    touch "$_TWIN_GATE"
+  fi
+  step 04c_twins env XCP_TWIN_GENDER_GATE="$_TWIN_GATE" "$PY" -u engine/twin_flag.py --write --no-swap
+  bgjoin 04d_gender
+else
+  step 04d_gender "$PY" -u engine/person_gender.py --write
+  step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap
+fi
 bgjoin 04_grade_sanity
 bgjoin 04b_wheelchair
 # ★ THE SEASON LEVELS, REBUILT EVERY RUN (2026-10-25: "the tables nothing

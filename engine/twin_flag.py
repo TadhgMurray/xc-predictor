@@ -1569,10 +1569,57 @@ RULES = (("twin_race", twinRaceSql), ("twin_person", twinPersonSql),
          (LC.REASON, LC.ruleSql))
 
 
+# ★ THE BUILD BESIDE 04d_gender, ONE RULE WAITING FOR IT (2026-11-22; run
+#   20261116_204106: 04d_gender 542 s and then 04c_twins 1,556 s, in line,
+#   one after the other). Of the twin rules only XC dup_cross_gender reads
+#   person_gender (TF's is `WHERE false`; level_conflict and the rest read
+#   results*, meets*, person_link_log and college_directory), and 04d reads
+#   nothing 04c writes (results*, meets, meets_tfrrs, athletes; 04c writes
+#   only result_twin_new and its own stage tables). So the pipeline starts
+#   04d in the background and 04c at once, with XCP_TWIN_GENDER_GATE naming a
+#   file 04d's wrapper touches when it has ended (swap and ANALYZE done, or
+#   failed). XC dup_cross_gender waits for that file before it opens its
+#   session and reads person_gender: the same person_gender, with the same
+#   statistics, as when 04c started after 04d. It is submitted last, so the
+#   wait holds no pool slot another rule could use. Unset (the default, and
+#   any run by hand): no wait, as before. XCP_TWIN_GENDER_GATE_MAX (14400 s)
+#   bounds the wait; past it the build FAILS (nothing is swapped) rather
+#   than read a person_gender 04d may not have finished.
+GENDER_GATE = os.environ.get("XCP_TWIN_GENDER_GATE", "")
+_GATE_OPEN = []
+
+
+def gated(sport, reason):
+    """Does this (sport, rule) wait for XCP_TWIN_GENDER_GATE?"""
+    return bool(GENDER_GATE) and sport == "XC" and reason == "dup_cross_gender"
+
+
+def waitGate(path=None, poll=2.0, max_s=None):
+    """Block until the gate file exists. -> seconds waited."""
+    path = path or GENDER_GATE
+    if not path or _GATE_OPEN:
+        return 0.0
+    max_s = float(max_s if max_s is not None
+                  else os.environ.get("XCP_TWIN_GENDER_GATE_MAX", "14400"))
+    t0 = time.time()
+    while not os.path.exists(path):
+        if time.time() - t0 > max_s:
+            raise RuntimeError(f"dup_cross_gender: {path} did not appear in {max_s:.0f}s "
+                               "(04d_gender never ended); nothing swapped")
+        time.sleep(poll)
+    _GATE_OPEN.append(True)
+    dt = time.time() - t0
+    print(f"  [XC] dup_cross_gender waited {dt:.0f}s for 04d_gender's person_gender",
+          flush=True)
+    return dt
+
+
 def prepareRule(cur, table, sport, reason, explain=False, connect=None):
     """The staging a rule needs before its SELECT can run: the meet pairs of
     dup_cross_date, the decided rows of level_conflict. Nothing for the
     rest."""
+    if gated(sport, reason) and not explain:
+        waitGate()
     if reason == "dup_cross_date":
         prepareCrossDate(cur, table, sport)
     elif reason == "dup_race_copy":
@@ -1723,6 +1770,8 @@ def _stageRule(connect, sport, table, reason, fn):
     import psycopg2.errors
     stage = _stageName(sport, reason)
     t0 = time.time()
+    if gated(sport, reason):
+        waitGate()          # before its session opens: no idle transaction
     with connect() as c:
         with c.cursor() as cur:
             _session(c, cur)
@@ -1792,8 +1841,14 @@ def _buildPooled(conn, cur, skip, connect, workers):
     #   clock. Last run's seconds per rule, kept beside the engine data.
     secs = _ruleSeconds()
     order = sorted(range(len(jobs)), key=lambda i: -secs.get(f"{jobs[i][0]}:{jobs[i][2]}", 0.0))
+    # the gated rule last (GENDER_GATE): its wait holds a slot only once
+    # every other rule has one
+    order = [i for i in order if not gated(jobs[i][0], jobs[i][2])] + \
+            [i for i in order if gated(jobs[i][0], jobs[i][2])]
 
     def timed(j):
+        if gated(j[0], j[2]):
+            waitGate()      # outside the rule's seconds (the longest-first order)
         t0 = time.time()
         return _stageRule(connect, *j), time.time() - t0
     # ★ THE ASSEMBLY OVERLAPS THE POOL (2026-11-19; run 20261116_204106:

@@ -58,6 +58,10 @@ def _func(name, text=None):
 
 def test_twin_build_runs_beside_grade_sanity_and_swaps_after_it():
     order = ["step 04a3b_merges", "bgstep 04_grade_sanity", "bgstep 04b_wheelchair",
+             # 04d beside the build, dup_cross_gender gated on it (2026-11-22)
+             "bgstep 04d_gender sh -c",
+             'step 04c_twins env XCP_TWIN_GENDER_GATE="$_TWIN_GATE"',
+             "bgjoin 04d_gender",
              'step 04d_gender "$PY"',
              'step 04c_twins        "$PY" -u engine/twin_flag.py --write --no-swap',
              "bgjoin 04_grade_sanity", "bgjoin 04b_wheelchair",
@@ -334,7 +338,7 @@ def test_fill_flag_cases():
 # THE SHELL HELPERS, RUN FOR REAL WITH STUB COMMANDS
 # ==================================================================== #
 
-_FUNCS = ("skipped", "failed", "beforeFrom", "_stampTo", "_skipCost", "step", "_live",
+_FUNCS = ("skipped", "failed", "beforeFrom", "willRun", "_stampTo", "_skipCost", "step", "_live",
           "steps2", "stepsN", "bgstep", "bgjoin", "bgwait", "bgchain", "bgchainjoin")
 
 
@@ -383,7 +387,11 @@ def _runPeople(tmp_path, fail_build=False, skip=""):
 echo "$*" >> {calls}
 case "$*" in
   *grade_sanity*) sleep 1; touch {tmp_path}/gs_done ;;
-  *--no-swap*) [ "{int(fail_build)}" = "1" ] && exit 1 ;;
+  *--no-swap*) if [ -n "$XCP_TWIN_GENDER_GATE" ]; then
+                 while [ ! -f "$XCP_TWIN_GENDER_GATE" ]; do sleep 0.1; done
+                 echo BUILD_PAST_GATE >> {calls}; fi
+               [ "{int(fail_build)}" = "1" ] && exit 1 ;;
+  *person_gender*) sleep 1 ;;
   *--swap-only*) if [ -f {tmp_path}/gs_done ]; then echo SWAP_AFTER_GS >> {calls}; else echo SWAP_EARLY >> {calls}; fi ;;
 esac
 exit 0
@@ -400,9 +408,13 @@ def test_the_twin_swap_waits_for_grade_sanity(tmp_path):
     assert "FAILED=[]" in out.stdout, out
     assert "SWAP_AFTER_GS" in calls and "SWAP_EARLY" not in calls, calls
     lines = calls.splitlines()
-    build = next(i for i, ln in enumerate(lines) if "--no-swap" in ln)
+    # ★ 2026-11-22: the build starts beside 04d; only the gated rule (here
+    #   the stub's whole run) goes on once 04d has ENDED
+    build = lines.index("BUILD_PAST_GATE")
     gender = next(i for i, ln in enumerate(lines) if "person_gender.py" in ln)
     assert gender < build
+    assert (tmp_path / ".04d_gender_ended").exists()
+    assert "04d_gender ok" in (tmp_path / "summary.log").read_text()
 
 
 def test_a_failed_twin_build_is_never_swapped(tmp_path):
