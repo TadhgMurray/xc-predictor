@@ -1853,10 +1853,8 @@ _TEAM_MINE_SQL = f"""
     JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
 """
 
-_TEAM_LEVEL_SQL = f"""
-    WITH wanted AS (
-        SELECT DISTINCT meet_id, div_id, source, event_key FROM tl_mine
-    ),
+_TEAM_WANTED_SELECT = "SELECT DISTINCT meet_id, div_id, source, event_key FROM tl_mine"
+_TEAM_EVENT_LEVEL = f"""
     event_level AS (
         SELECT w.meet_id, w.div_id, w.source, w.event_key,
                mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
@@ -1868,7 +1866,29 @@ _TEAM_LEVEL_SQL = f"""
         GROUP  BY 1, 2, 3, 4
         HAVING count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
                    >= {MIN_FIELD_GRADED}
-    )
+    )"""
+# the same event_level as counts per (event, level): the level with the most
+# entrants, a tie to the first in ORDER BY level -- mode()'s own rule (see
+# STAGED AND HASH-JOINED at rule 2c) -- and the HAVING its count of graded
+# entrants, summed. A GROUP BY the workers share, where mode() ran in the
+# leader.
+_TEAM_EVENT_LEVEL_COUNTS = f"""
+    event_level AS (
+        SELECT meet_id, div_id, source, event_key,
+               (array_agg(lvl ORDER BY n DESC, lvl)
+                    FILTER (WHERE lvl IS NOT NULL))[1]  AS level
+        FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
+                      gradeLevel(a.grade) AS lvl, count(*) AS n
+               FROM   wanted w
+               JOIN   allraces a
+                      ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+                     AND a.source = w.source AND a.event_key = w.event_key
+               GROUP  BY 1, 2, 3, 4, 5) per_level
+        GROUP  BY 1, 2, 3, 4
+        HAVING COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0)
+                   >= {MIN_FIELD_GRADED}
+    )"""
+_TEAM_LEVEL_REST = """
     SELECT m.person_id, m.acad
     FROM   tl_mine m
     JOIN   event_level e
@@ -1877,6 +1897,38 @@ _TEAM_LEVEL_SQL = f"""
     GROUP  BY 1, 2
     HAVING bool_and(e.level = 'hs')
 """
+_TEAM_LEVEL_SQL = f"""
+    WITH wanted AS (
+        {_TEAM_WANTED_SELECT}
+    ),{_TEAM_EVENT_LEVEL}{_TEAM_LEVEL_REST}"""
+# ★ STAGED (2026-11-22; see STAGED AND HASH-JOINED at rule 2c): `wanted`
+#   an ANALYZEd table under the CTE's name, event_level counted per level
+#   (above), the final SELECT verbatim; enable_nestloop off with each plan
+#   EXPLAINed, the old statement where one still holds a nested loop. The
+#   planner probed allraces' event index once per wanted event on one core,
+#   and mode() sorted every entrant in the leader (synthetic corpus, 3,323
+#   events, 4.5M entrants: 22.3 s; staged and counted 4.0 s, the same
+#   35,218 seasons).
+_TEAM_LEVEL_STAGED_SQL = f"""
+    WITH wanted AS (SELECT * FROM tl_wanted),{_TEAM_EVENT_LEVEL_COUNTS}{_TEAM_LEVEL_REST}"""
+
+
+def _teamLevelStaged(cur, params):
+    """_TEAM_LEVEL_SQL's rows, staged; None when a plan held a nested loop."""
+    rows = None
+    with _NoNestLoop(cur):
+        if not _planHasNestLoop(cur, _TEAM_WANTED_SELECT):
+            cur.execute("DROP TABLE IF EXISTS tl_wanted")
+            cur.execute(f"CREATE UNLOGGED TABLE tl_wanted AS {_TEAM_WANTED_SELECT}")
+            cur.execute("ANALYZE tl_wanted")
+            if not _planHasNestLoop(cur, _TEAM_LEVEL_STAGED_SQL, params):
+                cur.execute(_TEAM_LEVEL_STAGED_SQL, params)
+                rows = cur.fetchall()
+    cur.execute("DROP TABLE IF EXISTS tl_wanted")
+    if rows is None:
+        print("    [5f] staged plan holds a nested loop: the single statement instead",
+              flush=True)
+    return rows
 
 
 def teamLevelCandidates(acad, seasons_of):
@@ -1957,8 +2009,11 @@ def teamLevelSeasons(cur, acad, seasons_of, hs_codes=None):
     params = {"codes": list(hs_codes)}
     cur.execute(_TEAM_MINE_SQL, params)
     cur.execute("ANALYZE tl_mine")
-    cur.execute(_TEAM_LEVEL_SQL, params)
-    got = {(int(p), int(a)) for p, a in cur.fetchall()}
+    rows = _teamLevelStaged(cur, params) if _eventStagedOn() else None
+    if rows is None:
+        cur.execute(_TEAM_LEVEL_SQL, params)
+        rows = cur.fetchall()
+    got = {(int(p), int(a)) for p, a in rows}
     cur.execute("DROP TABLE tl_mine; DROP TABLE tl_cand")
     return got
 
@@ -2222,6 +2277,153 @@ _BARE_FIELD_SQL = """
     --   overruled by the company they kept.
 
 """
+
+# ★ STAGED AND HASH-JOINED (2026-11-22; run 20261116_204106: [2c round 1]
+#   401.8 s on its own connection -- the critical path's longest wait --
+#   and round 2 the same statement again on the main connection). The
+#   planner guessed ONE row for `wanted` (an anti-join of 225M rows against
+#   themselves), so it fetched every entrant of every wanted event through
+#   allraces' event index, one event at a time, on one core, three times
+#   over (ev, lvl, the final SELECT), and ran ev's and lvl's aggregates in
+#   the leader. Measured on a 5M-row synthetic corpus (3,099 wanted events,
+#   4.3M entrant rows): 30.4 s; staged, 7.0 s, the same rows.
+#
+#   1. `wanted` is a table, ANALYZEd, so the joins after it are planned on
+#      its real size. Its SELECT is the CTE's, word for word.
+#   2. ev and lvl in ONE pass over the wanted events' rows: entrants are
+#      counted per (event, grade_folded) -- an ordinary GROUP BY the workers
+#      share -- and each event's counts give ev's n_graded / n_school (the
+#      count of the rows whose grade's gradeLevel is set / a school level)
+#      and lvl's mode(): the numeric grade with the most entrants, a tie to
+#      the FIRST in ORDER BY grade_folded -- mode()'s own rule (it walks the
+#      sorted values and replaces its answer only on a strictly larger
+#      count), the same ordering (the column's collation), NULLs and words
+#      left out by the same FILTER. ev's HAVING and lvl's WHERE become the
+#      one HAVING; a sum over no rows is NULL where count(*) FILTER was 0,
+#      hence the COALESCEs. rule 4 made the same change (_FIELD_BUILD).
+#   3. The final SELECT is the original's, reading the event table.
+#
+#   ! enable_nestloop OFF FOR THESE THREE STATEMENTS ONLY, as rule 4's
+#     staging has it, for the same reason: a multi-column event join is
+#     estimated at one row per event, so the planner probes the event index
+#     per event. Each statement's plan is EXPLAINed first; one holding a
+#     Nested Loop (no other plan offered) runs the old single statement
+#     instead. The setting is put back as it was, before any other
+#     statement. XCP_GRADE_SANITY_EVENT_STAGED=0: the old statement always
+#     (this and rule 5d's, thinFieldSeasons).
+EVENT_STAGED_ENV = "XCP_GRADE_SANITY_EVENT_STAGED"
+
+_BARE_WANTED_SELECT = """
+        SELECT DISTINCT a.meet_id, a.div_id, a.source, a.event_key
+        FROM   allraces a
+        WHERE  a.grade_folded IN ('FR','SO','JR','SR')
+          AND  NOT EXISTS (SELECT 1 FROM allraces d
+                           WHERE d.person_id = a.person_id
+                             AND d.acad      = a.acad
+                             AND d.definite)"""
+assert " ".join(_BARE_WANTED_SELECT.split()) in " ".join(_BARE_FIELD_SQL.split())
+
+_BARE_LVL_SELECT = """
+        SELECT meet_id, div_id, source, event_key,
+               (array_agg(grade ORDER BY n DESC, grade)
+                    FILTER (WHERE grade ~ '^[0-9]+$'))[1]       AS modal_grade
+        FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
+                      a.grade_folded AS grade, count(*) AS n
+               FROM   {t}_wanted w
+               JOIN   allraces a
+                      ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+                     AND a.source  = w.source  AND a.event_key = w.event_key
+               GROUP  BY 1, 2, 3, 4, 5) per_grade
+        GROUP  BY 1, 2, 3, 4
+        HAVING COALESCE(sum(n) FILTER (WHERE gradeLevel(grade) IS NOT NULL), 0)
+                   >= %(minf)s
+           AND COALESCE(sum(n) FILTER (WHERE gradeLevel(grade)
+                                              IN ('elem','ms','hs')), 0)
+                   >= %(share)s * COALESCE(sum(n) FILTER (WHERE gradeLevel(grade)
+                                                          IS NOT NULL), 0)"""
+
+_BARE_FINAL_SELECT = """
+    SELECT a.person_id, a.acad,
+           mode() WITHIN GROUP (ORDER BY l.modal_grade) AS grade
+    FROM   allraces a
+    JOIN   {t}_lvl l
+           ON l.meet_id = a.meet_id AND l.div_id = a.div_id
+          AND l.source  = a.source  AND l.event_key = a.event_key
+    WHERE  a.grade_folded IN ('FR','SO','JR','SR')
+      AND  l.modal_grade IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM allraces d
+                      WHERE d.person_id = a.person_id
+                        AND d.acad      = a.acad
+                        AND d.definite)
+    GROUP  BY 1, 2"""
+
+
+def _eventStagedOn():
+    return os.environ.get(EVENT_STAGED_ENV, "1").strip() != "0"
+
+
+def _planHasNestLoop(cur, sql, params=None):
+    cur.execute("EXPLAIN " + sql, params)
+    return any("Nested Loop" in ln for (ln,) in cur.fetchall())
+
+
+class _NoNestLoop:
+    """enable_nestloop off for the statements inside, transaction-locally,
+    then back to the value it had (see STAGED AND HASH-JOINED)."""
+
+    def __init__(self, cur):
+        self.cur = cur
+
+    def __enter__(self):
+        self.cur.execute("SELECT current_setting('enable_nestloop')")
+        got = self.cur.fetchall()
+        self.prev = got[0][0] if got else "on"
+        self.cur.execute("SELECT set_config('enable_nestloop', 'off', true)")
+        return self
+
+    def __exit__(self, *exc):
+        self.cur.execute("SELECT set_config('enable_nestloop', %s, true)", (self.prev,))
+        return False
+
+
+def bareFieldRows(cur, args, tag="gs_bf"):
+    """_BARE_FIELD_SQL's rows, staged (see STAGED AND HASH-JOINED above):
+    [(person_id, acad, grade)]. `tag` names the two scratch tables, which
+    are dropped before it returns."""
+    if not _eventStagedOn():
+        cur.execute(_BARE_FIELD_SQL, args)
+        return cur.fetchall()
+    t0 = time.time()
+    rows = None
+    with _NoNestLoop(cur):
+        if not _planHasNestLoop(cur, _BARE_WANTED_SELECT):
+            cur.execute(f"DROP TABLE IF EXISTS {tag}_wanted")
+            cur.execute(f"CREATE UNLOGGED TABLE {tag}_wanted AS {_BARE_WANTED_SELECT}")
+            cur.execute(f"ANALYZE {tag}_wanted")
+            lvl_sql = _BARE_LVL_SELECT.format(t=tag)
+            if not _planHasNestLoop(cur, lvl_sql, args):
+                cur.execute(f"DROP TABLE IF EXISTS {tag}_lvl")
+                cur.execute(f"CREATE UNLOGGED TABLE {tag}_lvl AS {lvl_sql}", args)
+                cur.execute(f"ANALYZE {tag}_lvl")
+                final_sql = _BARE_FINAL_SELECT.format(t=tag)
+                if not _planHasNestLoop(cur, final_sql):
+                    cur.execute(final_sql)
+                    rows = cur.fetchall()
+    cur.execute(f"DROP TABLE IF EXISTS {tag}_lvl")
+    cur.execute(f"DROP TABLE IF EXISTS {tag}_wanted")
+    if rows is None:
+        print(f"    [2c] staged field plan holds a nested loop: the single "
+              f"statement instead ({time.time() - t0:.0f}s spent)", flush=True)
+        cur.execute(_BARE_FIELD_SQL, args)
+        return cur.fetchall()
+    return rows
+
+
+def _bareFieldJob(tag):
+    """A side job: bareFieldRows."""
+    def run(cur):
+        return bareFieldRows(cur, _bareFieldArgs(), tag=tag)
+    return run
 
 
 # _resolveBareClassByField
@@ -3090,13 +3292,22 @@ def thinFieldSeasons(cur, nuked_seasons):
     execute_values(cur, "INSERT INTO tmp_nuked VALUES %s",
                    sorted(nuked_seasons), page_size=10000)
     cur.execute("ANALYZE tmp_nuked")
-    cur.execute("""
-        WITH ev AS (
+    params = {"minf": MIN_FIELD_GRADED, "share": NUKED_FIELD_SHARE}
+    rows = _thinStaged(cur, params) if _eventStagedOn() else None
+    if rows is None:
+        cur.execute(_THIN_SQL, params)
+        rows = cur.fetchall()
+    out = {(int(p), int(a)) for p, a in rows}
+    cur.execute("DROP TABLE tmp_nuked")
+    return out
+
+
+_THIN_EV_SELECT = """
             SELECT DISTINCT a.meet_id, a.div_id, a.source, a.event_key
             FROM   tmp_nuked n
             JOIN   allraces a ON a.person_id = n.person_id AND a.acad = n.acad
-            WHERE  a.grade_folded IS NOT NULL
-        ),
+            WHERE  a.grade_folded IS NOT NULL"""
+_THIN_REST = """
         thin AS (
             SELECT a.meet_id, a.div_id, a.source, a.event_key
             FROM   ev
@@ -3113,10 +3324,39 @@ def thinFieldSeasons(cur, nuked_seasons):
         JOIN   allraces a ON a.meet_id = t.meet_id AND a.div_id = t.div_id
                          AND a.source = t.source AND a.event_key = t.event_key
         WHERE  a.grade_folded IS NOT NULL
-    """, {"minf": MIN_FIELD_GRADED, "share": NUKED_FIELD_SHARE})
-    out = {(int(p), int(a)) for p, a in cur.fetchall()}
-    cur.execute("DROP TABLE tmp_nuked")
-    return out
+"""
+_THIN_SQL = f"""
+        WITH ev AS ({_THIN_EV_SELECT}
+        ),{_THIN_REST}"""
+# ★ STAGED (2026-11-22; see STAGED AND HASH-JOINED at rule 2c): the same
+#   pathology -- the event join estimated at a row or two per event, so
+#   every entrant of every event a contradicted season ran in was fetched
+#   through the event index on one core (synthetic corpus, 27,417 nuked
+#   seasons in 2,805 events: 16.6 s; staged 4.2 s). `ev` becomes an
+#   ANALYZEd table (its SELECT verbatim), read under the name the CTE had;
+#   everything after it is the old text. enable_nestloop off, each plan
+#   EXPLAINed, the old statement where one still holds a nested loop.
+_THIN_STAGED_SQL = f"""
+        WITH ev AS (SELECT * FROM tmp_thin_ev),{_THIN_REST}"""
+
+
+def _thinStaged(cur, params):
+    """thinFieldSeasons' rows, staged; None when a plan held a nested loop
+    (the caller runs the old statement)."""
+    rows = None
+    with _NoNestLoop(cur):
+        if not _planHasNestLoop(cur, _THIN_EV_SELECT):
+            cur.execute("DROP TABLE IF EXISTS tmp_thin_ev")
+            cur.execute(f"CREATE UNLOGGED TABLE tmp_thin_ev AS {_THIN_EV_SELECT}")
+            cur.execute("ANALYZE tmp_thin_ev")
+            if not _planHasNestLoop(cur, _THIN_STAGED_SQL, params):
+                cur.execute(_THIN_STAGED_SQL, params)
+                rows = cur.fetchall()
+    cur.execute("DROP TABLE IF EXISTS tmp_thin_ev")
+    if rows is None:
+        print("    [5d] staged plan holds a nested loop: the single statement instead",
+              flush=True)
+    return rows
 
 
 # ================================================================== #
@@ -3426,12 +3666,12 @@ def startBareClassReads(side):
         # ★ THE LONGEST FIRST (2026-11-20; run 20261116_204106: round 1
         #   401.8 s, the main connection waiting 252 s of it): it takes its
         #   parallel workers before the word read and [2] ask for theirs
-        side.submit("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bareFieldArgs()))
+        side.submit("[2c round 1] field", _bareFieldJob("gs_bf1"))
         side.submit("[2c] bare class words", _fetch(_BARE_CLASS_SQL))
         side.submit("report: ungraded events", _fetch(_UNGRADED_SQL), workers=BG_WORKERS)
         return
     side.submit("[2c] bare class words", _fetch(_BARE_CLASS_SQL))
-    side.submit("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bareFieldArgs()))
+    side.submit("[2c round 1] field", _bareFieldJob("gs_bf1"))
     # and the ungraded report, after them: a report waits, they do not
     side.submit("report: ungraded events", _fetch(_UNGRADED_SQL))
 
@@ -3480,6 +3720,149 @@ def resolve(cur, audit=False, side=None):
         side = None             # the build did not split: one connection
     # The academic-year verdicts, in precedence order.
     return _resolve(cur, side=side)
+
+
+# ★ pa_races, raceKinds AND gradekind IN PERSON SHARDS (2026-11-22; run
+#   20261116_204106: pa_races 238.6 s on the build's critical path, then
+#   raceKinds and gradekind after it). Postgres runs pa_races' GROUP BY
+#   (person, season, race) -- 225M rows into ~200M groups -- as ONE serial
+#   HashAggregate (EXPLAIN on a scratch corpus: no Gather at all), and
+#   raceKinds' and gradekind's builds after it in the leader too. All three
+#   are grouped by person first, so each person's rows are one shard's:
+#   with XCP_GRADE_SANITY_SHARDS (4) side connections, shard k does, in one
+#   statement, for the persons with abs(person_id % K) = k,
+#     pa_races  += the same GROUP BY, the WHERE before it;
+#     raceKinds += those rows WHERE has_grade (its own SELECT, off them);
+#     gradekind += their GROUP BY person, season (its own SELECT, off them);
+#     season_races += count(race) per season (the overlap's
+#                     _SEASON_RACES_PA, off them; built here instead of
+#                     beside [2c round 1], ANALYZEd there as before).
+#   The tables are created first, empty, by CREATE ... AS <the same SELECT>
+#   WITH NO DATA (the same columns and types), and committed with
+#   autovacuum off like the rest (see SIDE BY SIDE); the indexes and
+#   ANALYZEs come after, here, in the old order. Same rows: the shards are
+#   disjoint and cover every person (person_id is never NULL in allraces),
+#   and every table is grouped by person. Only their physical order
+#   differs, which no reader depends on (each reads them through GROUP BY,
+#   a join or a key). XCP_GRADE_SANITY_SHARDS=1: one connection, the old
+#   statements.
+SHARDS_ENV = "XCP_GRADE_SANITY_SHARDS"
+_SHARD_HEADS = ("DROP TABLE IF EXISTS pa_races",
+                "CREATE UNLOGGED TABLE pa_races AS",
+                "DROP TABLE IF EXISTS raceKinds",
+                "CREATE UNLOGGED TABLE raceKinds AS",
+                "CREATE INDEX ON raceKinds (person_id, acad)",
+                "ANALYZE raceKinds",
+                "DROP TABLE IF EXISTS gradekind",
+                "CREATE UNLOGGED TABLE gradekind AS",
+                "CREATE INDEX ON gradekind (person_id, acad)",
+                "ANALYZE gradekind")
+_SR_BUILT = False         # season_races made by the shards on this run
+
+
+def _shards():
+    try:
+        return max(1, int(os.environ.get(SHARDS_ENV, "4").strip() or 4))
+    except ValueError:
+        return 1
+
+
+def _ctasBody(stmt, table):
+    """The SELECT of `CREATE UNLOGGED TABLE <table> AS <select>`."""
+    m = re.match(r"\s*CREATE\s+UNLOGGED\s+TABLE\s+" + table + r"\s+AS\s+", stmt, re.I)
+    assert m, stmt[:80]
+    return stmt[m.end():]
+
+
+def _shardPlan(stmts, start):
+    """(i, j, sql) when stmts[start:] holds _SHARD_HEADS in order at i..j-1,
+    else None. sql: {'pa', 'rk', 'gk'} -> each CTAS's SELECT."""
+    heads = [_headLine(s) for s in stmts]
+    for i in range(start, len(stmts) - len(_SHARD_HEADS) + 1):
+        if tuple(heads[i:i + len(_SHARD_HEADS)]) == _SHARD_HEADS:
+            pa = _ctasBody(stmts[i + 1], "pa_races")
+            rk = _ctasBody(stmts[i + 3], "raceKinds")
+            gk = _ctasBody(stmts[i + 7], "gradekind")
+            if (len(re.findall(r"\bFROM\s+allraces\s+GROUP\s+BY\b", pa)) == 1
+                    and len(re.findall(r"\bFROM\s+pa_races\b", rk)) == 1
+                    and len(re.findall(r"\bFROM\s+raceKinds\b", gk)) == 1):
+                return i, i + len(_SHARD_HEADS), {"pa": pa, "rk": rk, "gk": gk}
+            return None
+    return None
+
+
+def _shardSql(sql, k, n, season_races):
+    """Shard k of n's one statement (see PERSON SHARDS)."""
+    pa = re.sub(r"\bFROM\s+allraces\s+GROUP\s+BY\b",
+                f"FROM allraces WHERE abs(person_id % {int(n)}) = {int(k)} GROUP BY",
+                sql["pa"])
+    rk = re.sub(r"\bFROM\s+pa_races\b", "FROM pa", sql["rk"])
+    gk = re.sub(r"\bFROM\s+raceKinds\b", "FROM rk", sql["gk"])
+    sr = (",\n    sr AS (\n    INSERT INTO season_races\n    "
+          + re.sub(r"\bFROM\s+pa_races\b", "FROM pa", _SEASON_RACES_PA) + "\n    )"
+          if season_races else "")
+    return (f"WITH pa AS (\n    INSERT INTO pa_races\n{pa}\n    RETURNING *\n),\n"
+            f"    rk AS (\n    INSERT INTO raceKinds\n{rk}\n    RETURNING *\n){sr}\n"
+            f"INSERT INTO gradekind\n{gk}")
+
+
+def _shardJob(stmt, n):
+    """A side job: one shard, at work_mem / n (at least 64MB), so the n
+    shards' hash tables and RETURNING stores together hold what the one
+    statement's did -- and spill in the same proportion."""
+    def run(cur):
+        cur.execute("SELECT set_config('work_mem', "
+                    "greatest(pg_size_bytes(current_setting('work_mem')) / %s, "
+                    "         64 * 1024 * 1024)::text || 'B', true)", (int(n),))
+        cur.execute(stmt)
+    return run
+
+
+def _runShards(cur, side, sql, season_races):
+    """The PERSON SHARDS: the empty tables, committed; the shards; the
+    indexes and ANALYZEs in the old order."""
+    global _SR_BUILT
+    n = _shards()
+    t0 = time.time()
+    tables = ["pa_races", "raceKinds", "gradekind"]
+    ddl = [("pa_races", sql["pa"]), ("raceKinds", sql["rk"]), ("gradekind", sql["gk"])]
+    if season_races:
+        tables.append("season_races")
+        ddl.append(("season_races", _SEASON_RACES_PA))
+    for t, body in ddl:
+        cur.execute(f"DROP TABLE IF EXISTS {t}")
+        cur.execute(f"CREATE UNLOGGED TABLE {t} AS {body} WITH NO DATA")
+    noAutovacuum(cur, tuple(tables) + _SIDE_EARLY_TABLES)
+    cur.connection.commit()
+    labels = []
+    for k in range(n):
+        label = f"build: person shard {k + 1} of {n}"
+        stmt = _shardSql(sql, k, n, season_races)
+        side.submit(label, _shardJob(stmt, n), commit=True)
+        labels.append((label, stmt))
+    for label, stmt in labels:
+        side.result(label, fallback=_exec(stmt))
+    tick(f"build: pa_races, raceKinds, gradekind{', season_races' if season_races else ''}"
+         f" in {n} person shards", t0)
+    runTimed(cur, ["CREATE INDEX ON raceKinds (person_id, acad)", "ANALYZE raceKinds",
+                   "CREATE INDEX ON gradekind (person_id, acad)", "ANALYZE gradekind"],
+             label="build: raceKinds / gradekind keyed")
+    _SR_BUILT = bool(season_races)
+
+
+def _buildTables(cur, side, stmts):
+    """The build's statements up to allraces' indexes: as they are, or with
+    pa_races / raceKinds / gradekind in PERSON SHARDS (side by side and
+    XCP_GRADE_SANITY_SHARDS > 1, when the build holds those ten statements
+    in their order)."""
+    plan = _shardPlan(stmts, 0) if (side is not None and _shards() > 1) else None
+    if plan is None:
+        runTimed(cur, stmts, label="build: tables")
+        return
+    i, j, sql = plan
+    runTimed(cur, stmts[:i], label="build: tables up to pa_races")
+    _runShards(cur, side, sql, season_races=overlapOn())
+    runTimed(cur, stmts[j:], label="build: tables after gradekind")
 
 
 def buildRaces(cur, audit=False, side=None):
@@ -3533,9 +3916,9 @@ def buildRaces(cur, audit=False, side=None):
                 n_set += 1
             runTimed(cur, stmts[:n_set], label="build: settings")
             startEarlyReads(side)
-            runTimed(cur, stmts[n_set:idx[0]], label="build: tables")
+            _buildTables(cur, side, stmts[n_set:idx[0]])
         else:
-            runTimed(cur, stmts[:idx[0]], label="build: tables")
+            _buildTables(cur, side, stmts[:idx[0]])
         noAutovacuum(cur, _SIDE_EARLY_TABLES)
         cur.connection.commit()
         # ★ STARTED NOW, READ WHERE THE SEQUENTIAL PATH RAN THEM: rule 7
@@ -3561,6 +3944,25 @@ def buildRaces(cur, audit=False, side=None):
         reportUngraded(cur)
         tick("reports: mixed seasons, ungraded events", t0)
     return split
+
+
+def _raceCountRead(cur):
+    """Rule 5e's race_count {(person, season): races} from season_races,
+    and seasons_of {person: seasons} off its keys.
+
+    ★ BESIDE RULE 4 (2026-11-22). 31M rows fetched into Python and two
+      dicts built on the critical path at 5e (a scratch corpus: 5 s of
+      2.75M seasons -- ~55 s at production's 31M). season_races is final
+      from the write-back's commit (built from pa_races, which nothing here
+      writes; dropped only at 5e), so side by side it is read from then, on
+      its own connection, while the main connection waits on rule 4's
+      SQL; the same statement, the same dicts in the same order."""
+    cur.execute("SELECT person_id, acad, races FROM season_races")
+    race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    seasons_of = {}
+    for (pid, _ay) in race_count:
+        seasons_of[pid] = seasons_of.get(pid, 0) + 1
+    return race_count, seasons_of
 
 
 def _resolve(cur, side=None):
@@ -3630,7 +4032,12 @@ def _resolve(cur, side=None):
     _sr_staged = False
     if _ov:
         runTimed(cur, _FLD_BEST_PRE_BUILD, label="[4] fld_best_pre, beside [2c round 1]")
-        if _paReady(cur):
+        if _SR_BUILT:
+            # the build's person shards made its rows (see PERSON SHARDS)
+            runTimed(cur, "ANALYZE season_races",
+                     label="[4] season_races (from the shards) analyzed")
+            _sr_staged = True
+        elif _paReady(cur):
             runTimed(cur, f"""DROP TABLE IF EXISTS season_races;
                 CREATE UNLOGGED TABLE season_races AS {_SEASON_RACES_PA};
                 ANALYZE season_races""", label="[4] season_races, beside [2c round 1]")
@@ -3644,10 +4051,9 @@ def _resolve(cur, side=None):
     for _round in (1, 2):
         _tq = time.time()
         if _round == 1:
-            _rows = _here("[2c round 1] field", _fetch(_BARE_FIELD_SQL, _bare_field_args))
+            _rows = _here("[2c round 1] field", _bareFieldJob("gs_bf1"))
         else:
-            cur.execute(_BARE_FIELD_SQL, _bare_field_args)
-            _rows = cur.fetchall()
+            _rows = bareFieldRows(cur, _bare_field_args, tag="gs_bf2")
         got = _resolveBareClassByField(acad, _rows)
         del _rows
         n_bare_field += got
@@ -3678,6 +4084,10 @@ def _resolve(cur, side=None):
             side.submit("[8] athlete_season adult pools", adultPoolRows)
         if "[8] club rows" not in side.futs:
             side.submit("[8] club rows", _clubPrepSide, commit=True)
+        if _sr_staged:
+            # ★ 5e's 31M-row read of season_races and its two dicts, in a
+            #   thread while rule 4's staging runs (see _raceCountRead)
+            side.submit("[5e] season_races rows", _raceCountRead, workers=BG_WORKERS)
         tick("[2c] write-back committed, the reads after it started", _tq)
 
     # ! THE METHOD NAME IS DERIVED FROM THE LEVEL, NOT ASKED FOR SEPARATELY.
@@ -4069,12 +4479,8 @@ def _resolve(cur, side=None):
     hs_codes = _bg.submit(_hsTeamCodes)
     _bg.shutdown(wait=False)
     t_rc = time.time()
-    cur.execute("SELECT person_id, acad, races FROM season_races")
-    race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    race_count, seasons_of = _here("[5e] season_races rows", _raceCountRead)
     cur.execute("DROP TABLE IF EXISTS season_races")
-    seasons_of = {}
-    for (pid, _ay) in race_count:
-        seasons_of[pid] = seasons_of.get(pid, 0) + 1
     print(f"    [5e] races per season counted: {len(race_count):,} seasons "
           f"({time.time() - t_rc:.0f}s)", flush=True)
     _tq = time.time()

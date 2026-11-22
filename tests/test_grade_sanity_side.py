@@ -371,7 +371,10 @@ def test_side_by_side_writes_the_same_tables():
     cx, test_dsn = _load(dsn, seed=7, n_people=3000)
     try:
         runs = {m: _run(cx, test_dsn, m, e) for m, e in (
-            ("seq", {GS.SIDE_ENV: "0"}),
+            # the 2026-11-16 statements: one connection, the event joins
+            # unstaged (2026-11-22)
+            ("seq", {GS.SIDE_ENV: "0", GS.EVENT_STAGED_ENV: "0"}),
+            ("seqst", {GS.SIDE_ENV: "0"}),
             ("side", {GS.SIDE_ENV: "1"}),
             ("fail", {GS.SIDE_ENV: "1", "XCP_GRADE_SANITY_SIDE_TIMEOUT": "1ms"}))}
         tabs, idx, out = runs["seq"]
@@ -379,6 +382,9 @@ def test_side_by_side_writes_the_same_tables():
         # the overlap (2026-11-20): fld_best from [2]'s grouping, patched
         assert "fld_best_pre" not in out and "fld_best: fld_best_pre" in runs["side"][2]
         assert "failed on its own connection" in runs["fail"][2]
+        # the person shards (2026-11-22) ran, and the staged event joins
+        assert "person shard 4 of 4" in runs["side"][2]
+        assert "single statement instead" not in runs["side"][2] + runs["seqst"][2]
         assert {"grade_fix", "grade_untrusted", "allraces", "gradekind"} <= set(tabs)
         c = cx.cursor()
         # every rule fired on the corpus
@@ -387,7 +393,7 @@ def test_side_by_side_writes_the_same_tables():
         assert {"corroborated", "pinned", "bare_class", "bare_field", "field", "no_grades",
                 "stale_grade", "elite_field", "post_collegiate", "adult_club",
                 "contradicted", "thin_field", "team_level", "no_evidence"} <= methods, methods
-        for mode in ("side", "fail"):
+        for mode in ("seqst", "side", "fail"):
             m_tabs, m_idx, _ = runs[mode]
             assert sorted(m_tabs) == sorted(tabs), mode
             assert m_idx == idx, (mode, m_idx)
