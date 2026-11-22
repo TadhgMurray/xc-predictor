@@ -5,6 +5,8 @@
 #   bash deploy/pg_bulk_tuning.sh --show     # current values + checkpoint counters
 #   bash deploy/pg_bulk_tuning.sh --apply    # set them, reload
 #   bash deploy/pg_bulk_tuning.sh --revert   # back to postgresql.conf's values, reload
+#   bash deploy/pg_bulk_tuning.sh --minimal  # wal_level minimal: RESTARTS POSTGRES
+#   bash deploy/pg_bulk_tuning.sh --replica  # wal_level replica again: RESTARTS POSTGRES
 #
 # ★ WHY (2026-11-22, owner: "get really experimental"). Every big step
 #   rewrites a 20-70 GB table (05's merges, 08's results rebuilds, the
@@ -29,16 +31,33 @@
 #                         index builds and parallel sorts. Left at 16 when
 #                         max_worker_processes is lower than 24.
 #
-# ! wal_level STAYS replica (docs/REPLICA-PLAN.md plans a hot standby).
-#   Every setting here is reload-only; nothing here restarts Postgres or the
-#   site. --revert puts every one back.
+# ! wal_level: --apply/--revert never touch it; they are reload-only and
+#   restart nothing. --minimal / --replica change it and RESTART POSTGRES
+#   (a few seconds; the site's pool reconnects; the site's own service is
+#   NOT restarted).
+#
+# ★ --minimal (2026-11-22, owner: the standby is not running; backups are
+#   pg_dump, deploy/backup_db.sh, so there is no WAL archive or PITR to
+#   lose). At wal_level minimal a table or index created in a transaction
+#   and filled in that same transaction writes NO WAL: the file is fsynced
+#   at commit instead. The pipeline's big writes already qualify, checked
+#   2026-11-22: merge_column's CREATE TABLE AS (05), the go-live's
+#   DROP/CREATE/COPY/CREATE INDEX in one transaction (pair_write*.py), the
+#   rankings' UNLOGGED load + SET LOGGED and the ordered CREATE+INSERT
+#   rewrite (build_ranking_results.py), and every CREATE INDEX. So their
+#   data is written once instead of twice. Crash safety is unchanged.
+# ! BEFORE BUILDING THE STANDBY run --replica: streaming replication needs
+#   replica (deploy/replica/primary_prepare.sh warns about minimal and sets
+#   replica, but only takes effect after a restart).
+#   Refuses while a pipeline session is running (a restart would kill it);
+#   XCP_PG_RESTART_FORCE=1 overrides.
 set -euo pipefail
 PSQL=(runuser -u postgres -- psql -X -q -d "${XCP_DB_NAME:-xc_predictor}" -v ON_ERROR_STOP=1)
 SETTINGS=(max_wal_size checkpoint_timeout checkpoint_completion_target wal_compression
           max_parallel_workers)
 
 show() {
-  for s in "${SETTINGS[@]}" max_worker_processes wal_level server_version; do
+  for s in "${SETTINGS[@]}" max_worker_processes wal_level max_wal_senders server_version; do
     printf '  %-30s %s\n' "$s" "$("${PSQL[@]}" -tAc "SHOW $s")"
   done
   if [ "$("${PSQL[@]}" -tAc "SELECT current_setting('server_version_num')::int >= 170000")" = t ]; then
@@ -46,6 +65,30 @@ show() {
   else
     "${PSQL[@]}" -c "SELECT checkpoints_timed AS timed, checkpoints_req AS forced_by_wal FROM pg_stat_bgwriter"
   fi
+}
+
+_restartWith() {               # $1 = wal_level, $2 = max_wal_senders
+  local busy
+  busy=$("${PSQL[@]}" -tAc "SELECT count(*) FROM pg_stat_activity
+           WHERE application_name = 'xcp-pipeline' AND pid <> pg_backend_pid()")
+  if [ "${busy:-0}" -gt 0 ] && [ "${XCP_PG_RESTART_FORCE:-0}" != 1 ]; then
+    echo "  $busy pipeline session(s) connected: wait for the run to finish" >&2
+    echo "  (or XCP_PG_RESTART_FORCE=1 to restart anyway)" >&2
+    exit 1
+  fi
+  if [ "$1" = minimal ] && [ "$("${PSQL[@]}" -tAc "SHOW archive_mode")" != off ]; then
+    echo "  archive_mode is on: minimal needs it off (a WAL archive exists?)" >&2
+    exit 1
+  fi
+  "${PSQL[@]}" <<SQL
+ALTER SYSTEM SET wal_level = '$1';
+ALTER SYSTEM SET max_wal_senders = $2;
+SQL
+  echo "  restarting Postgres for wal_level=$1 (the site reconnects on its own)"
+  systemctl restart postgresql
+  for _ in $(seq 60); do "${PSQL[@]}" -tAc "SELECT 1" >/dev/null 2>&1 && break; sleep 1; done
+  show
+  [ "$("${PSQL[@]}" -tAc "SHOW wal_level")" = "$1" ] || { echo "  wal_level is NOT $1" >&2; exit 1; }
 }
 
 case "${1:---show}" in
@@ -68,5 +111,7 @@ SQL
     for s in "${SETTINGS[@]}"; do "${PSQL[@]}" -c "ALTER SYSTEM RESET $s"; done
     "${PSQL[@]}" -c "SELECT pg_reload_conf()"
     sleep 1; show ;;
-  *) echo "usage: $0 --show | --apply | --revert" >&2; exit 2 ;;
+  --minimal) _restartWith minimal 0 ;;
+  --replica) _restartWith replica 10 ;;
+  *) echo "usage: $0 --show | --apply | --revert | --minimal | --replica" >&2; exit 2 ;;
 esac
