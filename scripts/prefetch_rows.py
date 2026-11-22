@@ -63,13 +63,18 @@ class Prefetch:
             self._put(_Fail(exc))
 
     def __iter__(self):
+        for block in self.blocks():
+            yield from block
+
+    def blocks(self):
+        """The fetched blocks themselves, in order."""
         while True:
             item = self._q.get()
             if item is _END:
                 return
             if isinstance(item, _Fail):
                 raise item.exc
-            yield from item
+            yield item
 
     def close(self):
         """Stop reading and wait for the reader (at most the block it is

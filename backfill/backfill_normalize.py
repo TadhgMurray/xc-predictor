@@ -37,6 +37,7 @@ import math                           # ln() for the distance-aware pace floor
 import re                             # the wheelchair/seated title pattern
 import heapq                          # fixed-size top/bottom-N heaps (sanity panel)
 import random                         # bounded reservoir sample (approx percentiles)
+from bisect import bisect_left        # _WxStore: a cell's days
 import argparse
 import concurrent.futures as cf       # the index builds, several at a time
 from dataclasses import dataclass, field
@@ -430,11 +431,17 @@ class GeometryIndex:
     def __init__(self, anet, tfrrs):
         self._anet = anet        # (meet,div,event) -> (type, length)
         self._tfrrs = tfrrs      # meet -> (type, length)
+        self._anet_s = None      # the same, keyed "meet|div|event" (_strKeyed)
 
     @classmethod
     # Run the two bulk loads (one query each) and wrap them.
     def build(cls, cur):
-        return cls(_loadAnetGeometry(cur), _loadTfrrsGeometry(cur))
+        idx = cls(_loadAnetGeometry(cur), _loadTfrrsGeometry(cur))
+        if _arrayLookupsOn():
+            idx._anet_s = _strKeyed(idx._anet)
+            if idx._anet_s is not None:
+                idx._anet = None
+        return idx
 
     # Return (track_type, track_length) for a row, or (None, None) on a miss.
     # (None, None) -> normalize_distance treats it as the 400m-flat reference,
@@ -444,7 +451,43 @@ class GeometryIndex:
         if source == "tfrrs":
             return self._tfrrs.get(meet_id, (None, None))
         # anet (and any anet-shaped source): event-grain key
+        if self._anet_s is not None:
+            if _keyable(meet_id) and _keyable(div_id) and _keyable(event_id):
+                return self._anet_s.get(f"{meet_id}|{div_id}|{event_id}", (None, None))
+            return _strKeyedTuples(self._anet_s).get((meet_id, div_id, event_id),
+                                                     (None, None))
         return self._anet.get((meet_id, div_id, event_id), (None, None))
+
+
+# ★ A TUPLE-KEYED LOOKUP AS A STR-KEYED ONE (2026-11-22, see _IntMap): a
+#   dict whose keys are all str is read without touching the stored key
+#   (CPython's str lookup compares in place), so a forked worker reading
+#   it copies nothing, and the distinct values are shared objects, so the
+#   value's refcount writes land on a few pages. Key parts of int or None
+#   only: "meet|div|event" names one tuple and no other. Anything else
+#   keeps the tuple dict (_strKeyed returns None).
+def _keyable(x):
+    return x is None or type(x) is int
+
+
+def _strKeyed(d):
+    out, seen = {}, {}
+    for k, v in d.items():
+        if type(k) is not tuple or len(k) != 3 or not all(_keyable(x) for x in k):
+            return None
+        # one object per distinct value -- by repr, so 400 and 400.0 stay apart
+        if type(v) is tuple and all(type(x) in (str, int, float, type(None)) for x in v):
+            v = seen.setdefault(repr(v), v)
+        out[f"{k[0]}|{k[1]}|{k[2]}"] = v
+    return out
+
+
+def _strKeyedTuples(s):
+    """The tuple-keyed dict back, for a key part of another type (a bigint
+    column never gives one), which then compares by == as the dict did."""
+    def part(x):
+        return None if x == "None" else int(x)
+    return {tuple(part(x) for x in k.split("|")): v for k, v in s.items()}
 
 
 # ================================================================== #
@@ -820,6 +863,8 @@ class WeatherIndex:
                   f" every race reads the {hours} window")
             race_wx = {}
         print(f"  weather: {len(race_wx):,} {sport} races read at their own start")
+        if _arrayLookupsOn():
+            wx = _WxStore.fromDict(wx)
         return cls(anet, tfrrs, wx, race_wx)
 
     # lookup: (source, meet_id, race_date[, div, event]) -> (weather dict | None,
@@ -851,6 +896,103 @@ class WeatherIndex:
         return weather, course
 
 
+# ★ THE GRID AGGREGATE IN ARRAYS (2026-11-22, see _IntMap). _loadWxDict's
+#   {(cell_lat, cell_lon, 'YYYY-MM-DD'): (temp, wind, precip, soil, snow)}
+#   cost each forked worker its own copy: the key, the value tuple and its
+#   floats are increfed on every hit (+140 MB a worker on the scratch XC
+#   run, 750,834 cell-days). Here the cells and the days sit in two small
+#   dicts, each cell's days as a sorted run of an int array (bisect), the
+#   five values in a float array with a NULL mask -- the same doubles come
+#   back out -- none of which a read writes.
+# ! THE SAME ANSWERS: get((lat, lon, iso)) is the dict's value or default.
+#   A day matches only when the iso text is that day's own isoformat (the
+#   days dict holds exactly those), as the string key did; anything the
+#   arrays cannot hold exactly (a value not a float or None, a key of
+#   another shape) keeps the dict.
+class _WxStore:
+
+    def __init__(self, cells, days, ords, vals, nulls, n):
+        self._cells, self._days, self._ords = cells, days, ords
+        self._vals, self._nulls, self._n = vals, nulls, n
+        self._last = (None, None)
+
+    @classmethod
+    def fromDict(cls, wx):
+        import numpy as np
+        from array import array
+        cells, days, keys, vals, nulls = {}, {}, array("q"), array("d"), bytearray()
+        for k, v in wx.items():
+            if type(k) is not tuple or len(k) != 3 or type(k[2]) is not str \
+                    or type(v) is not tuple or len(v) != 5:
+                return wx
+            try:
+                od = days.get(k[2])
+                if od is None:
+                    day = date.fromisoformat(k[2])
+                    if day.isoformat() != k[2]:
+                        return wx
+                    od = days[k[2]] = day.toordinal()
+                if k[0] != k[0] or k[1] != k[1]:     # a NaN cell: only the dict is exact
+                    return wx
+                ci = cells.setdefault((k[0], k[1]), len(cells))
+            except (ValueError, TypeError):
+                return wx
+            for x in v:
+                if x is None:
+                    vals.append(0.0)
+                    nulls.append(1)
+                elif type(x) is float:
+                    vals.append(x)
+                    nulls.append(0)
+                else:
+                    return wx
+            keys.append((ci << 32) | od)
+        n = len(keys)
+        if not n:
+            return wx
+        k = np.frombuffer(keys, dtype=np.int64)
+        order = np.argsort(k, kind="stable")
+        k = k[order]
+        bounds = np.searchsorted(k >> 32, np.arange(len(cells) + 1))
+        spans = {cell: (int(bounds[i]), int(bounds[i + 1])) for cell, i in cells.items()}
+        ords = array("i", (k & 0xFFFFFFFF).astype(np.int32).tobytes())
+        v = array("d", np.frombuffer(vals, dtype=np.float64).reshape(n, 5)[order].tobytes())
+        nl = np.frombuffer(bytes(nulls), dtype=np.uint8).reshape(n, 5)[order].tobytes()
+        return cls(spans, days, ords, v, nl, n)
+
+    def __len__(self):
+        return self._n
+
+    def get(self, key, default=None):
+        # a meet's rows ask one key in turn: the last answer, kept per process
+        if key == self._last[0]:
+            v = self._last[1]
+        else:
+            v = self._find(key)
+            self._last = (key, v)
+        return default if v is None else v
+
+    def _find(self, key):
+        if type(key) is not tuple or len(key) != 3:
+            return None
+        span = self._cells.get((key[0], key[1]))
+        if span is None:
+            return None
+        od = self._days.get(key[2]) if type(key[2]) is str else None
+        if od is None:
+            return None
+        ords = self._ords
+        i = bisect_left(ords, od, span[0], span[1])
+        if i >= span[1] or ords[i] != od:
+            return None
+        j = 5 * i
+        out = self._vals[j:j + 5].tolist()
+        nl = self._nulls[j:j + 5]
+        if nl != b"\0\0\0\0\0":
+            out = [None if f else x for x, f in zip(out, nl)]
+        return tuple(out)
+
+
 # _weatherEnabled: is the per-sport weather artifact present? Only then is the
 # heavy weather index worth building; otherwise weather stays a no-op.
 def _weatherEnabled(sport):
@@ -860,6 +1002,279 @@ def _weatherEnabled(sport):
 # ================================================================== #
 # NON-GEOMETRY LOOKUPS  —  distance + gender + date, in memory (as before)
 # ================================================================== #
+
+# ★ THE PER-PERSON LOOKUPS IN ARRAYS, SO THE FORKED WORKERS SHARE ONE COPY
+#   (2026-11-22). 05_backfill_xc peaked at 67 GB with 2 workers, _tf at
+#   115 GB with 4: each forked worker ended up with its own copy of most of
+#   the parent's lookups, gc.freeze() notwithstanding. A dict hit on an int
+#   or tuple key INCREFS THE STORED KEY (CPython's generic lookup holds a
+#   reference across the == compare; only all-str dicts skip it), and the
+#   returned value is increfed too -- so every hit writes to the shared
+#   page that holds the key, and the worker gets its own copy of it.
+#   Measured (scratch Postgres, 1.5M people, 9.7M season levels, 3.0M
+#   grade_fix, 4.3M XC / 3.0M track rows; the real loaders and row_fn, a
+#   forked child reading half the meets): row_fn alone made 1,297 MB of
+#   the parent private in each XC worker (season levels + grade_fix 1,037,
+#   genders 132, the weather grid 141 -- _WxStore) and 1,142 MB in each
+#   track worker. With the arrays: 63 MB and 28 MB.
+#   The whole step, 05 as the pipeline runs it (--apply, copy path):
+#                       parent RSS  worker Private_Dirty  summed RSS  summed PSS
+#     XC, 2 workers  HEAD 3,966 MB      1,727 MB          10,393 MB   6,252 MB
+#                    now  1,966 MB        511 MB           5,343 MB   2,595 MB
+#     TF, 4 workers  HEAD 4,219 MB        997 MB          19,402 MB   7,658 MB
+#                    now  1,855 MB        186 MB           8,914 MB   2,509 MB
+#   (summed RSS is what scripts/jobrun.py reports as the step's peak; what
+#   a worker still holds is its own: the rows, the census, the COPY
+#   buffer). Wall clock 137 -> 128 s and 61 -> 53 s; a worker's rows/s
+#   22.6k -> 22.9k (XC), 26.7k -> 32.0k (track).
+#   Here those maps are two numpy arrays each -- the keys sorted (int64),
+#   the values as codes into a tuple of the distinct values -- which a read
+#   never writes, and ~9 bytes an entry where the dict held ~100. The row
+#   loop reads them a block at a time (row_fn.prefetch, _rowsOf): one
+#   searchsorted for the block's keys, a small private dict of the hits,
+#   and row_fn reads that dict exactly as it read the big one.
+# ! THE SAME ANSWERS: a key's value is the last one the loader saw for it
+#   (as the dict's assignment kept), non-int keys (a NULL athlete_id) keep
+#   their own small dict, and a block's dict holds every key its rows can
+#   ask for. A key that cannot be int64 sends the whole map back to a dict.
+#   XCP_BACKFILL_ARRAY_LOOKUPS=0 loads the dicts as before.
+def _arrayLookupsOn():
+    import os
+    return os.environ.get("XCP_BACKFILL_ARRAY_LOOKUPS", "1") != "0"
+
+
+class _IntMap:
+    """{int: value} read without writing: sorted int64 `keys`, `codes` into
+    the tuple `values`; `extra` holds the few non-int keys (None)."""
+    __slots__ = ("keys", "codes", "values", "extra")
+
+    def __init__(self, keys, codes, values, extra):
+        self.keys, self.codes, self.values, self.extra = keys, codes, values, extra
+
+    def __len__(self):
+        return len(self.keys) + len(self.extra)
+
+    def __bool__(self):
+        return len(self) > 0
+
+    def _index(self, k):
+        if type(k) is not int:
+            return None
+        try:
+            i = int(self.keys.searchsorted(k))
+        except OverflowError:                  # never stored: every key is int64
+            return None
+        return i if i < len(self.keys) and int(self.keys[i]) == k else None
+
+    def get(self, k, default=None):
+        if type(k) is not int:
+            return self.extra.get(k, default)
+        i = self._index(k)
+        return default if i is None else self.values[self.codes[i]]
+
+    def __contains__(self, k):
+        return k in self.extra if type(k) is not int else self._index(k) is not None
+
+    def __getitem__(self, k):
+        v = self.get(k, _IntMap)
+        if v is _IntMap:
+            raise KeyError(k)
+        return v
+
+    def subset(self, ks):
+        """{k: value} for the keys of `ks` (ints) that are stored."""
+        if not ks:
+            return {}
+        import numpy as np
+        try:
+            q = np.fromiter(ks, dtype=np.int64, count=len(ks))
+        except OverflowError:
+            return {k: v for k in ks for v in (self.get(k, _IntMap),) if v is not _IntMap}
+        n = len(self.keys)
+        if not n:
+            return {}
+        i = self.keys.searchsorted(q)
+        i[i == n] = 0
+        hit = self.keys[i] == q
+        vals = self.values
+        return dict(zip(q[hit].tolist(), [vals[c] for c in self.codes[i[hit]].tolist()]))
+
+
+class _IntMapBuilder:
+    """add(key, value) in the loader's order, then build(): an _IntMap, or
+    the plain dict when a key is an int beyond int64."""
+
+    def __init__(self):
+        from array import array
+        self._k, self._c = array("q"), array("l")
+        self._codes, self._vals, self._extra = {}, [], {}
+        self._dict = None
+
+    def add(self, key, value):
+        if self._dict is not None:
+            self._dict[key] = value
+            return
+        if type(key) is not int:
+            self._extra[key] = value
+            return
+        c = self._codes.get(value)
+        if c is None:
+            c = self._codes[value] = len(self._vals)
+            self._vals.append(value)
+        try:
+            self._k.append(key)
+        except OverflowError:
+            d = dict(zip(self._k, (self._vals[c] for c in self._c)))
+            d.update(self._extra)               # (key spaces apart: order is moot)
+            d[key] = value
+            self._dict = d
+            return
+        self._c.append(c)
+
+    def build(self):
+        import numpy as np
+        if self._dict is not None:
+            return self._dict
+        keys = np.frombuffer(self._k, dtype=np.int64) if len(self._k) else np.zeros(0, np.int64)
+        codes = np.frombuffer(self._c, dtype=np.int64 if self._c.itemsize == 8 else np.int32) \
+            if len(self._c) else np.zeros(0, np.int32)
+        order = np.argsort(keys, kind="stable")
+        keys, codes = keys[order], codes[order]
+        del order
+        if len(keys) > 1:                       # a repeated key: the LAST one wins
+            last = np.empty(len(keys), dtype=bool)
+            last[:-1] = keys[1:] != keys[:-1]
+            last[-1] = True
+            if not last.all():
+                keys, codes = keys[last], codes[last]
+        ct = np.int8 if len(self._vals) < 128 else np.int16 if len(self._vals) < 32768 else np.int32
+        out = _IntMap(np.ascontiguousarray(keys), codes.astype(ct), tuple(self._vals),
+                      self._extra)
+        self._k = self._c = None
+        return out
+
+
+class _GenderMap:
+    """_loadGenders' {athlete_id: g, ("pg", person_id): g} as two _IntMaps."""
+    __slots__ = ("prof", "pg")
+
+    def __init__(self, prof, pg):
+        self.prof, self.pg = prof, pg
+
+    def __len__(self):
+        return len(self.prof) + len(self.pg)
+
+    def __bool__(self):
+        return len(self) > 0
+
+    def get(self, k, default=None):
+        if type(k) is tuple:
+            if len(k) == 2 and k[0] == "pg":
+                return self.pg.get(k[1], default)
+            return default
+        return self.prof.get(k, default)
+
+    def __contains__(self, k):
+        return self.get(k, _IntMap) is not _IntMap
+
+    def __getitem__(self, k):
+        v = self.get(k, _IntMap)
+        if v is _IntMap:
+            raise KeyError(k)
+        return v
+
+    def view(self, aids, pids):
+        """The plain dict _rowGender reads for rows with these athlete and
+        person ids -- every key those rows can ask for."""
+        out = dict(self.prof.extra)             # a NULL athlete_id's answer
+        for k, v in self.pg.extra.items():
+            out[("pg", k)] = v
+        out.update(self.prof.subset(aids | pids))
+        for k, v in self.pg.subset(pids).items():
+            out[("pg", k)] = v
+        return out
+
+
+class _SportMaps:
+    """_loadSeasonLevels' {(key, sport): level} as one _IntMap per sport."""
+    __slots__ = ("by",)
+
+    def __init__(self, by):
+        self.by = by
+
+    def __len__(self):
+        return sum(len(m) for m in self.by.values())
+
+    def __bool__(self):
+        return len(self) > 0
+
+    def get(self, k, default=None):
+        if type(k) is not tuple or len(k) != 2:
+            return default
+        m = self.by.get(k[1])
+        return default if m is None else m.get(k[0], default)
+
+    def __contains__(self, k):
+        return self.get(k, _IntMap) is not _IntMap
+
+    def view(self, keys, sport):
+        m = self.by.get(sport)
+        if m is None:
+            return {}
+        out = {(k, sport): v for k, v in m.extra.items()}
+        for k, v in m.subset(keys).items():
+            out[(k, sport)] = v
+        return out
+
+
+def _intMapDict(m):
+    """An _IntMap back as the dict it replaced."""
+    out = dict(zip(m.keys.tolist(), [m.values[c] for c in m.codes.tolist()]))
+    out.update(m.extra)
+    return out
+
+
+def _lookupViews(rows, genders, season_levels, college_first, sport):
+    """(genders, season_levels, college_first) as small dicts holding every
+    key row_fn can ask of them for these rows: _rowGender's three keys,
+    _seasonPool's season key (person * 10000 + academic year) and person."""
+    aids, pids, sl_keys = set(), set(), set()
+    ays = {}
+    for row in rows:
+        a, p = row[_AID], row[_PERSON]
+        if type(a) is int:
+            aids.add(a)
+        if type(p) is int:
+            pids.add(p)
+            if p:
+                d = row[_DATE]
+                ay = ays.get(d, ays)
+                if ay is ays:
+                    try:
+                        ay = _academicYearOf(d, sport)
+                    except Exception:           # noqa: BLE001 -- _seasonPool raises it
+                        ay = None               #   itself, on the row that reaches it
+                    ays[d] = ay
+                if ay:
+                    sl_keys.add(p * 10000 + ay)
+    g = genders.view(aids, pids) if isinstance(genders, _GenderMap) else genders
+    sl = list(season_levels)
+    if isinstance(sl[0], _SportMaps):
+        sl[0] = sl[0].view(sl_keys, sport)
+    for i in (1, 2):
+        if isinstance(sl[i], _IntMap):
+            sl[i] = _subsetView(sl[i], sl_keys)
+    cf = _subsetView(college_first, pids) if isinstance(college_first, _IntMap) \
+        else college_first
+    if len(sl) > 3:
+        sl[3] = cf
+    return g, tuple(sl), cf
+
+
+def _subsetView(m, ks):
+    out = dict(m.extra)
+    out.update(m.subset(ks))
+    return out
 
 # athlete_id -> gender, one dict lookup per row (faster than a join).
 #
@@ -894,7 +1309,15 @@ def _loadGenders(cur):
         ) s
         ORDER BY athlete_id, n DESC, gender DESC
     """)
-    out = {aid: g for aid, g in cur}
+    arrays = _arrayLookupsOn()
+    if not arrays:
+        out = {aid: g for aid, g in cur}
+    else:                                       # the same pairs, in arrays (see _IntMap)
+        prof = _IntMapBuilder()
+        for aid, g in cur:
+            prof.add(aid, g)
+        prof = prof.build()
+        pg = _IntMapBuilder()
     # ★ THE ROWS OUTRANK THE PROFILES (issue 164): where person_gender has a
     #   verdict from the divisions the person raced under, it replaces the
     #   profile majority. Person level only here: the normalisation pool is
@@ -914,10 +1337,21 @@ def _loadGenders(cur):
         n = 0
         for pid, g in cur:
             if g in ("M", "F"):
-                out[("pg", pid)] = g
+                if arrays:
+                    pg.add(pid, g)
+                else:
+                    out[("pg", pid)] = g
                 n += 1
         print(f"  genders: {n:,} from person_gender (the rows), the rest "
               f"from the profiles")
+    if arrays:
+        pg = pg.build()
+        if type(prof) is dict or type(pg) is dict:   # a key past int64: the dict, as before
+            out = dict(prof.items()) if type(prof) is dict else _intMapDict(prof)
+            for pid, g in (pg.items() if type(pg) is dict else _intMapDict(pg).items()):
+                out[("pg", pid)] = g
+            return out
+        return _GenderMap(prof, pg)
     return out
 
 
@@ -989,14 +1423,15 @@ def _loadGradeFix(cur):
     if cur.fetchone()[0] is None:
         return {}
     cur.execute("SELECT person_id, season, grade, level FROM grade_fix")
-    out = {}
+    out = _IntMapBuilder() if _arrayLookupsOn() else {}
+    put = out.add if type(out) is not dict else out.__setitem__
     for pid, season, grade, level in cur:
         if pid is None or season is None:
             continue
-        out[int(pid) * 10000 + int(season)] = (
+        put(int(pid) * 10000 + int(season), (
             sys.intern(grade) if grade else None,
-            sys.intern(level) if level else None)
-    return out
+            sys.intern(level) if level else None))
+    return out if type(out) is dict else out.build()
 
 
 def _loadCollegeFirst(cur):
@@ -1018,7 +1453,13 @@ def _loadCollegeFirst(cur):
                            {seasonYearSqlInt(None, "first_date::text")}
                     FROM   college_first_season
                     WHERE  first_date IS NOT NULL""")
-    return {int(pid): int(ay) for pid, ay in cur if pid is not None}
+    if not _arrayLookupsOn():
+        return {int(pid): int(ay) for pid, ay in cur if pid is not None}
+    out = _IntMapBuilder()
+    for pid, ay in cur:
+        if pid is not None:
+            out.add(int(pid), int(ay))
+    return out.build()
 
 
 def _loadSeasonLevels(cur):
@@ -1053,6 +1494,25 @@ def _loadSeasonLevels(cur):
     cur.execute("""SELECT person_id, ay, sport, level
                    FROM   athlete_season_level
                    WHERE  level IS NOT NULL""")
+    if _arrayLookupsOn():                       # the same pairs, in arrays (see _IntMap)
+        by, combined = {}, _IntMapBuilder()
+        for pid, ay, sport, lvl in cur:
+            if pid is None or ay is None:
+                continue
+            key = int(pid) * 10000 + int(ay)
+            if sport == "ALL":
+                combined.add(key, sys.intern(lvl))
+            else:
+                b = by.get(sport)
+                if b is None:
+                    b = by[sport] = _IntMapBuilder()
+                b.add(key, sys.intern(lvl))
+        by = {sp: b.build() for sp, b in by.items()}
+        by_sport = _SportMaps(by)
+        if any(type(m) is dict for m in by.values()):   # a key past int64
+            by_sport = {(k, sp): v for sp, m in by.items()
+                        for k, v in (m.items() if type(m) is dict else _intMapDict(m).items())}
+        return by_sport, combined.build(), _loadGradeFix(cur), _loadCollegeFirst(cur)
     by_sport, combined = {}, {}
     for pid, ay, sport, lvl in cur:
         if pid is None or ay is None:
@@ -2286,6 +2746,17 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
     #   onto the rated pool right after this step; this line is how many it
     #   will have to, and which pairs, before it runs.
     pool_split = {}
+    # ★ THE ARRAY LOOKUPS A BLOCK AT A TIME (see _IntMap): prefetch(rows)
+    #   points the three names below at small dicts holding every key these
+    #   rows can ask for; _rowsOf calls it before each block's first row.
+    full = (genders, season_levels, college_first)
+    batched = (isinstance(genders, _GenderMap) or isinstance(college_first, _IntMap)
+               or any(isinstance(m, (_IntMap, _SportMaps)) for m in season_levels[:3]))
+
+    def prefetch(rows):
+        nonlocal genders, season_levels, college_first
+        genders, season_levels, college_first = _lookupViews(
+            rows, full[0], full[1], full[2], cfg.sport)
 
     def fn(row):
         # 0) RESULT DROP — a hand-confirmed cooked individual row (real division,
@@ -2554,7 +3025,36 @@ def _makeRowFn(cfg, geom_idx, genders, season_levels, meet_distances,
         _countSplit(pool_split, row, pool)
         return row[_ID], out["normalized_time"], _SkipReason.WRITTEN, trace
     fn.pool_split = pool_split
+    if batched:
+        fn.prefetch = prefetch
     return fn
+
+
+# _rowsOf
+# Purpose : the stream's rows, one by one -- a block of cfg.batch at a time
+#           through row_fn.prefetch when the row function has one (the array
+#           lookups, see _IntMap), else the cursor itself as before.
+def _rowsOf(stream, cfg, row_fn):
+    prefetch = getattr(row_fn, "prefetch", None)
+    if prefetch is None:
+        yield from stream
+        return
+    while True:
+        block = stream.fetchmany(cfg.batch)
+        if not block:
+            return
+        prefetch(block)
+        yield from block
+
+
+def _blocksThrough(blocks, row_fn):
+    """Prefetch's rows, each block through row_fn.prefetch first (on the
+    thread that runs row_fn)."""
+    prefetch = getattr(row_fn, "prefetch", None)
+    for block in blocks:
+        if prefetch is not None:
+            prefetch(block)
+        yield from block
 
 
 # _countSplit
@@ -3863,7 +4363,7 @@ def _drainStream(stream, write_conn, cfg, row_fn, apply, limit, target):
     census = _Census()                             # counts + extremes + reservoir
     start = time.time()
 
-    for row in stream:                             # lazy pull; no re-seek per row
+    for row in _rowsOf(stream, cfg, row_fn):       # lazy pull; no re-seek per row
         skipped += _accumulate(row_fn, row, updates, census)
         processed += 1
 
@@ -3925,7 +4425,9 @@ def _drainOverlapped(stream, write_conn, cfg, row_fn, apply, target):
                      depth=1, name=f"backfill_write_{cfg.sport.lower()}")
               if apply else None)
     try:
-        for row in reader:
+        rows = (_blocksThrough(reader.blocks(), row_fn)
+                if hasattr(row_fn, "prefetch") else reader)
+        for row in rows:
             skipped += _accumulate(row_fn, row, updates, census)
             processed += 1
             if len(updates) >= cfg.batch:
