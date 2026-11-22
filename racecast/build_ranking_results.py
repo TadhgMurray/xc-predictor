@@ -2905,15 +2905,23 @@ def _indexSeconds():
         return {}
 
 
+_INDEX_SECONDS_LOCK = __import__("threading").Lock()
+
+
 def _saveIndexSeconds(took):
-    try:
-        import json
-        tmp = f"{_INDEX_SECONDS}.{os.getpid()}.tmp"
-        with open(tmp, "w") as fh:
-            json.dump(took, fh, sort_keys=True)
-        os.replace(tmp, _INDEX_SECONDS)
-    except OSError:
-        pass
+    # ! UNDER A LOCK, MERGED INTO WHAT IS ON DISK NOW: two tables' builds
+    #   can finish side by side (_SEASON_TAIL_BESIDE), and each read the
+    #   file when it started -- the second save would put back the first
+    #   one's old seconds.
+    with _INDEX_SECONDS_LOCK:
+        try:
+            import json
+            tmp = f"{_INDEX_SECONDS}.{os.getpid()}.tmp"
+            with open(tmp, "w") as fh:
+                json.dump({**_indexSeconds(), **took}, fh, sort_keys=True)
+            os.replace(tmp, _INDEX_SECONDS)
+        except OSError:
+            pass
 
 
 def buildIndexes(conn, name, like):
@@ -3051,7 +3059,7 @@ def buildIndexes(conn, name, like):
             newname, dt = build(job)
             now[f"{like}/{job[0]}"] = round(dt, 1)
             print(f"    [{dt:7.1f}s] {newname[:60]}")
-    _saveIndexSeconds({**took, **now})
+    _saveIndexSeconds(now)      # merged into the file's current seconds
 
     verifyIndexes(conn, name, like)
     analyze(conn, name)
@@ -4031,7 +4039,40 @@ _SEASON_REWRITE_HASH = os.environ.get("XCP_SEASON_REWRITE_HASH", "1") != "0"
 #   run went no further. Cause not yet found (a lock wait or the overlap's
 #   load); the proven order -- indexes, then the season -- is the default
 #   again. XCP_SEASON_BESIDE_INDEXES=1 turns the overlap back on.
+# ★ THE LIKELY CAUSE (2026-11-22): the shards' nested loop over `home`, a
+#   plan ANALYZE's sample can tip into on any night, in either order -- see
+#   _SEASON_NO_NESTLOOP, which now refuses it. Left off: the owner's call;
+#   _SEASON_TAIL_BESIDE overlaps everything but the shards.
 _SEASON_BESIDE_INDEXES = os.environ.get("XCP_SEASON_BESIDE_INDEXES", "0") == "1"
+
+# ★ athlete_season's TAIL BESIDE ranking_results' INDEXES (2026-11-22; run
+#   20261117_142219: "index ranking_results" 20.5 min, then "athlete_season"
+#   9.4 min, one after the other). Of the season build only the aggregate
+#   (_seasonAggregate, the eight shards) reads ranking_results_new; the
+#   tail -- home states, the unit keys, the board-order rewrite and the
+#   season's own indexes (_seasonFinish, ~330 s on that run) -- reads only
+#   its own tables. So: the rewrite, an ANALYZE (as XCP_SEASON_BESIDE_INDEXES
+#   does), the aggregate ALONE, then the tail in a thread on its own
+#   connection while ranking_results' indexes build. The swap waits for both.
+# ! NOT THE OVERLAP THAT STALLED: the shards never run beside an index
+#   build, so the step's memory peak is still the shards' (the tail adds
+#   one sort and _INDEX_JOBS builds of maintenance_work_mem beside the
+#   ranking_results builds, ~6 GB under XCP_DB_QUIET). And the shards' plan
+#   is guarded (_SEASON_NO_NESTLOOP).
+# ! THE SAME TABLES: the shards' plan is the same with or without the
+#   ranking_results indexes (EXPLAIN on the 6.0M-row lab, every canonical
+#   index built vs none: identical text), so they read the same rows in the
+#   same order and sum the same; the tail reads nothing the index builds
+#   write. tests/test_finish_overlap_equivalence.py compares the tables, row
+#   for row and page for page, and their indexes.
+# ★ MEASURED: the real --stage finish on a 3.0M-row lab corpus (Postgres 16,
+#   4 cores, XCP_RR_ORDERED, XCP_DB_QUIET=1): 72.6 s -> 64.4 s, the tail's
+#   27.8 s inside the indexes' 37.6 s with nothing left to wait for; both
+#   tables identical by (ctid, md5 of the row), the same 34 indexes. Four
+#   cores were already full with the ranking_results builds; on the 24-core
+#   box the tail (~330 s on run 20261117_142219) has idle cores to use.
+#   XCP_SEASON_TAIL_BESIDE=0: indexes, then the whole season, as before.
+_SEASON_TAIL_BESIDE = os.environ.get("XCP_SEASON_TAIL_BESIDE", "1") != "0"
 _SEASON_OVERLAP_SHARDS = max(0, int(os.environ.get("XCP_SEASON_OVERLAP_SHARDS") or 0))
 
 # ★ THE TWO POST-SWAP VACUUMs ON TWO CONNECTIONS AT ONCE (2026-11-13: 78 s
@@ -4059,6 +4100,47 @@ def _seasonWorkMem(conn, cur, ladder, quiet_log=False):
     return None
 
 
+# ! THE SEASON AGGREGATE NEVER RUNS AS A NESTED LOOP OVER `home` (2026-11-22).
+#   EXPLAIN of a shard on the 6.0M-row lab table (scripts/layout_lab.py,
+#   Postgres 16): the shard filter mod(person_id, 8) = k is guessed at 0.5%
+#   of rows, the four-column join to season_med then at ONE row, and the
+#   planner joins `home` (an aggregate: DISTINCT ON over a GROUP BY over a
+#   seq scan) by Nested Loop Left Join with no Materialize -- it re-runs that
+#   whole subtree for every row of the shard (628,211 on the lab). As
+#   planned: cancelled at 300 s and still running. The same statement with
+#   the nested loop refused: Hash Left Join, 16.3 s. The plan sits on a
+#   knife edge of ANALYZE's random sample, and the `home` CTE arrived on
+#   2026-11-10 -- three days before run 20261113_150959, whose eight shards
+#   "never reported" (the stall that turned XCP_SEASON_BESIDE_INDEXES off).
+# ★ SO EACH SHARD (and the one-statement form) IS EXPLAINED FIRST. A plan
+#   with no Nested Loop runs untouched, as today. One with a Nested Loop is
+#   re-planned with enable_nestloop off for that transaction (SET LOCAL),
+#   and kept only if no nested loop or merge join is left -- the hash plan
+#   a healthy night gets on its own (the cheapest plan without a nested
+#   loop); anything else runs as first planned, with a warning.
+# ! THE SAME ROWS AND THE SAME SUMS: a join returns the same rows whatever
+#   its method, `home` holds one row per person (DISTINCT ON), and the hash
+#   plan is the one every run that finished used. XCP_SEASON_NO_NESTLOOP=0
+#   runs every plan as planned, as before.
+_SEASON_NO_NESTLOOP = os.environ.get("XCP_SEASON_NO_NESTLOOP", "1") != "0"
+
+
+def _seasonPlanGuard(cur, sql):
+    """See _SEASON_NO_NESTLOOP. In the caller's transaction, before `sql`
+    runs: '' when the plan is left as planned, else a note for the log."""
+    if not _SEASON_NO_NESTLOOP:
+        return ""
+    if "Nested Loop" not in _explain(cur, sql):
+        return ""
+    cur.execute("SET LOCAL enable_nestloop = off")
+    plan = _explain(cur, sql)
+    if "Nested Loop" in plan or re.search(r"Merge (?:\w+ )?Join", plan):
+        cur.execute("SET LOCAL enable_nestloop = on")
+        return ("⚠ planned with a nested loop, and the plan without one was "
+                "not all hash joins -- run as planned")
+    return "nested loop refused, hash joins"
+
+
 def refreshAthleteSeason(conn, shards=None):
     """Rebuild athlete_season from ranking_results.
 
@@ -4066,6 +4148,13 @@ def refreshAthleteSeason(conn, shards=None):
     yields a stale athlete_season with no error. The two are always rebuilt
     together. `shards`: the aggregate's shard count (default _SEASON_SHARDS).
     """
+    counts = _seasonAggregate(conn, shards)
+    _seasonFinish(conn, *counts)
+
+
+def _seasonAggregate(conn, shards=None):
+    """refreshAthleteSeason's first half: the shadow and its GROUP BY, the
+    only part that reads ranking_results_new. (rows, unrated rows)."""
     n_shards = max(1, int(shards or _SEASON_SHARDS))
     print("\n  building athlete_season...")
     createShadow(conn, _LOAD_SEASON, "athlete_season")
@@ -4119,12 +4208,16 @@ def refreshAthleteSeason(conn, shards=None):
             with getConn() as c:
                 with c.cursor() as cur:
                     _seasonWorkMem(c, cur, _SEASON_SHARD_WORK_MEM, quiet_log=True)
+                    # ★ _SEASON_NO_NESTLOOP: explained, and re-planned if it
+                    #   would re-run `home` for every row
+                    note = _seasonPlanGuard(cur, sql_k)
                     cur.execute(sql_k)
                 c.commit()
-            return k, time.time() - t_k
+            return k, time.time() - t_k, note
         with cf.ThreadPoolExecutor(max_workers=n_shards) as pool:
-            for k, dt in pool.map(_shard, range(n_shards)):
-                print(f"    [{dt:7.1f}s] shard {k + 1}/{n_shards}")
+            for k, dt, note in pool.map(_shard, range(n_shards)):
+                print(f"    [{dt:7.1f}s] shard {k + 1}/{n_shards}"
+                      + (f" ({note})" if note else ""))
     sql = _ATHLETE_SEASON_SQL.format(load_table=_LOAD_TABLE,
                                      season_table=_LOAD_SEASON,
                                      shard_where="TRUE", shard_where_base="TRUE")
@@ -4133,6 +4226,9 @@ def refreshAthleteSeason(conn, shards=None):
             # ★ ASK FOR ROOM BEFORE THE STATEMENT, NOT AFTER IT. See
             #   _SEASON_WORK_MEM: this is the sort that decides the step.
             _seasonWorkMem(conn, cur, _SEASON_WORK_MEM)
+            note = _seasonPlanGuard(cur, sql)       # ★ _SEASON_NO_NESTLOOP
+            if note:
+                print(f"    {_LOAD_SEASON} aggregate: {note}")
             cur.execute(sql)
         print(f"    [{time.time() - t0:7.1f}s] GROUP BY -> {_LOAD_SEASON}")
         # ! THE UNRATED SHARE IS PRINTED, because it is a new population and
@@ -4144,7 +4240,13 @@ def refreshAthleteSeason(conn, shards=None):
                     f"(WHERE mean_rating IS NULL) FROM {_LOAD_SEASON}")
         n, n_unrated = cur.fetchone()[:2]
     conn.commit()
+    return n, n_unrated
 
+
+def _seasonFinish(conn, n, n_unrated):
+    """refreshAthleteSeason's second half: states, units, the rewrite and
+    the indexes. Reads nothing of ranking_results_new (see _SEASON_TAIL_BESIDE);
+    its TEMP tables live on `conn`, so all of it runs there."""
     _homeStates(conn, _LOAD_SEASON)
     # ★ _SEASON_UNITS_IN_REWRITE: stamped on the keys, copied by the rewrite
     fold = (_SEASON_UNITS_IN_REWRITE and rr_layout.ordered()
@@ -4657,15 +4759,62 @@ def _seasonBeside():
     print(f"    [{time.time() - t0:7.1f}s] athlete_season built (beside the indexes)")
 
 
+def _seasonTail(n, n_unrated):
+    """_seasonFinish on a connection of its own (the season thread)."""
+    t0 = time.time()
+    with getConn() as c:
+        tuneSession(c, quiet=True)
+        with phase("athlete_season: states, units, rewrite, indexes (beside "
+                   "the ranking_results indexes)"):
+            _seasonFinish(c, n, n_unrated)
+        c.commit()
+    print(f"    [{time.time() - t0:7.1f}s] athlete_season finished (beside the indexes)")
+
+
+def _tailBeside(conn):
+    """_SEASON_TAIL_BESIDE: the rewrite, an ANALYZE, the season aggregate
+    alone, then ranking_results' indexes here while a thread finishes
+    athlete_season. Either one's error is raised after both have stopped."""
+    with phase("ranking_results: rewrite + ANALYZE"):
+        relog(conn, _LOAD_TABLE, "ranking_results")
+        analyze(conn, _LOAD_TABLE)
+    with phase("athlete_season aggregate (before the ranking_results indexes)"):
+        counts = _seasonAggregate(conn)
+    t0 = time.time()
+    real = sys.stdout
+    sys.stdout = _Lines(real, "  [season] ", "season")
+    try:
+        with cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="season") as ex:
+            season = ex.submit(_seasonTail, *counts)
+            try:
+                with phase("index ranking_results (athlete_season's tail beside it)"):
+                    buildIndexes(conn, _LOAD_TABLE, "ranking_results")
+            finally:
+                t_idx = time.time()
+                with phase("athlete_season (wait after the indexes)"):
+                    exc = season.exception()
+            print(f"    [{t_idx - t0:7.1f}s] ranking_results indexes built; "
+                  f"[{time.time() - t_idx:7.1f}s] waited for athlete_season")
+            if exc is not None:
+                raise exc
+    finally:
+        sys.stdout.flush()
+        sys.stdout = real
+
+
 def indexAndSeason(conn):
     """ranking_results_new's rewrite and indexes, and athlete_season_new.
 
-    Off (_SEASON_BESIDE_INDEXES false): one after the other, as before.
+    _SEASON_TAIL_BESIDE (the default): _tailBeside.
+    Both off: one after the other, as before.
     On: the rewrite, an ANALYZE (the statistics the season aggregate was
     planned on when it ran after buildIndexes' own ANALYZE), then the
     season build in a thread on its own connection while this one builds
     the indexes. Returns when both are done; either one's error is raised
     after both have stopped, so nothing is left writing a shadow."""
+    if not _SEASON_BESIDE_INDEXES and _SEASON_TAIL_BESIDE:
+        _tailBeside(conn)
+        return
     if not _SEASON_BESIDE_INDEXES:
         with phase("index ranking_results"):
             # ★ XCP_RR_ORDERED: rewritten in board order instead (relog)

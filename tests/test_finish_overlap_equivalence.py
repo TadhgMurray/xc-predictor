@@ -210,7 +210,7 @@ def db():
 
 
 def _finish(tdsn, monkeypatch, snap, *, lean, ordered, fold, beside, vac_par,
-            patches=()):
+            patches=(), tail=False, nonest=False):
     """A fresh corpus, the real `--stage finish`, and its two tables kept in
     schema `snap` with each row's physical position (rn, by ctid)."""
     import psycopg2
@@ -231,6 +231,8 @@ def _finish(tdsn, monkeypatch, snap, *, lean, ordered, fold, beside, vac_par,
     monkeypatch.setattr(B, "_SEASON_UNITS_IN_REWRITE", fold)
     monkeypatch.setattr(B, "_SEASON_BESIDE_INDEXES", beside)
     monkeypatch.setattr(B, "_VACUUM_PARALLEL", vac_par)
+    monkeypatch.setattr(B, "_SEASON_TAIL_BESIDE", tail)
+    monkeypatch.setattr(B, "_SEASON_NO_NESTLOOP", nonest)
     for name, value in patches:
         monkeypatch.setattr(B, name, value)
     monkeypatch.setattr(sys, "argv", ["build_ranking_results.py", "--stage", "finish"])
@@ -415,3 +417,18 @@ def test_the_season_rewrite_by_hash_builds_the_same_table(db, monkeypatch):
     join = line.split("unit columns from tmp_season_unit_keys, ", 1)[1].split(";")[0]
     assert join.endswith(" join") and "merge" not in join, line
     _assertSame(db, "snap_old_hj", "snap_new_hj", as_in_order=True)
+
+
+def test_the_season_tail_beside_the_indexes_builds_the_same_tables(db, monkeypatch):
+    """XCP_SEASON_TAIL_BESIDE and XCP_SEASON_NO_NESTLOOP (2026-11-22): the
+    aggregate before ranking_results' indexes, the rest of the season beside
+    them, and the shards' nested loop refused -- the tables, row for row and
+    page for page, and the indexes of the finish before them."""
+    base = dict(lean=False, ordered=True, fold=True, beside=False, vac_par=True)
+    _finish(db, monkeypatch, "snap_old_tail", **base)
+    log = _finish(db, monkeypatch, "snap_new_tail", tail=True, nonest=True, **base)
+    _assertSame(db, "snap_old_tail", "snap_new_tail", as_in_order=True)
+    assert "athlete_season finished (beside the indexes)" in log
+    assert "waited for athlete_season" in log
+    # the corpus's shards plan the nested loop over `home`, so the guard ran
+    assert "shard 1/8 (nested loop refused, hash joins)" in log
