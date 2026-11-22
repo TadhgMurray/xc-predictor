@@ -2689,6 +2689,9 @@ _RETIRED_INDEXES = {
     "ranking_results": {
         # idx_rr_person_cover's narrower twin (2026-11-07)
         "rr_person_cover_idx",
+        # rr_school_season_idx has its key (school, sport, year, meet_id) and
+        # covers racesRun's columns; 121-131 s a night (2026-11-22)
+        "idx_rr_school_sport_year_meet",
     },
 }
 

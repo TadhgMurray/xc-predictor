@@ -151,8 +151,12 @@ WANTED = [
     #   so each school's ENTIRE history is read to count one season of it.
     # ! SPEC GIVEN, for the same reason as the entry above: idx_rr_school
     #   leads on (school) and would satisfy a specless entry forever.
-    ("ranking_results", "school", "idx_rr_school_sport_year_meet",
-     "(school, sport, year, meet_id)"),
+    # ! RETIRED 2026-11-22: rr_school_season_idx (build_ranking_results'
+    #   canonical list) has exactly this key (school, sport, year, meet_id)
+    #   and INCLUDEs every column racesRun reads, so any plan that used this
+    #   one has the same plan on it. This one cost 121-131 s of every finish
+    #   (rebuilt from the live table each night). Listed in
+    #   build_ranking_results._RETIRED_INDEXES so the rebuild drops it.
     # ★ THE PREDICTIONS FIELD ENDPOINT (2026-09-01). meetField gained two
     #   lookups that filter athlete_season by PERSON -- _fieldGender, which
     #   reads a race's gender off the people who ran it, and
