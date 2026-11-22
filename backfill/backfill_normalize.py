@@ -4483,7 +4483,13 @@ def _backfillWorkers(apply, limit, cfg, staging):
     #   2,982 s, _xc 1,929 s, side by side -- track waited for): XC 2, track 4,
     #   six workers between the two sports as before. XCP_BACKFILL_WORKERS
     #   sets both; XCP_BACKFILL_WORKERS_XC / _TF one.
-    default = {"XC": "2", "TF": "4"}.get(cfg.sport, "3")
+    # ★ XC 4 (2026-11-22). Run 20261116_204106: _xc 996 s with 2 workers,
+    #   _tf 665 s with 4, side by side -- XC held the step. Each worker held a
+    #   ~22 GB private copy of the lookups then; XCP_BACKFILL_ARRAY_LOOKUPS
+    #   (same day) cut that copy from ~1.3 GB to ~60 MB per worker on
+    #   scratch, so two more XC workers now cost little memory. Each worker
+    #   scans the table for its own meets, so the gain is less than 2x.
+    default = {"XC": "4", "TF": "4"}.get(cfg.sport, "3")
     n = int(os.environ.get(f"XCP_BACKFILL_WORKERS_{cfg.sport}")
             or os.environ.get("XCP_BACKFILL_WORKERS") or default)
     if not apply or limit or staging is None or cfg.write_mode != "copy" \
