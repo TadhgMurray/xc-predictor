@@ -1853,10 +1853,8 @@ _TEAM_MINE_SQL = f"""
     JOIN   team_ok k ON k.person_id = a.person_id AND k.acad = a.acad
 """
 
-_TEAM_LEVEL_SQL = f"""
-    WITH wanted AS (
-        SELECT DISTINCT meet_id, div_id, source, event_key FROM tl_mine
-    ),
+_TEAM_WANTED_SELECT = "SELECT DISTINCT meet_id, div_id, source, event_key FROM tl_mine"
+_TEAM_EVENT_LEVEL = f"""
     event_level AS (
         SELECT w.meet_id, w.div_id, w.source, w.event_key,
                mode() WITHIN GROUP (ORDER BY gradeLevel(a.grade))
@@ -1868,7 +1866,29 @@ _TEAM_LEVEL_SQL = f"""
         GROUP  BY 1, 2, 3, 4
         HAVING count(*) FILTER (WHERE gradeLevel(a.grade) IS NOT NULL)
                    >= {MIN_FIELD_GRADED}
-    )
+    )"""
+# the same event_level as counts per (event, level): the level with the most
+# entrants, a tie to the first in ORDER BY level -- mode()'s own rule (see
+# STAGED AND HASH-JOINED at rule 2c) -- and the HAVING its count of graded
+# entrants, summed. A GROUP BY the workers share, where mode() ran in the
+# leader.
+_TEAM_EVENT_LEVEL_COUNTS = f"""
+    event_level AS (
+        SELECT meet_id, div_id, source, event_key,
+               (array_agg(lvl ORDER BY n DESC, lvl)
+                    FILTER (WHERE lvl IS NOT NULL))[1]  AS level
+        FROM  (SELECT w.meet_id, w.div_id, w.source, w.event_key,
+                      gradeLevel(a.grade) AS lvl, count(*) AS n
+               FROM   wanted w
+               JOIN   allraces a
+                      ON a.meet_id = w.meet_id AND a.div_id = w.div_id
+                     AND a.source = w.source AND a.event_key = w.event_key
+               GROUP  BY 1, 2, 3, 4, 5) per_level
+        GROUP  BY 1, 2, 3, 4
+        HAVING COALESCE(sum(n) FILTER (WHERE lvl IS NOT NULL), 0)
+                   >= {MIN_FIELD_GRADED}
+    )"""
+_TEAM_LEVEL_REST = """
     SELECT m.person_id, m.acad
     FROM   tl_mine m
     JOIN   event_level e
@@ -1877,6 +1897,38 @@ _TEAM_LEVEL_SQL = f"""
     GROUP  BY 1, 2
     HAVING bool_and(e.level = 'hs')
 """
+_TEAM_LEVEL_SQL = f"""
+    WITH wanted AS (
+        {_TEAM_WANTED_SELECT}
+    ),{_TEAM_EVENT_LEVEL}{_TEAM_LEVEL_REST}"""
+# ★ STAGED (2026-11-22; see STAGED AND HASH-JOINED at rule 2c): `wanted`
+#   an ANALYZEd table under the CTE's name, event_level counted per level
+#   (above), the final SELECT verbatim; enable_nestloop off with each plan
+#   EXPLAINed, the old statement where one still holds a nested loop. The
+#   planner probed allraces' event index once per wanted event on one core,
+#   and mode() sorted every entrant in the leader (synthetic corpus, 3,323
+#   events, 4.5M entrants: 22.3 s; staged and counted 4.0 s, the same
+#   35,218 seasons).
+_TEAM_LEVEL_STAGED_SQL = f"""
+    WITH wanted AS (SELECT * FROM tl_wanted),{_TEAM_EVENT_LEVEL_COUNTS}{_TEAM_LEVEL_REST}"""
+
+
+def _teamLevelStaged(cur, params):
+    """_TEAM_LEVEL_SQL's rows, staged; None when a plan held a nested loop."""
+    rows = None
+    with _NoNestLoop(cur):
+        if not _planHasNestLoop(cur, _TEAM_WANTED_SELECT):
+            cur.execute("DROP TABLE IF EXISTS tl_wanted")
+            cur.execute(f"CREATE UNLOGGED TABLE tl_wanted AS {_TEAM_WANTED_SELECT}")
+            cur.execute("ANALYZE tl_wanted")
+            if not _planHasNestLoop(cur, _TEAM_LEVEL_STAGED_SQL, params):
+                cur.execute(_TEAM_LEVEL_STAGED_SQL, params)
+                rows = cur.fetchall()
+    cur.execute("DROP TABLE IF EXISTS tl_wanted")
+    if rows is None:
+        print("    [5f] staged plan holds a nested loop: the single statement instead",
+              flush=True)
+    return rows
 
 
 def teamLevelCandidates(acad, seasons_of):
@@ -1957,8 +2009,11 @@ def teamLevelSeasons(cur, acad, seasons_of, hs_codes=None):
     params = {"codes": list(hs_codes)}
     cur.execute(_TEAM_MINE_SQL, params)
     cur.execute("ANALYZE tl_mine")
-    cur.execute(_TEAM_LEVEL_SQL, params)
-    got = {(int(p), int(a)) for p, a in cur.fetchall()}
+    rows = _teamLevelStaged(cur, params) if _eventStagedOn() else None
+    if rows is None:
+        cur.execute(_TEAM_LEVEL_SQL, params)
+        rows = cur.fetchall()
+    got = {(int(p), int(a)) for p, a in rows}
     cur.execute("DROP TABLE tl_mine; DROP TABLE tl_cand")
     return got
 
@@ -2321,7 +2376,8 @@ class _NoNestLoop:
 
     def __enter__(self):
         self.cur.execute("SELECT current_setting('enable_nestloop')")
-        self.prev = self.cur.fetchone()[0]
+        got = self.cur.fetchall()
+        self.prev = got[0][0] if got else "on"
         self.cur.execute("SELECT set_config('enable_nestloop', 'off', true)")
         return self
 
@@ -3890,6 +3946,25 @@ def buildRaces(cur, audit=False, side=None):
     return split
 
 
+def _raceCountRead(cur):
+    """Rule 5e's race_count {(person, season): races} from season_races,
+    and seasons_of {person: seasons} off its keys.
+
+    ★ BESIDE RULE 4 (2026-11-22). 31M rows fetched into Python and two
+      dicts built on the critical path at 5e (a scratch corpus: 5 s of
+      2.75M seasons -- ~55 s at production's 31M). season_races is final
+      from the write-back's commit (built from pa_races, which nothing here
+      writes; dropped only at 5e), so side by side it is read from then, on
+      its own connection, while the main connection waits on rule 4's
+      SQL; the same statement, the same dicts in the same order."""
+    cur.execute("SELECT person_id, acad, races FROM season_races")
+    race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    seasons_of = {}
+    for (pid, _ay) in race_count:
+        seasons_of[pid] = seasons_of.get(pid, 0) + 1
+    return race_count, seasons_of
+
+
 def _resolve(cur, side=None):
     """The rules, in precedence order, over buildRaces' tables. side: a
     SideWork whose build committed (see SIDE BY SIDE), or None."""
@@ -4009,6 +4084,10 @@ def _resolve(cur, side=None):
             side.submit("[8] athlete_season adult pools", adultPoolRows)
         if "[8] club rows" not in side.futs:
             side.submit("[8] club rows", _clubPrepSide, commit=True)
+        if _sr_staged:
+            # ★ 5e's 31M-row read of season_races and its two dicts, in a
+            #   thread while rule 4's staging runs (see _raceCountRead)
+            side.submit("[5e] season_races rows", _raceCountRead, workers=BG_WORKERS)
         tick("[2c] write-back committed, the reads after it started", _tq)
 
     # ! THE METHOD NAME IS DERIVED FROM THE LEVEL, NOT ASKED FOR SEPARATELY.
@@ -4400,12 +4479,8 @@ def _resolve(cur, side=None):
     hs_codes = _bg.submit(_hsTeamCodes)
     _bg.shutdown(wait=False)
     t_rc = time.time()
-    cur.execute("SELECT person_id, acad, races FROM season_races")
-    race_count = {(int(p), int(a)): int(n) for p, a, n in cur.fetchall()}
+    race_count, seasons_of = _here("[5e] season_races rows", _raceCountRead)
     cur.execute("DROP TABLE IF EXISTS season_races")
-    seasons_of = {}
-    for (pid, _ay) in race_count:
-        seasons_of[pid] = seasons_of.get(pid, 0) + 1
     print(f"    [5e] races per season counted: {len(race_count):,} seasons "
           f"({time.time() - t_rc:.0f}s)", flush=True)
     _tq = time.time()
