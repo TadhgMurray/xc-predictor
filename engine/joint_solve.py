@@ -4466,18 +4466,21 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                   f"{THETA_RACE_PRIOR_N:g} pseudo-rows; slow residuals keep "
                   f"weight 1", flush=True)
 
-    # ★ WARM START, TEST-ONLY (2026-11-20, docs/MOE-WARM-START-2026-11-20.md).
-    #   OFF unless BOTH a caller hangs a dict on the design (D.warm_start,
-    #   already mapped onto THIS design's indexing) AND XCP_WARM_START names
-    #   a mode; nothing in run_joint sets either, so the shipped solve is
-    #   untouched. "theta": last night's unknowns as pass 1's CG start, and
-    #   nothing else -- every pass still solves its own system to CG_TOL, so
-    #   only the iteration count moves. "full": also last night's weights,
+    # ★ WARM START (2026-11-20 measured, docs/MOE-WARM-START-2026-11-20.md;
+    #   2026-11-22 live, engine/warm_start.py). OFF unless a caller hangs a
+    #   dict on the design (D.warm_start, already mapped onto THIS design's
+    #   indexing). Its "mode" says which; a dict without one (the test hook)
+    #   reads XCP_WARM_START, empty = off. Only run_joint --golive hangs one.
+    #   "theta": last night's unknowns as pass 1's CG start, and nothing
+    #   else -- every pass still solves its own system to CG_TOL, so only
+    #   the iteration count moves (MOE: pass 1 37->16 / 35->27 iterations,
+    #   no row rating moved by 0.05). "full": also last night's weights,
     #   tilt, amplitude, variance components, curve prior and day-guard
     #   offset, i.e. pass 1 starts where last night's pass 5 ended (this
-    #   changes the PATH, and is what would let XCP_OUTER drop).
+    #   changes the PATH, and is what lets XCP_WARM_OUTER replace --outer).
     warm = getattr(D, "warm_start", None)
-    warm_mode = os.environ.get("XCP_WARM_START", "").strip().lower()
+    warm_mode = ((warm.get("mode") if warm is not None else None)
+                 or os.environ.get("XCP_WARM_START", "")).strip().lower()
     if warm is not None and warm_mode in ("theta", "full"):
         theta = np.asarray(warm["theta"], dtype=np.float64).copy()
         assert theta.size == D.n_total, "warm_start theta is not this design's"
@@ -4499,8 +4502,9 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 if dist_cal:
                     n_cal = D.calibrateDist(y, rating[D.athlete])
         if verbose:
-            print(f"[joint] WARM START ({warm_mode}) from a previous solve -- "
-                  "test-only, not the shipped path", flush=True)
+            print(f"[joint] WARM START ({warm_mode}) from a previous solve", flush=True)
+    # each pass's CG iterations, for the warm start's report (run_joint)
+    D.cg_iters = []
 
     for outer in range(n_outer):
         pen_cell = sigma2 / np.maximum(tau2[D.group_of_cell], 1e-12)
@@ -4550,6 +4554,7 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 _rhs, op.matvec, diag, max_iter=cg_max_iter, x0=theta, tol=_tol,
                 precond=(arrowPrecond(D, diag, 0, w, h, cellOfRace(D))
                          if precondKind() == "arrow" else None))
+        D.cg_iters.append(int(iters))
         b = D.unpack(theta)
         bbar = 0.0
         if D.n_beta:

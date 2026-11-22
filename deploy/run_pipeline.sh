@@ -1730,6 +1730,12 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   reservations. A running engine replay in its way stops itself at once
   #   (it is retried later); anything else is waited for, up to
   #   XCP_GOLIVE_MEM_WAIT_MIN (90), and then the go-live runs anyway.
+  # ★ WARM START (2026-11-22, engine/warm_start.py): pass 1's CG starts
+  #   from last night's unknowns, mapped by key from engine/data/
+  #   joint_difficulty_warm.npz; the answer is the cold one to the CG
+  #   tolerance. Cold, with the reason in the log, on a model or pack-layout
+  #   change or under 90% key cover. XCP_WARM_START=off restores the cold
+  #   solve; =full is the opt-in model change (see the module).
   STEP_MEM="--gb ${XCP_GOLIVE_GB:-60} --priority --wait-min ${XCP_GOLIVE_MEM_WAIT_MIN:-90}" \
   step 08_golive        "$PY" -u engine/run_joint.py --golive "${JOINT_FLAGS[@]}"
   # ★★ THE EVIDENCE STEPS RUN BESIDE THE BOARDS, NOT BEFORE THEM (owner,

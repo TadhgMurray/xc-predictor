@@ -3882,6 +3882,58 @@ def checkState(out, D):
                          "--era-years and term flags the solve ran with.")
 
 
+def warmPrepare(args, D, cols, keep, pool_names):
+    """The go-live's keyed warm start (engine/warm_start.py): tonight's keys,
+    last night's state mapped onto them, hung on D. None under
+    XCP_WARM_START=off (no read, no write: the old behaviour)."""
+    import warm_start as ws
+    mode = ws.warmMode()
+    if mode == "off":
+        print("[joint] warm start: off (XCP_WARM_START=off) -- cold, nothing saved")
+        return None
+    t = time.time()
+    ctx = {"path": ws.warmPath(args.out), "mode": mode, "keys": None,
+           "n_outer": None, "rid": None}
+    try:
+        ctx["parts"] = ws.modelParts(args)
+        ctx["layout"] = ws.packLayout(cols)
+        race_all, _n = raceCodesFor(cols)
+        _dates, pack_day, _agree = fh.rowDates(cols)
+        del _dates
+        # ! A CALENDAR DAY, NOT `days`: days count back from the pack's
+        #   build, so the same race reads a day older every night. Truncated
+        #   as raceCodes truncates, so the races split exactly as the design's.
+        abs_day = (int(pack_day.astype(np.int64))
+                   - np.asarray(cols["days"]).astype(np.int64))
+        ctx["keys"] = ws.designKeys(D, cols, race_all, _RACE_KEY["by"],
+                                    args.split_ability, pool_names, abs_day)
+        del race_all, abs_day
+        if mode == "full" and "result_id" in cols:
+            ctx["rid"] = np.asarray(cols["result_id"], dtype=np.int64)[keep]
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[joint] warm start: tonight's keys failed ({type(exc).__name__}: "
+              f"{exc}) -- cold, nothing saved")
+        return None
+    warm, ctx["n_outer"], ctx["info"] = ws.prepare(
+        ctx["path"], mode, D, ctx["keys"], ctx["parts"], ctx["layout"],
+        result_id=ctx["rid"])
+    D.warm_start = warm
+    print(f"[joint] warm start: keys and mapping took {time.time() - t:.0f}s")
+    return ctx
+
+
+def warmFinish(ctx, out, D):
+    """The saving, in the log, and tonight's keyed state for tomorrow."""
+    import warm_start as ws
+    iters = list(getattr(D, "cg_iters", None) or [])
+    try:
+        ws.reportIters(ctx["info"], iters)
+    except Exception as exc:                                     # noqa: BLE001
+        print(f"[joint] warm start report skipped ({type(exc).__name__}: {exc})")
+    ws.save(ctx["path"], out, D, ctx["keys"], ctx["parts"], ctx["layout"],
+            ctx["mode"], ctx["info"], iters, result_id=ctx["rid"])
+
+
 def guardedReport(name, fn):
     """Run a report; a failure is printed, never raised (a solve is hours)."""
     import traceback
@@ -4126,9 +4178,18 @@ def main():
         print(f"[joint] --from-state {args.from_state}: the solve's output loaded "
               f"({np.asarray(out['delta']).size:,} cells), no solve run")
     else:
-        out = js.solveJoint(y, design=D, n_probe=args.probes,
-                            **solveKwargs(args, athlete_pool, verbose=True))
+        # ★ THE KEYED WARM START, --golive ONLY (engine/warm_start.py). A
+        #   holdout, an --asof replay, the ladder and --golive-dry never
+        #   reach this line with args.golive set, so they always solve cold.
+        warm = warmPrepare(args, D, cols, keep, pool_names) if args.golive else None
+        kw = solveKwargs(args, athlete_pool, verbose=True)
+        if warm is not None and warm["n_outer"]:
+            kw["n_outer"] = warm["n_outer"]
+        out = js.solveJoint(y, design=D, n_probe=args.probes, **kw)
+        D.warm_start = None
         print(f"[joint] solved in {time.time() - t0:.0f}s")
+        if warm is not None:
+            warmFinish(warm, out, D)
         try:
             saveState(out, state_path)
             print(f"[joint] solve state -> {state_path} (rerun the rest with "

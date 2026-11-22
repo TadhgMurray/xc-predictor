@@ -72,6 +72,9 @@ engine/data/ladder_stamp
 engine/data/pair_ratings.npz
 engine/data/pair_validated.npz
 engine/data/pair_difficulty.npz
+# the go-live's keyed warm state (engine/warm_start.py), written every night
+engine/data/*_warm.npz
+engine/data/*_warm.npz.tmp
 
 # The geometry clouds are diagnostic dumps, not the fitted model.
 engine/data/geometry_*_cloud.csv

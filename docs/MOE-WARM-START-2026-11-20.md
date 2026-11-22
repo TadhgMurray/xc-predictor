@@ -3,6 +3,10 @@
 The owner asked: if 08_golive's joint solve started from last night's answer
 instead of from scratch, how far would the published numbers move?
 
+**Update 2026-11-22:** the theta warm start is now live in 08_golive, keyed
+(engine/warm_start.py, `XCP_WARM_START=theta` by default; `full` is opt-in).
+The text below is the measurement as it was written.
+
 This is a measurement only. The shipped solve is unchanged: the warm start
 is a test-only hook that runs only when a caller sets `D.warm_start` and
 `XCP_WARM_START` is set, and nothing in run_joint or the pipeline sets either.
