@@ -134,6 +134,10 @@ def test_a_whole_solve_is_the_same_either_way(monkeypatch):
 
     def solve(flag):
         monkeypatch.setenv("XCP_JOINT_KERNELS", flag)
+        # ! the same preconditioner both ways: the global block is formed by
+        #   a numba kernel, so without the kernels it would fall back to
+        #   Jacobi and this would compare two solvers, not two kernels
+        monkeypatch.setenv("XCP_PRECOND", "jacobi")
         # ! curve_smooth=1.0, the old stated weight: this checks the two
         #   kernels do the same ARITHMETIC. Under the fitted curvature prior
         #   (the default since 2026-10-06) the weakly-pinned curve direction

@@ -94,3 +94,46 @@ def test_arrow_preconditioner_inverts_one_course_exactly():
     r = np.r_[np.zeros(4), 1.0, 0.5, -0.25, 2.0]
     z = apply(r)
     assert np.allclose(M @ z[4:], r[4:])
+
+
+def test_global_block_preconditioner_is_the_same_solve(monkeypatch):
+    """XCP_PRECOND=global+arrow (the default since 2026-11-22): its block
+    is the normal matrix's own on the global unknowns, and the solve lands
+    on the plain Jacobi solve's answer."""
+    pytest.importorskip("numba")
+    y, ath, cel, rac = _world()
+    rng = np.random.default_rng(5)
+    n_cell = int(cel.max()) + 1
+    grp = (np.arange(n_cell) % 2).astype(np.int64)
+    pool = (ath % 3).astype(np.int64)
+    day = np.where(grp[cel] == 0, rng.integers(235, 331, ath.size),
+                   rng.integers(15, 171, ath.size)).astype(float)
+
+    def design():
+        return js.Design(ath, cel, rac, group_of_cell=grp, pool_row=pool,
+                         day=day, n_pool=3)
+
+    seen = []
+    real = js.globalBlockPrecond
+
+    def probe(op, D, diag):
+        got = real(op, D, diag)
+        if not seen:
+            idx, inv = got
+            e = np.zeros(D.n_total)
+            A = np.empty((idx.size, idx.size))
+            for j, g in enumerate(idx):
+                e[g] = 1.0
+                A[:, j] = op.matvec(e)[idx]
+                e[g] = 0.0
+            seen.append(np.max(np.abs(np.linalg.inv(inv) - A)) / np.max(np.abs(A)))
+        return got
+    monkeypatch.setattr(js, "globalBlockPrecond", probe)
+    monkeypatch.setenv("XCP_PRECOND", "jacobi")
+    base = js.solveJoint(y, design=design(), n_outer=3, tilt=False, n_probe=0)
+    monkeypatch.setenv("XCP_PRECOND", "global+arrow")
+    D = design()
+    got = js.solveJoint(y, design=D, n_outer=3, tilt=False, n_probe=0)
+    assert seen and seen[0] < 1e-10
+    for k in ("ability", "delta"):
+        assert np.max(np.abs(np.asarray(got[k]) - np.asarray(base[k]))) < 1e-6, k
