@@ -922,7 +922,7 @@ ENV_RULES = {
     **_all("XCP_WARM_MIN_COVER", "INFRA", "warm start: the share of tonight's unknowns the keys must cover, else cold (0.90)"),
     **_all("XCP_WARM_OUTER XCP_WARM_COLD_EVERY", "INFRA",
            "XCP_WARM_START=full only: its passes (2) and every Nth warm run forced cold (7)"),
-    **_all("XCP_02B_BG XCP_09D_BG", "INFRA", "steps moved beside longer ones (2026-11-20); 0 restores the old order"),
+    **_all("XCP_02B_BG XCP_09D_BG XCP_TWIN_BESIDE_GENDER", "INFRA", "steps moved beside longer ones (2026-11-20); 0 restores the old order"),
     **_all("XCP_RANK_PARTS_TF XCP_RANK_PARTS_XC", "INFRA", "how many date ranges each sport's board streams take"),
     **_all("XCP_RACE_MODEL", "INFRA", "which race-forecast model file the forecasts load"),
     **_all("XCP_CG_INPLACE XCP_CG_PARALLEL XCP_CURVE_GAP_CACHE XCP_KERNEL_ZERO_IN XCP_KERNEL_DERIVE",
