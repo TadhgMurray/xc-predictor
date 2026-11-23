@@ -15,13 +15,15 @@ READ-ONLY (our database; nothing is fetched).
   the mean number of places a runner was off. Each model is scored on its
   last list before the race.
 
-Two of our lists, side by side:
+Three of our lists, side by side:
 
-  FROZEN   what the predictions page showed the night before (meet_forecast,
+  RATING   each finisher's season rating alone (athlete_season), best first:
+           what the ratings know, before any course, distance or race model.
+  PAGE     (frozen) what the predictions page showed the night before (meet_forecast,
            step 13h; never rewritten on or after race day). Its runners are
            the ones WE guessed would start -- with the site offline and the
            nightly stopped it may be old, or missing; made_on says which.
-  ENTRANTS the actual finishers, predicted with history cut at race day
+  MODEL    the actual finishers, predicted with history cut at race day
            (predict._servedTimes, mode rerun_exact), the way LACCTiC's last
            list knew the field. ! If the race's own results are already
            rated (results.speed_rating), the ratings have seen the race and
@@ -119,6 +121,8 @@ def main(argv=None):
     from score_frozen_forecasts import rebuildRace
 
     out = {}
+    import qualifying as Q
+    season = int(Q._seasonOf(a.day))
     with getConn() as conn, conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SET statement_timeout = '900s'")
         cur.execute("""SELECT meet_id, meet_name, date FROM meets_tfrrs
@@ -165,6 +169,19 @@ def main(argv=None):
                     row["frozen_made"] = str(fc.get("made_on"))[:10]
                     row["frozen"] = runnerScore(pred, actual)
                     row["frozen_teams"] = teamScore(pred, actual, school)
+                # ★ RATINGS ALONE: each finisher's season rating, best first,
+                #   as if it were a time -- what the ratings know, without the
+                #   course, the distance or the race model
+                cur.execute("""
+                    SELECT DISTINCT ON (person_id) person_id, mean_rating
+                    FROM   athlete_season
+                    WHERE  person_id = ANY(%s) AND sport = 'XC' AND year = %s
+                      AND  mean_rating IS NOT NULL
+                    ORDER  BY person_id, n_races DESC NULLS LAST, mean_rating DESC""",
+                            (list(actual), season))
+                pred = {int(x["person_id"]): -float(x["mean_rating"]) for x in cur.fetchall()}
+                row["rating"] = runnerScore(pred, actual)
+                row["rating_teams"] = teamScore(pred, actual, school)
                 if not a.no_entrants:
                     cur.execute("SELECT count(*) AS n, count(speed_rating) AS rated FROM results "
                                 "WHERE source = 'tfrrs' AND meet_id = %s AND div_id = %s", (mid, d))
@@ -178,7 +195,7 @@ def main(argv=None):
                         cur.execute("RELEASE SAVEPOINT nv")
                         pred = {r["person_id"]: r["seconds"] for r in now["runners"]}
                         row["entrants"] = runnerScore(pred, actual)
-                        row["entrant_teams"] = teamScore(pred, actual, school)
+                        row["entrants_teams"] = teamScore(pred, actual, school)
                     except Exception as exc:                # noqa: BLE001
                         cur.execute("ROLLBACK TO SAVEPOINT nv")
                         row["entrants_error"] = f"{type(exc).__name__}: {exc}"
@@ -189,63 +206,67 @@ def main(argv=None):
     return 0
 
 
+ARMS = (("rating", "RC rate"), ("entrants", "RC model"), ("frozen", "RC page"))
+
+
 def report(out):
-    """Print our rows beside theirs."""
+    """Print our rows beside theirs: per race, LACCTiC's published columns,
+    then ours -- ratings alone, the model on the entrants, the frozen page."""
     def f3(v):
         return f"{v:.3f}" if isinstance(v, float) else "  -  "
+
+    def mean4(xs):
+        return statistics.fmean(xs) if len(xs) == 4 else None
     order = ["DI men", "DI women", "DIII men", "DIII women"]
     print("\nRUNNERS (Spearman rho; 1 = finish order exactly)")
     print(f"  {'race':<11}" + "".join(f"{h:>9}" for h in THEIRS_RUNNER_HEAD)
-          + f"{'RC entr':>9}{'RC frozen':>10}   scored / finishers")
-    avg = {"e": [], "f": [], "ep": [], "fp": []}
+          + "".join(f"{h:>9}" for _k, h in ARMS) + "   scored / finishers")
+    rho = {k: [] for k, _h in ARMS}
+    off = {k: [] for k, _h in ARMS}
     for k in order:
         r = out.get(k)
         th = THEIRS_RUNNERS[k]
         if not r:
             print(f"  {k:<11}" + "".join(f"{x:>9.3f}" for x in th) + "   (no results here)")
             continue
-        e = r.get("entrants") or (None, None, 0)
-        fz = r.get("frozen") or (None, None, 0)
-        for s, v in (("e", e), ("f", fz)):
+        cells, n = "", 0
+        for arm, _h in ARMS:
+            v = r.get(arm) or (None, None, 0)
             if v[0] is not None:
-                avg[s].append(v[0])
-                avg[s + "p"].append(v[1])
-        print(f"  {k:<11}" + "".join(f"{x:>9.3f}" for x in th)
-              + f"{f3(e[0]):>9}{f3(fz[0]):>10}   {e[2] or fz[2]} / {r['finishers']}"
-              + (f"   frozen {r['frozen_made']}" if r.get("frozen_made") else "   no frozen list")
+                rho[arm].append(v[0])
+                off[arm].append(v[1])
+            n = n or v[2]
+            cells += f"{f3(v[0]):>9}"
+        print(f"  {k:<11}" + "".join(f"{x:>9.3f}" for x in th) + cells
+              + f"   {n} / {r['finishers']}"
+              + (f"   page made {r['frozen_made']}" if r.get("frozen_made") else "   no page list")
               + ("   ! ratings have seen this race" if r.get("leak") else "")
-              + (f"   entrants failed: {r['entrants_error']}" if r.get("entrants_error") else ""))
+              + (f"   model failed: {r['entrants_error']}" if r.get("entrants_error") else ""))
     th_avg = [statistics.fmean(THEIRS_RUNNERS[k][i] for k in order) for i in range(3)]
     print(f"  {'Average':<11}" + "".join(f"{x:>9.3f}" for x in th_avg)
-          + f"{f3(statistics.fmean(avg['e']) if len(avg['e']) == 4 else None):>9}"
-          + f"{f3(statistics.fmean(avg['f']) if len(avg['f']) == 4 else None):>10}")
-    pe = statistics.fmean(avg["ep"]) if avg["ep"] else None
-    pf = statistics.fmean(avg["fp"]) if avg["fp"] else None
+          + "".join(f"{f3(mean4(rho[a])):>9}" for a, _h in ARMS))
     print("  mean places off: " + ", ".join(f"{k} {v}" for k, v in THEIRS_PLACES.items())
-          + (f", Racecast entrants {pe:.1f}" if pe is not None else "")
-          + (f", Racecast frozen {pf:.1f}" if pf is not None else "")
-          + "  (ours: mean over the four races of each race's mean)")
+          + "".join(f", {h} {statistics.fmean(off[a]):.1f}" for a, h in ARMS if off[a])
+          + "  (ours: mean over the races of each race's mean)")
 
     print("\nTEAMS (Spearman rho of the team order)")
     print(f"  {'race':<11}" + "".join(f"{h:>9}" for h in THEIRS_TEAM_HEAD)
-          + f"{'RC entr':>9}{'RC frozen':>10}   teams")
-    tav = {"e": [], "f": []}
+          + "".join(f"{h:>9}" for _k, h in ARMS) + "   teams")
+    tav = {k: [] for k, _h in ARMS}
     for k in order:
         r = out.get(k) or {}
-        th = THEIRS_TEAMS[k]
-        e = r.get("entrant_teams") or (None, None, 0)
-        fz = r.get("frozen_teams") or (None, None, 0)
-        for s, v in (("e", e), ("f", fz)):
+        cells, n = "", 0
+        for arm, _h in ARMS:
+            v = r.get(arm + "_teams") or (None, None, 0)
             if v[0] is not None:
-                tav[s].append(v[0])
-        print(f"  {k:<11}" + "".join(f"{f3(x):>9}" for x in th)
-              + f"{f3(e[0]):>9}{f3(fz[0]):>10}   {e[2] or fz[2]}")
+                tav[arm].append(v[0])
+            n = n or v[2]
+            cells += f"{f3(v[0]):>9}"
+        print(f"  {k:<11}" + "".join(f"{f3(x):>9}" for x in THEIRS_TEAMS[k]) + cells + f"   {n}")
     print(f"  {'Average':<11}" + "".join(
         f"{f3(statistics.fmean(THEIRS_TEAMS[k][i] for k in order) if i < 4 else None):>9}"
         for i in range(5))
-        + f"{f3(statistics.fmean(tav['e']) if len(tav['e']) == 4 else None):>9}"
-        + f"{f3(statistics.fmean(tav['f']) if len(tav['f']) == 4 else None):>10}")
-
+        + "".join(f"{f3(mean4(tav[a])):>9}" for a, _h in ARMS))
 
 if __name__ == "__main__":
     raise SystemExit(main())

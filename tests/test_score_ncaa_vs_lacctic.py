@@ -30,8 +30,26 @@ def test_team_order():
 
 
 def test_report_prints(capsys):
-    row = {"finishers": 250, "entrants": (0.85, 31.0, 248), "entrant_teams": (0.9, 2.5, 31),
+    row = {"finishers": 250, "entrants": (0.85, 31.0, 248), "entrants_teams": (0.9, 2.5, 31),
+           "rating": (0.83, 33.0, 248), "rating_teams": (0.88, 2.9, 31),
            "frozen": (0.8, 35.0, 200), "frozen_teams": (0.85, 3.0, 30), "frozen_made": "2026-11-12"}
     S.report({"DI men": row, "DI women": row, "DIII men": dict(row, leak=True)})
     out = capsys.readouterr().out
     assert "0.850" in out and "no results here" in out and "seen this race" in out
+
+
+def test_only_meets_parse():
+    sys.path.insert(0, os.path.join(_ROOT, "tfrrs", "driver"))
+    import importlib
+    src = open(os.path.join(_ROOT, "tfrrs", "driver", "run_tfrrs.py")).read()
+    ns = {}
+    # the parser alone: run_tfrrs imports the scraper stack at the top
+    start = src.index("def parseOnlyMeets")
+    end = src.index("async def runOnly")
+    exec("import re\nSPORT_XC, SPORT_TF = 'XC', 'TF'\n" + src[start:end], ns)
+    p = ns["parseOnlyMeets"]
+    assert p("12345, 67890") == [(12345, "XC"), (67890, "XC")]
+    assert p("1:tf 2:XC 1:TF") == [(1, "TF"), (2, "XC")]
+    import pytest
+    with pytest.raises(ValueError):
+        p("abc")
