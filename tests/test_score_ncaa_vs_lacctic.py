@@ -53,3 +53,21 @@ def test_only_meets_parse():
     import pytest
     with pytest.raises(ValueError):
         p("abc")
+
+
+def test_ncaa_meet_ids_classify():
+    import ncaa_meet_ids as N
+    assert N.classify("NCAA Division III Midwest Region Cross Country Championships") == ("DIII", "regional")
+    assert N.classify("NCAA Division I Cross Country Championships") == ("DI", "national")
+    assert N.classify("NCAA DI Mountain Region XC Championships") == ("DI", "regional")
+    assert N.classify("NCAA Division II Cross Country Championships") is None
+    assert N.classify("NCAA D-III Pre-Nationals Championship") is None
+    assert N.classify("Hope Invitational") is None
+    rows = [{"meet_id": "5", "sport": "XC", "date": "2026-11-14",
+             "name": "NCAA Division III East Region Cross Country Championships"},
+            {"meet_id": "6", "sport": "XC", "date": "2025-11-15",
+             "name": "NCAA Division III East Region Cross Country Championships"},
+            {"meet_id": "7", "sport": "TF", "date": "2026-11-14",
+             "name": "NCAA Division I Championships"}]
+    assert N.pick(rows, 2026) == {("DIII", "regional"): [(5, "2026-11-14",
+                                   "NCAA Division III East Region Cross Country Championships")]}
