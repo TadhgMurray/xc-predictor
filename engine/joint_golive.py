@@ -623,7 +623,8 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
     #   the course. Untilted. XC rows carry none (e_w = 0).
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
         # interpolated by rating between the band anchors, no step at a
-        # band edge (js.distOffsetRow); the solve's own bands stay hard
+        # band edge (js.distOffsetRow); the solve loads on the same two
+        # bands (js.distSoftBands; hard under XCP_DIST_SOFT_BANDS=0)
         eff = eff + js.distOffsetRow(D, out["dist_offset"], rat["career"][D.athlete])
     # the altitude term (issue 172): credit at altitude, for everyone in
     # the race alike -- the venue's km less the field's acclimatisation
@@ -1032,7 +1033,7 @@ def buildLive(out, D, cols, keep, collapse="best", anchor="career",
 
     dist_rows = []
     if out.get("dist_offset") is not None and getattr(D, "n_e", 0):
-        n_e_rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
+        n_e_rows = np.rint(js.distRowMass(D))   # split across two bands when soft
         for i, lab in enumerate(getattr(D, "dist_labels", [])):
             parts = lab.split(":")
             band = int(parts[2][1:]) if len(parts) > 2 else 1

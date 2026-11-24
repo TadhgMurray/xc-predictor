@@ -927,6 +927,10 @@ ENV_RULES = {
     **_all("XCP_HOLDOUT_FRONT_RATED", "REVIEW", "holdout scoring (2026-11-24, joint_solve.predictHeldOut): a held-out race's "
            "field-strength front from rated rows only, so a cold-start athlete's meaningless ~119,000 'rating' cannot pin "
            "it at +6; changes held-out scores (evidence only, never the site), so off until the owner turns it on"),
+    **_all("XCP_DIST_SOFT_BANDS", "REVIEW", "joint solve (2026-11-24, owner approved, joint_solve.distSoftBands): each track row "
+           "loads on its two neighbouring distance-band offsets with distOffsetRow's interpolation weights, so a rating at a band "
+           "edge no longer jumps a band on a CG nudge, and held-out rows read the interpolated offset; on by default, 0 = the old "
+           "hard bands bit for bit"),
     **_all("XCP_EVIDENCE_REBALANCE XCP_EVIDENCE_THREADS XCP_HOLDOUT_KEEP_DESIGN", "INFRA", "evidence chain (2026-11-24): ladder rungs shared by both lanes, a thread cap per background solve, the unused full design freed in --holdout-only; 0 or 1 restores the old way"),
     **_all("XCP_GLOBAL_BLOCK_MAX", "INFRA", "the go-live CG global-block preconditioner: the largest block it inverts (8000)"),
     **_all("XCP_BACKFILL_ARRAY_LOOKUPS", "INFRA", "05_backfill person/weather lookups in numpy arrays shared by the forked workers (2026-11-22); 0 = the old dicts; same tables"),

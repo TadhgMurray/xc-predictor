@@ -54,7 +54,7 @@ if _HAVE_NUMBA:
                 has_beta, sc, beta,
                 has_c, k0, k1, c0, c1, w0, w1, cfull,
                 has_r, first, pool_row, r,
-                has_e, e_idx, e_w, e,
+                has_e, e_idx, e_w, e, has_e2, e_w2,
                 has_g, lz, g,
                 has_q, tz, q,
                 has_k, alt, kk,
@@ -105,6 +105,9 @@ if _HAVE_NUMBA:
                     row += first[i] * r[pool_row[i]]
                 if has_e:
                     row += e_w[i] * e[e_idx[i]]
+                    if has_e2:
+                        # soft bands: band j + 1's load (distSoftBands)
+                        row += e_w2[i] * e[e_idx[i] + 1]
                 if has_g:
                     row += g[at] * lz[i]
                 if has_q:
@@ -144,6 +147,8 @@ if _HAVE_NUMBA:
                     p_r[t, pool_row[i]] += wr * first[i]
                 if has_e:
                     p_e[t, e_idx[i]] += wr * e_w[i]
+                    if has_e2:
+                        p_e[t, e_idx[i] + 1] += wr * e_w2[i]
                 if has_g:
                     out_g[at] += wr * lz[i]
                 if has_q:
@@ -258,7 +263,8 @@ if _HAVE_NUMBA:
 # ★ THE GLOBAL BLOCK'S OWN GRAM MATRIX, IN ONE PASS (2026-11-22; see
 #   joint_solve.globalBlockPrecond). Per row its loadings on the few
 #   hundred global unknowns (mu, curve knots, rust, distance classes,
-#   altitude, importance, indoor -- at most 8 a row), and w * v_p * v_q
+#   altitude, importance, indoor -- at most 9 a row, the distance class
+#   two under soft bands), and w * v_p * v_q
 #   added into a private m x m matrix per chunk, summed in chunk order (so
 #   the same matrix every run). Once per outer pass, about one matvec.
 if _HAVE_NUMBA:
@@ -266,7 +272,7 @@ if _HAVE_NUMBA:
     def _globalGram(edges, nacc, m, w, h, amp, grp,
                     has_mu, has_c, c0, c1, w0, w1,
                     has_r, first, pool_row,
-                    has_e, e_idx, e_w,
+                    has_e, e_idx, e_w, has_e2, e_w2,
                     has_k, alt,
                     has_imp, imp_idx, imp_w,
                     has_ind, ind_idx, ind_w,
@@ -274,8 +280,8 @@ if _HAVE_NUMBA:
         nch = edges.size - 1
         acc = np.zeros((nacc, m, m))
         for j in prange(nacc):
-            idx = np.empty(8, dtype=np.int64)
-            val = np.empty(8)
+            idx = np.empty(9, dtype=np.int64)
+            val = np.empty(9)
             # accumulator j takes chunks j, j + nacc, ... in order, so the
             # sums are the same whichever thread runs it
             for t in range(j, nch, nacc):
@@ -301,6 +307,10 @@ if _HAVE_NUMBA:
                         idx[n] = o_e + e_idx[i]
                         val[n] = e_w[i]
                         n += 1
+                        if has_e2:
+                            idx[n] = o_e + e_idx[i] + 1
+                            val[n] = e_w2[i]
+                            n += 1
                     if has_k:
                         idx[n] = o_k + grp[i]
                         val[n] = alt[i]
@@ -344,6 +354,7 @@ def globalGram(D, w, h, amp, nmax=None):
     has_c = bool(D.n_c)
     has_r = bool(D.n_r)
     has_e = bool(getattr(D, "n_e", 0))
+    e_w2 = getattr(D, "e_w2", None) if has_e else None
     has_k = bool(getattr(D, "n_k", 0))
     has_imp = bool(getattr(D, "n_imp", 0))
     has_ind = bool(getattr(D, "n_ind", 0))
@@ -368,6 +379,7 @@ def globalGram(D, w, h, amp, nmax=None):
         f64(D.w0) if has_c else F, f64(D.w1) if has_c else F,
         has_r, f64(D.first) if has_r else F, i64(D.pool_row) if has_r else I,
         has_e, i64(D.e_idx) if has_e else I, f64(D.e_w) if has_e else F,
+        e_w2 is not None, F if e_w2 is None else f64(e_w2),
         has_k, f64(D.alt) if has_k else F,
         has_imp, i64(D.imp_idx) if has_imp else I,
         f64(D.imp_w) if has_imp else F,
@@ -517,6 +529,7 @@ def fusedMatvec(D, w, h, amp, b):
     has_c = bool(D.n_c) and b.get("c") is not None
     has_r = bool(D.n_r) and b.get("r") is not None
     has_e = bool(getattr(D, "n_e", 0)) and b.get("e") is not None
+    e_w2 = getattr(D, "e_w2", None) if has_e else None
     has_g = bool(getattr(D, "n_g", 0)) and b.get("g") is not None
     has_q = bool(getattr(D, "n_q", 0)) and b.get("q") is not None
     has_k = bool(getattr(D, "n_k", 0)) and b.get("k") is not None
@@ -585,6 +598,7 @@ def fusedMatvec(D, w, h, amp, b):
             b["r"] if has_r else F,
             has_e, D.e_idx if has_e else I, D.e_w if has_e else F,
             b["e"] if has_e else F,
+            e_w2 is not None, F if e_w2 is None else e_w2,
             has_g, D.lz if has_g else F, b["g"] if has_g else F,
             has_q, D.tz if has_q else F, b["q"] if has_q else F,
             has_k, D.alt if has_k else F, b["k"] if has_k else F,

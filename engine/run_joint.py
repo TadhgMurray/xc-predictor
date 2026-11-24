@@ -1236,7 +1236,7 @@ def reportDistOffsets(out, D, pools=("hs_m", "hs_f", "ms_m", "ms_f",
         print("[joint] track distance offsets: OFF (pack has no dist_m, or "
               "--no-dist)")
         return
-    rows = np.bincount(D.e_idx, weights=D.e_w, minlength=D.n_e)
+    rows = np.rint(js.distRowMass(D))      # split across two bands under soft bands
     cal_mean = out.get("dist_cal_mean")
     cal_n = out.get("dist_cal_n")
     cal_via = out.get("dist_cal_via")
@@ -4372,8 +4372,7 @@ def main():
         save["dist_offset"] = out["dist_offset"]
         save["dist_labels"] = np.array(D.dist_labels)
         save["dist_bands"] = np.array(js.DIST_BANDS if D.dist_banded else [])
-        save["dist_rows"] = np.bincount(D.e_idx, weights=D.e_w,
-                                        minlength=D.n_e).astype(np.int64)
+        save["dist_rows"] = np.rint(js.distRowMass(D)).astype(np.int64)
         if out.get("dist_cal_mean") is not None:
             save["dist_cal_mean"] = out["dist_cal_mean"]
             save["dist_cal_n"] = out["dist_cal_n"]

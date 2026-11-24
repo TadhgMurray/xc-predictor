@@ -115,6 +115,31 @@ def test_optional_terms_off_still_match():
     assert np.max(np.abs(got - ref)) <= 1e-10 * np.max(np.abs(ref))
 
 
+def test_soft_distance_bands_match_numpy_and_the_global_block():
+    """2026-11-24: a track row loads on two neighbouring band offsets
+    (joint_solve.distSoftBands). The fused kernel and globalGram carry the
+    second load exactly as the numpy matvec does."""
+    D, rng = _fakeDesign(seed=7)
+    D.e_idx = rng.integers(0, D.n_e - 1, D.n)
+    t = rng.random(D.n)
+    on = rng.random(D.n) > .3
+    D.e_w, D.e_w2 = np.where(on, 1 - t, 0.0), np.where(on, t, 0.0)
+    b = D.unpack(rng.normal(size=D.n_total))
+    w, h, amp = rng.random(D.n), 1 + .1 * rng.normal(size=D.n), \
+        1 + .1 * rng.normal(size=D.n)
+    got = jk.fusedMatvec(D, w, h, amp, b)
+    ref = _numpy(D, w, h, amp, b)
+    assert np.max(np.abs(got - ref)) <= 1e-10 * np.max(np.abs(ref))
+    G = jk.globalGram(D, w, h, amp)
+    Z = np.zeros((D.n, D.n_e))
+    np.add.at(Z, (np.arange(D.n), D.e_idx), D.e_w)
+    np.add.at(Z, (np.arange(D.n), D.e_idx + 1), D.e_w2)
+    o_e = D.n_mu + D.n_c + D.n_r
+    blk = G[o_e:o_e + D.n_e, o_e:o_e + D.n_e]
+    want = Z.T @ (w[:, None] * Z)
+    assert np.max(np.abs(blk - want)) <= 1e-10 * np.max(np.abs(want))
+
+
 def test_unsorted_rows_fall_back_to_numpy():
     D, rng = _fakeDesign(sort=False)
     b = D.unpack(rng.normal(size=D.n_total))

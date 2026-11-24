@@ -104,6 +104,27 @@ def test_banded_offsets_follow_the_rating():
     top = free & (rating >= 120)
     assert (D.e_idx[top] == classes[top] * js.DIST_N_BAND + 2).all()
     assert (D.e_w[~free] == 0).all(), "the pinned event is pinned in every band"
+    # ★ soft bands (2026-11-24, the default): band j at 1 - t, band j + 1
+    #   at t, distOffsetRow's weights -- 130 is 3/18 of the way 127 -> 145,
+    #   100 is 10/22 of the way 90 -> 112; the pinned event loads nowhere
+    assert D.e_w2 is not None
+    assert np.allclose(D.e_w2[top], 3.0 / 18.0) and np.allclose(D.e_w[top], 15.0 / 18.0)
+    low = free & (rating < 120)
+    assert (D.e_idx[low] == classes[low] * js.DIST_N_BAND + 0).all()
+    assert np.allclose(D.e_w2[low], 10.0 / 22.0)
+    assert (D.e_w2[~free] == 0).all()
+    e = np.random.default_rng(0).normal(size=D.n_e)
+    soft = D.e_w * e[D.e_idx] + D.e_w2 * e[D.e_idx + 1]
+    assert np.allclose(soft, js.distOffsetRow(D, e, rating), atol=1e-15)
+    # XCP_DIST_SOFT_BANDS=0: the old hard bands, digitized at DIST_BANDS
+    os.environ["XCP_DIST_SOFT_BANDS"] = "0"
+    try:
+        D.rebandDist(rating)
+    finally:
+        del os.environ["XCP_DIST_SOFT_BANDS"]
+    assert D.e_w2 is None and (D.e_w == free).all()
+    assert (D.e_idx[top] == classes[top] * js.DIST_N_BAND + 2).all()
+    assert (D.e_idx[low] == classes[low] * js.DIST_N_BAND + 0).all()
     # four bands since 2026-09-11 (a top band from 135, DIST_BANDS)
     assert rj.bandLabels(["p0:800"]) == [f"p0:800:b{b}" for b in range(js.DIST_N_BAND)]
     assert js.DIST_N_BAND == 4 and js.DIST_BANDS == (105.0, 120.0, 135.0)

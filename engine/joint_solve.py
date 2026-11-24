@@ -1110,27 +1110,68 @@ SPORT_GAIN_ROW_Q = (None if os.environ.get("XCP_SPORT_GAIN_STAT", "").strip().lo
 SPORT_GAIN_MIN_ROWS = 1 if SPORT_GAIN_ROW_Q is None else 3   # board_sanity: n_races >= 3
 
 
+# ★ SOFT BAND MEMBERSHIP IN THE SOLVE (2026-11-24, owner: "yes we can do
+#   both"). The solve put each athlete-season in ONE band (digitize at
+#   DIST_BANDS) while the published rating interpolated between the band
+#   anchors (distOffsetRow). A rating within ~1e-3 of 105/120/135 changed
+#   band on any CG-scale nudge (a warm start, another preconditioner), and
+#   its track rows jumped to another offset: ~0.3 points on the synthetic
+#   repro, 1-2 on real data. Now every track row loads on its two
+#   neighbouring band offsets with distOffsetRow's own weights -- (1 - t)
+#   on band j, t on band j + 1, distBandLoads -- so the solve fits the
+#   model the site publishes, and a rating nudge moves the loads by the
+#   nudge, not by a whole band. Design.e_idx is band j, e_w its load,
+#   e_w2 band j + 1's (None under hard bands).
+#   XCP_DIST_SOFT_BANDS=0 is the old hard bands, bit for bit.
+def distSoftBands():
+    return os.environ.get("XCP_DIST_SOFT_BANDS", "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
+def distBandLoads(rating_row):
+    """(j, t) per row: the lower band anchor's index and the fraction of
+    the way to the next (DIST_BAND_ANCHORS, flat beyond the outer ones;
+    a missing rating reads 100). distOffsetRow's interpolation."""
+    r = np.nan_to_num(np.asarray(rating_row, dtype=np.float64), nan=100.0)
+    anchors = np.asarray(DIST_BAND_ANCHORS)
+    x = np.clip(r, anchors[0], anchors[-1])
+    # piecewise-linear over the anchors, vectorised per row
+    j = np.clip(np.searchsorted(anchors, x, side="right") - 1, 0, DIST_N_BAND - 2)
+    t = (x - anchors[j]) / (anchors[j + 1] - anchors[j])
+    return j, t
+
+
+def distRowMass(D, w=None):
+    """Per (class, band): the rows' (weighted) load -- the row count under
+    hard bands, each row split between its two bands under soft ones."""
+    wt = D.e_w if w is None else w * D.e_w
+    out = np.bincount(D.e_idx, weights=wt, minlength=D.n_e)
+    e_w2 = getattr(D, "e_w2", None)
+    if e_w2 is not None:
+        wt2 = e_w2 if w is None else w * e_w2
+        out = out + np.bincount(D.e_idx + 1, weights=wt2, minlength=D.n_e)
+    return out
+
+
 def distOffsetRow(D, e, rating_row):
     """The event offset each row's RATING applies: the class's three band
     values interpolated at the athlete-season's rating between the band
     anchors (SPORT_GAIN_ANCHORS), flat beyond -- no step at 105 or 120
-    (2026-09-06, the owner: "band edges"). The SOLVE keeps the hard bands
-    (a fit); an unbanded design gets its one value."""
+    (2026-09-06, the owner: "band edges"). The solve loads on the same two
+    bands with the same weights (distSoftBands; hard bands under
+    XCP_DIST_SOFT_BANDS=0); an unbanded design gets its one value."""
     if not getattr(D, "n_e", 0) or e is None:
         return np.zeros(D.n)
     if not getattr(D, "dist_banded", False):
         return D.e_w * e[D.e_idx]
     nb = D.n_e_base
     table = np.asarray(e).reshape(nb, DIST_N_BAND)          # class x band
-    r = np.nan_to_num(np.asarray(rating_row, dtype=np.float64), nan=100.0)
-    anchors = np.asarray(DIST_BAND_ANCHORS)
-    x = np.clip(r, anchors[0], anchors[-1])
-    # piecewise-linear over the three anchors, vectorised per row
-    j = np.clip(np.searchsorted(anchors, x, side="right") - 1, 0, DIST_N_BAND - 2)
-    t = (x - anchors[j]) / (anchors[j + 1] - anchors[j])
+    j, t = distBandLoads(rating_row)
     lo = table[D.e_base, j]
     hi = table[D.e_base, j + 1]
-    return D.e_w * (lo + t * (hi - lo))
+    # the row's class mask, not e_w: under soft bands e_w is band j's load
+    on = getattr(D, "e_on", None)
+    return (D.e_w if on is None else on.astype(np.float64)) * (lo + t * (hi - lo))
 
 
 def altitudeCredit(D):
@@ -1770,10 +1811,12 @@ class Design:
         # event, or no distance. e_w zeroes the -1 rows in every product.
         self.n_e = 0
         self.dist_banded = False
+        self.e_w2 = None          # band j + 1's load under soft bands
         if dist is not None:
             dist = np.asarray(dist, dtype=np.int64)
             self.e_base = np.maximum(dist, 0)
-            self.e_w = (dist >= 0).astype(np.float64)
+            self.e_on = dist >= 0
+            self.e_w = self.e_on.astype(np.float64)
             n_base = int(n_e if n_e is not None
                          else (int(dist.max()) + 1 if dist.size else 0))
             self.n_e_base = max(n_base, 0)
@@ -1974,6 +2017,16 @@ class Design:
         rating band (DIST_BANDS); a no-op for an unbanded design."""
         if not self.dist_banded:
             return
+        if distSoftBands():
+            # soft: band j at (1 - t), band j + 1 at t (distBandLoads)
+            j, t = distBandLoads(rating_row)
+            self.e_idx = self.e_base * DIST_N_BAND + j
+            self.e_w = np.where(self.e_on, 1.0 - t, 0.0)
+            self.e_w2 = np.where(self.e_on, t, 0.0)
+            return
+        if self.e_w2 is not None:                  # back from soft loads
+            self.e_w = self.e_on.astype(np.float64)
+            self.e_w2 = None
         band = np.digitize(np.asarray(rating_row, dtype=np.float64), DIST_BANDS)
         self.e_idx = self.e_base * DIST_N_BAND + band
 
@@ -2014,7 +2067,7 @@ class Design:
             start = np.maximum.accumulate(np.where(first, np.arange(key.size), 0))
             return rows, key, np.arange(key.size) - start
 
-        free = np.flatnonzero(self.e_w > 0)
+        free = np.flatnonzero(self.e_on)
         f_rows, f_key, f_pos = _ranked(free, self.athlete[free] * nb
                                        + self.e_base[free])
         n_y = np.bincount(f_key, minlength=self.n_ath * nb)
@@ -2187,6 +2240,8 @@ def _predictSlice(b, D, h, amp, sl, out):
         row += D.first[sl] * b["r"][D.pool_row[sl]]
     if b.get("e") is not None and getattr(D, "n_e", 0):
         row += D.e_w[sl] * b["e"][D.e_idx[sl]]
+        if getattr(D, "e_w2", None) is not None:          # soft bands
+            row += D.e_w2[sl] * b["e"][D.e_idx[sl] + 1]
     if b.get("g") is not None and getattr(D, "n_g", 0):
         row += b["g"][ath] * D.lz[sl]
     if b.get("q") is not None and getattr(D, "n_q", 0):
@@ -2420,8 +2475,11 @@ class _Operator:
             self.pen_dist = np.full(D.n_e, float(pen_dist))
             cal = getattr(D, "e_cal_n", None)
             if cal is not None and (cal > 0).any():
-                rows_w = np.bincount(D.e_idx, weights=w * D.e_w,
-                                     minlength=D.n_e)
+                # ! the class's row LOAD (its mass): under soft bands a row
+                #   counts (1 - t) to one band and t to the next, so a class
+                #   keeps the pseudo-rows its rows bring; under hard bands
+                #   the same number as before
+                rows_w = distRowMass(D, w)
                 share = DIST_CAL_SHARE / (1.0 - DIST_CAL_SHARE)
                 self.pen_dist = np.where(cal > 0, rows_w * share, self.pen_dist)
         # the walk over distance classes: incident weight per class, for
@@ -2480,8 +2538,14 @@ class _Operator:
             jobs.append(lambda: np.bincount(D.pool_row, weights=wr * D.first,
                                             minlength=D.n_pool))
         if D.n_e:
-            jobs.append(lambda: np.bincount(D.e_idx, weights=wr * D.e_w,
-                                            minlength=D.n_e))
+            if getattr(D, "e_w2", None) is None:
+                jobs.append(lambda: np.bincount(D.e_idx, weights=wr * D.e_w,
+                                                minlength=D.n_e))
+            else:                                          # soft bands
+                jobs.append(lambda: np.bincount(D.e_idx, weights=wr * D.e_w,
+                                                minlength=D.n_e)
+                            + np.bincount(D.e_idx + 1, weights=wr * D.e_w2,
+                                          minlength=D.n_e))
         if D.n_g:
             jobs.append(lambda: np.bincount(D.athlete, weights=wr * D.lz,
                                             minlength=D.n_ath))
@@ -2628,7 +2692,14 @@ class _Operator:
         if D.n_r:
             jobs.append(lambda: np.bincount(D.pool_row, weights=w * D.first,
                                             minlength=D.n_pool))
-        if D.n_e:
+        if D.n_e and getattr(D, "e_w2", None) is not None:
+            # soft bands: each band's share of a row enters squared
+            jobs.append(lambda: np.bincount(D.e_idx, weights=w * D.e_w * D.e_w,
+                                            minlength=D.n_e)
+                        + np.bincount(D.e_idx + 1, weights=w * D.e_w2 * D.e_w2,
+                                      minlength=D.n_e) + self.pen_dist
+                        + (0.0 if self._dist_deg is None else self.pen_walk * self._dist_deg))
+        elif D.n_e:
             jobs.append(lambda: np.bincount(D.e_idx, weights=w * D.e_w,
                                             minlength=D.n_e) + self.pen_dist
                         + (0.0 if self._dist_deg is None else self.pen_walk * self._dist_deg))
@@ -5201,6 +5272,16 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     amp = np.ones(D_test.n)
     if out.get("rating") is not None:
         r_row = out["rating"][D_test.athlete]
+        # ★ THE HELD-OUT ROWS' EVENT OFFSETS AT THEIR RATING (2026-11-24,
+        #   with the soft bands): a held-out design is built fresh, every
+        #   track row on the middle band, and was scored that way; under
+        #   soft bands it reads the interpolated offset the site publishes
+        #   (distOffsetRow). A design scored on itself keeps the loads it
+        #   was fitted with. Hard bands (XCP_DIST_SOFT_BANDS=0) score as
+        #   before.
+        if (distSoftBands() and D_test is not D_train
+                and getattr(D_test, "dist_banded", False)):
+            D_test.rebandDist(r_row)
         if tilt:
             # the rating the fit's tilt read: the HS-equivalent under
             # TILT_SCALES 'hs', else the own-pool rating as before
