@@ -288,20 +288,50 @@ def refresh(cur):
     return n
 
 
+def _ourTriggers(cur):
+    cur.execute("SELECT c.relname, t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "WHERE t.tgname IN ('lu_person_move', 'lu_person_move_id') AND c.relname = ANY(%s) "
+                "ORDER BY 1, 2", (list(TABLES),))
+    return cur.fetchall()
+
+
 def uninstall(conn, quiet=False, lock_wait="30s"):
+    """The move triggers OFF: disabled first, then dropped if the tables can
+    be had.
+    ★ DISABLE BEFORE DROP (2026-11-24; run 20261122_220225's
+      04a_registry_off FAILED after its 5-minute wait, as on 11-13 and
+      11-16). DROP TRIGGER takes ACCESS EXCLUSIVE, so ANY reader of
+      results/results_tf (01c_level_graph's scan, the site) blocks it -- and
+      queues the site behind it while it waits. ALTER TABLE ... DISABLE
+      TRIGGER takes SHARE ROW EXCLUSIVE, which readers do not block. A
+      disabled trigger never fires, which is all 'off' has to mean; the drop
+      after it is tidying and gets a few seconds. The next install
+      (_triggersOnce) drops and recreates them, enabled."""
     try:
         conn.rollback()
         with conn.cursor() as cur:
             cur.execute(f"SET LOCAL lock_timeout = '{lock_wait}'")
-            for table in TABLES:
-                cur.execute(f"DROP TRIGGER IF EXISTS lu_person_move ON {table}")
-                cur.execute(f"DROP TRIGGER IF EXISTS lu_person_move_id ON {table}")
+            for table, name in _ourTriggers(cur):
+                cur.execute(f"ALTER TABLE {table} DISABLE TRIGGER {name}")
         conn.commit()
     except Exception as exc:                # noqa: BLE001
         conn.rollback()
         if not quiet:
-            print(f"[name-registry] ! could not drop the triggers ({exc}); the next 04a "
+            print(f"[name-registry] ! could not disable the triggers ({exc}); the next 04a "
                   "replaces them and the next backfill drops them", flush=True)
+        _READY.pop(id(conn), None)
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL lock_timeout = '5s'")
+            for table, name in _ourTriggers(cur):
+                cur.execute(f"DROP TRIGGER IF EXISTS {name} ON {table}")
+        conn.commit()
+    except Exception:                       # noqa: BLE001 -- disabled is off
+        conn.rollback()
+        if not quiet:
+            print("[name-registry] triggers disabled (the tables were busy, so they stay "
+                  "in the catalogue, off; the next 04a replaces them)", flush=True)
     _READY.pop(id(conn), None)
 
 
@@ -324,12 +354,14 @@ def main():
     with getConn() as conn:
         uninstall(conn, lock_wait=a.lock_wait)
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM pg_trigger WHERE tgname LIKE 'lu_person_move%%'")
-            left = cur.fetchone()[0]
-            if not left:
+            # enabled ones only: a disabled trigger is off (see uninstall)
+            cur.execute("SELECT count(*) FILTER (WHERE tgenabled <> 'D'), count(*) "
+                        "FROM pg_trigger WHERE tgname LIKE 'lu_person_move%%'")
+            left, anyleft = cur.fetchone()
+            if not anyleft:
                 cur.execute("DROP TABLE IF EXISTS lu_person_moves")
         conn.commit()
-    print(f"[name-registry] triggers left: {left}")
+    print(f"[name-registry] triggers left on: {left}")
     return 1 if left else 0
 
 
