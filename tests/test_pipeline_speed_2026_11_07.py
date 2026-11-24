@@ -686,6 +686,44 @@ def test_merge_column_parallel_indexes_give_the_serial_table(monkeypatch):
         assert _shape(cur) == serial
 
 
+def test_merge_column_frozen_build_gives_the_ctas_table(monkeypatch):
+    """2026-11-24: COPY FREEZE from a second connection (XCP_MERGE_FREEZE)
+    against CREATE TABLE AS: the same rows, types, collations and catalogue;
+    the heap frozen by the COPY, all of it visible after the VACUUM."""
+    def types(cur):
+        cur.execute("""SELECT attname, format_type(atttypid, atttypmod), attcollation,
+                              attstorage, attcompression, atthasdef, attnotnull
+                       FROM pg_attribute WHERE attrelid = 'mt'::regclass
+                         AND attnum > 0 AND NOT attisdropped ORDER BY attnum""")
+        return cur.fetchall()
+    with scratch("xcp_speed_freeze") as (conn, connect):
+        cur = conn.cursor()
+        cur.execute(_MT + "CREATE EXTENSION IF NOT EXISTS pg_visibility;")
+        conn.commit()
+        monkeypatch.setenv("XCP_MERGE_FREEZE", "0")
+        _merge(conn, connect, 3, 11, monkeypatch)
+        ctas = (_shape(cur), types(cur))
+        cur.execute("SELECT * FROM mt ORDER BY result_id")
+        ctas_rows = cur.fetchall()
+        conn.commit()
+        monkeypatch.setenv("XCP_MERGE_FREEZE", "1")
+        import merge_column as mc
+        cur.execute("DROP TABLE IF EXISTS mt_old")
+        conn.commit()
+        mc.mergeColumn(conn, "mt", "speed_rating", "stg", extra=(("rating_pool", "pool"),),
+                       preserve_unmatched=False, connect=connect)
+        assert (_shape(cur), types(cur)) == ctas
+        cur.execute("SELECT * FROM mt ORDER BY result_id")
+        assert cur.fetchall() == ctas_rows
+        # COPY FREEZE leaves only its last batch's pages for the VACUUM
+        cur.execute("""SELECT count(*), count(*) FILTER (WHERE all_visible),
+                              count(*) FILTER (WHERE all_frozen)
+                       FROM pg_visibility_map('mt')""")
+        n, vis, frozen = cur.fetchone()
+        assert vis == n and frozen >= n - 10
+        conn.commit()
+
+
 def test_merge_column_keeps_the_order_build_commit_vacuum_swap():
     src = read("engine", "merge_column.py")
     body = src[src.index("def mergeColumn("):]

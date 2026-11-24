@@ -309,8 +309,13 @@ def _dbSetting(name, default):
     return dbSetting(name, default)
 
 
-def _buildNewTable(cur, table, staging, cap, column, key, val,
-                   preserve_unmatched=True, extra=()):
+def _buildSelect(table, staging, cap, column, key, val, preserve_unmatched, extra):
+    return (f"SELECT {_selectList(cap['columns'], column, val, preserve_unmatched, extra)}\n"
+            f"        FROM {table} r\n"
+            f"        LEFT JOIN {staging} s ON s.{key} = r.{key}")
+
+
+def _buildSettings(cur):
     # SET LOCAL, not SET. A plain SET survives COMMIT and rides back into the
     # connection POOL, so the next caller silently inherits a 2GB-per-sort-node
     # budget. SET LOCAL is scoped to the transaction and evaporates at commit.
@@ -321,11 +326,121 @@ def _buildNewTable(cur, table, staging, cap, column, key, val,
     cur.execute(f"SET LOCAL work_mem = '{_dbSetting('work_mem', '2GB')}'")
     cur.execute(f"SET LOCAL max_parallel_workers_per_gather = "
                 f"{_dbSetting('max_parallel_workers_per_gather', 4)}")
+
+
+# ★ THE NEW HEAP WRITTEN FROZEN (2026-11-24; 08_golive's write-out, run
+#   20261122_220225, ~15 min after the solve with results_tf's rebuild the
+#   long pole). Production has data checksums on, so a CREATE TABLE AS heap
+#   is written THREE times: once by the CTAS (no WAL at wal_level minimal),
+#   once more when the first index build's heap scan sets every tuple's
+#   commit hint bit (each page's first hint after a checkpoint is a full-page
+#   image in the WAL, and the page is dirty again), and a third time when
+#   _vacuumNew marks every page all-visible. Measured on a checksummed,
+#   wal_level=minimal Postgres 16 (scratch, 12M rows, 1.9 GB heap, 8
+#   indexes): CTAS 19.4 s, NOT NULL scan 1.4 s, indexes 31.0 s (856 MB of
+#   WAL), VACUUM 11.9 s.
+#   Now: CREATE TABLE AS ... WITH NO DATA (the CTAS's own column types,
+#   typmods and collations, by construction), the shape ALTER on the empty
+#   table (no scan: NOT NULL is then checked row by row as rows arrive),
+#   and COPY ... FROM STDIN (FREEZE) in the same transaction, fed by a
+#   second pooled connection running COPY (<the CTAS's SELECT, the same
+#   text, the same SET LOCALs>) TO STDOUT in binary (exact for every type).
+#   COPY FREEZE writes the pages frozen and all-visible: nothing to hint,
+#   and VACUUM only finishes the last batch's few pages. Scratch, same
+#   table, the whole mergeColumn twice each way: 58.7 / 62.3 s and 856 /
+#   1,648 MB of WAL before; 40.5 / 46.1 s and 0.2 MB after (fill 22.9 s,
+#   indexes ~17 s wall, VACUUM 0.0 s). The reader's COPY (query) is planned
+#   like the CTAS's SELECT (the same Hash Right Join; parallel workers
+#   allowed, checked with auto_explain). The same rows and values, the same
+#   catalogue (tests/test_pipeline_speed_2026_11_07.py checks both against
+#   the CTAS path). Only with the index pool and the key in it (the other
+#   path adds the key in the build transaction, after the data).
+#   XCP_MERGE_FREEZE=0 is the CREATE TABLE AS. Cost: one more pooled
+#   connection while the heap is copied, two 1 MB buffers.
+def _freezeOn(jobs, pk_in_pool, cap, connect):
+    import os
+    return (connect is not None and jobs > 1 and (pk_in_pool or not cap["pk"])
+            and os.environ.get("XCP_MERGE_FREEZE", "1") != "0")
+
+
+def _buildNewTableFrozen(conn, cur, table, select, cap, connect, pk_in_pool):
+    """{table}_new built empty, shaped, then filled by COPY FREEZE from a
+    second connection's COPY (select) TO STDOUT, in conn's transaction."""
+    import os
+    import threading
+    cur.execute(f"CREATE TABLE {table}_new AS {select} WITH NO DATA")
+    sql = _shapeSql(table, cap, pk_in_pool)
+    if sql:
+        _timed(cur, sql, f"NOT NULL / DEFAULT on the empty {table}_new (one statement)")
+    rfd, wfd = os.pipe()
+    src = os.fdopen(rfd, "rb", buffering=1 << 20)
+    sink = os.fdopen(wfd, "wb", buffering=1 << 20)
+    err, reader_conn = [], []
+
+    def reader():
+        try:
+            with connect() as rc:
+                reader_conn.append(rc)
+                try:
+                    with rc.cursor() as rcur:
+                        _buildSettings(rcur)
+                        rcur.copy_expert(f"COPY ({select}) TO STDOUT (FORMAT binary)",
+                                         sink, size=1 << 20)
+                    rc.commit()
+                except BaseException:
+                    rc.rollback()
+                    raise
+        except BaseException as exc:                    # noqa: BLE001
+            err.append(exc)
+        finally:
+            try:
+                sink.close()             # EOF (or a truncated stream) for the writer
+            except Exception:                           # noqa: BLE001
+                pass
+
+    print(f"    ...        COPY {table}_new FROM a second connection (FREEZE)", flush=True)
+    t0 = time.time()
+    th = threading.Thread(target=reader, name=f"freeze-{table}", daemon=True)
+    th.start()
+    try:
+        cur.copy_expert(f"COPY {table}_new FROM STDIN (FORMAT binary, FREEZE)",
+                        src, size=1 << 20)
+    except BaseException as exc:
+        # the reader may be blocked on a full pipe: cancel its COPY, then
+        # break the pipe, so it ends instead of waiting forever
+        for rc in reader_conn:
+            try:
+                rc.cancel()
+            except Exception:                           # noqa: BLE001
+                pass
+        src.close()
+        th.join()
+        # a cut stream ("COPY file signature not recognized", "unexpected
+        # EOF"): the reader's own error is the cause worth reading
+        if err and isinstance(exc, psycopg2.errors.BadCopyFileFormat):
+            raise err[0] from exc
+        raise
+    src.close()
+    th.join()
+    if err:
+        raise err[0]
+    print(f"    [{time.time() - t0:7.1f}s] {table}_new filled frozen "
+          f"(heap rebuild, {cur.rowcount:,} rows)", flush=True)
+
+
+def _buildNewTable(cur, table, staging, cap, column, key, val,
+                   preserve_unmatched=True, extra=(), frozen=None):
+    """frozen: None (CREATE TABLE AS), or (conn, connect, pk_in_pool) for
+    _buildNewTableFrozen, which also applies the shape ALTER."""
+    _buildSettings(cur)
+    select = _buildSelect(table, staging, cap, column, key, val, preserve_unmatched, extra)
+    if frozen is not None:
+        conn, connect, pk_in_pool = frozen
+        _buildNewTableFrozen(conn, cur, table, select, cap, connect, pk_in_pool)
+        return
     _timed(cur, f"""
         CREATE TABLE {table}_new AS
-        SELECT {_selectList(cap['columns'], column, val, preserve_unmatched, extra)}
-        FROM {table} r
-        LEFT JOIN {staging} s ON s.{key} = r.{key}
+        {select}
     """, f"CREATE TABLE {table}_new AS SELECT ... (heap rebuild)")
 
 
@@ -356,12 +471,14 @@ def _shapeSql(table, cap, pk_in_pool=False):
     return f"ALTER TABLE {table}_new " + ", ".join(subs)
 
 
-def _restoreShape(cur, table, cap, pk_in_pool=False):
+def _restoreShape(cur, table, cap, pk_in_pool=False, shaped=False):
+    """shaped: the frozen build already ran the shape ALTER, on the empty
+    table (_buildNewTableFrozen)."""
     if cap["pk"] and not pk_in_pool:
         cols = ", ".join(cap["pk"])
         _timed(cur, f"ALTER TABLE {table}_new ADD PRIMARY KEY ({cols})",
                f"PRIMARY KEY ({cols})")
-    sql = _shapeSql(table, cap, pk_in_pool)
+    sql = None if shaped else _shapeSql(table, cap, pk_in_pool)
     if sql:
         _timed(cur, sql, f"NOT NULL / DEFAULT on {table}_new (one statement)")
     if cap["notnulls"]:
@@ -865,9 +982,11 @@ def mergeColumn(conn, table, column, staging, key="result_id", val="val",
         jobs = _indexJobs(len(cap["indexes"])) if connect is not None else 1
         pk_in_pool = jobs > 1 and _pkInPool(cap)
         pool = _poolIndexes(cur, table, cap) if pk_in_pool else cap["indexes"]
+        frozen = ((conn, connect, pk_in_pool)
+                  if _freezeOn(jobs, pk_in_pool, cap, connect) else None)
         _buildNewTable(cur, table, staging, cap, column, key, val,
-                       preserve_unmatched, extra)
-        _restoreShape(cur, table, cap, pk_in_pool)
+                       preserve_unmatched, extra, frozen=frozen)
+        _restoreShape(cur, table, cap, pk_in_pool, shaped=frozen is not None)
         if jobs <= 1:
             _restoreIndexes(cur, table, cap)
             _restoreConstraints(cur, table, cap)
