@@ -77,7 +77,7 @@ def test_index_signature_matches_the_builders_rule():
 def test_protected_indexes_come_from_both_lists():
     prot = H.protectedIndexes()
     names = {(t, n) for t, n, _s in prot}
-    assert ("ranking_results", "rr_person_idx") in names                  # _CANONICAL_INDEXES
+    assert ("ranking_results", "rr_result_idx") in names                  # _CANONICAL_INDEXES
     assert ("athlete_season", "as_board_mean_idx") in names
     assert ("ranking_results", "idx_rr_person_cover") in names            # both lists
     assert ("results", "idx_results_div") in names                        # add_page_indexes.WANTED

@@ -549,3 +549,16 @@ def test_projections_are_computed_once_for_the_box(tmp_path, monkeypatch):
     assert a == b == c and "_shared_at" not in a
     assert a["year"] == 2025 and a["teams"] == [] and a["n_field"] == 0
     assert isinstance(a["computed_at"], float)
+
+
+def test_retired_prefix_trees_keep_a_tree_with_their_key():
+    """2026-11-24: rr_school_sport_idx and rr_person_idx are retired because a
+    canonical tree that stays leads with exactly their key; if that tree ever
+    goes, they must come back."""
+    import build_ranking_results as B
+    canon = {n: B._indexSig(c) for n, c in B._CANONICAL_INDEXES["ranking_results"]}
+    wanted = {n for n, (t, _s) in _wanted().items() if t == "ranking_results"}
+    for gone, key in (("rr_school_sport_idx", "school,sport"), ("rr_person_idx", "person_id")):
+        assert gone in B._RETIRED_INDEXES["ranking_results"]
+        assert gone not in canon and gone not in wanted
+        assert any(re.match(re.escape(key) + r"(,|include|$)", sig) for sig in canon.values()), gone

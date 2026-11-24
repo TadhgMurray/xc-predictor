@@ -2497,8 +2497,9 @@ def createShadow(conn, name, like):
 _CANONICAL_INDEXES = {
     "ranking_results": [
         # app.py _athletePaces, conversions.athlete_paces, rankings PR ranks:
-        #   WHERE person_id = %s
-        ("rr_person_idx", "(person_id)"),
+        #   WHERE person_id = %s -- read through idx_rr_person_cover below,
+        #   whose key is the same (person_id). rr_person_idx is retired
+        #   (_RETIRED_INDEXES says why).
         # pool_view.stampRowsHs, on EVERY race/compiled/course/compare
         #   page: WHERE sport = %s AND result_id = ANY(%s). Without it
         #   each of those pages seq-scans 56M rows (measured 11.6s a hit,
@@ -2541,7 +2542,8 @@ _CANONICAL_INDEXES = {
         #   workers were busy and nginx timed out). scripts/add_page_indexes
         #   still builds it CONCURRENTLY on an older table; here it exists
         #   before the swap, so there is no window without it.
-        ("rr_school_sport_idx", "(school, sport)"),
+        # ! (school, sport) ITSELF IS RETIRED (2026-11-24): rr_school_idx and
+        #   rr_school_season_idx below both lead with it (_RETIRED_INDEXES).
         ("rr_pool_rating_idx", "(pool, speed_rating DESC)"),
         ("rr_pool_sport_rating_idx", "(pool, sport, speed_rating DESC)"),
         # rankings PR boards: same filters, ORDER BY time_seconds ASC
@@ -2692,6 +2694,28 @@ _RETIRED_INDEXES = {
         # rr_school_season_idx has its key (school, sport, year, meet_id) and
         # covers racesRun's columns; 121-131 s a night (2026-11-22)
         "idx_rr_school_sport_year_meet",
+        # ★ TWO LEFT-PREFIX TREES (2026-11-24; production pg_stat_user_indexes
+        #   ~1.5 days after run 20261122_220225's swap, whose "index
+        #   ranking_results" phase took 11.9 min at 3 builds a time). Each is
+        #   a leading prefix of a tree that stays, so every query that could
+        #   read one gets the same plan node on the other, with the same
+        #   Index Cond:
+        #   - rr_school_sport_idx (school, sport), 1,082 MB, ZERO scans: the
+        #     planner already reads rr_school_idx (school, sport, speed_rating
+        #     DESC) INCLUDE (...) or rr_school_season_idx (school, sport,
+        #     year, meet_id) INCLUDE (...) for every school page.
+        #   - rr_person_idx (person_id), 191,003 scans beside
+        #     idx_rr_person_cover (person_id) INCLUDE (...) at 742,115: the
+        #     cover takes the same probes (Index Scan / Index Only Scan /
+        #     Bitmap Index Scan, Index Cond person_id = ...). Its leaf
+        #     entries are wider, so a cold probe reads a few more index
+        #     pages; it is the busiest person tree and stays warm.
+        #   EXPLAIN, 4M-row stand-in with the same trees, before and after
+        #   (athlete pace read, a field's careers by person, the school
+        #   meets / best / PRs / roster reads, counts): every plan the same
+        #   shape, only the index name changed.
+        "rr_school_sport_idx",
+        "rr_person_idx",
     },
 }
 
