@@ -1827,14 +1827,39 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       $([ "${XCP_SEASON_TIE:-0}" = "1" ] && echo --season-tie) || true
   }
   _wantHoldout() { case ",${XCP_HOLDOUTS:-race,sport,distance}," in *",$1,"*) return 0 ;; esac; return 1; }
+  # ★ REBALANCED (2026-11-24, run 20261122_220225). Lane A was race 2,617 s
+  #   + distance 2,028 s and then idle; lane B was sport 2,697 s + the ladder
+  #   10,966 s + 08d, and the run waited 2,908 s for lane B after its last
+  #   in-line step. Now lane A runs all three holdouts and lane B starts the
+  #   ladder at once; when lane A's holdouts are done it HELPS with the
+  #   ladder's remaining rungs (scripts/ablation_ladder.py --claim-dir /
+  #   --helper: a rung runs in whichever lane claims it first, the helper
+  #   admitted like a holdout through the memory ledger, and lane B still
+  #   prints the one report). Still at most one solve per lane, as before.
+  #   Every holdout and rung is the same command as before, so every number
+  #   is the same. XCP_EVIDENCE_REBALANCE=0 puts the sport holdout back at
+  #   the head of lane B and runs the ladder there alone.
+  _evRebalance() { [ "${XCP_EVIDENCE_REBALANCE:-1}" != "0" ] && [ "${XCP_EVIDENCE_LANES:-2}" -ge 2 ] && [ "$DRY" -eq 0 ]; }
   _evLaneA() {
     _wantHoldout race && _holdout 08a_holdout race
     if [ "${XCP_DIST_HOLDOUT:-1}" != "0" ] && _wantHoldout distance; then
       _holdout 08a_distance_holdout distance
     fi
+    if _evRebalance; then
+      _wantHoldout sport && _holdout 08a_sport_holdout "${XCP_SPORT_HOLDOUT:-sport}"
+      # ! never without its owner: a skipped 08b_ladder (--test) skips this
+      if [ "${LADDER_RUN:-0}" -eq 1 ] && ! skipped 08b_ladder; then
+        step 08b_ladder_help "$PY" -u scripts/ablation_ladder.py \
+            --pct "${XCP_LADDER_PCT:-15}" --outer "${XCP_OUTER:-5}" \
+            --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
+            ${XCP_LADDER_ALL:+--all} \
+            $([ "${XCP_LADDER_TUNE:-0}" = "1" ] && echo --tune) \
+            ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} \
+            --claim-dir "$LADDER_CLAIMS" --helper --gb "${XCP_HOLDOUT_GB:-38}" || true
+      fi
+    fi
   }
-  _evLaneB() {
-    _wantHoldout sport && _holdout 08a_sport_holdout "${XCP_SPORT_HOLDOUT:-sport}"
+  _ladderDecide() {
     LADDER_STAMP_FILE="$ROOT/engine/data/ladder_stamp"
     LADDER_STAMP=$( { cat "$ROOT"/engine/*.py "$ROOT/deploy/solve_env.sh" \
                           "$ROOT/scripts/ablation_ladder.py"
@@ -1861,6 +1886,12 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
            LADDER_WHY="the model changed since its last run"
          fi ;;
     esac
+    # the rungs' claim files, one fresh directory a run (ablation_ladder.py)
+    LADDER_CLAIMS="$LOGDIR/.ladder_claims"
+    rm -rf "$LADDER_CLAIMS"
+  }
+  _evLaneB() {
+    _evRebalance || { _wantHoldout sport && _holdout 08a_sport_holdout "${XCP_SPORT_HOLDOUT:-sport}"; }
     if [ "$LADDER_RUN" -eq 1 ]; then
       echo "  08b_ladder runs: $LADDER_WHY"
       step 08b_ladder       "$PY" -u scripts/ablation_ladder.py \
@@ -1868,7 +1899,8 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
           --rung-timeout "${XCP_RUNG_TIMEOUT:-7200}" \
           ${XCP_LADDER_ALL:+--all} \
           $([ "${XCP_LADDER_TUNE:-0}" = "1" ] && echo --tune) \
-          ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} || true
+          ${XCP_LADDER_ONLY:+--only "$XCP_LADDER_ONLY"} \
+          $(_evRebalance && echo --claim-dir "$LADDER_CLAIMS") || true
       case " $FAILED " in
         *" 08b_ladder "*) ;;
         *) [ "$DRY" -eq 1 ] || [ -n "${XCP_LADDER_ONLY:-}" ] || [ "${XCP_LADDER_TUNE:-0}" = "1" ] || echo "$LADDER_STAMP" > "$LADDER_STAMP_FILE" ;;
@@ -1905,6 +1937,7 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
         || true
     }
   _evidence() {
+    _ladderDecide
     if [ "${XCP_EVIDENCE_LANES:-2}" -ge 2 ] && [ "$DRY" -eq 0 ]; then
       ( FAILED=""; _evLaneA; echo "$FAILED" > "$LOGDIR/.evidence_lane_a" ) &
       local _la=$!
@@ -1955,6 +1988,25 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
       STEP_NOTE="background, evidence chain"
       NICE="nice -n ${XCP_EVIDENCE_NICE:-19}"
       command -v ionice >/dev/null 2>&1 && NICE="$NICE ionice -c2 -n7"
+      # ★ HALF THE THREADS PER LANE (2026-11-24). Two lanes each ran a solve
+      #   on every core (numba's default, 48 chunks) beside the in-line
+      #   steps: oversubscribed. Measured on the 4-core scratch box, two
+      #   holdouts side by side: 145 s and 178 s at 4+4 threads, 123 s and
+      #   127 s at 2+2 (serial: 163 s, 234 s; the box is noisy, the order
+      #   held both times). A different thread count cuts the sums into
+      #   different chunks, so the numbers move by float rounding only: the
+      #   held-out predictions by at most 1.7e-7 log-time, every printed
+      #   error sd identical. XCP_EVIDENCE_THREADS=0 keeps the box's
+      #   defaults (the old behaviour); a number sets the cap.
+      _evT="${XCP_EVIDENCE_THREADS:-}"
+      if [ -z "$_evT" ] && [ "${XCP_EVIDENCE_LANES:-2}" -ge 2 ]; then
+        _evT=$(( XCP_THREADS / 2 > 0 ? XCP_THREADS / 2 : 1 ))
+      fi
+      if [ -n "$_evT" ] && [ "$_evT" != "0" ]; then
+        export XCP_THREADS="$_evT" NUMBA_NUM_THREADS="$_evT" OMP_NUM_THREADS="$_evT" \
+               OPENBLAS_NUM_THREADS="$_evT" MKL_NUM_THREADS="$_evT" NUMEXPR_NUM_THREADS="$_evT"
+        echo "  evidence solves capped at $_evT threads each (XCP_EVIDENCE_THREADS=0: the box's defaults)"
+      fi
       _evidence
       echo "$FAILED" > "$EVID_FAILED_FILE"
     ) 2>&1 | sed -u "s/^/  [evidence] /" &

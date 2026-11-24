@@ -296,6 +296,166 @@ def runRung(name, flags, args):
     return rec
 
 
+# ★ ONE LADDER, TWO LANES (2026-11-24). Run 20261122_220225: the ladder's
+#   seven rungs were 10,966 s in lane B after the sport holdout, while lane A
+#   (race + distance holdouts, 4,645 s) sat idle for the last 2.7 hours, and
+#   the whole run waited 2,908 s for lane B after its in-line steps were
+#   done. With --claim-dir the lane-B ladder (the OWNER) and a --helper
+#   started in lane A when its holdouts finish pull rungs from one list: a
+#   rung belongs to whichever process creates <dir>/<rung>.claim first
+#   (O_EXCL), and its record lands in <dir>/<rung>.json. The owner then
+#   waits for the helper's rungs and prints the one report, in the ladder's
+#   order, as before.
+#  ! EACH RUNG IS THE SAME COMMAND, whichever process runs it: same flags,
+#    sample, seed, env, thread count and per-rung log and dump, so every
+#    number is the one the serial ladder prints (bit-identical: the solve is
+#    deterministic at a fixed thread count).
+#  ! THE HELPER IS ADMITTED LIKE A HOLDOUT: before it claims a rung it needs
+#    --gb (XCP_HOLDOUT_GB, 38) + XCP_MEM_RESERVE_GB free after the memory
+#    ledger's reservations (scripts/jobrun.py), and holds that reservation
+#    while the rung runs. Without the memory it waits WITHOUT a claim, so the
+#    owner simply runs the rest itself; a helper that dies mid-rung is seen
+#    (its pid is gone and no record) and the owner reruns that rung.
+#  ! Without --claim-dir nothing here runs: the serial loop, as before.
+def _claimPath(d, name):
+    return os.path.join(d, f"{name}.claim")
+
+
+def _recPath(d, name):
+    return os.path.join(d, f"{name}.json")
+
+
+def _claim(d, name):
+    try:
+        fd = os.open(_claimPath(d, name), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w") as fh:
+        fh.write(str(os.getpid()))
+    return True
+
+
+def _claimant(d, name):
+    try:
+        with open(_claimPath(d, name)) as fh:
+            return int(fh.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _alive(pid):
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _record(d, name, rec):
+    rec = rec if rec is not None else {"name": name, "error": "no result"}
+    tmp = _recPath(d, name) + f".tmp{os.getpid()}"
+    with open(tmp, "w") as fh:
+        json.dump(rec, fh)
+    os.replace(tmp, _recPath(d, name))
+
+
+def _readRecord(d, name):
+    try:
+        with open(_recPath(d, name)) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _admitHelper(gb):
+    """A ledger entry for this helper (pid = this process, so its rung's
+    tree counts against it), or None when the box has no room now."""
+    sys.path.insert(0, _HERE)
+    import jobrun
+    need = gb + float(os.environ.get("XCP_MEM_RESERVE_GB", "16"))
+    with jobrun._GateLock():
+        jobs, _wants = jobrun._entries()
+        free = jobrun.memAvailableGb() - jobrun.unspentGb(jobs)
+        if free < need:
+            return None, f"{free:.0f} GB free after reservations, needs {need:.0f}"
+        path = os.path.join(jobrun.GATE_DIR, f"{os.getpid()}.json")
+        jobrun._write(path, {"name": "08b_ladder helper", "pid": os.getpid(),
+                             "gb": gb, "since": int(time.time())})
+    return path, f"{free:.0f} GB free, needs {need:.0f}"
+
+
+def _printRec(rec):
+    if "sd" in rec:
+        print(f"  {rec['name']:<18} {rec['sd']:.6f}   covered {rec['covered']:.0%}"
+              + (f"   median |err| {rec['med']:.5f}  pairwise {rec['pairwise']:.4f}"
+                 if "med" in rec else "")
+              + f"   [{rec.get('secs', 0):.0f}s]", flush=True)
+    else:
+        print(f"  ! {rec['name']}: {rec.get('error', 'failed')}", flush=True)
+
+
+def runShared(rungs, args):
+    d = args.claim_dir
+    os.makedirs(d, exist_ok=True)
+    if args.helper:
+        last_say = 0.0
+        while True:
+            if all(os.path.exists(_claimPath(d, n)) for n, _f, _w in rungs):
+                return []
+            entry, why = _admitHelper(args.gb)
+            if entry is None:
+                if time.time() - last_say >= 300:
+                    print(f"  helper: waiting for memory ({why}); the owner runs "
+                          f"the rungs meanwhile", flush=True)
+                    last_say = time.time()
+                time.sleep(15)
+                continue
+            try:
+                got = next(((n, f) for n, f, _w in rungs if _claim(d, n)), None)
+                if got is None:
+                    return []
+                print(f"  helper: {got[0]} admitted ({why})", flush=True)
+                _record(d, got[0], runRung(got[0], got[1], args))
+            finally:
+                try:
+                    os.remove(entry)
+                except OSError:
+                    pass
+    done = {}
+    for name, flags, _why in rungs:
+        if _claim(d, name):
+            done[name] = runRung(name, flags, args)
+            _record(d, name, done[name])
+    for name, flags, _why in rungs:
+        if name in done:
+            continue
+        t_wait = time.time()
+        next_beat = t_wait + args.heartbeat
+        while True:
+            rec = _readRecord(d, name)
+            if rec is not None:
+                print(f"  < {name}: run by the helper (lane A)", flush=True)
+                _printRec(rec)
+                done[name] = rec
+                break
+            if not _alive(_claimant(d, name)):
+                print(f"  ! {name}: its helper is gone without a result -- "
+                      f"running it here", flush=True)
+                done[name] = runRung(name, flags, args)
+                _record(d, name, done[name])
+                break
+            if time.time() >= next_beat:
+                print(f"    … waiting {time.time() - t_wait:.0f}s for {name} "
+                      f"(the helper, pid {_claimant(d, name)})", flush=True)
+                next_beat = time.time() + args.heartbeat
+            time.sleep(5)
+    return [done[n] for n, _f, _w in rungs if done.get(n)]
+
+
 def report(rows, kind):
     ok = [r for r in rows if "sd" in r]
     if not ok:
@@ -384,7 +544,22 @@ def main():
     ap.add_argument("--out", default=os.path.join(_ROOT, "engine", "data",
                                                   "ablation_ladder.json"))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--claim-dir", default=None, metavar="DIR",
+                    help="share the rungs with a --helper through claim files "
+                         "in DIR (one fresh directory per run): each rung is "
+                         "run by whichever process claims it first")
+    ap.add_argument("--helper", action="store_true",
+                    help="with --claim-dir: run unclaimed rungs while there is "
+                         "memory for one (--gb), report nothing; the owner (the "
+                         "run without --helper) collects every rung and reports")
+    ap.add_argument("--gb", type=float,
+                    default=float(os.environ.get("XCP_HOLDOUT_GB") or 38),
+                    help="--helper: GB reserved per rung in the memory ledger "
+                         "(scripts/jobrun.py), as a holdout is (default "
+                         "XCP_HOLDOUT_GB, 38)")
     args = ap.parse_args()
+    if args.helper and not args.claim_dir:
+        ap.error("--helper needs --claim-dir")
 
     rungs = (LADDER if args.all else
              [r for r in LADDER if r[0] in TUNE] if getattr(args, "tune", False) else
@@ -404,10 +579,16 @@ def main():
 
     rows = []
     t0 = time.time()
-    for name, flags, _why in rungs:
-        rec = runRung(name, flags, args)
-        if rec:
-            rows.append(rec)
+    if args.claim_dir and not args.dry_run:
+        rows = runShared(rungs, args)
+        if args.helper:
+            print(f"\n  helper done after {time.time() - t0:.0f}s; the owner reports")
+            return 0
+    else:
+        for name, flags, _why in rungs:
+            rec = runRung(name, flags, args)
+            if rec:
+                rows.append(rec)
     if args.dry_run:
         return 0
     report(rows, args.kind)
