@@ -1758,9 +1758,10 @@ if [ "${XCP_JOINT_LIVE:-1}" = "1" ]; then
   #   from last night's unknowns, mapped by key from engine/data/
   #   joint_difficulty_warm.npz; the answer is the cold one to the CG
   #   tolerance. Cold, with the reason in the log, on a model or pack-layout
-  #   change or under 90% key cover. ! OFF BY DEFAULT since 2026-11-24
-  #   (an unexplained 40-point jump on scratch; see warm_start.warmMode);
-  #   XCP_WARM_START=theta turns it on, =full is the opt-in model change.
+  #   change or under 90% key cover. XCP_WARM_START=off restores the cold
+  #   solve; =full is the opt-in model change (see the module). (Briefly
+  #   off on 2026-11-24 for a 40-point jump on scratch -- explained the same
+  #   day: unidentified, never-published athlete-seasons; warmMode's note.)
   STEP_MEM="--gb ${XCP_GOLIVE_GB:-60} --priority --wait-min ${XCP_GOLIVE_MEM_WAIT_MIN:-90}" \
   step 08_golive        "$PY" -u engine/run_joint.py --golive "${JOINT_FLAGS[@]}"
   # ★★ THE EVIDENCE STEPS RUN BESIDE THE BOARDS, NOT BEFORE THEM (owner,
