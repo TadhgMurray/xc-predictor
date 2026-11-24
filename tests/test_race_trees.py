@@ -328,3 +328,27 @@ def test_the_model_switches_train_save_and_route_by_level(tmp_path):
     X = np.zeros((4, len(m["features"])), np.float32)
     X[:, m["features"].index("level")] = [2, 2, 3, np.nan]
     assert rm.predict(X).shape == (4,)
+
+
+def test_field_batches_and_parts():
+    import race_blend as B
+    assert B.fieldBatches([3, 50, 4, 60], max_tokens=120, max_field=256) == [[0, 2], [1, 3]]
+    assert B.fieldBatches([3, 50, 4, 60], max_tokens=119, max_field=256) == [[0, 2], [1], [3]]
+    parts = B.fieldParts(600, max_field=256)
+    assert [len(p) for p in parts] == [200, 200, 200]
+    assert sorted(np.concatenate(parts).tolist()) == list(range(600))
+    r = B.fieldParts(10, max_field=4, rng=np.random.default_rng(0))
+    assert sorted(np.concatenate(r).tolist()) == list(range(10)) and max(map(len, r)) <= 4
+
+
+def test_the_whole_field_member_runs_and_is_blended(tmp_path):
+    """(owner, 2026-11-22: "try the whole field model")"""
+    pytest.importorskip("torch")
+    path = tmp_path / "rows.npz"
+    _table(str(path))
+    got = subprocess.run([sys.executable, os.path.join(_ROOT, "model", "race_blend.py"),
+                          "--rows", str(path), "--members", "hgb,field", "--field-epochs", "2"],
+                         capture_output=True, text=True, timeout=900)
+    assert got.returncode == 0, got.stderr[-2000:]
+    assert "field epoch 2/2" in got.stdout and "field: fitted" in got.stdout
+    assert "field " in got.stdout.split("blend weights")[1]

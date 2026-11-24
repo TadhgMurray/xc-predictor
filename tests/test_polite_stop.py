@@ -49,7 +49,10 @@ def test_the_scraper_trips_it_on_a_429():
 def test_the_tfrrs_drain_stops_too():
     src = open(os.path.join(ROOT, "tfrrs", "driver", "run_tfrrs.py")).read()
     assert "while not polite_stop.stopped():" in src
-    assert src.count("polite_stop.trip(") == 2          # IP block and "blocked:" bundles
+    # IP block and "blocked:" bundles, in the drain and in runOnly
+    # (TFRRS_ONLY_MEETS, 2026-11-23): every TFRRS loop stops the same way
+    assert src.count("polite_stop.trip(") == 4
+    assert "if polite_stop.stopped():" in src[src.index("async def runOnly"):]
 
 
 def test_three_refusals_in_a_row_stop_the_run_and_a_success_clears_them(monkeypatch):

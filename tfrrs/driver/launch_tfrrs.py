@@ -226,7 +226,35 @@ async def _skipHeavy(route):
         await route.continue_()
 
 
+async def _newPage(browser):
+    """One session's page: the settings every TFRRS fetch goes through (the
+    drain's and TFRRS_ONLY_MEETS' alike -- CLAUDE.md, scraper privacy)."""
+    ctx = await browser.new_context(viewport=_viewport())
+    page = await ctx.new_page()
+    await page.add_init_script(WEBDRIVER_MASK)
+    # ★ NO IMAGES, FONTS OR VIDEO (owner, 2026-11-10: "block the tfrrs
+    #   images"): every meet page pulled them all, most of its weight.
+    #   The results are in the page's text, and the athletic.net
+    #   launcher has blocked the same three kinds for months
+    #   (_blockHeavyResources). Nothing else about the browser changes.
+    await page.route("**/*", _skipHeavy)
+    return page
+
+
 async def main():
+    # ★ TFRRS_ONLY_MEETS: the named meets and nothing else (run_tfrrs.runOnly)
+    only = os.environ.get("TFRRS_ONLY_MEETS", "").strip()
+    if only:
+        from run_tfrrs import parseOnlyMeets, runOnly
+        meets = parseOnlyMeets(only)
+        print(f"[only] {len(meets)} meets: " + " ".join(f"{m}:{s}" for m, s in meets), flush=True)
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=False,
+                                               executable_path=chromePath())
+            await runOnly(lambda: _newPage(browser), _urlFor, meets)
+        print("TFRRS only-meets run complete", flush=True)
+        return
+
     # Stale-claim reset is blocking psycopg2 -> run it off the event loop.
     # ⚠ NOT IN RETRY MODE. This flips 3 -> 0, and a retry claims 2 and 3
     #   themselves -- so resetting first would quietly move every stranded
@@ -249,16 +277,7 @@ async def main():
         # make_page is now ASYNC (new_context/new_page are awaitable in the async
         # API). runDrain awaits it once per session.
         async def make_page():
-            ctx = await browser.new_context(viewport=_viewport())
-            page = await ctx.new_page()
-            await page.add_init_script(WEBDRIVER_MASK)
-            # ★ NO IMAGES, FONTS OR VIDEO (owner, 2026-11-10: "block the tfrrs
-            #   images"): every meet page pulled them all, most of its weight.
-            #   The results are in the page's text, and the athletic.net
-            #   launcher has blocked the same three kinds for months
-            #   (_blockHeavyResources). Nothing else about the browser changes.
-            await page.route("**/*", _skipHeavy)
-            return page
+            return await _newPage(browser)
 
         await runDrain(make_page, _urlFor)
 

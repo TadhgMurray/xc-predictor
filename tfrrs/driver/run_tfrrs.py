@@ -670,6 +670,61 @@ async def runDrain(make_page, url_for):
     print(f"[drain] queue empty — processed {counter[0]} meets", flush=True)
 
 
+# ★ THESE MEETS ONLY (owner, 2026-11-23: "scrape only the regional and
+#   national meets, just so we can have full confidence"). TFRRS_ONLY_MEETS=
+#   "id,id,..." in launch_tfrrs: each id fetched once, in order, through the
+#   SAME page and settings as the drain (launch_tfrrs.make_page: real Chrome,
+#   webdriver hidden, images/fonts/video skipped), the same per-meet delay,
+#   and the same polite stop on a block or a 429. No queue claim, no frontier
+#   walk: nothing but the meets named is asked for.
+def parseOnlyMeets(text):
+    """[(meet_id, sport)] from "12345,67890" or "12345:XC 67890:TF" (XC when
+    no sport is given). Pure."""
+    out = []
+    for tok in re.split(r"[\s,]+", (text or "").strip()):
+        if not tok:
+            continue
+        mid, _sep, sport = tok.partition(":")
+        sport = (sport or SPORT_XC).upper()
+        if not mid.isdigit() or sport not in (SPORT_XC, SPORT_TF):
+            raise ValueError(f"TFRRS_ONLY_MEETS: {tok!r} is not an id or id:XC / id:TF")
+        if (int(mid), sport) not in out:
+            out.append((int(mid), sport))
+    return out
+
+
+async def runOnly(make_page, url_for, meets):
+    """Scrape exactly `meets` [(meet_id, sport)], one at a time. Returns the
+    bundles."""
+    import polite_stop
+    page = await make_page()
+    conn = await asyncio.to_thread(_borrowConn)
+    out = []
+    try:
+        for i, (meet_id, sport) in enumerate(meets, 1):
+            if polite_stop.stopped():
+                break
+            try:
+                bundle = await processMeet(conn, meet_id, sport, url_for(meet_id, sport), page=page)
+            except IPBlockedException:
+                await asyncio.to_thread(conn.rollback)
+                if polite_stop.trip("[only]", f"CloudFront IP block on meet {meet_id}"):
+                    break
+                continue
+            _printMeetResult(i, bundle)
+            out.append(bundle)
+            if str(bundle.get("note") or "").startswith("blocked:"):
+                if polite_stop.trip("[only]", f"{bundle['note']} (meet {meet_id})"):
+                    break
+            if i < len(meets):
+                await asyncio.sleep(random.uniform(*PER_MEET_DELAY))
+    finally:
+        await asyncio.to_thread(_returnConn, conn)
+    done = sum(1 for b in out if b.get("saved"))
+    print(f"[only] {done} of {len(meets)} meets saved", flush=True)
+    return out
+
+
 # _logMeet
 # Purpose: One-line progress print per meet. Plain print for now - swap for the
 #          project logger when wired.
