@@ -113,7 +113,8 @@ class TheEngineSuppliesIt(unittest.TestCase):
     def test_poolOf_forwards_team_pro(self):
         import speed_ratings as sr
         self.assertIn("team_pro", inspect.signature(sr.poolOf).parameters)
-        body = inspect.getsource(sr.poolOf)
+        # poolOf hands it to _poolFromFacts, which hands it to resolvePool
+        body = inspect.getsource(sr.poolOf) + inspect.getsource(sr._poolFromFacts)
         self.assertIn("team_pro=team_pro", body,
                       "poolOf must pass it through, not swallow it")
 
