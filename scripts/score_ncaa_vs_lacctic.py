@@ -138,6 +138,10 @@ def main(argv=None):
             name = (m["meet_name"] or "").lower()
             div = next((d for d, rx in (("DIII", _DIV["DIII"]), ("DI", _DIV["DI"]))
                         if re.search(rx, name)), None)
+            # Division I's own title names no division ("NCAA Cross Country
+            # Championships"); Division II always says so
+            if div is None and not re.search(r"division\s+ii(?!i)|\bd-?ii\b", name):
+                div = "DI"
             if div is None:
                 continue
             mid = int(m["meet_id"])

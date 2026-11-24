@@ -26,6 +26,7 @@ import sys
 
 DI = re.compile(r"division\s+i(?![iv])|\bd-?i\b(?!i)", re.I)
 DIII = re.compile(r"division\s+iii|\bd-?iii\b", re.I)
+DII = re.compile(r"division\s+ii(?!i)|\bd-?ii\b", re.I)
 REGIONS = {"DI": 9, "DIII": 10}
 
 
@@ -35,10 +36,16 @@ def classify(name):
     n = name or ""
     if not re.search(r"\bncaa\b", n, re.I) or not re.search(r"champ", n, re.I):
         return None
+    kind = "regional" if re.search(r"region", n, re.I) else "national"
     div = "DIII" if DIII.search(n) else "DI" if DI.search(n) else None
+    # ★ DIVISION I'S OWN TITLE NAMES NO DIVISION (2026-11-24: the index had
+    #   all nine DI regionals and no "Division I" championship): "NCAA Cross
+    #   Country Championships" is Division I's; Division II always says so
+    if div is None and kind == "national" and not DII.search(n) \
+            and not re.search(r"\b(naia|njcaa|juco)\b", n, re.I):
+        div = "DI"
     if div is None:
         return None
-    kind = "regional" if re.search(r"region", n, re.I) else "national"
     if kind == "national" and re.search(r"pre-?nat|pre-?champ", n, re.I):
         return None
     return div, kind

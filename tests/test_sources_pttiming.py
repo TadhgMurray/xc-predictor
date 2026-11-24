@@ -48,8 +48,8 @@ def test_dates_with_a_range():
     assert P.parseDate("October 31st, 2026") == "2026-10-31"
 
 
-def test_nothing_is_off_limits_by_name_or_host_now():
-    # owner, 2026-11-10: PTTiming, Leone, TimerHub, ItsYourRace and eccathletics told him it is fine
-    assert not registry.offLimits("https://www.pttiming.com/results")
-    assert not registry.offLimits("https://results.leonetiming.com/x")
-    assert not registry.BLOCKED_NAMES.search("PrimeTime Timing (PTTiming)")
+def test_pttiming_and_leone_are_off_limits():
+    # owner, 2026-11-24: the 2026-11-10 permission was never given -- off limits again
+    assert registry.offLimits("https://www.pttiming.com/results")
+    assert registry.offLimits("https://results.leonetiming.com/x")
+    assert registry.BLOCKED_NAMES.search("PrimeTime Timing (PTTiming)")

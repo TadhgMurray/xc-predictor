@@ -61,6 +61,9 @@ def test_ncaa_meet_ids_classify():
     assert N.classify("NCAA Division I Cross Country Championships") == ("DI", "national")
     assert N.classify("NCAA DI Mountain Region XC Championships") == ("DI", "regional")
     assert N.classify("NCAA Division II Cross Country Championships") is None
+    assert N.classify("NCAA Cross Country Championships") == ("DI", "national")
+    assert N.classify("2026 NCAA Cross Country Championships") == ("DI", "national")
+    assert N.classify("NAIA Cross Country National Championships") is None
     assert N.classify("NCAA D-III Pre-Nationals Championship") is None
     assert N.classify("Hope Invitational") is None
     rows = [{"meet_id": "5", "sport": "XC", "date": "2026-11-14",
