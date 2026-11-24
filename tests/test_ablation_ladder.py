@@ -174,3 +174,33 @@ class CoreSet(unittest.TestCase):
         self.assertTrue(set(core) <= set(names), set(core) - set(names))
         self.assertEqual(core[0], "base")
         self.assertLess(len(core), len(names))
+
+
+class SharedRungs(unittest.TestCase):
+    """★ --claim-dir (2026-11-24): the owner runs what it claims, collects
+    the helper's records, reruns a rung whose helper died without one, and
+    returns every rung in the ladder's order."""
+
+    def test_owner_collects_and_reruns_a_dead_helpers_rung(self):
+        import tempfile
+        import types
+        import ablation_ladder as al
+        d = tempfile.mkdtemp()
+        rungs = [("base", ["--altitude"], ""), ("a", [], ""), ("b", [], ""), ("c", [], "")]
+        # a live helper finished "a"; a dead one (no such pid) claimed "b"
+        with open(al._claimPath(d, "a"), "w") as fh:
+            fh.write(str(os.getpid()))
+        al._record(d, "a", {"name": "a", "sd": 0.5, "covered": 1.0})
+        with open(al._claimPath(d, "b"), "w") as fh:
+            fh.write("999999999")
+        ran = []
+        real = al.runRung
+        al.runRung = lambda n, f, a: ran.append(n) or {"name": n, "sd": 0.1, "covered": 1.0}
+        try:
+            rows = al.runShared(rungs, types.SimpleNamespace(claim_dir=d, helper=False,
+                                                             heartbeat=60))
+        finally:
+            al.runRung = real
+        self.assertEqual(ran, ["base", "c", "b"])
+        self.assertEqual([r["name"] for r in rows], ["base", "a", "b", "c"])
+        self.assertEqual(rows[1]["sd"], 0.5)

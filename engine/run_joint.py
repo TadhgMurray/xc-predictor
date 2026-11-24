@@ -53,6 +53,7 @@ WHAT TO READ IN THE LOG
 """
 
 import argparse
+import gc
 import os
 import sys
 import time
@@ -4164,7 +4165,21 @@ def main():
     if args.tilt_scale == "hs" and not args.no_tilt:
         args._tilt_scale_inputs = tiltScaleInputs(pool_names)
 
-    if args.holdout or args.holdout_only:
+    if args.holdout_only and os.environ.get("XCP_HOLDOUT_KEEP_DESIGN", "0") != "1":
+        # ★ THE SAMPLE'S OWN DESIGN GOES BEFORE THE HELD-OUT SOLVE (2026-11-24).
+        #   holdout() builds its own training and held-out designs and never
+        #   reads this one (its D_full is unused), and --holdout-only stops
+        #   right after it -- yet it stayed alive through the whole solve: a
+        #   second copy of every per-row array of the sample, beside the
+        #   training design's 90%. Freed here, the numbers are the same
+        #   arrays' (nothing reads it); only the peak drops (scratch, a 692k-row
+        #   sample of a 2.8M-row synthetic pack: 1.19 -> 1.06 GB, dumps
+        #   bit-identical). XCP_HOLDOUT_KEEP_DESIGN=1
+        #   keeps it, the old peak.
+        del D
+        gc.collect()
+        holdout(cols, keep, args, athlete_pool, None)
+    elif args.holdout or args.holdout_only:
         holdout(cols, keep, args, athlete_pool, D)
     if args.holdout_only:
         print("[joint] --holdout-only: no full solve, nothing written")
