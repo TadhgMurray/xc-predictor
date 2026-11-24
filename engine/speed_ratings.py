@@ -1231,8 +1231,8 @@ def poolOf(grade, gender, source, school, sport, merge=False,
 
     # Initialised alongside `untrusted`, or a row with no person_id reaches
     # the call with these unbound.
-    untrusted = pro = False
-    fixed_grade = fixed_level = grade_verdict = None
+    pro = False
+    gate_row = None
     # ! None, NOT False. False is a VERDICT ("measured, and not fast
     #   enough") and would demote every row that cannot be looked up at
     #   all. A row with no person_id has no season to ask about, which is
@@ -1266,16 +1266,35 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         # ⚠ A ROW WITH NO PARSEABLE DATE HAS NO ACADEMIC YEAR, so it cannot be
         #   looked up and the raw grade decides. That is the old behaviour for
         #   such rows, not a new gap: _asDate already rejected them upstream.
-        untrusted = gkey is not None and gkey in gate
-        fixed_grade, fixed_level, grade_verdict = (
-            gate.get(gkey, (None, None, None))
-            if gkey is not None else (None, None, None))
+        # ! gate's values are (grade, level, method) triples, never None, so
+        #   "in the gate" is "got one" (_poolFromFacts).
+        gate_row = gate.get(gkey) if gkey is not None else None
         pro_set = loadProSeasons()
         pro = bool(pro_set) and gkey is not None and gkey in pro_set
         # ★ THE ABILITY GATE (owner, 2026-09-22). Tri-state; see
         #   proAbilityFor and pool_resolve's veto.
         pro_able = proAbilityFor(gkey)
 
+    return _poolFromFacts(
+        grade, gender, source, school, sport, merge, pid, ay, slvl, gate_row,
+        pro, pro_able, None if pid is None else loadCollegeFirst().get(pid),
+        race_date, team_level, team_has_pros, no_team, team_pro, race_top_level)
+
+
+# _poolFromFacts
+# Purpose:   poolOf's decision once its person-season lookups are made: the
+#            pack's pool memo (_packLoop) makes them itself, through
+#            _poolSeasonFacts, and on a miss hands them here rather than have
+#            poolOf look them up again (2026-11-24).
+# gate_row:  loadGradeUntrusted()'s (fixed grade, level, method) for the
+#            season, None when the season is not in it.
+def _poolFromFacts(grade, gender, source, school, sport, merge, pid, ay, slvl,
+                   gate_row, pro, pro_able, college_first, race_date,
+                   team_level, team_has_pros, no_team, team_pro,
+                   race_top_level):
+    untrusted = gate_row is not None
+    fixed_grade, fixed_level, grade_verdict = (
+        gate_row if untrusted else (None, None, None))
     return resolvePool(
         grade, gender, source, school, sport,
         season_level=slvl,
@@ -1292,7 +1311,7 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         season=ay,
         is_pro=pro,
         pro_ability=pro_able,
-        college_first=None if pid is None else loadCollegeFirst().get(pid),
+        college_first=college_first,
         race_date=race_date,
         merge=merge,
         poolfor=_cachedPoolFor,
@@ -1301,6 +1320,71 @@ def poolOf(grade, gender, source, school, sport, merge=False,
         no_team=no_team,
         team_pro=team_pro,
         race_top_level=race_top_level)
+
+
+# _poolSeasonFacts
+# Purpose:   what rowTeamFacts + poolOf read about ONE PERSON-SEASON, as a
+#            hashable tuple -- the pack's pool memo keys on it instead of on
+#            the person_id (_packLoop).
+# ★ WHY (2026-11-24; run 20261122_220225, TF: 1,932 s resolving pools,
+#   50.1 us a row, the memo keyed on person_id hitting ~17% of 38.6M rows:
+#   one person-season rarely meets itself again inside the 1M-entry window).
+#   Given the tables they load once, the two functions read the person ONLY
+#   through these lookups on (person_id, academic year), so two rows of
+#   different people with the same facts -- teammates of the same grade --
+#   are decided the same, census counts included:
+#     season level      by_sport.get(((pid, ay), sport)) or combined.get(...)
+#     grade gate        gate.get((pid, ay)): None = not in it, else the triple
+#     pro season        pro_set membership (bool(pro_set) and ...)
+#     ability gate      proAbilityFor((pid, ay))
+#     first college     firstCollegeSeason(loadCollegeFirst().get(pid)) --
+#                       resolvePool reads college_first only through it
+#     club season       rowTeamFacts' clubSeason(pid, ay)
+#     hand-listed pro   pool_resolve.isProPerson: the person_id itself when
+#                       it is in pool_resolve._PRO_SEASONS, else None
+#   A row with no person_id is (None,), its own key (poolOf then passes
+#   season=None and resolvePool takes the year from the date).
+# ! KEEP IN STEP WITH poolOf AND rowTeamFacts. A new person-keyed lookup in
+#   either (or in resolvePool) belongs here too, or the memo hands one
+#   person's pool to a teammate. XCP_PACK_POOL_KEY=person keys on the
+#   person_id as before.
+# ! THE TABLES ARE BOUND ONCE (each loader keeps the object it returns for
+#   the life of the process, empty included), so a row pays the lookups and
+#   not ten loader calls. proAbilityFor is pro_ability.proAbilityFor's own
+#   test on the bound set: None when it is empty, else membership.
+def _poolSeasonFacts():
+    """The person-season half of the pool memo's key: fn(person_id, ay,
+    sport) -> a tuple, (None,) without a person_id."""
+    from pool_resolve import _PRO_SEASONS as hand
+    from normalize_distance import firstCollegeSeason
+    from pro_ability import loadProAbility as _able
+    by_sport, combined = loadSeasonLevels()
+    gate = loadGradeUntrusted()
+    pro_set = loadProSeasons()
+    any_pro = bool(pro_set)
+    able = _able()
+    cfirst = loadCollegeFirst()
+    club = loadClubMajority()
+    fcs = {}                                    # first_date -> its season
+    nopid = (None,)
+
+    def facts(person_id, ay, sport):
+        if person_id is None:
+            return nopid
+        pid = int(person_id)
+        gkey = (pid, ay)
+        cf = cfirst.get(pid)
+        fay = fcs.get(cf, fcs)
+        if fay is fcs:
+            fay = fcs[cf] = firstCollegeSeason(cf)
+        return (by_sport.get((gkey, sport)) or combined.get(gkey),
+                gate.get(gkey),
+                any_pro and gkey in pro_set,
+                (gkey in able) if able else None,
+                fay,
+                gkey in club,
+                pid if pid in hand else None)
+    return facts
 
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1667,6 +1751,13 @@ def _packLoop(batches, today, merge=False, marks=None):
     date_memo, season_memo, scale_memo = _packMemo(), _packMemo(), _packMemo()
     pool_memo = _packMemo()
     pool_memo_max = int(os.environ.get("XCP_PACK_POOL_MEMO") or 1_000_000)
+    # ! XCP_PACK_POOL_MEMO bounds BOTH generations together: each turns over
+    #   at half of it, so the memo never holds more than it did with clear().
+    pool_gen_max = max(1, pool_memo_max // 2)
+    pool_old = None
+    pool_by_person = os.environ.get("XCP_PACK_POOL_KEY", "") == "person"
+    season_facts = None                 # _poolSeasonFacts(), at the first row
+    team_memo = _packMemo()             # rowTeamFacts per team (2026-11-24)
     n_pool_miss = 0
     unatt = loadUnattachedRaceLevel()
 
@@ -1739,8 +1830,15 @@ def _packLoop(batches, today, merge=False, marks=None):
             #   tested for None), team id, team slug and its race ceiling
             #   (looked up here, as rowTeamFacts does). The census counts
             #   rowTeamFacts makes are kept with the answer and replayed per
-            #   row, in the order they were made. Bounded: the memo starts
-            #   over past XCP_PACK_POOL_MEMO entries (default 1M).
+            #   row, in the order they were made. Bounded: XCP_PACK_POOL_MEMO
+            #   entries (default 1M) over two generations (2026-11-24).
+            # ★ MEASURED 2026-11-24 (scratch, 1.5M production-shaped TF rows,
+            #   meets of 8 teams in scrape order, memo scaled to 39k so ~17%
+            #   of rows hit as in run 20261122_220225): the person_id-keyed
+            #   memo cost more than it saved -- loop 33.0 s against 30.7 s
+            #   with no pool memo at all. Keyed on the facts, with the miss
+            #   path below: 20.0 s, pools 13.9 -> 6.3 us a row, decided
+            #   1,251,215 -> 631,730 times.
             have_team = len(r) > _SLUG
             tid_ = r[_TEAM] if have_team else None
             slug_ = r[_SLUG] if have_team else None
@@ -1750,10 +1848,57 @@ def _packLoop(batches, today, merge=False, marks=None):
                     rtl_ = unatt.get((str(sp_), int(r[_RID])))
                 except (TypeError, ValueError):
                     rtl_ = None
-            pkey = (r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL], sp_, r[_PID],
-                    sy[0], tid_, slug_, rtl_, have_team)
+            # ★ KEYED ON THE PERSON-SEASON'S FACTS, NOT ITS person_id
+            #   (2026-11-24, _poolSeasonFacts): teammates of one grade share
+            #   an answer, where a person-season rarely met itself again
+            #   inside the window (production TF: ~17% hits).
+            if pool_by_person:
+                pkey = (r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL], sp_, r[_PID],
+                        sy[0], tid_, slug_, rtl_, have_team)
+            else:
+                if season_facts is None:
+                    season_facts = _poolSeasonFacts()
+                pkey = (r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL], sp_,
+                        sy[0], tid_, slug_, rtl_, have_team) + \
+                    season_facts(r[_PID], sy[0], sp_)
             hit = pool_memo.get(pkey)
-            if hit is None:
+            if hit is None and pool_old:
+                # ★ TWO GENERATIONS, NOT ONE CLEAR (2026-11-24): a key the
+                #   last generation held comes back in, so a team-season met
+                #   again after the turnover is not decided again.
+                hit = pool_old.get(pkey)
+                if hit is not None:
+                    pool_memo[pkey] = hit
+            if hit is None and not pool_by_person and r[_PID] is not None:
+                # ★ A MISS WITHOUT THE LOOKUPS DONE TWICE (2026-11-24): the
+                #   person-season facts are the key's tail, so the decision
+                #   goes straight to _poolFromFacts (poolOf's own tail), and
+                #   rowTeamFacts -- which reads the person only through
+                #   clubSeason, the key's sixth fact -- is kept per team in
+                #   team_memo, census counts with it.
+                f_ = pkey[-7:]
+                tkey = (tid_, slug_, r[_SCHOOL], sp_, f_[5], rtl_, have_team)
+                tf_ = team_memo.get(tkey)
+                if tf_ is None:
+                    c_ = defaultdict(int)
+                    tf_ = rowTeamFacts(
+                        tid_, slug_, r[_SCHOOL], r[_PID], d, sp_, r[_RID],
+                        census=c_, have_team=have_team) + (
+                            tuple(c_.items()) if c_ else (),)
+                    if len(team_memo) >= pool_memo_max:
+                        team_memo.clear()
+                    team_memo[tkey] = tf_
+                team_level, has_pros, no_team, team_pro, race_top_level, deltas = tf_
+                pid_ = int(r[_PID])
+                pool = _poolFromFacts(
+                    r[_GRADE], r[_GENDER], r[_SRC], r[_SCHOOL], sp_, merge,
+                    pid_, sy[0], f_[0], f_[1], f_[2], f_[3],
+                    loadCollegeFirst().get(pid_), d, team_level, has_pros,
+                    no_team, team_pro, race_top_level)
+                hit = (pool, has_pros, deltas)
+                pool_memo[pkey] = hit
+                n_pool_miss += 1
+            elif hit is None:
                 c_ = defaultdict(int)
                 team_level, has_pros, no_team, team_pro, race_top_level = rowTeamFacts(
                     tid_, slug_, r[_SCHOOL], r[_PID], d, sp_, r[_RID],
@@ -1765,10 +1910,10 @@ def _packLoop(batches, today, merge=False, marks=None):
                               no_team=no_team, team_pro=team_pro,
                               race_top_level=race_top_level)
                 hit = (pool, has_pros, tuple(c_.items()) if c_ else ())
-                if len(pool_memo) >= pool_memo_max:
-                    pool_memo.clear()
                 pool_memo[pkey] = hit
                 n_pool_miss += 1
+            if len(pool_memo) >= pool_gen_max:
+                pool_old, pool_memo = pool_memo, _packMemo()
             pool, has_pros, deltas = hit
             for k_, n_ in deltas:
                 census[k_] += n_

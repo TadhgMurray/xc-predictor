@@ -73,6 +73,10 @@ def fake(monkeypatch, tmp_path):
                "loadGradeUntrusted", "loadUpperclassFirst"):
         monkeypatch.setattr(S, fn, lambda: None)
     monkeypatch.setattr(S, "_CACHE_DIR", str(tmp_path))
+    # the fake poolOf above decides every row: the memo keyed on person_id
+    # calls it (the facts-keyed one, the default, goes to _poolFromFacts --
+    # tests/test_pack_pool_memo.py proves the two pack the same)
+    monkeypatch.setenv("XCP_PACK_POOL_KEY", "person")
     return data
 
 

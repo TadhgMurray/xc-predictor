@@ -930,6 +930,9 @@ ENV_RULES = {
            "07_pack row loop (2026-11-22): dates, season years, scale factors and pools looked up once per "
            "distinct input (0 = every row as before); the pool memo's size bound (1M); same pack. "
            "05c streams by the proved COPY chunks unless XCP_PRO_COPY=0; same table"),
+    **_all("XCP_PACK_POOL_KEY", "INFRA",
+           "07_pack pool memo (2026-11-24): keyed on the person-season's facts, so teammates share a decision "
+           "and a miss skips poolOf's second lookups; person = keyed on person_id as before; same pack"),
     **_all("XCP_RANK_PARTS_TF XCP_RANK_PARTS_XC", "INFRA", "how many date ranges each sport's board streams take"),
     **_all("XCP_RACE_MODEL", "INFRA", "which race-forecast model file the forecasts load"),
     **_all("XCP_CG_INPLACE XCP_CG_PARALLEL XCP_CURVE_GAP_CACHE XCP_KERNEL_ZERO_IN XCP_KERNEL_DERIVE",
