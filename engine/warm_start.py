@@ -68,15 +68,21 @@ _PLUMBING_ENV = re.compile(r"^XCP_(WARM_|THREADS$|CG_TRACE$|CG_PARALLEL$|CG_INPL
                            r"|HOLDOUT_|GOLIVE_|PRED_DIR$)")
 
 
+# ! DEFAULT OFF AGAIN (2026-11-24). Re-solving a holdout from its own
+#   final answer (the theta warm start's exact mechanism) moved theta by at
+#   most 3e-4 but ONE athlete's rating by 40 on scratch -- a jump the CG
+#   tolerance cannot explain; something downstream of theta (a guard, a
+#   weight, a threshold) flips. Until that is understood, the go-live solves
+#   cold. XCP_WARM_START=theta turns it back on.
 def warmMode():
-    v = os.environ.get("XCP_WARM_START", "theta").strip().lower()
+    v = os.environ.get("XCP_WARM_START", "off").strip().lower()
     if v in ("", "0", "off", "cold", "none", "no", "false"):
         return "off"
     if v in ("theta", "1", "on"):
         return "theta"
     if v == "full":
         return "full"
-    raise SystemExit(f"[joint] XCP_WARM_START={v!r}: theta (default), full or off")
+    raise SystemExit(f"[joint] XCP_WARM_START={v!r}: off (default), theta or full")
 
 
 def minCover():

@@ -917,13 +917,14 @@ ENV_RULES = {
            "XCP_IGNORE_PEOPLE_FAIL", "INFRA", "performance and plumbing"),
     **_all("XCP_06C_GENDER_JOIN XCP_06C_SIDE_BY_SIDE XCP_06C_STMT_MIN XCP_09C_BG XCP_BACKFILL_LOOKUP_THREADS XCP_BACKFILL_OVERLAP XCP_BACKFILL_WORKERS XCP_CLUB_CACHE XCP_COURSE_BG XCP_EVIDENCE_DAYS XCP_EVIDENCE_LANES XCP_FILL_OVERLAP XCP_FORECAST_RAW XCP_GOLIVE_GB XCP_GOLIVE_MEM_WAIT_MIN XCP_GOLIVE_PRESAVE_PARALLEL XCP_GOLIVE_SAVE_MIN_GB XCP_GOLIVE_SAVE_PARALLEL XCP_GOLIVE_SNAPSHOT_DAYS XCP_HOLDOUTS XCP_HOLDOUT_GB XCP_HOLDOUT_WAIT_MIN XCP_JOBRUN XCP_LACCTIC_DAYS XCP_LATE_PARALLEL XCP_LOCK_WAIT_MIN XCP_PANELS_HEAD XCP_PRED_DIR XCP_RACE_INPUTS_DIR XCP_RACE_MODEL_RAW XCP_RANK_INDEX_JOBS XCP_RANK_PREFETCH XCP_RANK_PREP_JOBS XCP_RANK_ROWCACHE XCP_RANK_SHARED_PREP XCP_SEASON_VOTES_EARLY XCP_SNAPSHOT_03 XCP_SNAPSHOT_03_MAX XCP_SNAPSHOT_BG XCP_STALL_MIN XCP_UNITS_BG XCP_WX_GRID_MIN",
            "INFRA", "speed passes 2026-11-16..20: side connections, prefetch, background steps, memory gates, holdout lanes and other scheduling switches; same outputs"),
-    **_all("XCP_WARM_START", "INFRA", "go-live warm start (engine/warm_start.py, 2026-11-22): theta (default) starts pass 1's CG "
+    **_all("XCP_WARM_START", "INFRA", "go-live warm start (engine/warm_start.py, 2026-11-22): off by default since 2026-11-24 (an unexplained 40-point jump on scratch); theta starts pass 1's CG "
            "from last night's unknowns mapped by key, the cold answer to the CG tolerance; full (opt-in) also carries "
            "weights and variance components and changes the numbers (docs/MOE-WARM-START-2026-11-20.md); off = cold"),
     **_all("XCP_WARM_MIN_COVER", "INFRA", "warm start: the share of tonight's unknowns the keys must cover, else cold (0.90)"),
     **_all("XCP_WARM_OUTER XCP_WARM_COLD_EVERY", "INFRA",
            "XCP_WARM_START=full only: its passes (2) and every Nth warm run forced cold (7)"),
     **_all("XCP_02B_BG XCP_09D_BG XCP_TWIN_BESIDE_GENDER", "INFRA", "steps moved beside longer ones (2026-11-20); 0 restores the old order"),
+    **_all("XCP_EVIDENCE_REBALANCE XCP_EVIDENCE_THREADS XCP_HOLDOUT_KEEP_DESIGN", "INFRA", "evidence chain (2026-11-24): ladder rungs shared by both lanes, a thread cap per background solve, the unused full design freed in --holdout-only; 0 or 1 restores the old way"),
     **_all("XCP_GLOBAL_BLOCK_MAX", "INFRA", "the go-live CG global-block preconditioner: the largest block it inverts (8000)"),
     **_all("XCP_BACKFILL_ARRAY_LOOKUPS", "INFRA", "05_backfill person/weather lookups in numpy arrays shared by the forked workers (2026-11-22); 0 = the old dicts; same tables"),
     **_all("XCP_PACK_MEMO XCP_PACK_POOL_MEMO XCP_PRO_COPY", "INFRA",
