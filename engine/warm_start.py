@@ -74,6 +74,17 @@ _PLUMBING_ENV = re.compile(r"^XCP_(WARM_|THREADS$|CG_TRACE$|CG_PARALLEL$|CG_INPL
 #   tolerance cannot explain; something downstream of theta (a guard, a
 #   weight, a threshold) flips. Until that is understood, the go-live solves
 #   cold. XCP_WARM_START=theta turns it back on.
+# ★ EXPLAINED (2026-11-24, same 2.8M-row pack, 692k-row race holdout). The
+#   40 was on the 293,345 of 391,047 athlete-season codes with NO training
+#   row: their ability is unidentified, CG never moves it, so it keeps its
+#   start (now last run's value) plus each pass's recentring -- 3.4e-4 --
+#   on a "rating" of ~119,000 (joint_solve.ratingsFromAbility's note).
+#   Nothing publishes those. On the 97,702 with rows: max 1.7e-4 pts,
+#   0 distance-band flips, identified unknowns within 1.5e-6. The real
+#   amplifier is the solve's hard rating bands (DIST_BANDS): a rating
+#   within ~1e-3 of 105/120/135 can change band on any CG-scale nudge and
+#   move ~0.3 pts (global+arrow vs jacobi: 5 flips, one athlete 0.3 pts).
+#   Warm theta's expected flips there are 0.08 a run vs jacobi's 1.8.
 def warmMode():
     v = os.environ.get("XCP_WARM_START", "off").strip().lower()
     if v in ("", "0", "off", "cold", "none", "no", "false"):

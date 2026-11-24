@@ -484,6 +484,26 @@ def test_the_field_strength_term_recovers_a_planted_front_effect():
     print("  field strength recovers the front effect; stacked venues honest ..... OK")
 
 
+def test_a_row_less_athlete_cannot_pin_a_held_out_front(monkeypatch):
+    # race 0: rated athletes 0-5 at 100 and a cold-start athlete 6 (no
+    # training row) whose unidentified "rating" reads ~119,000
+    tr_a = np.array([0, 1, 2, 3, 4, 5]); tr_c = np.zeros(6, np.int64)
+    D_tr = js.Design(tr_a, tr_c, np.zeros(6, np.int64), n_ath=7,
+                     imp=np.zeros(6, np.int64), n_imp=1, imp_kind="field")
+    te_a = np.array([0, 1, 2, 3, 4, 5, 6])
+    D_te = js.Design(te_a, np.zeros(7, np.int64), np.zeros(7, np.int64), n_ath=7,
+                     imp=np.zeros(7, np.int64), n_imp=1, imp_kind="field")
+    out = {"theta": np.zeros(D_tr.n_total),
+           "rating": np.array([100.0] * 6 + [119_000.0]),
+           "field_centre": np.array([100.0])}
+    monkeypatch.setenv("XCP_HOLDOUT_FRONT_RATED", "0")
+    js.predictHeldOut(out, D_tr, D_te)
+    assert D_te.field_strength[0] == js.FIELD_CLIP[1]       # the old way: pinned
+    monkeypatch.setenv("XCP_HOLDOUT_FRONT_RATED", "1")
+    js.predictHeldOut(out, D_tr, D_te)
+    assert D_te.field_strength[0] == 0.0 and not D_te.imp_w.any()
+
+
 def test_the_field_covariate_is_the_front_of_the_race():
     race = np.array([0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2])
     r = np.array([150, 140, 130, 120, 110, 100, 90, 105, 100, 95, 130, 70.0])

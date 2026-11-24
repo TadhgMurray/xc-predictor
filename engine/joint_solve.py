@@ -3349,6 +3349,17 @@ def ratingsFromAbility(a, athlete_pool, n_races, n_pool,
     athlete-seasons with enough races. Gauge-free: a constant added to every
     a of a pool cancels, which is why the curve's and mu's null directions
     never reach a rating."""
+    # ! A ROW-LESS ATHLETE-SEASON'S VALUE HERE IS NOT A RATING (2026-11-24).
+    #   Codes cover every row of the pack (athleteSeasonCodes), so a design
+    #   built on a subset -- a holdout's training rows, a --sample-pct, rows
+    #   keep drops -- has abilities with no rows. CG never moves them (no
+    #   row, no gradient): they sit at the start value plus the recentring,
+    #   ~0 against fitted values near 7, and read ~119,000 here. A warm
+    #   start from the solve's own answer starts them at last run's value,
+    #   so they move by the recentring (3.4e-4) -- 40 "points" at 119,000,
+    #   the jump that switched the warm start off. Nothing published reads
+    #   them (pair_ratings.buildRatings needs 2+ races; the solve reads
+    #   ratings at its rows); compare solves on n_races >= 1 only.
     ability = np.exp(a - a.mean())           # centred for exp() safety only
     vote = n_races >= min_races
     tot = np.bincount(athlete_pool[vote], weights=ability[vote],
@@ -5154,6 +5165,23 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 # HELD-OUT SCORING
 # ------------------------------------------------------------------ #
 
+# ! A HELD-OUT RACE'S FRONT FROM RATED ROWS ONLY (2026-11-24, measured).
+#   out["rating"] holds a number for EVERY athlete-season code, and one
+#   with no training row has an ability nothing identifies: it sits where
+#   pass 1's CG started it (0, plus each pass's recentring), about seven
+#   log units from the fitted ones, so its "rating" reads ~119,000. A
+#   held-out row of such an athlete is not scored (covered is False), but
+#   it still entered raceFront's top 5 and pinned its race's field strength
+#   at the +6 clip. Race holdout on the 2.8M-row synthetic pack (25%
+#   sample): 39 cold-start rows put 38 held-out races at +6 and moved 291
+#   scored rows' predictions by up to 0.025 log-time. XCP_HOLDOUT_FRONT_RATED=1
+#   builds the front from the rows the fit rated (a race with none gets no
+#   strength, as a race with no front always has). OFF by default because it
+#   changes held-out scores; the go-live never predicts a row-less athlete.
+def holdoutFrontRated():
+    return os.environ.get("XCP_HOLDOUT_FRONT_RATED", "0").strip().lower() in ("1", "on", "true", "yes")
+
+
 def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     """Predictions for rows of D_test from a fit on D_train.
 
@@ -5186,10 +5214,22 @@ def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
     # ratings of their fields, centred where the training races were
     if (getattr(D_test, "imp_kind", None) == "field"
             and getattr(D_test, "n_imp", 0) and out.get("rating") is not None):
-        D_test.imp_w, D_test.field_strength, _ = fieldStrength(
-            out["rating"][D_test.athlete], D_test.race, D_test.n_race,
-            D_test.imp_idx, D_test.imp_mask, D_test.n_imp,
-            centre=out.get("field_centre"))
+        r_f = np.asarray(out["rating"], dtype=np.float64)[D_test.athlete]
+        seen = a_cnt[D_test.athlete] > 0
+        if holdoutFrontRated() and not seen.all():
+            # see HOLDOUT_FRONT_RATED: the front from the rows the fit rated
+            _, strength, _ = fieldStrength(
+                r_f[seen], D_test.race[seen], D_test.n_race,
+                np.asarray(D_test.imp_idx)[seen], np.asarray(D_test.imp_mask)[seen],
+                D_test.n_imp, centre=out.get("field_centre"))
+            D_test.imp_w = np.where(np.asarray(D_test.imp_mask, dtype=bool),
+                                    strength[D_test.race], 0.0)
+            D_test.field_strength = strength
+        else:
+            D_test.imp_w, D_test.field_strength, _ = fieldStrength(
+                r_f, D_test.race, D_test.n_race,
+                D_test.imp_idx, D_test.imp_mask, D_test.n_imp,
+                centre=out.get("field_centre"))
     pred = rowPrediction(bb, D_test, h, amp)
     # ★ THE LEVEL merge DROPPED AFTER THE LAST SOLVE (recentreLevels): the
     #   abilities were fitted with it, so a prediction carries it too

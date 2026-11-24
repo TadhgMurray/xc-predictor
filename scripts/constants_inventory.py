@@ -924,6 +924,9 @@ ENV_RULES = {
     **_all("XCP_WARM_OUTER XCP_WARM_COLD_EVERY", "INFRA",
            "XCP_WARM_START=full only: its passes (2) and every Nth warm run forced cold (7)"),
     **_all("XCP_02B_BG XCP_09D_BG XCP_TWIN_BESIDE_GENDER", "INFRA", "steps moved beside longer ones (2026-11-20); 0 restores the old order"),
+    **_all("XCP_HOLDOUT_FRONT_RATED", "REVIEW", "holdout scoring (2026-11-24, joint_solve.predictHeldOut): a held-out race's "
+           "field-strength front from rated rows only, so a cold-start athlete's meaningless ~119,000 'rating' cannot pin "
+           "it at +6; changes held-out scores (evidence only, never the site), so off until the owner turns it on"),
     **_all("XCP_EVIDENCE_REBALANCE XCP_EVIDENCE_THREADS XCP_HOLDOUT_KEEP_DESIGN", "INFRA", "evidence chain (2026-11-24): ladder rungs shared by both lanes, a thread cap per background solve, the unused full design freed in --holdout-only; 0 or 1 restores the old way"),
     **_all("XCP_GLOBAL_BLOCK_MAX", "INFRA", "the go-live CG global-block preconditioner: the largest block it inverts (8000)"),
     **_all("XCP_BACKFILL_ARRAY_LOOKUPS", "INFRA", "05_backfill person/weather lookups in numpy arrays shared by the forked workers (2026-11-22); 0 = the old dicts; same tables"),
