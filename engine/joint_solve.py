@@ -3102,7 +3102,15 @@ def arrowPrecond(D, diag_sub, off, w, h, cell_of, rowq=None):
 # ! Symmetric positive definite by construction (a principal block of the
 #   normal matrix, and the diagonal); if its Cholesky fails anyway, or the
 #   block is larger than GLOBAL_BLOCK_MAX, None and the plain Jacobi runs.
-GLOBAL_BLOCK_MAX = 4000
+# ! PRODUCTION 2026-11-22 (run 20261122_220225): the go-live printed
+#   "cg preconditioner: jacobi" -- the block was refused and the whole solve
+#   (and every holdout and ladder solve) ran the old way, 1,505 CG
+#   iterations. The log did not say why. Now it does (GLOBAL_BLOCK_WHY), a
+#   block that is not numerically positive definite is inverted through its
+#   eigenvalues (clipped) instead of being refused, and the size cap is
+#   8,000 (an 8,000-square block is 512 MB and a few seconds of LAPACK).
+GLOBAL_BLOCK_MAX = int(os.environ.get("XCP_GLOBAL_BLOCK_MAX", "8000") or 8000)
+GLOBAL_BLOCK_WHY = ""
 
 
 def globalBlockPrecond(op, D, diag):
@@ -3111,11 +3119,20 @@ def globalBlockPrecond(op, D, diag):
     when it cannot be formed (no numba, rows not sorted, too large)."""
     idx = np.concatenate([np.arange(D.o_mu, D.o_beta), np.arange(D.o_c, D.o_g),
                           np.arange(D.o_k, D.n_total)]).astype(np.int64)
+    global GLOBAL_BLOCK_WHY
     m = idx.size
-    if m == 0 or m > GLOBAL_BLOCK_MAX:
+    GLOBAL_BLOCK_WHY = f"{m} global unknowns"
+    if m == 0:
+        GLOBAL_BLOCK_WHY = "no global unknowns"
+        return None
+    if m > GLOBAL_BLOCK_MAX:
+        GLOBAL_BLOCK_WHY = f"{m} global unknowns > XCP_GLOBAL_BLOCK_MAX {GLOBAL_BLOCK_MAX}"
         return None
     G = _jk.globalGram(D, op.w, op.h, op.amp, nmax=GLOBAL_BLOCK_MAX)
     if G is None or G.shape != (m, m):
+        GLOBAL_BLOCK_WHY = ("the kernel could not build it (numba off, or rows not "
+                            "sorted by athlete)" if G is None else
+                            f"the kernel's block is {G.shape}, not {m} square")
         return None
     # the penalties' couplings inside the block: the curve's curvature,
     # the window-balance rank-one terms, the walk over distance classes;
@@ -3143,7 +3160,19 @@ def globalBlockPrecond(op, D, diag):
     try:
         L = np.linalg.cholesky(G)
     except np.linalg.LinAlgError:
-        return None
+        # ! not numerically positive definite (a direction the rows and
+        #   priors barely pin): any symmetric positive definite inverse is a
+        #   valid preconditioner -- CG still converges to the same minimiser
+        #   at the same tolerance -- so clip the eigenvalues, don't give up
+        lam, V = np.linalg.eigh(G)
+        if not np.all(np.isfinite(lam)) or lam.max() <= 0:
+            GLOBAL_BLOCK_WHY = f"{m} global unknowns, block not finite or not positive"
+            return None
+        floor = lam.max() * 1e-12
+        n_clip = int((lam < floor).sum())
+        inv = (V / np.maximum(lam, floor)) @ V.T
+        GLOBAL_BLOCK_WHY = f"{m} global unknowns, eigen-inverted ({n_clip} clipped)"
+        return idx, 0.5 * (inv + inv.T)
     Li = np.linalg.inv(L)
     inv = Li.T @ Li
     return idx, 0.5 * (inv + inv.T)
@@ -4673,8 +4702,11 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
                 _pk = "jacobi"          # no block: the plain solve, not arrow alone
             if verbose and outer == 0:
                 print(f"[joint] cg preconditioner: {_pk}"
-                      + (f" ({_gb[0].size} global unknowns), tol {_tol:.1e}"
-                         if _gb is not None else ""), flush=True)
+                      + (f" ({GLOBAL_BLOCK_WHY}), tol {_tol:.1e}"
+                         if _gb is not None else
+                         (f" -- global block refused: {GLOBAL_BLOCK_WHY}"
+                          if precondKind() in ("global", "global+arrow") else "")),
+                      flush=True)
             theta, iters = conjugateGradient(
                 _rhs, op.matvec, diag, max_iter=cg_max_iter, x0=theta, tol=_tol,
                 precond=(arrowPrecond(D, diag, 0, w, h, cellOfRace(D))

@@ -604,7 +604,7 @@ RULES = {
                THETA + ": each runner's own trajectory (§4.2: the amplitude tilt and its rails)"),
         "POOL_MEAN_MIN_RACES": ("DISPLAY", "who votes in the pool mean that 100 is anchored on; "
                                            "§8 point 1 keeps rating = 100·pm/exp(perf)"),
-        **_all("CG_TOL CG_MAX_ITER CG_TOL_OUTER CG_TOL_PROBE CG_MAX_ITER_PROBE GLOBAL_BLOCK_MAX PRECOND_TOL_SCALE _N_THREADS _PRED_POOL "
+        **_all("CG_TOL CG_MAX_ITER CG_TOL_OUTER CG_TOL_PROBE CG_MAX_ITER_PROBE GLOBAL_BLOCK_MAX GLOBAL_BLOCK_WHY PRECOND_TOL_SCALE _N_THREADS _PRED_POOL "
                "_CG_INPLACE _CG_PARALLEL",
                "INFRA", "CG tolerances and threads (the new fit has no CG)"),
         **_all("ABILITY_BANDS ABILITY_W_FLOOR ABILITY_W_CEIL", "REMOVED", ROWT + " (§4.2: the ability weights)"),
@@ -924,6 +924,7 @@ ENV_RULES = {
     **_all("XCP_WARM_OUTER XCP_WARM_COLD_EVERY", "INFRA",
            "XCP_WARM_START=full only: its passes (2) and every Nth warm run forced cold (7)"),
     **_all("XCP_02B_BG XCP_09D_BG XCP_TWIN_BESIDE_GENDER", "INFRA", "steps moved beside longer ones (2026-11-20); 0 restores the old order"),
+    **_all("XCP_GLOBAL_BLOCK_MAX", "INFRA", "the go-live CG global-block preconditioner: the largest block it inverts (8000)"),
     **_all("XCP_BACKFILL_ARRAY_LOOKUPS", "INFRA", "05_backfill person/weather lookups in numpy arrays shared by the forked workers (2026-11-22); 0 = the old dicts; same tables"),
     **_all("XCP_PACK_MEMO XCP_PACK_POOL_MEMO XCP_PRO_COPY", "INFRA",
            "07_pack row loop (2026-11-22): dates, season years, scale factors and pools looked up once per "
