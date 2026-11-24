@@ -5178,8 +5178,11 @@ def solveJoint(y, athlete=None, cell=None, race=None, group=None,
 #   builds the front from the rows the fit rated (a race with none gets no
 #   strength, as a race with no front always has). OFF by default because it
 #   changes held-out scores; the go-live never predicts a row-less athlete.
+# ★ ON BY DEFAULT (owner, 2026-11-24: "yes we can do both"). Held-out
+#   scores shift slightly from earlier nights: the field front no longer
+#   counts athlete-seasons with no training row. =0 restores the old score.
 def holdoutFrontRated():
-    return os.environ.get("XCP_HOLDOUT_FRONT_RATED", "0").strip().lower() in ("1", "on", "true", "yes")
+    return os.environ.get("XCP_HOLDOUT_FRONT_RATED", "1").strip().lower() in ("1", "on", "true", "yes")
 
 
 def predictHeldOut(out, D_train, D_test, athlete_pool=None, tilt=True):
